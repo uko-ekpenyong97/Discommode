@@ -1,8 +1,16 @@
+import { Suspense, lazy } from 'react';
 import { BackgroundLayer } from './components/BackgroundLayer';
 import { GridPlane } from './components/GridPlane';
 import { FrameHUD } from './components/FrameHUD';
 import { usePanController } from './hooks/usePanController';
 import './App.css';
+
+/**
+ * Dev-only DialKit panel. The dynamic import sits in a branch that is statically
+ * `false` in production (`import.meta.env.DEV`), so Rollup drops the branch and
+ * neither `./dev/Dials` nor `dialkit` is emitted to the production bundle.
+ */
+const DevDials = import.meta.env.DEV ? lazy(() => import('./dev/Dials')) : null;
 
 /**
  * App owns the motion controller (the single source of truth for grid position)
@@ -27,11 +35,12 @@ export default function App() {
         tiltRef={pan.tiltRef}
         overlayVisible={pan.overlayVisible}
       />
-      <FrameHUD
-        focusedIndex={pan.focused}
-        worldCol={pan.world.col}
-        worldRow={pan.world.row}
-      />
+      <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
+      {DevDials && (
+        <Suspense fallback={null}>
+          <DevDials />
+        </Suspense>
+      )}
     </div>
   );
 }

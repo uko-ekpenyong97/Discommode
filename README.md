@@ -3,10 +3,11 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 6 — hover overlay.** Hovering the focused card reveals a typographic
-overlay — headline, captions, and a CTA — arranged around it, each floating at a
-different depth so the cursor separates the layers spatially. Builds on the
-Phase 5 tilt; pan, snap, and recycling are untouched.
+**Phase 7 — live tuning + content pipeline.** Feel and layout are a reactive
+config store driven by a dev-only [DialKit](https://interfacecraft.dev/library/dial-kit)
+panel (excluded from production builds); content is a typed manifest that mixes
+real poster images with hue placeholders. Layout itself (card width, gap, wrap
+stride) retunes live.
 
 ## Getting started
 
@@ -124,28 +125,55 @@ On touch there is no hover, so a tap on the focused card toggles it instead (a
 touch that crosses the axis-lock threshold is a drag, not a tap). Under
 `prefers-reduced-motion` the overlay still fades but does not parallax.
 
-## Tuning
+## Content pipeline
 
-All layout, sizing, and visual constants — card width, aspect ratio, gap, grid
-size, perspective, per-ring dim levels, dot-matrix spacing, HUD colours, the
-motion feel (axis-lock threshold, snap duration, flick threshold, momentum
-factor), the tilt feel (max tilt, parallax shift, tilt ease, background parallax
-factor), and the overlay feel (fade, depth factors, CTA hover scale, card dim) —
-live in [`src/config.ts`](src/config.ts) so the whole scene can be re-tuned from
-one place. (Phase 4 removed the grid bounds, so the former `rubberBandFactor`
-edge-resistance constant was deleted — there are no edges.)
+Cards come from a typed manifest in [`src/content.ts`](src/content.ts): each
+`PosterItem` is `{ id, title, image?, hue, captions, cta }`. If `image` is set,
+the card renders it (`object-fit: cover`, 3:4); otherwise it falls back to the
+`hue` tint — so real posters and placeholders mix freely. Images live in
+[`public/posters/`](public/posters/) and load `lazy`, except the focused card
+and its immediate ring (eager), so what you're looking at is always sharp. The
+top of `content.ts` documents the add-a-poster workflow (drop image → add entry →
+push). The wrap stride that tiles the N items across the plane
+(`index = mod(row · wrapStride + col, N)`) is a live config value, not a magic
+number.
+
+## Tuning (DialKit, dev only)
+
+The feel and layout values are a small **reactive store**:
+[`src/config.ts`](src/config.ts) keeps a mutable `config` singleton that the rAF
+loop and handlers read directly each frame, plus `useConfig()` for components to
+subscribe and re-render. In development a **DialKit** panel
+([`src/dev/Dials.tsx`](src/dev/Dials.tsx)) wires those values to live sliders,
+grouped MOTION / DEPTH / LAYOUT / OVERLAY, and pushes changes through `setConfig`
+so they propagate without a reload. It is loaded behind an `import.meta.env.DEV`
+dynamic import, so **neither the panel nor the `dialkit` dependency is in the
+production bundle** (Rollup drops the dead branch); production uses the `DEFAULTS`.
+Values persist to `localStorage` across reloads, and a **Copy config** button
+emits a paste-ready snippet for promoting tuned numbers back into `DEFAULTS`.
+
+Retuning **layout** live is handled end-to-end: changing `cardWidth`/`gap`
+recomputes the cell span used by pan/flick math, re-derives the slot-window size
+(the ring is recomputed on layout change, not just viewport resize), and keeps
+the focused card centred by preserving its **world coordinate** (the position is
+in cell units, so the transform stays identity when settled). Changing
+`wrapStride` re-tiles the content with no crashes at negative coordinates.
+(Phase 4 removed the grid bounds, so the former `rubberBandFactor` constant is
+gone — there are no edges.)
 
 ## Structure
 
 ```
 src/
-  config.ts                  # all tunable layout / visual / feel constants
-  grid.ts                    # pure grid math (modulo, brightness, centre cell)
-  content.ts                 # placeholder content (incl. overlay copy) + cell → item wrap
+  config.ts                  # reactive config store (DEFAULTS + setConfig + useConfig)
+  grid.ts                    # pure grid math (modulo, brightness)
+  content.ts                 # poster manifest (PosterItem) + cell → item wrap
   motion.ts                  # pure momentum math (velocity window, flick target, settle)
-  App.tsx                    # owns the controller, composes the three layers
+  App.tsx                    # owns the controller, composes the layers (+ dev panel)
   main.tsx                   # React entry point
   index.css                  # global reset + viewport lock
+  dev/
+    Dials.tsx                # dev-only DialKit panel (excluded from production)
   hooks/
     useTicker.ts             # the single requestAnimationFrame loop
     usePanController.ts      # drag + keyboard → continuous grid position
@@ -154,4 +182,5 @@ src/
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
     CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
     FrameHUD.tsx             # layer 3: fixed HUD overlay
+public/posters/              # poster images referenced by the manifest
 ```

@@ -1,18 +1,10 @@
 import type { CSSProperties, MouseEvent } from 'react';
-import {
-  CARD_HEIGHT,
-  CARD_WIDTH,
-  ctaHoverScale,
-  overlayDepthCaptions,
-  overlayDepthCta,
-  overlayDepthHeadline,
-  overlayFadeMs,
-} from '../config';
-import type { ContentItem } from '../content';
+import { CARD_ASPECT_H, CARD_ASPECT_W, useConfig } from '../config';
+import type { PosterItem } from '../content';
 import './CardOverlay.css';
 
 interface CardOverlayProps {
-  item: ContentItem;
+  item: PosterItem;
 }
 
 /**
@@ -29,6 +21,10 @@ interface CardOverlayProps {
  * (reduced motion) — the overlay still fades, it just doesn't parallax.
  */
 export function CardOverlay({ item }: CardOverlayProps) {
+  const cfg = useConfig();
+  const cardW = cfg.cardWidth;
+  const cardH = (cardW * CARD_ASPECT_H) / CARD_ASPECT_W;
+
   const onCta = (e: MouseEvent<HTMLButtonElement>) => {
     // Detail view is wired in a later phase; for now log + pulse.
     console.log(`[overlay] open item ${item.id}`);
@@ -44,16 +40,16 @@ export function CardOverlay({ item }: CardOverlayProps) {
     <div
       className="card-overlay"
       style={{
-        width: `${CARD_WIDTH}px`,
-        height: `${CARD_HEIGHT}px`,
-        animationDuration: `${overlayFadeMs}ms`,
+        width: `${cardW}px`,
+        height: `${cardH}px`,
+        animationDuration: `${cfg.overlayFadeMs}ms`,
       }}
     >
-      <div className="card-overlay__headline" style={depth(overlayDepthHeadline)}>
+      <div className="card-overlay__headline" style={depth(cfg.overlayDepthHeadline)}>
         {item.title}
       </div>
 
-      <div className="card-overlay__captions" style={depth(overlayDepthCaptions)}>
+      <div className="card-overlay__captions" style={depth(cfg.overlayDepthCaptions)}>
         {item.captions.map((caption) => (
           <span key={caption} className="card-overlay__caption">
             {caption}
@@ -61,11 +57,11 @@ export function CardOverlay({ item }: CardOverlayProps) {
         ))}
       </div>
 
-      <div className="card-overlay__cta-wrap" style={depth(overlayDepthCta)}>
+      <div className="card-overlay__cta-wrap" style={depth(cfg.overlayDepthCta)}>
         <button
           type="button"
           className="card-overlay__cta"
-          style={{ '--cta-hover-scale': ctaHoverScale } as CSSProperties}
+          style={{ '--cta-hover-scale': cfg.ctaHoverScale } as CSSProperties}
           aria-label={`${item.cta} ${item.title}`}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onCta}

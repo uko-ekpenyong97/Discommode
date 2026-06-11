@@ -1,25 +1,16 @@
 import { memo } from 'react';
 import type { CSSProperties } from 'react';
 import {
-  CARD_HEIGHT,
-  CARD_WIDTH,
+  CARD_ASPECT_H,
+  CARD_ASPECT_W,
   HUD_LINE_COLOR,
   HUD_TEXT_COLOR,
   RULER_TICK_COUNT,
   RULER_TICK_SPACING,
+  useConfig,
 } from '../config';
-import { CONTENT_COUNT } from '../content';
+import { CONTENT_COUNT, contentIndex } from '../content';
 import './FrameHUD.css';
-
-/** The four corners of the center cell, as offsets from the viewport center. */
-const HALF_W = CARD_WIDTH / 2;
-const HALF_H = CARD_HEIGHT / 2;
-const CORNERS = [
-  { id: 'tl', x: -HALF_W, y: -HALF_H },
-  { id: 'tr', x: HALF_W, y: -HALF_H },
-  { id: 'bl', x: -HALF_W, y: HALF_H },
-  { id: 'br', x: HALF_W, y: HALF_H },
-];
 
 /** Colour tokens exposed to the stylesheet as CSS custom properties. */
 const hudVars = {
@@ -28,9 +19,7 @@ const hudVars = {
 } as CSSProperties;
 
 interface FrameHUDProps {
-  /** Content index (0-based) of the focused card, reflected in the counter. */
-  focusedIndex: number;
-  /** Focused world cell coordinates, shown in the world-coordinate readout. */
+  /** Focused world cell coordinates: drive both the counter and the readout. */
   worldCol: number;
   worldRow: number;
 }
@@ -44,12 +33,22 @@ interface FrameHUDProps {
  * numbers that change only when the window shifts), so the per-frame plane
  * motion never re-renders it.
  */
-export const FrameHUD = memo(function FrameHUD({
-  focusedIndex,
-  worldCol,
-  worldRow,
-}: FrameHUDProps) {
+export const FrameHUD = memo(function FrameHUD({ worldCol, worldRow }: FrameHUDProps) {
+  const cfg = useConfig();
+  // Focused content index derived here from the world cell + live wrap stride,
+  // so retuning the stride updates the counter (this component subscribes to it).
+  const focusedIndex = contentIndex(worldCol, worldRow);
   const counter = `${String(focusedIndex + 1).padStart(2, '0')} / ${CONTENT_COUNT}`;
+
+  // Crosshairs sit at the corners of the focused card (live size).
+  const halfW = cfg.cardWidth / 2;
+  const halfH = (cfg.cardWidth * CARD_ASPECT_H) / CARD_ASPECT_W / 2;
+  const corners = [
+    { id: 'tl', x: -halfW, y: -halfH },
+    { id: 'tr', x: halfW, y: -halfH },
+    { id: 'bl', x: -halfW, y: halfH },
+    { id: 'br', x: halfW, y: halfH },
+  ];
 
   return (
     <div className="frame-hud" style={hudVars}>
@@ -73,7 +72,7 @@ export const FrameHUD = memo(function FrameHUD({
       </div>
 
       {/* crosshairs at the corners of the center cell */}
-      {CORNERS.map((c) => (
+      {corners.map((c) => (
         <div
           key={c.id}
           className="hud-crosshair"

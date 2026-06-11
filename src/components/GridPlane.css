@@ -40,6 +40,18 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
+/* Poster image (when the item has one); covers the card at its 3:4 ratio and
+   sits above the hue fallback. */
+.grid-card__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 .grid-card__index {
   padding: 14px 18px;
   font-family: var(--mono);

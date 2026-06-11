@@ -2,19 +2,15 @@
  * Pure grid math shared by the motion controller and the layers.
  *
  * The scene's source of truth is a continuous, unbounded grid position
- * `{ col, row }` in cell units. `{ col: 2, row: 2 }` centres world cell "13" at
- * startup. There are no edges (Phase 4); coordinates run to any integer.
+ * `{ col, row }` in cell units. There are no edges; coordinates run to any
+ * integer. Layout sizes and the wrap stride live in the reactive config.
  */
-import { DIM_BY_RING, GRID_SIZE } from './config';
+import { DIM_BY_RING } from './config';
 
 export interface GridPos {
   col: number;
   row: number;
 }
-
-/** World cell centred in the viewport at startup. */
-export const CENTER_COL = (GRID_SIZE - 1) / 2;
-export const CENTER_ROW = (GRID_SIZE - 1) / 2;
 
 /** True modulo: the result is always in [0, m). `mod(-1, 25) === 24`. */
 export function mod(n: number, m: number): number {

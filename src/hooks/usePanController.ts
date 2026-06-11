@@ -1,32 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
-  CARD_HEIGHT,
-  CARD_WIDTH,
-  GAP,
+  START_COL,
+  START_ROW,
   axisLockThresholdPx,
-  backgroundParallaxFactor,
-  maxTiltDeg,
-  parallaxShiftPx,
-  tiltLerpMs,
-  velocityWindowMs,
+  cardHeight,
+  cellSpanX,
+  cellSpanY,
+  config,
 } from '../config';
-import { CENTER_COL, CENTER_ROW } from '../grid';
 import type { GridPos } from '../grid';
-import { contentIndex } from '../content';
 import { flickTarget, releaseVelocity, settleTauSeconds } from '../motion';
 import type { PointerSample } from '../motion';
 import { useTicker } from './useTicker';
 
-/** Pixels spanned by one cell step, including the gap, on each axis. */
-const CELL_SPAN_X = CARD_WIDTH + GAP;
-const CELL_SPAN_Y = CARD_HEIGHT + GAP;
-
 /** Once both axes are within this many cells of target, finish the snap. */
 const SNAP_EPSILON = 0.0008;
 
-/** Tilt ease time constant (seconds) and the "settled" threshold. */
-const TILT_TAU = tiltLerpMs / 1000;
+/** "Settled" threshold for the tilt ease (its time constant is config.tiltLerpMs). */
 const TILT_EPSILON = 0.0005;
 
 type Axis = 'x' | 'y';
@@ -52,8 +43,6 @@ export interface PanController {
   position: GridPos;
   /** Integer window centre (the focused world cell); changes only on a shift. */
   world: GridPos;
-  /** Content index of the focused card ("14 / 25"), wrapped onto the list. */
-  focused: number;
   /** True while a pointer drag gesture is in progress. */
   isDragging: boolean;
   /** True when the focused card's hover overlay should be shown. */
@@ -70,8 +59,8 @@ export interface PanController {
 /** Whether a viewport point is over the focused card (centred when settled). */
 function isOverFocusedCard(x: number, y: number): boolean {
   return (
-    Math.abs(x - window.innerWidth / 2) <= CARD_WIDTH / 2 &&
-    Math.abs(y - window.innerHeight / 2) <= CARD_HEIGHT / 2
+    Math.abs(x - window.innerWidth / 2) <= config.cardWidth / 2 &&
+    Math.abs(y - window.innerHeight / 2) <= cardHeight() / 2
   );
 }
 
@@ -88,10 +77,10 @@ function deadZoned(delta: number): number {
 }
 
 const START: View = {
-  col: CENTER_COL,
-  row: CENTER_ROW,
-  cc: Math.round(CENTER_COL),
-  cr: Math.round(CENTER_ROW),
+  col: START_COL,
+  row: START_ROW,
+  cc: Math.round(START_COL),
+  cr: Math.round(START_ROW),
 };
 
 /**
@@ -181,10 +170,10 @@ export function usePanController(): PanController {
       // right/below). No bounds — the plane travels freely.
       if (axisRef.current === 'x') {
         const dx = pointerRef.current.x - originRef.current.pointer.x;
-        posRef.current.col = originRef.current.pos.col - deadZoned(dx) / CELL_SPAN_X;
+        posRef.current.col = originRef.current.pos.col - deadZoned(dx) / cellSpanX();
       } else if (axisRef.current === 'y') {
         const dy = pointerRef.current.y - originRef.current.pointer.y;
-        posRef.current.row = originRef.current.pos.row - deadZoned(dy) / CELL_SPAN_Y;
+        posRef.current.row = originRef.current.pos.row - deadZoned(dy) / cellSpanY();
       }
     } else if (settlingRef.current) {
       // Frame-rate-independent exponential ease-out toward the target.
@@ -209,7 +198,7 @@ export function usePanController(): PanController {
     if (tiltDirtyRef.current && !reducedMotionRef.current) {
       const cur = curTiltRef.current;
       const tgt = targetTiltRef.current;
-      const k = 1 - Math.exp(-dt / TILT_TAU);
+      const k = 1 - Math.exp(-dt / (config.tiltLerpMs / 1000));
       cur.nx += (tgt.nx - cur.nx) * k;
       cur.ny += (tgt.ny - cur.ny) * k;
       if (Math.abs(tgt.nx - cur.nx) < TILT_EPSILON && Math.abs(tgt.ny - cur.ny) < TILT_EPSILON) {
@@ -221,10 +210,10 @@ export function usePanController(): PanController {
       // Final plane transform: a parallax shift (opposite the cursor) then the
       // tilt rotation. The pan offset lives on the inner grid (pre-rotation
       // space), so pan and tilt compose without fighting.
-      const rotY = cur.nx * maxTiltDeg;
-      const rotX = -cur.ny * maxTiltDeg;
-      const shiftX = -parallaxShiftPx * cur.nx;
-      const shiftY = -parallaxShiftPx * cur.ny;
+      const rotY = cur.nx * config.maxTiltDeg;
+      const rotX = -cur.ny * config.maxTiltDeg;
+      const shiftX = -config.parallaxShiftPx * cur.nx;
+      const shiftY = -config.parallaxShiftPx * cur.ny;
       if (tiltRef.current) {
         tiltRef.current.style.transform =
           `translate3d(${shiftX}px, ${shiftY}px, 0) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
@@ -234,7 +223,7 @@ export function usePanController(): PanController {
       }
       if (bgRef.current) {
         bgRef.current.style.transform =
-          `translate3d(${backgroundParallaxFactor * shiftX}px, ${backgroundParallaxFactor * shiftY}px, 0)`;
+          `translate3d(${config.backgroundParallaxFactor * shiftX}px, ${config.backgroundParallaxFactor * shiftY}px, 0)`;
       }
     }
 
@@ -284,7 +273,7 @@ export function usePanController(): PanController {
     pointerRef.current = { x, y };
     const samples = samplesRef.current;
     samples.push({ t: e.timeStamp, x, y });
-    const cutoff = e.timeStamp - velocityWindowMs;
+    const cutoff = e.timeStamp - config.velocityWindowMs;
     while (samples.length > 2 && samples[0].t < cutoff) samples.shift();
   }, []);
 
@@ -304,7 +293,7 @@ export function usePanController(): PanController {
       let targetRow = Math.round(posRef.current.row);
       if (axis) {
         samplesRef.current.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
-        const cellSpan = axis === 'x' ? CELL_SPAN_X : CELL_SPAN_Y;
+        const cellSpan = axis === 'x' ? cellSpanX() : cellSpanY();
         const velocity = releaseVelocity(samplesRef.current, e.timeStamp, axis, cellSpan);
         const axisPos = axis === 'x' ? posRef.current.col : posRef.current.row;
         const landed = flickTarget(axisPos, velocity);
@@ -412,7 +401,6 @@ export function usePanController(): PanController {
   return {
     position: { col: view.col, row: view.row },
     world: { col: view.cc, row: view.cr },
-    focused: contentIndex(view.cc, view.cr),
     isDragging,
     overlayVisible,
     onPointerDown,

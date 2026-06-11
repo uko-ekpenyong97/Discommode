@@ -1,21 +1,13 @@
 /**
- * Pure momentum/flick math for Phase 3. Kept free of React and DOM so the
- * release decision is deterministic and unit-testable: given a position and a
- * release velocity it returns where the plane should land, and given a window
- * of pointer samples it returns the release velocity.
+ * Pure momentum/flick math. Reads the live `config` (so DialKit retuning takes
+ * effect immediately) but is otherwise side-effect free and deterministic given
+ * the config + inputs: it returns where the plane should land and the release
+ * velocity, without touching React or the DOM.
  */
-import {
-  flickThreshold,
-  maxFlickCells,
-  momentumFactor,
-  settleTauMaxScale,
-  settleTauPerCell,
-  snapMs,
-  velocityWindowMs,
-} from './config';
+import { config, settleTauMaxScale } from './config';
 
 export interface PointerSample {
-  t: number; // timestamp (performance.now ms)
+  t: number; // timestamp (performance.now / event.timeStamp ms)
   x: number;
   y: number;
 }
@@ -39,7 +31,7 @@ export function releaseVelocity(
   axis: 'x' | 'y',
   cellSpan: number,
 ): number {
-  const cutoff = now - velocityWindowMs;
+  const cutoff = now - config.velocityWindowMs;
   let oldest: PointerSample | null = null;
   for (const s of samples) {
     if (s.t >= cutoff) {
@@ -57,24 +49,25 @@ export function releaseVelocity(
 
 /**
  * Where a release lands on one axis. Below the flick threshold it is a plain
- * snap to the nearest cell (Phase 2 behaviour). Above it, the landing is the
- * projected coast point, forced at least one cell in the flick direction (never
- * settles back onto the card you flicked from) and capped to `maxFlickCells` of
- * travel. The grid is unbounded, so there is no clamp — flicks travel forever.
+ * snap to the nearest cell. Above it, the landing is the projected coast point,
+ * forced at least one cell in the flick direction (never settles back onto the
+ * card you flicked from) and capped to `maxFlickCells` of travel. The grid is
+ * unbounded, so there is no clamp — flicks travel forever.
  */
 export function flickTarget(axisPos: number, velocity: number): number {
-  if (Math.abs(velocity) < flickThreshold) {
+  if (Math.abs(velocity) < config.flickThreshold) {
     return Math.round(axisPos);
   }
 
   const base = Math.round(axisPos);
   const dir = velocity > 0 ? 1 : -1;
-  let landed = Math.round(axisPos + velocity * momentumFactor);
+  let landed = Math.round(axisPos + velocity * config.momentumFactor);
 
   // Always move at least one cell in the flick direction.
   landed = dir > 0 ? Math.max(landed, base + 1) : Math.min(landed, base - 1);
   // Cap how far a single flick may travel from the release cell.
-  return Math.max(base - maxFlickCells, Math.min(base + maxFlickCells, landed));
+  const cap = config.maxFlickCells;
+  return Math.max(base - cap, Math.min(base + cap, landed));
 }
 
 /**
@@ -85,7 +78,7 @@ export function flickTarget(axisPos: number, velocity: number): number {
 export function settleTauSeconds(cellsTravelled: number): number {
   const scale = Math.min(
     settleTauMaxScale,
-    Math.max(1, 1 + settleTauPerCell * (cellsTravelled - 1)),
+    Math.max(1, 1 + config.settleTauPerCell * (cellsTravelled - 1)),
   );
-  return (snapMs / 1000 / SETTLE_DECAY) * scale;
+  return (config.snapMs / 1000 / SETTLE_DECAY) * scale;
 }
