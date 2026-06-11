@@ -1,0 +1,81 @@
+.frame-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  font-family: var(--mono);
+  color: var(--hud-text);
+}
+
+/* --- labels --------------------------------------------------------------- */
+
+.hud-index,
+.hud-coords {
+  position: absolute;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.hud-index {
+  top: 22px;
+  left: 26px;
+}
+
+.hud-coords {
+  right: 26px;
+  bottom: 22px;
+}
+
+/* --- left ruler ----------------------------------------------------------- */
+
+.hud-ruler {
+  position: absolute;
+  left: 22px;
+  top: 50%;
+  width: 12px;
+  transform: translateY(-50%);
+}
+
+.hud-ruler__tick {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 1px;
+  background: var(--hud-line);
+}
+
+.hud-ruler__tick--major {
+  width: 12px;
+}
+
+/* --- center-cell corner crosshairs ---------------------------------------- */
+
+.hud-crosshair {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+}
+
+.hud-crosshair__h,
+.hud-crosshair__v {
+  position: absolute;
+  background: var(--hud-line);
+}
+
+.hud-crosshair__h {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.hud-crosshair__v {
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  transform: translateX(-50%);
+}

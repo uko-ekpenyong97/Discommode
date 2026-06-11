@@ -1,0 +1,32 @@
+.grid-plane {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.grid-plane__grid {
+  display: grid;
+  /* grid-template-columns and gap are supplied inline from config.ts */
+}
+
+.grid-card {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.grid-card__index {
+  padding: 14px 18px;
+  font-family: var(--mono);
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: rgba(255, 255, 255, 0.82);
+}
