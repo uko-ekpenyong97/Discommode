@@ -5,11 +5,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: grab;
+  /* Let pointer drags own the gesture; suppress browser scroll/selection. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.grid-plane--dragging {
+  cursor: grabbing;
 }
 
 .grid-plane__grid {
   display: grid;
-  /* grid-template-columns and gap are supplied inline from config.ts */
+  /* grid-template-columns, gap, and transform are supplied inline from state */
+  will-change: transform;
 }
 
 .grid-card {

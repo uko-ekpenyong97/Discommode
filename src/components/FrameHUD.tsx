@@ -1,9 +1,9 @@
+import { memo } from 'react';
 import type { CSSProperties } from 'react';
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
   CELL_COUNT,
-  CENTER_INDEX,
   HUD_LINE_COLOR,
   HUD_TEXT_COLOR,
   RULER_TICK_COUNT,
@@ -27,14 +27,20 @@ const hudVars = {
   '--hud-text': HUD_TEXT_COLOR,
 } as CSSProperties;
 
+interface FrameHUDProps {
+  /** Flat index (0-based) of the focused card, reflected in the counter. */
+  focusedIndex: number;
+}
+
 /**
  * Layer 3 — a fixed, full-viewport overlay that never moves and ignores
  * pointer events. Holds placeholder instrumentation: a left-edge tick ruler,
- * crosshairs at the corners of the center cell, an index counter (top-left),
- * and a coordinates readout (bottom-right). Intentionally minimal for now.
+ * crosshairs at the corners of the center cell, an index counter (top-left)
+ * that tracks the focused card, and a coordinates readout (bottom-right).
+ * Memoised on `focusedIndex` so the per-frame plane motion doesn't re-render it.
  */
-export function FrameHUD() {
-  const counter = `${String(CENTER_INDEX + 1).padStart(2, '0')} / ${CELL_COUNT}`;
+export const FrameHUD = memo(function FrameHUD({ focusedIndex }: FrameHUDProps) {
+  const counter = `${String(focusedIndex + 1).padStart(2, '0')} / ${CELL_COUNT}`;
 
   return (
     <div className="frame-hud" style={hudVars}>
@@ -73,4 +79,4 @@ export function FrameHUD() {
       <div className="hud-coords">X&nbsp;+000.0&ensp;Y&nbsp;+000.0</div>
     </div>
   );
-}
+});

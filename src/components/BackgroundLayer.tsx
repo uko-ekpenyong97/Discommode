@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { BG_COLOR, DOT_OPACITY, DOT_RADIUS, DOT_SPACING } from '../config';
 import './BackgroundLayer.css';
 
@@ -5,9 +6,9 @@ import './BackgroundLayer.css';
  * Layer 1 — fills the viewport with a near-black background and a subtle,
  * repeating dot matrix. The matrix is a single radial-gradient "dot" tiled
  * across the layer via `background-size`, so it repeats without any image
- * assets.
+ * assets. Static and memoised: the per-frame plane motion never re-renders it.
  */
-export function BackgroundLayer() {
+export const BackgroundLayer = memo(function BackgroundLayer() {
   const dot = `rgba(255, 255, 255, ${DOT_OPACITY})`;
 
   return (
@@ -20,4 +21,4 @@ export function BackgroundLayer() {
       }}
     />
   );
-}
+});

@@ -70,3 +70,24 @@ export const RULER_TICK_COUNT = 24;
 
 /** Vertical spacing between ruler ticks, in px. */
 export const RULER_TICK_SPACING = 28;
+
+// --- Motion / feel -----------------------------------------------------------
+// Phase 2: drag + keyboard navigation. All feel-related numbers live here.
+
+/**
+ * Total pointer travel (px) required before a drag engages. At that moment the
+ * dominant axis is locked for the rest of the gesture.
+ */
+export const axisLockThresholdPx = 10;
+
+/**
+ * Time for a release-snap to visually settle, in ms. Drives the exponential
+ * ease-out that lerps the plane toward the nearest cell.
+ */
+export const snapMs = 600;
+
+/**
+ * Resistance applied past the grid edge while dragging. Movement beyond the
+ * bounds is multiplied by this factor, producing a rubber-band feel.
+ */
+export const rubberBandFactor = 0.3;
