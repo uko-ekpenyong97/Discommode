@@ -10,7 +10,8 @@
 /* --- labels --------------------------------------------------------------- */
 
 .hud-index,
-.hud-coords {
+.hud-coords,
+.hud-world {
   position: absolute;
   font-size: 12px;
   letter-spacing: 0.18em;
@@ -25,6 +26,12 @@
 .hud-coords {
   right: 26px;
   bottom: 22px;
+}
+
+.hud-world {
+  right: 26px;
+  bottom: 42px;
+  color: var(--hud-text);
 }
 
 /* --- left ruler ----------------------------------------------------------- */

@@ -8,7 +8,7 @@ import './App.css';
  * App owns the motion controller (the single source of truth for grid position)
  * and composes the three stacked layers:
  *   1. BackgroundLayer — static viewport backdrop + dot matrix
- *   2. GridPlane       — the 5x5 poster grid, translated from `position`
+ *   2. GridPlane       — the infinite poster grid (recycled slot window)
  *   3. FrameHUD        — the fixed instrumentation overlay
  */
 export default function App() {
@@ -19,12 +19,17 @@ export default function App() {
       <BackgroundLayer />
       <GridPlane
         position={pan.position}
+        world={pan.world}
         isDragging={pan.isDragging}
         onPointerDown={pan.onPointerDown}
         onPointerMove={pan.onPointerMove}
         onPointerUp={pan.onPointerUp}
       />
-      <FrameHUD focusedIndex={pan.focused} />
+      <FrameHUD
+        focusedIndex={pan.focused}
+        worldCol={pan.world.col}
+        worldRow={pan.world.row}
+      />
     </div>
   );
 }

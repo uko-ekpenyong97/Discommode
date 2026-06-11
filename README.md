@@ -3,9 +3,9 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 3 — momentum.** The grid pans by dragging or with the arrow keys: a
-slow drag snaps to the adjacent card, while a fast flick coasts several cards
-before settling. No tilt yet.
+**Phase 4 — infinite grid.** The grid wraps in all four directions: drags,
+flicks, and arrows travel forever, while a fixed window of cards recycles its
+content seamlessly. No tilt yet.
 
 ## Getting started
 
@@ -21,16 +21,17 @@ The scene is composed of three stacked, independent layers, rendered by `App`
 in z-order: **`BackgroundLayer`** fills the viewport with a near-black backdrop
 (`#0d0d0d`) and a subtle, repeating white dot matrix drawn entirely in CSS (a
 tiled `radial-gradient`, no image assets); **`GridPlane`** sits above it and
-holds a 5×5 window of 3:4 "poster" cards inside a `perspective: 1200px`
-container (reserved for tilt in a later phase), translating itself from the
-grid position so the focused card sits at the viewport centre at full
+holds a fixed window of 3:4 "poster" cards inside a `perspective: 1200px`
+container (reserved for tilt in a later phase) that recycles content to feel
+infinite, translating so the focused card sits at the viewport centre at full
 brightness while every other card is dimmed as a continuous function of its
 distance from centre; and **`FrameHUD`** is a fixed, full-viewport overlay
 that never moves and ignores pointer events (`pointer-events: none`), holding
 the minimal instrumentation — a left-edge tick ruler, crosshairs at the corners
-of the centre cell, a top-left index counter (which tracks the focused card),
-and a bottom-right coordinates readout. The page itself is locked to one
-viewport (`100vw`/`100vh`, `overflow: hidden`) so it never scrolls.
+of the centre cell, a top-left index counter (which tracks the focused card's
+content), and bottom-right coordinate readouts (a placeholder plus a live world
+coordinate). The page itself is locked to one viewport (`100vw`/`100vh`,
+`overflow: hidden`) so it never scrolls.
 
 ## Motion system
 
@@ -41,35 +42,63 @@ that one value. All motion flows through **one `requestAnimationFrame` loop**
 (`useTicker`); there are no CSS transitions on the plane. `usePanController`
 owns the position: pointer and keyboard input only record intent into refs, and
 the ticker advances the position each frame. A drag locks to the dominant axis
-after a small threshold and then follows the finger 1:1 (content-follows-finger,
-with a rubber band past the edges). On release, a **momentum** decision (pure
-math in [`src/motion.ts`](src/motion.ts)) takes over: the release velocity is
-measured from a rolling window of the last `velocityWindowMs` of pointer samples
-— oldest-to-newest in the window, so a finger that pauses before letting go
-reads as zero and never flicks. Below `flickThreshold` it simply snaps to the
-nearest cell (unchanged); above it, the plane coasts to a projected landing
-(`position + velocity * momentumFactor`), always at least one cell in the flick
-direction, capped to `maxFlickCells` and clamped to the grid. Either way it
+after a small threshold and then follows the finger 1:1 (content-follows-finger).
+On release, a **momentum** decision (pure math in [`src/motion.ts`](src/motion.ts))
+takes over: the release velocity is measured from a rolling window of the last
+`velocityWindowMs` of pointer samples — oldest-to-newest in the window, so a
+finger that pauses before letting go reads as zero and never flicks. Below
+`flickThreshold` it simply snaps to the nearest cell; above it, the plane coasts
+to a projected landing (`position + velocity * momentumFactor`), always at least
+one cell in the flick direction and capped to `maxFlickCells`. Either way it
 eases exponentially to the target (frame-rate-independent, settle time scaling
 mildly with distance), and a new pointerdown interrupts the glide cleanly from
-the current position. Arrow keys move one cell with the same snap and clamping,
-retargeting from the in-flight target during a glide. All feel constants live in
-[`src/config.ts`](src/config.ts).
+the current position. Arrow keys move one cell, retargeting from the in-flight
+target during a glide. The grid is **unbounded** — there is no clamping and no
+edge rubber-band; positions, flicks, and arrows travel to any integer cell. All
+feel constants live in [`src/config.ts`](src/config.ts).
+
+## Slot / window model
+
+The world is an unbounded lattice of integer `(col, row)` cells, but only a
+fixed window of DOM "slots" is ever rendered — the count never grows as you
+travel. Each slot is keyed by its window offset `(dc, dr)` and keeps a fixed
+layout position; what changes is its *content*. The window centre is the
+integer cell `round(position)`, and a slot at offset `(dc, dr)` shows world cell
+`(centre + dc)`, mapped onto the placeholder list by a deterministic wrap
+(`contentIndex = mod(row * 5 + col, N)`, a true modulo so negatives wrap too) in
+[`src/content.ts`](src/content.ts). A given world cell therefore always shows the
+same item, however you reached it.
+
+The plane translates by only the **fractional** part of the position
+(`position − round(position)`, always within half a cell), so its transform
+never accumulates. When the position crosses a cell boundary the window centre
+steps by one and every slot re-maps to the next world cell — but the jump in the
+plane transform exactly cancels that reassignment, so every on-screen card holds
+its place and its content; only the trailing/leading cards (which are offscreen)
+actually change. The window is sized to the viewport (one full ring beyond the
+furthest visible cell, so swaps always happen out of view): 5×5 is too tight
+horizontally on wide viewports, so a 1440px viewport resolves to **7×7**, and it
+re-sizes on resize (never on travel). Content re-maps only when the integer
+window shifts; per frame, only the plane's `translate3d` and each card's
+`brightness` change — both compositor-only, so there is no layout thrash and no
+per-frame work when settled.
 
 ## Tuning
 
 All layout, sizing, and visual constants — card width, aspect ratio, gap, grid
 size, perspective, per-ring dim levels, dot-matrix spacing, HUD colours, and the
-motion feel (axis-lock threshold, snap duration, rubber-band factor) — live in
-[`src/config.ts`](src/config.ts) so the whole scene can be re-tuned from one
-place.
+motion feel (axis-lock threshold, snap duration, flick threshold, momentum
+factor) — live in [`src/config.ts`](src/config.ts) so the whole scene can be
+re-tuned from one place. (Phase 4 removed the grid bounds, so the former
+`rubberBandFactor` edge-resistance constant was deleted — there are no edges.)
 
 ## Structure
 
 ```
 src/
   config.ts                  # all tunable layout / visual / feel constants
-  grid.ts                    # pure grid math (position → transform/brightness/focus)
+  grid.ts                    # pure grid math (modulo, brightness, centre cell)
+  content.ts                 # placeholder content + infinite-cell → item wrap
   motion.ts                  # pure momentum math (velocity window, flick target, settle)
   App.tsx                    # owns the controller, composes the three layers
   main.tsx                   # React entry point
@@ -79,6 +108,6 @@ src/
     usePanController.ts      # drag + keyboard → continuous grid position
   components/
     BackgroundLayer.tsx      # layer 1: backdrop + dot matrix
-    GridPlane.tsx            # layer 2: 5x5 poster grid, translated from position
+    GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
     FrameHUD.tsx             # layer 3: fixed HUD overlay
 ```

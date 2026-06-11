@@ -3,12 +3,12 @@ import type { CSSProperties } from 'react';
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
-  CELL_COUNT,
   HUD_LINE_COLOR,
   HUD_TEXT_COLOR,
   RULER_TICK_COUNT,
   RULER_TICK_SPACING,
 } from '../config';
+import { CONTENT_COUNT } from '../content';
 import './FrameHUD.css';
 
 /** The four corners of the center cell, as offsets from the viewport center. */
@@ -28,19 +28,28 @@ const hudVars = {
 } as CSSProperties;
 
 interface FrameHUDProps {
-  /** Flat index (0-based) of the focused card, reflected in the counter. */
+  /** Content index (0-based) of the focused card, reflected in the counter. */
   focusedIndex: number;
+  /** Focused world cell coordinates, shown in the world-coordinate readout. */
+  worldCol: number;
+  worldRow: number;
 }
 
 /**
  * Layer 3 — a fixed, full-viewport overlay that never moves and ignores
  * pointer events. Holds placeholder instrumentation: a left-edge tick ruler,
  * crosshairs at the corners of the center cell, an index counter (top-left)
- * that tracks the focused card, and a coordinates readout (bottom-right).
- * Memoised on `focusedIndex` so the per-frame plane motion doesn't re-render it.
+ * that tracks the focused card's content, a placeholder coordinates readout and
+ * a live world-coordinate readout (bottom-right). Memoised on its props (all
+ * numbers that change only when the window shifts), so the per-frame plane
+ * motion never re-renders it.
  */
-export const FrameHUD = memo(function FrameHUD({ focusedIndex }: FrameHUDProps) {
-  const counter = `${String(focusedIndex + 1).padStart(2, '0')} / ${CELL_COUNT}`;
+export const FrameHUD = memo(function FrameHUD({
+  focusedIndex,
+  worldCol,
+  worldRow,
+}: FrameHUDProps) {
+  const counter = `${String(focusedIndex + 1).padStart(2, '0')} / ${CONTENT_COUNT}`;
 
   return (
     <div className="frame-hud" style={hudVars}>
@@ -75,7 +84,10 @@ export const FrameHUD = memo(function FrameHUD({ focusedIndex }: FrameHUDProps) 
         </div>
       ))}
 
-      {/* bottom-right: coordinates readout (placeholder values) */}
+      {/* bottom-right: world coordinate readout + placeholder coordinates */}
+      <div className="hud-world">
+        c:{worldCol}&ensp;r:{worldRow}
+      </div>
       <div className="hud-coords">X&nbsp;+000.0&ensp;Y&nbsp;+000.0</div>
     </div>
   );

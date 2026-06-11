@@ -86,11 +86,8 @@ export const axisLockThresholdPx = 10;
  */
 export const snapMs = 600;
 
-/**
- * Resistance applied past the grid edge while dragging. Movement beyond the
- * bounds is multiplied by this factor, producing a rubber-band feel.
- */
-export const rubberBandFactor = 0.3;
+// Phase 4 removed the grid bounds, so the old `rubberBandFactor` (edge
+// resistance) was deleted — there are no edges to resist against anymore.
 
 // --- Momentum (Phase 3) ------------------------------------------------------
 // A fast flick coasts several cells before settling; a slow drag still snaps to

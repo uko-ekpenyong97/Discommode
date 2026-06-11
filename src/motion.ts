@@ -13,7 +13,6 @@ import {
   snapMs,
   velocityWindowMs,
 } from './config';
-import { clampCell } from './grid';
 
 export interface PointerSample {
   t: number; // timestamp (performance.now ms)
@@ -60,12 +59,12 @@ export function releaseVelocity(
  * Where a release lands on one axis. Below the flick threshold it is a plain
  * snap to the nearest cell (Phase 2 behaviour). Above it, the landing is the
  * projected coast point, forced at least one cell in the flick direction (never
- * settles back onto the card you flicked from), capped to `maxFlickCells` of
- * travel, then clamped to the grid bounds (no overshoot past an edge).
+ * settles back onto the card you flicked from) and capped to `maxFlickCells` of
+ * travel. The grid is unbounded, so there is no clamp — flicks travel forever.
  */
 export function flickTarget(axisPos: number, velocity: number): number {
   if (Math.abs(velocity) < flickThreshold) {
-    return clampCell(Math.round(axisPos));
+    return Math.round(axisPos);
   }
 
   const base = Math.round(axisPos);
@@ -75,9 +74,7 @@ export function flickTarget(axisPos: number, velocity: number): number {
   // Always move at least one cell in the flick direction.
   landed = dir > 0 ? Math.max(landed, base + 1) : Math.min(landed, base - 1);
   // Cap how far a single flick may travel from the release cell.
-  landed = Math.max(base - maxFlickCells, Math.min(base + maxFlickCells, landed));
-  // Stay on the grid.
-  return clampCell(landed);
+  return Math.max(base - maxFlickCells, Math.min(base + maxFlickCells, landed));
 }
 
 /**
