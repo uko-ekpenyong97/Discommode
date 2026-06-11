@@ -141,3 +141,26 @@ export const tiltLerpMs = 200;
 /** Background dot-matrix shift as a fraction of the plane's shift (same
  *  direction, weaker) so it reads as the deepest layer. */
 export const backgroundParallaxFactor = 0.3;
+
+// --- Hover overlay (Phase 6) -------------------------------------------------
+// Typographic overlay on the focused card, its layers floating at different
+// depths so cursor movement separates them spatially.
+
+/** Fade-in duration (ms) of the overlay. (Fade-out is immediate.) */
+export const overlayFadeMs = 180;
+
+/**
+ * Depth factor per overlay layer (card itself = 1.0). Each layer parallaxes by
+ * its factor times the cursor-tilt shift, so higher factors float further above
+ * the card.
+ */
+export const overlayDepthHeadline = 1.6;
+export const overlayDepthCaptions = 1.3;
+export const overlayDepthCta = 1.15;
+
+/** Scale the CTA button grows to on hover (eased in CSS). */
+export const ctaHoverScale = 1.08;
+
+/** Brightness multiplier applied to the focused card while the overlay shows,
+ *  so the white type reads. Neighbours are unaffected. */
+export const overlayCardDim = 0.75;

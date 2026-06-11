@@ -56,6 +56,8 @@ export interface PanController {
   focused: number;
   /** True while a pointer drag gesture is in progress. */
   isDragging: boolean;
+  /** True when the focused card's hover overlay should be shown. */
+  overlayVisible: boolean;
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerMove: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;
@@ -63,6 +65,14 @@ export interface PanController {
   tiltRef: RefObject<HTMLDivElement | null>;
   /** Attach to the background layer; the ticker writes its parallax transform. */
   bgRef: RefObject<HTMLDivElement | null>;
+}
+
+/** Whether a viewport point is over the focused card (centred when settled). */
+function isOverFocusedCard(x: number, y: number): boolean {
+  return (
+    Math.abs(x - window.innerWidth / 2) <= CARD_WIDTH / 2 &&
+    Math.abs(y - window.innerHeight / 2) <= CARD_HEIGHT / 2
+  );
 }
 
 /**
@@ -120,6 +130,14 @@ export function usePanController(): PanController {
   const curTiltRef = useRef<Tilt>({ nx: 0, ny: 0 });
   const tiltDirtyRef = useRef(false);
   const reducedMotionRef = useRef(false);
+
+  // Hover overlay on the focused card. overCard tracks the mouse; touchToggle is
+  // the tap state on touch. Visibility (settled + over/toggled) is computed in
+  // the ticker so every transition — drag, glide, settle, hover — is caught.
+  const [overlayVisible, setOverlayVisible] = useState(false);
+  const overlayVisibleRef = useRef(false);
+  const overCardRef = useRef(false);
+  const touchToggleRef = useRef(false);
 
   // Push the live position into React state only when it actually changed (so a
   // held-still finger or a settled plane stops re-rendering). The integer
@@ -210,11 +228,25 @@ export function usePanController(): PanController {
       if (tiltRef.current) {
         tiltRef.current.style.transform =
           `translate3d(${shiftX}px, ${shiftY}px, 0) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+        // Expose the shift to the overlay so its layers can parallax further.
+        tiltRef.current.style.setProperty('--tsx', `${shiftX}px`);
+        tiltRef.current.style.setProperty('--tsy', `${shiftY}px`);
       }
       if (bgRef.current) {
         bgRef.current.style.transform =
           `translate3d(${backgroundParallaxFactor * shiftX}px, ${backgroundParallaxFactor * shiftY}px, 0)`;
       }
+    }
+
+    // Overlay shows only on the focused card, only when the grid is settled
+    // (not dragging, not gliding), while the mouse is over it or it has been
+    // tapped (touch). Computed here so every transition is caught on the frame
+    // it happens; setState fires only on an actual change.
+    const settled = !draggingRef.current && !settlingRef.current;
+    const wantOverlay = settled && (overCardRef.current || touchToggleRef.current);
+    if (wantOverlay !== overlayVisibleRef.current) {
+      overlayVisibleRef.current = wantOverlay;
+      setOverlayVisible(wantOverlay);
     }
   });
 
@@ -235,6 +267,11 @@ export function usePanController(): PanController {
       pos: { col: posRef.current.col, row: posRef.current.row },
     };
     samplesRef.current = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }];
+    // The overlay vanishes the instant a drag begins (don't wait for the ticker).
+    if (overlayVisibleRef.current) {
+      overlayVisibleRef.current = false;
+      setOverlayVisible(false);
+    }
     setIsDragging(true);
   }, []);
 
@@ -275,6 +312,16 @@ export function usePanController(): PanController {
         else targetRow = landed;
       }
       samplesRef.current = [];
+
+      // Touch: a press that never locked an axis is a tap, not a drag. A tap on
+      // the focused card toggles its overlay; a tap elsewhere (or any drag)
+      // clears it. (Mouse uses hover — overCardRef — instead.)
+      if (e.pointerType === 'touch') {
+        touchToggleRef.current =
+          axis === null && isOverFocusedCard(e.clientX, e.clientY)
+            ? !touchToggleRef.current
+            : false;
+      }
 
       startSettle(targetCol, targetRow);
       setIsDragging(false);
@@ -333,7 +380,10 @@ export function usePanController(): PanController {
     syncMq();
 
     const onMove = (e: PointerEvent) => {
-      if (reducedMotionRef.current || e.pointerType === 'touch') return;
+      if (e.pointerType === 'touch') return;
+      // Hover detection drives the overlay even under reduced motion.
+      overCardRef.current = isOverFocusedCard(e.clientX, e.clientY);
+      if (reducedMotionRef.current) return;
       targetTiltRef.current = {
         nx: (e.clientX / window.innerWidth) * 2 - 1,
         ny: (e.clientY / window.innerHeight) * 2 - 1,
@@ -341,6 +391,7 @@ export function usePanController(): PanController {
       tiltDirtyRef.current = true;
     };
     const onLeave = () => {
+      overCardRef.current = false;
       if (reducedMotionRef.current) return;
       targetTiltRef.current = { nx: 0, ny: 0 };
       tiltDirtyRef.current = true;
@@ -363,6 +414,7 @@ export function usePanController(): PanController {
     world: { col: view.cc, row: view.cr },
     focused: contentIndex(view.cc, view.cr),
     isDragging,
+    overlayVisible,
     onPointerDown,
     onPointerMove,
     onPointerUp,

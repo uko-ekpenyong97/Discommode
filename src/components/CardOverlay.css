@@ -1,0 +1,107 @@
+/* Centred on the focused card inside the tilt wrapper, so it inherits the
+   card's 3D lean. Ignores pointer events except the CTA. Fades in only. */
+.card-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
+  animation-name: card-overlay-fade;
+  animation-timing-function: ease;
+  animation-fill-mode: both;
+}
+
+@keyframes card-overlay-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Each layer parallaxes by (depthFactor - 1) * the tilt shift exposed on the
+   wrapper as --tsx/--tsy. Absent (reduced motion) -> 0 -> no parallax. */
+.card-overlay__headline,
+.card-overlay__captions {
+  position: absolute;
+  transform: translate3d(
+    calc(var(--tsx, 0px) * var(--depth-k, 0)),
+    calc(var(--tsy, 0px) * var(--depth-k, 0)),
+    0
+  );
+}
+
+.card-overlay__headline {
+  top: -26px;
+  left: -6px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
+}
+
+.card-overlay__captions {
+  right: -12px;
+  bottom: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.card-overlay__caption {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+/* CTA: circular button centred on the card, parallax on the wrapper so the
+   button's own hover scale is free to compose. */
+.card-overlay__cta-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%)
+    translate3d(
+      calc(var(--tsx, 0px) * var(--depth-k, 0)),
+      calc(var(--tsy, 0px) * var(--depth-k, 0)),
+      0
+    );
+}
+
+.card-overlay__cta {
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(12, 12, 12, 0.35);
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.card-overlay__cta:hover {
+  transform: scale(var(--cta-hover-scale, 1.08));
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+.card-overlay__cta:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 4px;
+}

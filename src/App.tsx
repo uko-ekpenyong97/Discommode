@@ -25,6 +25,7 @@ export default function App() {
         onPointerMove={pan.onPointerMove}
         onPointerUp={pan.onPointerUp}
         tiltRef={pan.tiltRef}
+        overlayVisible={pan.overlayVisible}
       />
       <FrameHUD
         focusedIndex={pan.focused}

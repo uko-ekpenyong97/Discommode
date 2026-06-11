@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, Ref } from 'react';
-import { CARD_HEIGHT, CARD_WIDTH, GAP, PERSPECTIVE } from '../config';
+import { CARD_HEIGHT, CARD_WIDTH, GAP, PERSPECTIVE, overlayCardDim } from '../config';
 import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
 import { CONTENT, contentIndex } from '../content';
+import { CardOverlay } from './CardOverlay';
 import './GridPlane.css';
 
 /** Pixels spanned by one cell step (card + gap) on each axis. */
@@ -32,6 +33,8 @@ interface GridPlaneProps {
   onPointerUp: (e: ReactPointerEvent) => void;
   /** Tilt wrapper — the controller writes its 3D transform each frame. */
   tiltRef: Ref<HTMLDivElement>;
+  /** Whether the focused card's hover overlay is shown. */
+  overlayVisible: boolean;
 }
 
 /**
@@ -57,6 +60,7 @@ export function GridPlane({
   onPointerMove,
   onPointerUp,
   tiltRef,
+  overlayVisible,
 }: GridPlaneProps) {
   const [ring, setRing] = useState(() => requiredRing(window.innerWidth, window.innerHeight));
   useEffect(() => {
@@ -87,6 +91,9 @@ export function GridPlane({
   const tx = -fracCol * CELL_SPAN_X;
   const ty = -fracRow * CELL_SPAN_Y;
 
+  // The focused (centre) card backs the overlay; it is dimmed while it shows.
+  const focusedItem = CONTENT[contentIndex(world.col, world.row)];
+
   return (
     <div
       className={isDragging ? 'grid-plane grid-plane--dragging' : 'grid-plane'}
@@ -107,6 +114,9 @@ export function GridPlane({
         >
           {slots.map((s) => {
             const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
+            const isFocused = s.dc === 0 && s.dr === 0;
+            const brightness =
+              brightnessForDistance(distance) * (isFocused && overlayVisible ? overlayCardDim : 1);
             return (
               <div
                 key={`${s.dc}|${s.dr}`}
@@ -115,7 +125,7 @@ export function GridPlane({
                   width: `${CARD_WIDTH}px`,
                   height: `${CARD_HEIGHT}px`,
                   backgroundColor: `hsl(${s.hue}, 28%, 32%)`,
-                  filter: `brightness(${brightnessForDistance(distance)})`,
+                  filter: `brightness(${brightness})`,
                 }}
               >
                 <span className="grid-card__index">{s.title}</span>
@@ -123,6 +133,7 @@ export function GridPlane({
             );
           })}
         </div>
+        {overlayVisible && <CardOverlay item={focusedItem} />}
       </div>
     </div>
   );

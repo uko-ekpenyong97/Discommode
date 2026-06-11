@@ -3,9 +3,10 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 5 — cursor-follow tilt.** The grid plane leans toward the cursor in 3D,
-with the dot matrix parallaxing behind it and the HUD held perfectly still, for
-a layered depth effect. Purely visual — it never touches pan, snap, or focus.
+**Phase 6 — hover overlay.** Hovering the focused card reveals a typographic
+overlay — headline, captions, and a CTA — arranged around it, each floating at a
+different depth so the cursor separates the layers spatially. Builds on the
+Phase 5 tilt; pan, snap, and recycling are untouched.
 
 ## Getting started
 
@@ -25,7 +26,8 @@ cursor as the deepest layer; **`GridPlane`** sits above it and holds a fixed
 window of 3:4 "poster" cards inside a `perspective: 1200px` container that
 recycles content to feel infinite and leans toward the cursor in 3D, translating
 so the focused card sits at the viewport centre at full brightness while every
-other card is dimmed as a continuous function of its distance from centre; and
+other card is dimmed as a continuous function of its distance from centre (and,
+on hover, that focused card reveals a typographic overlay); and
 **`FrameHUD`** is a fixed, full-viewport overlay
 that never moves and ignores pointer events (`pointer-events: none`), holding
 the minimal instrumentation — a left-edge tick ruler, crosshairs at the corners
@@ -101,15 +103,37 @@ direction, weaker — the deepest layer), the `GridPlane` carries the full tilt,
 the `FrameHUD` never moves. Tilt is disabled for touch pointers (no hover) and
 when `prefers-reduced-motion` is set; pan/snap, being user-initiated, remain.
 
+## Hover overlay
+
+Hovering the focused card (only while the grid is settled — not dragging, not
+gliding) fades in a `CardOverlay`: a bold headline overlapping the top-left
+corner, monospace captions along the bottom-right edge, and a circular CTA
+centred on the card, all from the item's data in [`src/content.ts`](src/content.ts).
+It lives inside the tilt wrapper, so it inherits the card's 3D lean, and its
+layers float at different depths — `overlayDepthHeadline`/`Captions`/`Cta`. The
+depth parallax reuses the tilt path: the controller writes the cursor-tilt shift
+as `--tsx`/`--tsy` CSS variables on the wrapper, and each layer multiplies them
+by `(depthFactor − 1)` in a `calc()` transform, so the type slides *more* than
+the card and reads as floating above it. (Chosen over `translateZ`, which doesn't
+compose cleanly with the slot/pan transforms; and it degrades to flat when the
+variables are absent.) The focused card dims to `overlayCardDim` so the white
+type reads. The overlay ignores pointer events except the CTA — a real, focusable
+`<button>` (Enter/Space activate it) that logs the item and pulses. It fades in
+over `overlayFadeMs` and vanishes instantly on drag, glide, or leaving the card.
+On touch there is no hover, so a tap on the focused card toggles it instead (a
+touch that crosses the axis-lock threshold is a drag, not a tap). Under
+`prefers-reduced-motion` the overlay still fades but does not parallax.
+
 ## Tuning
 
 All layout, sizing, and visual constants — card width, aspect ratio, gap, grid
 size, perspective, per-ring dim levels, dot-matrix spacing, HUD colours, the
 motion feel (axis-lock threshold, snap duration, flick threshold, momentum
-factor), and the tilt feel (max tilt, parallax shift, tilt ease, background
-parallax factor) — live in [`src/config.ts`](src/config.ts) so the whole scene
-can be re-tuned from one place. (Phase 4 removed the grid bounds, so the former
-`rubberBandFactor` edge-resistance constant was deleted — there are no edges.)
+factor), the tilt feel (max tilt, parallax shift, tilt ease, background parallax
+factor), and the overlay feel (fade, depth factors, CTA hover scale, card dim) —
+live in [`src/config.ts`](src/config.ts) so the whole scene can be re-tuned from
+one place. (Phase 4 removed the grid bounds, so the former `rubberBandFactor`
+edge-resistance constant was deleted — there are no edges.)
 
 ## Structure
 
@@ -117,7 +141,7 @@ can be re-tuned from one place. (Phase 4 removed the grid bounds, so the former
 src/
   config.ts                  # all tunable layout / visual / feel constants
   grid.ts                    # pure grid math (modulo, brightness, centre cell)
-  content.ts                 # placeholder content + infinite-cell → item wrap
+  content.ts                 # placeholder content (incl. overlay copy) + cell → item wrap
   motion.ts                  # pure momentum math (velocity window, flick target, settle)
   App.tsx                    # owns the controller, composes the three layers
   main.tsx                   # React entry point
@@ -128,5 +152,6 @@ src/
   components/
     BackgroundLayer.tsx      # layer 1: backdrop + dot matrix
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
+    CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
     FrameHUD.tsx             # layer 3: fixed HUD overlay
 ```

@@ -20,6 +20,7 @@
    transform-origin is the viewport centre. The controller writes its 3D
    transform (rotate + parallax shift) imperatively each frame. */
 .grid-plane__tilt {
+  position: relative; /* containing block for the centred overlay */
   transform-origin: center center;
   will-change: transform;
 }

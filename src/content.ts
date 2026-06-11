@@ -9,16 +9,27 @@ export interface ContentItem {
   id: number;
   title: string;
   hue: number;
+  /** Short caption fragments shown around the card edges in the hover overlay. */
+  captions: string[];
+  /** Call-to-action label for the overlay button. */
+  cta: string;
 }
 
 const COUNT = 25;
 
-/** N placeholder items, each a distinct muted hue and a two-digit label. */
-export const CONTENT: ContentItem[] = Array.from({ length: COUNT }, (_, i) => ({
-  id: i,
-  title: String(i + 1).padStart(2, '0'),
-  hue: Math.round((i / COUNT) * 360),
-}));
+/** N placeholder items, each a distinct muted hue, a two-digit label, and
+ *  placeholder overlay copy (we design these properly in a later phase). */
+export const CONTENT: ContentItem[] = Array.from({ length: COUNT }, (_, i) => {
+  const title = String(i + 1).padStart(2, '0');
+  const hue = Math.round((i / COUNT) * 360);
+  return {
+    id: i,
+    title,
+    hue,
+    captions: [`NO ${title}`, `HUE ${hue}`, 'INDEXED'],
+    cta: 'OPEN',
+  };
+});
 
 export const CONTENT_COUNT = COUNT;
 
