@@ -123,3 +123,21 @@ export const settleTauPerCell = 0.15;
 
 /** Upper bound on the settle-time scaling, so very long flicks don't crawl. */
 export const settleTauMaxScale = 2;
+
+// --- Tilt / parallax (Phase 5) -----------------------------------------------
+// Cursor-follow 3D tilt of the grid plane, with layered parallax for depth.
+// Purely visual: it never affects pan, snap, focus, or recycling.
+
+/** Maximum plane tilt at the viewport edges, in degrees. Subtle by design. */
+export const maxTiltDeg = 4;
+
+/** Plane translate (px) at the edges, opposite the cursor, to deepen parallax. */
+export const parallaxShiftPx = 12;
+
+/** Time constant (ms) of the tilt ease — the plane glides toward the cursor's
+ *  target tilt, never snaps. */
+export const tiltLerpMs = 200;
+
+/** Background dot-matrix shift as a fraction of the plane's shift (same
+ *  direction, weaker) so it reads as the deepest layer. */
+export const backgroundParallaxFactor = 0.3;

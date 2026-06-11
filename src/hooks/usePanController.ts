@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
   GAP,
   axisLockThresholdPx,
+  backgroundParallaxFactor,
+  maxTiltDeg,
+  parallaxShiftPx,
+  tiltLerpMs,
   velocityWindowMs,
 } from '../config';
 import { CENTER_COL, CENTER_ROW } from '../grid';
@@ -21,7 +25,17 @@ const CELL_SPAN_Y = CARD_HEIGHT + GAP;
 /** Once both axes are within this many cells of target, finish the snap. */
 const SNAP_EPSILON = 0.0008;
 
+/** Tilt ease time constant (seconds) and the "settled" threshold. */
+const TILT_TAU = tiltLerpMs / 1000;
+const TILT_EPSILON = 0.0005;
+
 type Axis = 'x' | 'y';
+
+/** Normalized cursor offset from viewport centre, each in [-1, 1]. */
+interface Tilt {
+  nx: number;
+  ny: number;
+}
 
 /** Continuous position plus the integer window centre it rounds to. Bundled in
  *  one state object so the plane transform and the recycled content always
@@ -45,6 +59,10 @@ export interface PanController {
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerMove: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;
+  /** Attach to the plane's tilt wrapper; the ticker writes its transform. */
+  tiltRef: RefObject<HTMLDivElement | null>;
+  /** Attach to the background layer; the ticker writes its parallax transform. */
+  bgRef: RefObject<HTMLDivElement | null>;
 }
 
 /**
@@ -91,6 +109,17 @@ export function usePanController(): PanController {
   const pointerRef = useRef({ x: 0, y: 0 });
   const originRef = useRef({ pointer: { x: 0, y: 0 }, pos: { col: START.col, row: START.row } });
   const samplesRef = useRef<PointerSample[]>([]);
+
+  // Tilt: applied imperatively to DOM refs in the ticker, so cursor-follow tilt
+  // animates without React re-renders (even over a settled grid). targetTilt is
+  // the cursor; curTilt eases toward it. Refs, not state, so the only thing
+  // moving is the transform of two DOM nodes.
+  const tiltRef = useRef<HTMLDivElement | null>(null);
+  const bgRef = useRef<HTMLDivElement | null>(null);
+  const targetTiltRef = useRef<Tilt>({ nx: 0, ny: 0 });
+  const curTiltRef = useRef<Tilt>({ nx: 0, ny: 0 });
+  const tiltDirtyRef = useRef(false);
+  const reducedMotionRef = useRef(false);
 
   // Push the live position into React state only when it actually changed (so a
   // held-still finger or a settled plane stops re-rendering). The integer
@@ -156,6 +185,37 @@ export function usePanController(): PanController {
     }
 
     sync();
+
+    // Tilt + layered parallax — eased in this same loop, written straight to the
+    // DOM. Only runs while the tilt is moving, so a still cursor does no work.
+    if (tiltDirtyRef.current && !reducedMotionRef.current) {
+      const cur = curTiltRef.current;
+      const tgt = targetTiltRef.current;
+      const k = 1 - Math.exp(-dt / TILT_TAU);
+      cur.nx += (tgt.nx - cur.nx) * k;
+      cur.ny += (tgt.ny - cur.ny) * k;
+      if (Math.abs(tgt.nx - cur.nx) < TILT_EPSILON && Math.abs(tgt.ny - cur.ny) < TILT_EPSILON) {
+        cur.nx = tgt.nx;
+        cur.ny = tgt.ny;
+        tiltDirtyRef.current = false;
+      }
+
+      // Final plane transform: a parallax shift (opposite the cursor) then the
+      // tilt rotation. The pan offset lives on the inner grid (pre-rotation
+      // space), so pan and tilt compose without fighting.
+      const rotY = cur.nx * maxTiltDeg;
+      const rotX = -cur.ny * maxTiltDeg;
+      const shiftX = -parallaxShiftPx * cur.nx;
+      const shiftY = -parallaxShiftPx * cur.ny;
+      if (tiltRef.current) {
+        tiltRef.current.style.transform =
+          `translate3d(${shiftX}px, ${shiftY}px, 0) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+      }
+      if (bgRef.current) {
+        bgRef.current.style.transform =
+          `translate3d(${backgroundParallaxFactor * shiftX}px, ${backgroundParallaxFactor * shiftY}px, 0)`;
+      }
+    }
   });
 
   const onPointerDown = useCallback((e: ReactPointerEvent) => {
@@ -255,6 +315,49 @@ export function usePanController(): PanController {
     return () => window.removeEventListener('keydown', onKey);
   }, [startSettle]);
 
+  // Cursor-follow tilt: track the pointer over the whole viewport (independent
+  // of dragging), ignoring touch (no hover) and honouring reduced-motion.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const flatten = () => {
+      curTiltRef.current = { nx: 0, ny: 0 };
+      targetTiltRef.current = { nx: 0, ny: 0 };
+      tiltDirtyRef.current = false;
+      if (tiltRef.current) tiltRef.current.style.transform = '';
+      if (bgRef.current) bgRef.current.style.transform = '';
+    };
+    const syncMq = () => {
+      reducedMotionRef.current = mq.matches;
+      if (mq.matches) flatten();
+    };
+    syncMq();
+
+    const onMove = (e: PointerEvent) => {
+      if (reducedMotionRef.current || e.pointerType === 'touch') return;
+      targetTiltRef.current = {
+        nx: (e.clientX / window.innerWidth) * 2 - 1,
+        ny: (e.clientY / window.innerHeight) * 2 - 1,
+      };
+      tiltDirtyRef.current = true;
+    };
+    const onLeave = () => {
+      if (reducedMotionRef.current) return;
+      targetTiltRef.current = { nx: 0, ny: 0 };
+      tiltDirtyRef.current = true;
+    };
+
+    mq.addEventListener('change', syncMq);
+    window.addEventListener('pointermove', onMove);
+    document.documentElement.addEventListener('pointerleave', onLeave);
+    window.addEventListener('blur', onLeave);
+    return () => {
+      mq.removeEventListener('change', syncMq);
+      window.removeEventListener('pointermove', onMove);
+      document.documentElement.removeEventListener('pointerleave', onLeave);
+      window.removeEventListener('blur', onLeave);
+    };
+  }, []);
+
   return {
     position: { col: view.col, row: view.row },
     world: { col: view.cc, row: view.cr },
@@ -263,5 +366,7 @@ export function usePanController(): PanController {
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    tiltRef,
+    bgRef,
   };
 }

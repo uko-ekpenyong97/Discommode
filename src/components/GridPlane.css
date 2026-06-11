@@ -16,6 +16,14 @@
   cursor: grabbing;
 }
 
+/* Cursor-follow tilt wrapper. Sized to the grid, centred by the flex parent, so
+   transform-origin is the viewport centre. The controller writes its 3D
+   transform (rotate + parallax shift) imperatively each frame. */
+.grid-plane__tilt {
+  transform-origin: center center;
+  will-change: transform;
+}
+
 .grid-plane__grid {
   display: grid;
   /* grid-template-columns, gap, and transform are supplied inline from state */

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent, Ref } from 'react';
 import { CARD_HEIGHT, CARD_WIDTH, GAP, PERSPECTIVE } from '../config';
 import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
@@ -30,6 +30,8 @@ interface GridPlaneProps {
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerMove: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;
+  /** Tilt wrapper — the controller writes its 3D transform each frame. */
+  tiltRef: Ref<HTMLDivElement>;
 }
 
 /**
@@ -41,6 +43,11 @@ interface GridPlaneProps {
  * transform at a shift is exactly cancelled by the content reassignment and
  * every on-screen card stays put. Brightness flows from each slot's continuous
  * distance to centre. DOM node count is constant no matter how far you travel.
+ *
+ * A tilt wrapper sits between the perspective container and the grid: the
+ * controller writes its cursor-follow 3D transform imperatively, so tilt and
+ * the React-driven pan (on the inner grid, in pre-rotation space) compose
+ * cleanly without either re-rendering the other.
  */
 export function GridPlane({
   position,
@@ -49,6 +56,7 @@ export function GridPlane({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  tiltRef,
 }: GridPlaneProps) {
   const [ring, setRing] = useState(() => requiredRing(window.innerWidth, window.innerHeight));
   useEffect(() => {
@@ -88,31 +96,33 @@ export function GridPlane({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      <div
-        className="grid-plane__grid"
-        style={{
-          gridTemplateColumns: `repeat(${cols}, ${CARD_WIDTH}px)`,
-          gap: `${GAP}px`,
-          transform: `translate3d(${tx}px, ${ty}px, 0)`,
-        }}
-      >
-        {slots.map((s) => {
-          const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
-          return (
-            <div
-              key={`${s.dc}|${s.dr}`}
-              className="grid-card"
-              style={{
-                width: `${CARD_WIDTH}px`,
-                height: `${CARD_HEIGHT}px`,
-                backgroundColor: `hsl(${s.hue}, 28%, 32%)`,
-                filter: `brightness(${brightnessForDistance(distance)})`,
-              }}
-            >
-              <span className="grid-card__index">{s.title}</span>
-            </div>
-          );
-        })}
+      <div ref={tiltRef} className="grid-plane__tilt">
+        <div
+          className="grid-plane__grid"
+          style={{
+            gridTemplateColumns: `repeat(${cols}, ${CARD_WIDTH}px)`,
+            gap: `${GAP}px`,
+            transform: `translate3d(${tx}px, ${ty}px, 0)`,
+          }}
+        >
+          {slots.map((s) => {
+            const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
+            return (
+              <div
+                key={`${s.dc}|${s.dr}`}
+                className="grid-card"
+                style={{
+                  width: `${CARD_WIDTH}px`,
+                  height: `${CARD_HEIGHT}px`,
+                  backgroundColor: `hsl(${s.hue}, 28%, 32%)`,
+                  filter: `brightness(${brightnessForDistance(distance)})`,
+                }}
+              >
+                <span className="grid-card__index">{s.title}</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

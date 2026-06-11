@@ -16,7 +16,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <BackgroundLayer />
+      <BackgroundLayer parallaxRef={pan.bgRef} />
       <GridPlane
         position={pan.position}
         world={pan.world}
@@ -24,6 +24,7 @@ export default function App() {
         onPointerDown={pan.onPointerDown}
         onPointerMove={pan.onPointerMove}
         onPointerUp={pan.onPointerUp}
+        tiltRef={pan.tiltRef}
       />
       <FrameHUD
         focusedIndex={pan.focused}

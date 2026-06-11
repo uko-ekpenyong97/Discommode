@@ -3,9 +3,9 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 4 — infinite grid.** The grid wraps in all four directions: drags,
-flicks, and arrows travel forever, while a fixed window of cards recycles its
-content seamlessly. No tilt yet.
+**Phase 5 — cursor-follow tilt.** The grid plane leans toward the cursor in 3D,
+with the dot matrix parallaxing behind it and the HUD held perfectly still, for
+a layered depth effect. Purely visual — it never touches pan, snap, or focus.
 
 ## Getting started
 
@@ -20,18 +20,20 @@ npm run build    # type-check + production build
 The scene is composed of three stacked, independent layers, rendered by `App`
 in z-order: **`BackgroundLayer`** fills the viewport with a near-black backdrop
 (`#0d0d0d`) and a subtle, repeating white dot matrix drawn entirely in CSS (a
-tiled `radial-gradient`, no image assets); **`GridPlane`** sits above it and
-holds a fixed window of 3:4 "poster" cards inside a `perspective: 1200px`
-container (reserved for tilt in a later phase) that recycles content to feel
-infinite, translating so the focused card sits at the viewport centre at full
-brightness while every other card is dimmed as a continuous function of its
-distance from centre; and **`FrameHUD`** is a fixed, full-viewport overlay
+tiled `radial-gradient`, no image assets) that parallaxes slightly with the
+cursor as the deepest layer; **`GridPlane`** sits above it and holds a fixed
+window of 3:4 "poster" cards inside a `perspective: 1200px` container that
+recycles content to feel infinite and leans toward the cursor in 3D, translating
+so the focused card sits at the viewport centre at full brightness while every
+other card is dimmed as a continuous function of its distance from centre; and
+**`FrameHUD`** is a fixed, full-viewport overlay
 that never moves and ignores pointer events (`pointer-events: none`), holding
 the minimal instrumentation — a left-edge tick ruler, crosshairs at the corners
 of the centre cell, a top-left index counter (which tracks the focused card's
 content), and bottom-right coordinate readouts (a placeholder plus a live world
-coordinate). The page itself is locked to one viewport (`100vw`/`100vh`,
-`overflow: hidden`) so it never scrolls.
+coordinate). It is the still "glass" of the viewport — its stillness is what
+makes the layers behind it read as moving in depth. The page itself is locked to
+one viewport (`100vw`/`100vh`, `overflow: hidden`) so it never scrolls.
 
 ## Motion system
 
@@ -83,13 +85,30 @@ window shifts; per frame, only the plane's `translate3d` and each card's
 `brightness` change — both compositor-only, so there is no layout thrash and no
 per-frame work when settled.
 
+## Depth / cursor tilt
+
+The plane leans toward the cursor for a parallax depth read. The pointer is
+tracked over the whole viewport and normalized to `(nx, ny)` in `[-1, 1]`; the
+target is `rotateY = nx · maxTiltDeg`, `rotateX = -ny · maxTiltDeg`, plus a small
+`parallaxShiftPx` translate opposite the cursor. This tilt is **eased in the same
+rAF loop** (its own `tiltLerpMs` time constant) and written **imperatively** to a
+wrapper element's transform — so it animates even over a settled grid without any
+React re-render, and never affects pan, snap, focus, or recycling. The pan offset
+lives on the inner grid (pre-rotation space), so pan and tilt compose without
+fighting. The three layers move at different rates for depth: the `BackgroundLayer`
+dot matrix shifts at `backgroundParallaxFactor` of the plane's shift (same
+direction, weaker — the deepest layer), the `GridPlane` carries the full tilt, and
+the `FrameHUD` never moves. Tilt is disabled for touch pointers (no hover) and
+when `prefers-reduced-motion` is set; pan/snap, being user-initiated, remain.
+
 ## Tuning
 
 All layout, sizing, and visual constants — card width, aspect ratio, gap, grid
-size, perspective, per-ring dim levels, dot-matrix spacing, HUD colours, and the
+size, perspective, per-ring dim levels, dot-matrix spacing, HUD colours, the
 motion feel (axis-lock threshold, snap duration, flick threshold, momentum
-factor) — live in [`src/config.ts`](src/config.ts) so the whole scene can be
-re-tuned from one place. (Phase 4 removed the grid bounds, so the former
+factor), and the tilt feel (max tilt, parallax shift, tilt ease, background
+parallax factor) — live in [`src/config.ts`](src/config.ts) so the whole scene
+can be re-tuned from one place. (Phase 4 removed the grid bounds, so the former
 `rubberBandFactor` edge-resistance constant was deleted — there are no edges.)
 
 ## Structure
