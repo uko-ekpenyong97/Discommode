@@ -3,9 +3,9 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 2 — drag + keyboard navigation.** The grid pans by dragging or with the
-arrow keys and snaps to the nearest card. No momentum yet (that's the next
-phase) and no tilt yet.
+**Phase 3 — momentum.** The grid pans by dragging or with the arrow keys: a
+slow drag snaps to the adjacent card, while a fast flick coasts several cards
+before settling. No tilt yet.
 
 ## Getting started
 
@@ -42,9 +42,18 @@ that one value. All motion flows through **one `requestAnimationFrame` loop**
 owns the position: pointer and keyboard input only record intent into refs, and
 the ticker advances the position each frame. A drag locks to the dominant axis
 after a small threshold and then follows the finger 1:1 (content-follows-finger,
-with a rubber band past the edges); on release it eases exponentially to the
-nearest cell (frame-rate-independent, settling in `snapMs`). Arrow keys move one
-cell with the same snap and clamping. All feel constants live in
+with a rubber band past the edges). On release, a **momentum** decision (pure
+math in [`src/motion.ts`](src/motion.ts)) takes over: the release velocity is
+measured from a rolling window of the last `velocityWindowMs` of pointer samples
+— oldest-to-newest in the window, so a finger that pauses before letting go
+reads as zero and never flicks. Below `flickThreshold` it simply snaps to the
+nearest cell (unchanged); above it, the plane coasts to a projected landing
+(`position + velocity * momentumFactor`), always at least one cell in the flick
+direction, capped to `maxFlickCells` and clamped to the grid. Either way it
+eases exponentially to the target (frame-rate-independent, settle time scaling
+mildly with distance), and a new pointerdown interrupts the glide cleanly from
+the current position. Arrow keys move one cell with the same snap and clamping,
+retargeting from the in-flight target during a glide. All feel constants live in
 [`src/config.ts`](src/config.ts).
 
 ## Tuning
@@ -61,6 +70,7 @@ place.
 src/
   config.ts                  # all tunable layout / visual / feel constants
   grid.ts                    # pure grid math (position → transform/brightness/focus)
+  motion.ts                  # pure momentum math (velocity window, flick target, settle)
   App.tsx                    # owns the controller, composes the three layers
   main.tsx                   # React entry point
   index.css                  # global reset + viewport lock

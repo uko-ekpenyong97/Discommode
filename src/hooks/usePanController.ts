@@ -6,7 +6,7 @@ import {
   GAP,
   axisLockThresholdPx,
   rubberBandFactor,
-  snapMs,
+  velocityWindowMs,
 } from '../config';
 import {
   CENTER_COL,
@@ -16,17 +16,13 @@ import {
   focusedIndex,
 } from '../grid';
 import type { GridPos } from '../grid';
+import { flickTarget, releaseVelocity, settleTauSeconds } from '../motion';
+import type { PointerSample } from '../motion';
 import { useTicker } from './useTicker';
 
 /** Pixels spanned by one cell step, including the gap, on each axis. */
 const CELL_SPAN_X = CARD_WIDTH + GAP;
 const CELL_SPAN_Y = CARD_HEIGHT + GAP;
-
-/**
- * A release-snap eases exponentially toward its target. We treat ~99% of the
- * distance as "settled", so the time constant is snapMs / ln(100).
- */
-const SETTLE_DECAY = Math.log(100);
 
 /** Once both axes are within this many cells of target, finish the snap. */
 const SNAP_EPSILON = 0.0008;
@@ -70,6 +66,10 @@ const START: GridPos = { col: CENTER_COL, row: CENTER_ROW };
  * Owns the continuous grid position and all of its motion. Drag and keyboard
  * input only record intent (into refs); the single rAF ticker reads that intent
  * and advances the position every frame — no CSS transitions, one loop.
+ *
+ * Phase 3 adds momentum: a rolling window of pointer samples gives a release
+ * velocity, and pointerup either snaps (slow) or projects a multi-cell glide
+ * (fast). Everything still settles through the same exponential ease-out.
  */
 export function usePanController(): PanController {
   const [position, setPosition] = useState<GridPos>(START);
@@ -80,12 +80,14 @@ export function usePanController(): PanController {
   const posRef = useRef<GridPos>({ ...START });
   const syncedRef = useRef<GridPos>({ ...START });
   const targetRef = useRef<GridPos>({ ...START });
+  const settleTauRef = useRef(settleTauSeconds(1));
 
   const draggingRef = useRef(false);
   const settlingRef = useRef(false);
   const axisRef = useRef<Axis | null>(null);
   const pointerRef = useRef({ x: 0, y: 0 });
   const originRef = useRef({ pointer: { x: 0, y: 0 }, pos: { ...START } });
+  const samplesRef = useRef<PointerSample[]>([]);
 
   // Push the live position into React state only when it actually changed,
   // so a held-still finger or a settled plane stops re-rendering.
@@ -95,6 +97,18 @@ export function usePanController(): PanController {
       syncedRef.current = { col: p.col, row: p.row };
       setPosition(syncedRef.current);
     }
+  }, []);
+
+  // Begin (or retarget) an exponential glide to an integer cell. The settle
+  // time scales with how far this glide travels from the current position.
+  const startSettle = useCallback((col: number, row: number) => {
+    targetRef.current = { col, row };
+    const travel = Math.max(
+      Math.abs(col - posRef.current.col),
+      Math.abs(row - posRef.current.row),
+    );
+    settleTauRef.current = settleTauSeconds(travel);
+    settlingRef.current = true;
   }, []);
 
   useTicker((dt) => {
@@ -125,9 +139,8 @@ export function usePanController(): PanController {
         );
       }
     } else if (settlingRef.current) {
-      // Frame-rate-independent exponential ease-out toward the snap target.
-      const tau = snapMs / 1000 / SETTLE_DECAY;
-      const k = 1 - Math.exp(-dt / tau);
+      // Frame-rate-independent exponential ease-out toward the target.
+      const k = 1 - Math.exp(-dt / settleTauRef.current);
       posRef.current.col += (targetRef.current.col - posRef.current.col) * k;
       posRef.current.row += (targetRef.current.row - posRef.current.row) * k;
 
@@ -150,40 +163,67 @@ export function usePanController(): PanController {
     } catch {
       // Capture is a nice-to-have; some environments reject it harmlessly.
     }
+    // A new grab interrupts any in-flight glide and continues from exactly
+    // where the plane is now — no jump, the old animation does not complete.
     draggingRef.current = true;
-    settlingRef.current = false; // a new grab interrupts any in-flight snap
+    settlingRef.current = false;
     axisRef.current = null;
     pointerRef.current = { x: e.clientX, y: e.clientY };
     originRef.current = {
       pointer: { x: e.clientX, y: e.clientY },
       pos: { col: posRef.current.col, row: posRef.current.row },
     };
+    samplesRef.current = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }];
     setIsDragging(true);
   }, []);
 
   const onPointerMove = useCallback((e: ReactPointerEvent) => {
     if (!draggingRef.current) return;
-    // The ticker owns the math; the move only records the latest pointer.
-    pointerRef.current = { x: e.clientX, y: e.clientY };
+    // The ticker owns the math; the move records the pointer plus a timestamped
+    // sample for velocity, pruning anything older than the window.
+    const x = e.clientX;
+    const y = e.clientY;
+    pointerRef.current = { x, y };
+    const samples = samplesRef.current;
+    samples.push({ t: e.timeStamp, x, y });
+    const cutoff = e.timeStamp - velocityWindowMs;
+    while (samples.length > 2 && samples[0].t < cutoff) samples.shift();
   }, []);
 
-  const onPointerUp = useCallback((e: ReactPointerEvent) => {
-    if (!draggingRef.current) return;
-    draggingRef.current = false;
-    axisRef.current = null;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    // Snap to the nearest integer cell on both axes, clamped to bounds.
-    targetRef.current = {
-      col: clampCell(Math.round(posRef.current.col)),
-      row: clampCell(Math.round(posRef.current.row)),
-    };
-    settlingRef.current = true;
-    setIsDragging(false);
-  }, []);
+  const onPointerUp = useCallback(
+    (e: ReactPointerEvent) => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      const axis = axisRef.current;
+      axisRef.current = null;
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
 
-  // Keyboard: one cell per arrow press, same snap + clamping. Ignored mid-drag.
+      // Default: snap both axes to the nearest cell. On the locked axis,
+      // flickTarget upgrades that to a momentum glide when the release is fast.
+      let targetCol = clampCell(Math.round(posRef.current.col));
+      let targetRow = clampCell(Math.round(posRef.current.row));
+      if (axis) {
+        samplesRef.current.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+        const cellSpan = axis === 'x' ? CELL_SPAN_X : CELL_SPAN_Y;
+        const velocity = releaseVelocity(samplesRef.current, e.timeStamp, axis, cellSpan);
+        const axisPos = axis === 'x' ? posRef.current.col : posRef.current.row;
+        const landed = flickTarget(axisPos, velocity);
+        if (axis === 'x') targetCol = landed;
+        else targetRow = landed;
+      }
+      samplesRef.current = [];
+
+      startSettle(targetCol, targetRow);
+      setIsDragging(false);
+    },
+    [startSettle],
+  );
+
+  // Keyboard: one cell per arrow press, same snap + clamping. Ignored mid-drag,
+  // but a press during a glide retargets from the in-flight target (so it lands
+  // one cell past where the flick was heading).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (draggingRef.current) return;
@@ -206,20 +246,14 @@ export function usePanController(): PanController {
           return;
       }
       e.preventDefault();
-      // Step from the in-flight target if still settling, else from the
-      // current rounded cell — so rapid presses chain cleanly.
       const base = settlingRef.current
         ? targetRef.current
         : { col: Math.round(posRef.current.col), row: Math.round(posRef.current.row) };
-      targetRef.current = {
-        col: clampCell(base.col + dCol),
-        row: clampCell(base.row + dRow),
-      };
-      settlingRef.current = true;
+      startSettle(clampCell(base.col + dCol), clampCell(base.row + dRow));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [startSettle]);
 
   return {
     position,

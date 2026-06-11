@@ -91,3 +91,38 @@ export const snapMs = 600;
  * bounds is multiplied by this factor, producing a rubber-band feel.
  */
 export const rubberBandFactor = 0.3;
+
+// --- Momentum (Phase 3) ------------------------------------------------------
+// A fast flick coasts several cells before settling; a slow drag still snaps to
+// the adjacent cell.
+
+/**
+ * Rolling window (ms) of recent pointer samples used to measure release
+ * velocity. A windowed average (oldest→newest in the window) makes the flick
+ * robust to a finger that pauses before releasing: pause = zero velocity.
+ */
+export const velocityWindowMs = 120;
+
+/**
+ * Minimum release speed (cells/sec) that counts as a flick. Below this the grid
+ * just snaps to the nearest cell, exactly as a slow drag (no behaviour change).
+ */
+export const flickThreshold = 1.5;
+
+/**
+ * How far a flick coasts: projected landing = position + velocity *
+ * momentumFactor. Effectively the seconds of velocity carried into the glide.
+ */
+export const momentumFactor = 0.28;
+
+/** Maximum number of cells a single flick may travel from the release cell. */
+export const maxFlickCells = 4;
+
+/**
+ * Settle time grows mildly with flick distance so longer glides decelerate over
+ * a little more time: tau scale = 1 + settleTauPerCell * (cellsTravelled - 1).
+ */
+export const settleTauPerCell = 0.15;
+
+/** Upper bound on the settle-time scaling, so very long flicks don't crawl. */
+export const settleTauMaxScale = 2;
