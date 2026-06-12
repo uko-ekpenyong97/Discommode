@@ -35,7 +35,13 @@ export const CARD_ASPECT_W = 3;
 export const CARD_ASPECT_H = 4;
 
 /** Pointer travel (px) before a drag engages and locks an axis. */
-export const axisLockThresholdPx = 10;
+/**
+ * Pointer travel (px) before a drag "starts" — just a dead zone so a tap doesn't
+ * micro-pan. (Phase 8 replaced axis-locked navigation with free 2D panning, so
+ * the old `axisLockThresholdPx` axis-lock constant is gone; drags now move both
+ * axes at once.)
+ */
+export const dragDeadZonePx = 4;
 /** Upper bound on the settle-time scaling for long flicks. */
 export const settleTauMaxScale = 2;
 
@@ -53,7 +59,7 @@ export interface LiveConfig {
   maxFlickCells: number;
   velocityWindowMs: number;
   settleTauPerCell: number;
-  // DEPTH
+  // DEPTH — global plane tilt (Phase 5)
   maxTiltDeg: number;
   parallaxShiftPx: number;
   tiltLerpMs: number;
@@ -61,6 +67,15 @@ export interface LiveConfig {
   overlayDepthHeadline: number;
   overlayDepthCaptions: number;
   overlayDepthCta: number;
+  // DEPTH — per-card cursor-facing rotation (Phase 8)
+  /** Distance (px) the cursor "floats" in front of the plane; bigger = gentler. */
+  cursorDepthPx: number;
+  /** Multiplier on the facing angle before clamping. */
+  cardFaceStrength: number;
+  /** Clamp on a single card's facing rotation, in degrees. */
+  maxCardTiltDeg: number;
+  /** Per-card facing ease time constant, in ms. */
+  cardTiltLerpMs: number;
   // LAYOUT
   cardWidth: number;
   gap: number;
@@ -85,13 +100,18 @@ export const DEFAULTS: LiveConfig = {
   maxFlickCells: 4,
   velocityWindowMs: 120,
   settleTauPerCell: 0.15,
-  maxTiltDeg: 4,
+  // Global plane tilt reduced to 2° so the per-card facing leads (Phase 8).
+  maxTiltDeg: 2,
   parallaxShiftPx: 12,
   tiltLerpMs: 200,
   backgroundParallaxFactor: 0.3,
   overlayDepthHeadline: 1.6,
   overlayDepthCaptions: 1.3,
   overlayDepthCta: 1.15,
+  cursorDepthPx: 600,
+  cardFaceStrength: 0.6,
+  maxCardTiltDeg: 10,
+  cardTiltLerpMs: 250,
   cardWidth: 300,
   gap: 120,
   wrapStride: 5,

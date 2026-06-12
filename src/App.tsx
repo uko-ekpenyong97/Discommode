@@ -33,6 +33,7 @@ export default function App() {
         onPointerMove={pan.onPointerMove}
         onPointerUp={pan.onPointerUp}
         tiltRef={pan.tiltRef}
+        cardsRef={pan.cardsRef}
         overlayVisible={pan.overlayVisible}
       />
       <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />

@@ -47,28 +47,10 @@ export function releaseVelocity(
   return -dCoord / cellSpan / dtSec;
 }
 
-/**
- * Where a release lands on one axis. Below the flick threshold it is a plain
- * snap to the nearest cell. Above it, the landing is the projected coast point,
- * forced at least one cell in the flick direction (never settles back onto the
- * card you flicked from) and capped to `maxFlickCells` of travel. The grid is
- * unbounded, so there is no clamp — flicks travel forever.
- */
-export function flickTarget(axisPos: number, velocity: number): number {
-  if (Math.abs(velocity) < config.flickThreshold) {
-    return Math.round(axisPos);
-  }
-
-  const base = Math.round(axisPos);
-  const dir = velocity > 0 ? 1 : -1;
-  let landed = Math.round(axisPos + velocity * config.momentumFactor);
-
-  // Always move at least one cell in the flick direction.
-  landed = dir > 0 ? Math.max(landed, base + 1) : Math.min(landed, base - 1);
-  // Cap how far a single flick may travel from the release cell.
-  const cap = config.maxFlickCells;
-  return Math.max(base - cap, Math.min(base + cap, landed));
-}
+// Phase 8 replaced per-axis flick projection (the former `flickTarget`) with a
+// 2D vector decision in the controller: project both axes, cap the offset vector
+// to maxFlickCells (preserving direction), and ensure ≥1 cell on the dominant
+// axis. `releaseVelocity` (above) is now called per axis to build that vector.
 
 /**
  * Settle time constant (seconds) for a glide of `cellsTravelled` cells. Scales

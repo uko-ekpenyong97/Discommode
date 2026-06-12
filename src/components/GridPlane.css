@@ -31,13 +31,26 @@
   will-change: transform;
 }
 
+/* Outer cell: grid layout slot + a perspective so the inner face's cursor-facing
+   rotation renders in 3D. */
 .grid-card {
   position: relative;
+  perspective: 900px;
+}
+
+/* Inner face: carries the hue/image, the brightness filter, and the per-card
+   cursor-facing rotation (written imperatively to its transform by the ticker,
+   so it composes with — doesn't fight — the layout and the filter). */
+.grid-card__face {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: flex-end;
   border-radius: 4px;
   overflow: hidden;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  transform-origin: center center;
+  will-change: transform;
 }
 
 /* Poster image (when the item has one); covers the card at its 3:4 ratio and

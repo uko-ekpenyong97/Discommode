@@ -3,11 +3,10 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 7 — live tuning + content pipeline.** Feel and layout are a reactive
-config store driven by a dev-only [DialKit](https://interfacecraft.dev/library/dial-kit)
-panel (excluded from production builds); content is a typed manifest that mixes
-real poster images with hue placeholders. Layout itself (card width, gap, wrap
-stride) retunes live.
+**Phase 8 — free 2D navigation + per-card facing.** Dragging now pans both axes
+at once (no axis lock), and every card individually rotates to face the cursor,
+its angle growing with distance — a wave of attention that sweeps across the
+grid. Builds on the position model, the rAF loop, and the imperative tilt path.
 
 ## Getting started
 
@@ -46,20 +45,21 @@ cell units (`{ 2, 2 }` centres the middle card). Everything visual — the plane
 that one value. All motion flows through **one `requestAnimationFrame` loop**
 (`useTicker`); there are no CSS transitions on the plane. `usePanController`
 owns the position: pointer and keyboard input only record intent into refs, and
-the ticker advances the position each frame. A drag locks to the dominant axis
-after a small threshold and then follows the finger 1:1 (content-follows-finger).
-On release, a **momentum** decision (pure math in [`src/motion.ts`](src/motion.ts))
-takes over: the release velocity is measured from a rolling window of the last
-`velocityWindowMs` of pointer samples — oldest-to-newest in the window, so a
-finger that pauses before letting go reads as zero and never flicks. Below
-`flickThreshold` it simply snaps to the nearest cell; above it, the plane coasts
-to a projected landing (`position + velocity * momentumFactor`), always at least
-one cell in the flick direction and capped to `maxFlickCells`. Either way it
-eases exponentially to the target (frame-rate-independent, settle time scaling
-mildly with distance), and a new pointerdown interrupts the glide cleanly from
-the current position. Arrow keys move one cell, retargeting from the in-flight
-target during a glide. The grid is **unbounded** — there is no clamping and no
-edge rubber-band; positions, flicks, and arrows travel to any integer cell. All
+the ticker advances the position each frame. A drag pans **freely in 2D** — both
+axes follow the finger 1:1 at once (content-follows-finger), past a small ~4px
+dead zone so a tap doesn't micro-pan (there is no axis lock). On release, a **2D
+momentum** decision (using pure math in [`src/motion.ts`](src/motion.ts)) takes
+over: the release velocity is a vector, each axis measured from a rolling window
+of the last `velocityWindowMs` of pointer samples — oldest-to-newest, so a finger
+that pauses before letting go reads as zero and never flicks. Below
+`flickThreshold` (vector magnitude) it snaps to the nearest cell on both axes;
+above it, the plane coasts to a projected landing (`position + velocity *
+momentumFactor` per axis), with the offset vector scaled to cap total travel at
+`maxFlickCells` (direction preserved) and at least one cell along the dominant
+axis. Either way both axes ease to the target as **one** frame-rate-independent
+2D motion (shared settle, scaled by euclidean distance), and a new pointerdown
+interrupts the glide cleanly from the current position. Arrow keys move one cell
+on one axis. The grid is **unbounded** — no clamping, no edge rubber-band. All
 feel constants live in [`src/config.ts`](src/config.ts).
 
 ## Slot / window model
@@ -90,19 +90,34 @@ per-frame work when settled.
 
 ## Depth / cursor tilt
 
-The plane leans toward the cursor for a parallax depth read. The pointer is
-tracked over the whole viewport and normalized to `(nx, ny)` in `[-1, 1]`; the
-target is `rotateY = nx · maxTiltDeg`, `rotateX = -ny · maxTiltDeg`, plus a small
-`parallaxShiftPx` translate opposite the cursor. This tilt is **eased in the same
-rAF loop** (its own `tiltLerpMs` time constant) and written **imperatively** to a
-wrapper element's transform — so it animates even over a settled grid without any
-React re-render, and never affects pan, snap, focus, or recycling. The pan offset
-lives on the inner grid (pre-rotation space), so pan and tilt compose without
-fighting. The three layers move at different rates for depth: the `BackgroundLayer`
-dot matrix shifts at `backgroundParallaxFactor` of the plane's shift (same
-direction, weaker — the deepest layer), the `GridPlane` carries the full tilt, and
-the `FrameHUD` never moves. Tilt is disabled for touch pointers (no hover) and
-when `prefers-reduced-motion` is set; pan/snap, being user-initiated, remain.
+Two cursor-driven effects layer for depth, both eased in the same rAF loop and
+written **imperatively** to the DOM (no React re-renders) so they animate even
+over a settled grid and never affect pan, snap, focus, or recycling.
+
+**Global plane tilt.** The whole plane leans toward the cursor: target
+`rotateY = nx · maxTiltDeg`, `rotateX = -ny · maxTiltDeg` (from the cursor
+normalized to `[-1, 1]`), plus a small `parallaxShiftPx` translate opposite the
+cursor, eased with its own `tiltLerpMs`. The pan offset lives on the inner grid
+(pre-rotation space), so pan and tilt compose without fighting. The three layers
+move at different rates: `BackgroundLayer` shifts at `backgroundParallaxFactor` of
+the plane's shift (the deepest layer), `GridPlane` carries the tilt, and
+`FrameHUD` never moves. From Phase 8 the global tilt is gentle (`maxTiltDeg` 2°)
+so the per-card effect leads.
+
+**Per-card cursor facing.** Each visible card *individually* rotates to face a
+cursor that floats `cursorDepthPx` in front of the plane: for a card centred at
+`(cx, cy)` and cursor `(px, py)`, `rotateY = atan2(px − cx, cursorDepthPx) ·
+cardFaceStrength`, `rotateX = −atan2(py − cy, cursorDepthPx) · cardFaceStrength`,
+clamped to `maxCardTiltDeg`. The card under the cursor is ≈ flat; farther cards
+rotate more, saturating naturally with distance. The ticker loops the rendered
+card faces (refs collected once per window remap), computes each card's screen
+centre from the position (no per-frame layout reads), eases its rotation
+(`cardTiltLerpMs`), and writes it to a dedicated inner `.grid-card__face` wrapper
+— composing with the slot layout and the brightness filter rather than fighting
+them. It keeps updating during drags and glides, so cards turn as they pass under
+a stationary cursor (a wave of attention). Both effects are disabled for touch
+(no cursor) and under `prefers-reduced-motion`, and ease to flat when the pointer
+leaves the viewport; pan/snap, being user-initiated, remain.
 
 ## Hover overlay
 
@@ -122,7 +137,7 @@ type reads. The overlay ignores pointer events except the CTA — a real, focusa
 `<button>` (Enter/Space activate it) that logs the item and pulses. It fades in
 over `overlayFadeMs` and vanishes instantly on drag, glide, or leaving the card.
 On touch there is no hover, so a tap on the focused card toggles it instead (a
-touch that crosses the axis-lock threshold is a drag, not a tap). Under
+touch that crosses the drag dead zone is a drag, not a tap). Under
 `prefers-reduced-motion` the overlay still fades but does not parallax.
 
 ## Content pipeline
@@ -152,6 +167,10 @@ production bundle** (Rollup drops the dead branch); production uses the `DEFAULT
 Values persist to `localStorage` across reloads, and a **Copy config** button
 emits a paste-ready snippet for promoting tuned numbers back into `DEFAULTS`.
 
+The DEPTH group includes the per-card facing dials (`cursorDepthPx`,
+`cardFaceStrength`, `maxCardTiltDeg`, `cardTiltLerpMs`) alongside the global tilt;
+both are independently dialable.
+
 Retuning **layout** live is handled end-to-end: changing `cardWidth`/`gap`
 recomputes the cell span used by pan/flick math, re-derives the slot-window size
 (the ring is recomputed on layout change, not just viewport resize), and keeps
@@ -159,7 +178,8 @@ the focused card centred by preserving its **world coordinate** (the position is
 in cell units, so the transform stays identity when settled). Changing
 `wrapStride` re-tiles the content with no crashes at negative coordinates.
 (Phase 4 removed the grid bounds, so the former `rubberBandFactor` constant is
-gone — there are no edges.)
+gone; Phase 8 replaced the axis lock with free 2D panning, so the former
+`axisLockThresholdPx` is now just a ~4px `dragDeadZonePx`.)
 
 ## Structure
 

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent, Ref } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
 import { CARD_ASPECT_H, CARD_ASPECT_W, PERSPECTIVE, useConfig } from '../config';
 import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
 import { CONTENT, contentIndex } from '../content';
 import type { PosterItem } from '../content';
+import type { CardFace } from '../hooks/usePanController';
 import { CardOverlay } from './CardOverlay';
 import './GridPlane.css';
 
@@ -32,6 +33,8 @@ interface GridPlaneProps {
   onPointerUp: (e: ReactPointerEvent) => void;
   /** Tilt wrapper — the controller writes its 3D transform each frame. */
   tiltRef: Ref<HTMLDivElement>;
+  /** Collected card-face wrappers — the controller rotates them per cursor. */
+  cardsRef: RefObject<CardFace[]>;
   /** Whether the focused card's hover overlay is shown. */
   overlayVisible: boolean;
 }
@@ -67,6 +70,7 @@ export function GridPlane({
   onPointerMove,
   onPointerUp,
   tiltRef,
+  cardsRef,
   overlayVisible,
 }: GridPlaneProps) {
   const cfg = useConfig();
@@ -117,6 +121,20 @@ export function GridPlane({
   // The focused (centre) card backs the overlay; it is dimmed while it shows.
   const focusedItem = CONTENT[contentIndex(world.col, world.row)];
 
+  // Collect the card-face wrappers for the controller's per-card rotation. The
+  // faces are stable across window shifts (keyed by offset), so we re-collect
+  // only when the window size (ring) changes — e.g. a resize or card-size dial.
+  const gridRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const faces = grid.querySelectorAll<HTMLElement>('.grid-card__face');
+    cardsRef.current = Array.from(faces, (el) => {
+      el.style.transform = ''; // start flat; the ticker re-faces on next move
+      return { dc: Number(el.dataset.dc), dr: Number(el.dataset.dr), el, rx: 0, ry: 0 };
+    });
+  }, [ring, cardsRef]);
+
   return (
     <div
       className={isDragging ? 'grid-plane grid-plane--dragging' : 'grid-plane'}
@@ -128,6 +146,7 @@ export function GridPlane({
     >
       <div ref={tiltRef} className="grid-plane__tilt">
         <div
+          ref={gridRef}
           className="grid-plane__grid"
           style={{
             gridTemplateColumns: `repeat(${cols}, ${cardW}px)`,
@@ -141,26 +160,30 @@ export function GridPlane({
             const brightness =
               brightnessForDistance(distance) * (isFocused && overlayVisible ? cfg.overlayCardDim : 1);
             return (
-              <div
-                key={`${s.dc}|${s.dr}`}
-                className="grid-card"
-                style={{
-                  width: `${cardW}px`,
-                  height: `${cardH}px`,
-                  backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
-                  filter: `brightness(${brightness})`,
-                }}
-              >
-                {s.item.image && (
-                  <img
-                    className="grid-card__img"
-                    src={s.item.image}
-                    alt=""
-                    draggable={false}
-                    loading={s.eager ? 'eager' : 'lazy'}
-                  />
-                )}
-                <span className="grid-card__index">{s.item.title}</span>
+              // Outer cell carries layout + per-card perspective; the inner face
+              // carries the hue/image/brightness and the cursor-facing rotation
+              // (written imperatively), so rotation, layout, and filter don't fight.
+              <div key={`${s.dc}|${s.dr}`} className="grid-card" style={{ width: `${cardW}px`, height: `${cardH}px` }}>
+                <div
+                  className="grid-card__face"
+                  data-dc={s.dc}
+                  data-dr={s.dr}
+                  style={{
+                    backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
+                    filter: `brightness(${brightness})`,
+                  }}
+                >
+                  {s.item.image && (
+                    <img
+                      className="grid-card__img"
+                      src={s.item.image}
+                      alt=""
+                      draggable={false}
+                      loading={s.eager ? 'eager' : 'lazy'}
+                    />
+                  )}
+                  <span className="grid-card__index">{s.item.title}</span>
+                </div>
               </div>
             );
           })}

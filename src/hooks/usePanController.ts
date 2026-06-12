@@ -3,14 +3,14 @@ import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
   START_COL,
   START_ROW,
-  axisLockThresholdPx,
   cardHeight,
   cellSpanX,
   cellSpanY,
   config,
+  dragDeadZonePx,
 } from '../config';
 import type { GridPos } from '../grid';
-import { flickTarget, releaseVelocity, settleTauSeconds } from '../motion';
+import { releaseVelocity, settleTauSeconds } from '../motion';
 import type { PointerSample } from '../motion';
 import { useTicker } from './useTicker';
 
@@ -20,12 +20,26 @@ const SNAP_EPSILON = 0.0008;
 /** "Settled" threshold for the tilt ease (its time constant is config.tiltLerpMs). */
 const TILT_EPSILON = 0.0005;
 
-type Axis = 'x' | 'y';
+/** Per-card facing rotation is considered at rest under this many degrees. */
+const CARD_TILT_EPSILON = 0.01;
+
+const RAD2DEG = 180 / Math.PI;
+const clampDeg = (v: number, m: number) => Math.max(-m, Math.min(m, v));
 
 /** Normalized cursor offset from viewport centre, each in [-1, 1]. */
 interface Tilt {
   nx: number;
   ny: number;
+}
+
+/** A rendered card's facing wrapper + its eased rotation state. GridPlane fills
+ *  in `dc/dr/el` per window; the ticker maintains `rx/ry` and writes the transform. */
+export interface CardFace {
+  dc: number;
+  dr: number;
+  el: HTMLElement;
+  rx: number;
+  ry: number;
 }
 
 /** Continuous position plus the integer window centre it rounds to. Bundled in
@@ -54,6 +68,8 @@ export interface PanController {
   tiltRef: RefObject<HTMLDivElement | null>;
   /** Attach to the background layer; the ticker writes its parallax transform. */
   bgRef: RefObject<HTMLDivElement | null>;
+  /** GridPlane fills this with the rendered card faces; the ticker rotates them. */
+  cardsRef: RefObject<CardFace[]>;
 }
 
 /** Whether a viewport point is over the focused card (centred when settled). */
@@ -62,18 +78,6 @@ function isOverFocusedCard(x: number, y: number): boolean {
     Math.abs(x - window.innerWidth / 2) <= config.cardWidth / 2 &&
     Math.abs(y - window.innerHeight / 2) <= cardHeight() / 2
   );
-}
-
-/**
- * Remove the axis-lock dead-zone from a raw pointer delta: the first
- * `axisLockThresholdPx` of travel engages the gesture and produces no motion,
- * so the plane starts moving cleanly from the lock point without a jump. Only a
- * constant is subtracted, so a fast flick keeps the rest of its delta.
- */
-function deadZoned(delta: number): number {
-  if (delta > axisLockThresholdPx) return delta - axisLockThresholdPx;
-  if (delta < -axisLockThresholdPx) return delta + axisLockThresholdPx;
-  return 0;
 }
 
 const START: View = {
@@ -103,8 +107,8 @@ export function usePanController(): PanController {
   const settleTauRef = useRef(settleTauSeconds(1));
 
   const draggingRef = useRef(false);
+  const draggedRef = useRef(false); // crossed the dead zone (a real drag, not a tap)
   const settlingRef = useRef(false);
-  const axisRef = useRef<Axis | null>(null);
   const pointerRef = useRef({ x: 0, y: 0 });
   const originRef = useRef({ pointer: { x: 0, y: 0 }, pos: { col: START.col, row: START.row } });
   const samplesRef = useRef<PointerSample[]>([]);
@@ -119,6 +123,15 @@ export function usePanController(): PanController {
   const curTiltRef = useRef<Tilt>({ nx: 0, ny: 0 });
   const tiltDirtyRef = useRef(false);
   const reducedMotionRef = useRef(false);
+
+  // Per-card cursor-facing rotation. The raw cursor (viewport px) plus the card
+  // faces GridPlane registers; the ticker eases each card toward facing the
+  // cursor and writes its transform. Also driven during pan/glide so cards turn
+  // as they pass under a stationary cursor.
+  const cardsRef = useRef<CardFace[]>([]);
+  const cursorRef = useRef({ x: 0, y: 0 });
+  const cursorActiveRef = useRef(false);
+  const cardFaceDirtyRef = useRef(false);
 
   // Hover overlay on the focused card. overCard tracks the mouse; touchToggle is
   // the tap state on touch. Visibility (settled + over/toggled) is computed in
@@ -142,41 +155,44 @@ export function usePanController(): PanController {
     }
   }, []);
 
-  // Begin (or retarget) an exponential glide to an integer cell. The settle
-  // time scales with how far this glide travels from the current position.
+  // Begin (or retarget) an exponential glide to an integer cell. Both axes share
+  // one settle (one tau), so a diagonal glide is one eased 2D motion that lands
+  // on both axes together. The settle time scales with the euclidean distance.
   const startSettle = useCallback((col: number, row: number) => {
     targetRef.current = { col, row };
-    const travel = Math.max(
-      Math.abs(col - posRef.current.col),
-      Math.abs(row - posRef.current.row),
-    );
+    const travel = Math.hypot(col - posRef.current.col, row - posRef.current.row);
     settleTauRef.current = settleTauSeconds(travel);
     settlingRef.current = true;
   }, []);
 
+  // Ease all card faces to flat immediately (reduced motion / disable).
+  const flattenCards = useCallback(() => {
+    for (const c of cardsRef.current) {
+      c.rx = 0;
+      c.ry = 0;
+      if (c.el) c.el.style.transform = '';
+    }
+    cardFaceDirtyRef.current = false;
+  }, []);
+
   useTicker((dt) => {
     if (draggingRef.current) {
-      // Lock the dominant axis once total travel passes the threshold.
-      if (!axisRef.current) {
-        const dx = pointerRef.current.x - originRef.current.pointer.x;
-        const dy = pointerRef.current.y - originRef.current.pointer.y;
-        if (Math.hypot(dx, dy) >= axisLockThresholdPx) {
-          axisRef.current = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
-        }
+      // Free 2D pan: follow the finger 1:1 on both axes at once (no axis lock),
+      // less a small dead zone subtracted along the travel direction so a tap
+      // doesn't micro-pan and motion starts cleanly from the dead-zone edge.
+      const dx = pointerRef.current.x - originRef.current.pointer.x;
+      const dy = pointerRef.current.y - originRef.current.pointer.y;
+      const len = Math.hypot(dx, dy);
+      if (len > dragDeadZonePx) {
+        draggedRef.current = true;
+        const scale = (len - dragDeadZonePx) / len;
+        posRef.current.col = originRef.current.pos.col - (dx * scale) / cellSpanX();
+        posRef.current.row = originRef.current.pos.row - (dy * scale) / cellSpanY();
       }
-
-      // Follow the finger 1:1 on the locked axis, less the lock dead-zone
-      // (content-follows-finger: dragging left/up reveals cards to the
-      // right/below). No bounds — the plane travels freely.
-      if (axisRef.current === 'x') {
-        const dx = pointerRef.current.x - originRef.current.pointer.x;
-        posRef.current.col = originRef.current.pos.col - deadZoned(dx) / cellSpanX();
-      } else if (axisRef.current === 'y') {
-        const dy = pointerRef.current.y - originRef.current.pointer.y;
-        posRef.current.row = originRef.current.pos.row - deadZoned(dy) / cellSpanY();
-      }
+      cardFaceDirtyRef.current = true; // grid moves under the cursor
     } else if (settlingRef.current) {
-      // Frame-rate-independent exponential ease-out toward the target.
+      // One eased 2D motion: both axes lerp with the same k (same tau), so a
+      // diagonal glide lands on both axes together.
       const k = 1 - Math.exp(-dt / settleTauRef.current);
       posRef.current.col += (targetRef.current.col - posRef.current.col) * k;
       posRef.current.row += (targetRef.current.row - posRef.current.row) * k;
@@ -189,6 +205,7 @@ export function usePanController(): PanController {
         posRef.current.row = targetRef.current.row;
         settlingRef.current = false;
       }
+      cardFaceDirtyRef.current = true; // grid moves under the cursor
     }
 
     sync();
@@ -227,6 +244,53 @@ export function usePanController(): PanController {
       }
     }
 
+    // Per-card cursor-facing rotation — each card rotates to face a cursor that
+    // floats `cursorDepthPx` in front of the plane: under-cursor ≈ flat, farther
+    // cards turn more (saturating with distance). Eased per card, written to its
+    // face wrapper. Runs while moving (the cursor or the grid) and eases to flat
+    // when disabled (touch / reduced motion / pointer left the viewport).
+    if (!reducedMotionRef.current && cardFaceDirtyRef.current) {
+      const cards = cardsRef.current;
+      const enabled = cursorActiveRef.current;
+      const fcol = posRef.current.col - viewRef.current.cc;
+      const frow = posRef.current.row - viewRef.current.cr;
+      const spanX = cellSpanX();
+      const spanY = cellSpanY();
+      const hw = window.innerWidth / 2;
+      const hh = window.innerHeight / 2;
+      const px = cursorRef.current.x;
+      const py = cursorRef.current.y;
+      const depth = config.cursorDepthPx;
+      const strength = config.cardFaceStrength;
+      const maxDeg = config.maxCardTiltDeg;
+      const kc = 1 - Math.exp(-dt / (config.cardTiltLerpMs / 1000));
+      let maxDelta = 0;
+
+      for (const c of cards) {
+        let targetY = 0;
+        let targetX = 0;
+        if (enabled) {
+          const cx = hw + (c.dc - fcol) * spanX;
+          const cy = hh + (c.dr - frow) * spanY;
+          targetY = clampDeg(Math.atan2(px - cx, depth) * RAD2DEG * strength, maxDeg);
+          targetX = clampDeg(-Math.atan2(py - cy, depth) * RAD2DEG * strength, maxDeg);
+        }
+        maxDelta = Math.max(maxDelta, Math.abs(targetY - c.ry), Math.abs(targetX - c.rx));
+        // Per-frame eased rotation state, advanced imperatively in the rAF loop
+        // (not during render) — mutating the ticker-owned card is intentional.
+        /* eslint-disable react-hooks/immutability */
+        c.ry += (targetY - c.ry) * kc;
+        c.rx += (targetX - c.rx) * kc;
+        /* eslint-enable react-hooks/immutability */
+        if (c.el) c.el.style.transform = `rotateX(${c.rx}deg) rotateY(${c.ry}deg)`;
+      }
+
+      // Stop once the cards have reached rest and nothing is moving them.
+      if (maxDelta < CARD_TILT_EPSILON && !draggingRef.current && !settlingRef.current) {
+        cardFaceDirtyRef.current = false;
+      }
+    }
+
     // Overlay shows only on the focused card, only when the grid is settled
     // (not dragging, not gliding), while the mouse is over it or it has been
     // tapped (touch). Computed here so every transition is caught on the frame
@@ -248,8 +312,8 @@ export function usePanController(): PanController {
     // A new grab interrupts any in-flight glide and continues from exactly
     // where the plane is now — no jump, the old animation does not complete.
     draggingRef.current = true;
+    draggedRef.current = false;
     settlingRef.current = false;
-    axisRef.current = null;
     pointerRef.current = { x: e.clientX, y: e.clientY };
     originRef.current = {
       pointer: { x: e.clientX, y: e.clientY },
@@ -281,33 +345,49 @@ export function usePanController(): PanController {
     (e: ReactPointerEvent) => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
-      const axis = axisRef.current;
-      axisRef.current = null;
+      const dragged = draggedRef.current;
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
 
-      // Default: snap both axes to the nearest cell. On the locked axis,
-      // flickTarget upgrades that to a momentum glide when the release is fast.
+      // Default: snap both axes to the nearest cell. A fast release upgrades that
+      // to a 2D momentum glide projected from the release velocity vector.
       let targetCol = Math.round(posRef.current.col);
       let targetRow = Math.round(posRef.current.row);
-      if (axis) {
+      if (dragged) {
         samplesRef.current.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
-        const cellSpan = axis === 'x' ? cellSpanX() : cellSpanY();
-        const velocity = releaseVelocity(samplesRef.current, e.timeStamp, axis, cellSpan);
-        const axisPos = axis === 'x' ? posRef.current.col : posRef.current.row;
-        const landed = flickTarget(axisPos, velocity);
-        if (axis === 'x') targetCol = landed;
-        else targetRow = landed;
+        const vCol = releaseVelocity(samplesRef.current, e.timeStamp, 'x', cellSpanX());
+        const vRow = releaseVelocity(samplesRef.current, e.timeStamp, 'y', cellSpanY());
+        if (Math.hypot(vCol, vRow) >= config.flickThreshold) {
+          let offCol = vCol * config.momentumFactor;
+          let offRow = vRow * config.momentumFactor;
+          // Cap total travel to maxFlickCells by scaling the vector (keep direction).
+          const offLen = Math.hypot(offCol, offRow);
+          if (offLen > config.maxFlickCells) {
+            const s = config.maxFlickCells / offLen;
+            offCol *= s;
+            offRow *= s;
+          }
+          targetCol = Math.round(posRef.current.col + offCol);
+          targetRow = Math.round(posRef.current.row + offRow);
+          // Guarantee at least one cell of travel along the dominant axis.
+          if (Math.abs(vCol) >= Math.abs(vRow)) {
+            if (targetCol === Math.round(posRef.current.col)) {
+              targetCol += vCol >= 0 ? 1 : -1;
+            }
+          } else if (targetRow === Math.round(posRef.current.row)) {
+            targetRow += vRow >= 0 ? 1 : -1;
+          }
+        }
       }
       samplesRef.current = [];
 
-      // Touch: a press that never locked an axis is a tap, not a drag. A tap on
-      // the focused card toggles its overlay; a tap elsewhere (or any drag)
-      // clears it. (Mouse uses hover — overCardRef — instead.)
+      // Touch: a press that never crossed the dead zone is a tap, not a drag. A
+      // tap on the focused card toggles its overlay; a tap elsewhere (or any
+      // drag) clears it. (Mouse uses hover — overCardRef — instead.)
       if (e.pointerType === 'touch') {
         touchToggleRef.current =
-          axis === null && isOverFocusedCard(e.clientX, e.clientY)
+          !dragged && isOverFocusedCard(e.clientX, e.clientY)
             ? !touchToggleRef.current
             : false;
       }
@@ -351,8 +431,9 @@ export function usePanController(): PanController {
     return () => window.removeEventListener('keydown', onKey);
   }, [startSettle]);
 
-  // Cursor-follow tilt: track the pointer over the whole viewport (independent
-  // of dragging), ignoring touch (no hover) and honouring reduced-motion.
+  // Cursor tracking: the global plane tilt and the per-card facing rotation both
+  // follow the pointer over the whole viewport (independent of dragging),
+  // ignoring touch (no hover) and honouring reduced-motion.
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const flatten = () => {
@@ -361,6 +442,7 @@ export function usePanController(): PanController {
       tiltDirtyRef.current = false;
       if (tiltRef.current) tiltRef.current.style.transform = '';
       if (bgRef.current) bgRef.current.style.transform = '';
+      flattenCards();
     };
     const syncMq = () => {
       reducedMotionRef.current = mq.matches;
@@ -372,15 +454,20 @@ export function usePanController(): PanController {
       if (e.pointerType === 'touch') return;
       // Hover detection drives the overlay even under reduced motion.
       overCardRef.current = isOverFocusedCard(e.clientX, e.clientY);
+      cursorRef.current = { x: e.clientX, y: e.clientY };
+      cursorActiveRef.current = true;
       if (reducedMotionRef.current) return;
       targetTiltRef.current = {
         nx: (e.clientX / window.innerWidth) * 2 - 1,
         ny: (e.clientY / window.innerHeight) * 2 - 1,
       };
       tiltDirtyRef.current = true;
+      cardFaceDirtyRef.current = true;
     };
     const onLeave = () => {
       overCardRef.current = false;
+      cursorActiveRef.current = false;
+      cardFaceDirtyRef.current = true; // ease all cards back to flat
       if (reducedMotionRef.current) return;
       targetTiltRef.current = { nx: 0, ny: 0 };
       tiltDirtyRef.current = true;
@@ -396,7 +483,7 @@ export function usePanController(): PanController {
       document.documentElement.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('blur', onLeave);
     };
-  }, []);
+  }, [flattenCards]);
 
   return {
     position: { col: view.col, row: view.row },
@@ -408,5 +495,6 @@ export function usePanController(): PanController {
     onPointerUp,
     tiltRef,
     bgRef,
+    cardsRef,
   };
 }

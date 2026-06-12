@@ -49,6 +49,10 @@ function Dials() {
     overlayDepthHeadline: [start.overlayDepthHeadline, 1, 2.5],
     overlayDepthCaptions: [start.overlayDepthCaptions, 1, 2],
     overlayDepthCta: [start.overlayDepthCta, 1, 1.5],
+    cursorDepthPx: [start.cursorDepthPx, 200, 1500],
+    cardFaceStrength: [start.cardFaceStrength, 0, 1.5],
+    maxCardTiltDeg: [start.maxCardTiltDeg, 0, 20],
+    cardTiltLerpMs: [start.cardTiltLerpMs, 50, 800],
   });
 
   const layout = useDialKit('LAYOUT', {
@@ -96,6 +100,10 @@ function Dials() {
       overlayDepthHeadline: depth.overlayDepthHeadline,
       overlayDepthCaptions: depth.overlayDepthCaptions,
       overlayDepthCta: depth.overlayDepthCta,
+      cursorDepthPx: depth.cursorDepthPx,
+      cardFaceStrength: depth.cardFaceStrength,
+      maxCardTiltDeg: depth.maxCardTiltDeg,
+      cardTiltLerpMs: depth.cardTiltLerpMs,
       cardWidth: layout.cardWidth,
       gap: layout.gap,
       wrapStride: Math.round(layout.wrapStride),
