@@ -1,8 +1,14 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { BackgroundLayer } from './components/BackgroundLayer';
 import { GridPlane } from './components/GridPlane';
 import { FrameHUD } from './components/FrameHUD';
+import { MiniMap } from './components/MiniMap';
+import { DetailView } from './components/DetailView';
 import { usePanController } from './hooks/usePanController';
+import { useDetail } from './hooks/useDetail';
+import { config, useConfig } from './config';
+import { contentIndex } from './content';
 import './App.css';
 
 /**
@@ -13,35 +19,83 @@ import './App.css';
 const DevDials = import.meta.env.DEV ? lazy(() => import('./dev/Dials')) : null;
 
 /**
- * App owns the motion controller (the single source of truth for grid position)
- * and composes the three stacked layers:
- *   1. BackgroundLayer — static viewport backdrop + dot matrix
- *   2. GridPlane       — the infinite poster grid (recycled slot window)
- *   3. FrameHUD        — the fixed instrumentation overlay
+ * App owns the grid controller and the detail-view router, and cross-fades
+ * between the two modes. The grid stays mounted (just faded) so the focused card
+ * can morph into the detail page and back. The mini-map lives here so it persists
+ * across both modes.
  */
 export default function App() {
-  const pan = usePanController();
+  useConfig(); // re-render on layout/feel changes (e.g. wrapStride → focused index)
+
+  // Refs break the controller ↔ detail cycle: the controller needs tap/suspend
+  // callbacks; the detail router needs the controller's grid-focus navigation.
+  const detailModeRef = useRef<'grid' | 'detail'>('grid');
+  const openRef = useRef<(index: number) => void>(() => {});
+  const navCellRef = useRef<(col: number, row: number) => void>(() => {});
+
+  const isSuspended = useCallback(() => detailModeRef.current !== 'grid', []);
+  const onTap = useCallback((col: number, row: number, focused: boolean) => {
+    if (focused) openRef.current(contentIndex(col, row));
+    else navCellRef.current(col, row);
+  }, []);
+
+  const pan = usePanController({ isSuspended, onTap });
+  const detail = useDetail(pan.navigateToContent);
+
+  useEffect(() => {
+    detailModeRef.current = detail.mode;
+    openRef.current = detail.open;
+    navCellRef.current = pan.navigateToCell;
+  });
+
+  const onOpenDetail = useCallback((index: number) => openRef.current(index), []);
+
+  const inDetail = detail.mode === 'detail';
+  // Grid is visible in grid mode, and again while the detail is exiting (so they
+  // cross-fade). It only accepts input in grid mode (input ignored mid-transition).
+  const gridVisible = !inDetail || detail.phase === 'exit';
+
+  // Mini-map reflects the focused grid item, or the active detail item, and
+  // navigates within whichever mode is active (without leaving detail).
+  const miniIndex = inDetail
+    ? detail.activeIndex
+    : contentIndex(pan.world.col, pan.world.row);
+  const miniNavigate = inDetail ? detail.goto : pan.navigateToContent;
+
+  const stageStyle = { '--detail-ms': `${config.detailTransitionMs}ms` } as CSSProperties;
 
   return (
     <div className="app">
       <BackgroundLayer parallaxRef={pan.bgRef} />
-      <GridPlane
-        position={pan.position}
-        world={pan.world}
-        isDragging={pan.isDragging}
-        onPointerDown={pan.onPointerDown}
-        onPointerMove={pan.onPointerMove}
-        onPointerUp={pan.onPointerUp}
-        tiltRef={pan.tiltRef}
-        cardsRef={pan.cardsRef}
-        markCardsChanged={pan.markCardsChanged}
-        overlayVisible={pan.overlayVisible}
-      />
-      <FrameHUD
-        worldCol={pan.world.col}
-        worldRow={pan.world.row}
-        onNavigate={pan.navigateToContent}
-      />
+      <div
+        className={
+          gridVisible
+            ? 'grid-stage'
+            : 'grid-stage grid-stage--hidden'
+        }
+        data-locked={inDetail || undefined}
+        style={stageStyle}
+      >
+        <GridPlane
+          position={pan.position}
+          world={pan.world}
+          isDragging={pan.isDragging}
+          onPointerDown={pan.onPointerDown}
+          onPointerMove={pan.onPointerMove}
+          onPointerUp={pan.onPointerUp}
+          tiltRef={pan.tiltRef}
+          cardsRef={pan.cardsRef}
+          markCardsChanged={pan.markCardsChanged}
+          overlayVisible={pan.overlayVisible && !inDetail}
+          onOpenDetail={onOpenDetail}
+        />
+        <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
+      </div>
+
+      {inDetail && <DetailView detail={detail} />}
+
+      <MiniMap focusedIndex={miniIndex} onNavigate={miniNavigate} />
+
       {DevDials && (
         <Suspense fallback={null}>
           <DevDials />

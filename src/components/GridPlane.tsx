@@ -39,6 +39,8 @@ interface GridPlaneProps {
   markCardsChanged: () => void;
   /** Whether the focused card's hover overlay is shown. */
   overlayVisible: boolean;
+  /** Open the detail view for a content index (overlay CTA). */
+  onOpenDetail: (contentIndex: number) => void;
 }
 
 interface Slot {
@@ -75,6 +77,7 @@ export function GridPlane({
   cardsRef,
   markCardsChanged,
   overlayVisible,
+  onOpenDetail,
 }: GridPlaneProps) {
   const cfg = useConfig();
   const cardW = cfg.cardWidth;
@@ -198,7 +201,7 @@ export function GridPlane({
             );
           })}
         </div>
-        {overlayVisible && <CardOverlay item={focusedItem} />}
+        {overlayVisible && <CardOverlay item={focusedItem} onOpen={onOpenDetail} />}
       </div>
     </div>
   );

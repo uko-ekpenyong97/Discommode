@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
   START_COL,
@@ -78,6 +78,15 @@ export interface PanController {
   /** Glide the grid to the world cell with this content index nearest the
    *  current position (shortest euclidean travel). Used by the mini-map. */
   navigateToContent: (contentIndex: number) => void;
+  /** Glide the grid so a specific world cell is centred. */
+  navigateToCell: (col: number, row: number) => void;
+}
+
+interface PanOptions {
+  /** When this returns true (e.g. detail view open), arrow keys are ignored. */
+  isSuspended?: () => boolean;
+  /** A clean mouse click on a card: the tapped world cell + whether it's focused. */
+  onTap?: (col: number, row: number, focused: boolean) => void;
 }
 
 /** Whether a viewport point is over the focused card (centred when settled). */
@@ -103,7 +112,12 @@ const START: View = {
  * The grid is unbounded: drags, flicks, and arrows travel forever in any
  * direction with no clamping and no edge rubber-band.
  */
-export function usePanController(): PanController {
+export function usePanController(options: PanOptions = {}): PanController {
+  const optionsRef = useRef(options);
+  useLayoutEffect(() => {
+    optionsRef.current = options;
+  });
+
   const [view, setView] = useState<View>(START);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -418,6 +432,16 @@ export function usePanController(): PanController {
             : false;
       }
 
+      // Mouse click (no drag): report which cell was tapped so the app can open
+      // the detail view (focused card) or navigate the grid to it (others).
+      if (e.pointerType !== 'touch' && !dragged && !optionsRef.current.isSuspended?.()) {
+        const offCol = Math.round((e.clientX - window.innerWidth / 2) / cellSpanX());
+        const offRow = Math.round((e.clientY - window.innerHeight / 2) / cellSpanY());
+        const col = Math.round(posRef.current.col) + offCol;
+        const row = Math.round(posRef.current.row) + offRow;
+        optionsRef.current.onTap?.(col, row, offCol === 0 && offRow === 0);
+      }
+
       startSettle(targetCol, targetRow);
       setIsDragging(false);
     },
@@ -452,11 +476,13 @@ export function usePanController(): PanController {
     [startSettle],
   );
 
+  const navigateToCell = useCallback((col: number, row: number) => startSettle(col, row), [startSettle]);
+
   // Keyboard: one cell per arrow press. Ignored mid-drag, but a press during a
   // glide retargets from the in-flight target (lands one cell past it). No clamp.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (draggingRef.current) return;
+      if (draggingRef.current || optionsRef.current.isSuspended?.()) return;
       let dCol = 0;
       let dRow = 0;
       switch (e.key) {
@@ -552,5 +578,6 @@ export function usePanController(): PanController {
     cardsRef,
     markCardsChanged,
     navigateToContent,
+    navigateToCell,
   };
 }

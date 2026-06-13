@@ -3,11 +3,11 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 9 — focus emphasis + mini-map.** The focused card scales up and stays
-fully opaque while others shrink and fade (continuous with distance), and a
-small interactive mini-map at bottom-left mirrors the position and navigates to
-any item by shortest path. Builds on the per-card transform path; motion,
-recycling, and tilt are unchanged.
+**Phase 10 — detail view.** Clicking a poster (or its CTA) expands it into a
+focused 3-panel reading state with hash-based routing, so every item is
+deep-linkable; Prev/Next, a dropdown, the side panels, the mini-map, arrow keys,
+and touch swipes all walk the sequence, and exiting returns the grid focused on
+the item just viewed. Built as a state layer over the grid.
 
 ## Getting started
 
@@ -164,6 +164,28 @@ that index nearest the current position (inverting the `mod(row·stride + col, N
 mapping per nearby row, picking minimal euclidean travel) and glides there. It
 hides on very narrow viewports so it never collides with the other HUD readouts.
 
+## Detail view
+
+Clicking the focused card (or its CTA) opens a full-viewport reading state
+(`DetailView`); clicking a non-focused card navigates the grid to it instead.
+Routing (`useDetail`) makes the **URL hash the source of truth** — a slug means
+detail, no hash means grid: deep-linking `#item-07` opens straight into that
+item, browser back/forward arrive as `popstate` and the state follows, and Esc /
+the close button / a down-swipe clear the hash via history without trapping the
+back button. Every item view pushes a history entry, so back/forward walk the
+visited sequence. On exit the grid re-centres on the item just viewed (the
+Phase 9 shortest-path glide). The layout is a horizontal strip — the active item
+large with title + captions, the previous/next items peeking dimmed at the edges
+(clickable) — over a bar with Prev / a title dropdown / Next. Prev/Next, arrow
+keys, horizontal swipes, the dropdown, side-panel clicks, and the (persistent)
+mini-map all change the active item, wrapping the `content.ts` order. The strip
+**slides** between items with the grid's exponential-settle feel — a continuous
+position eased in an rAF loop toward a carousel target that accumulates signed
+steps, so it slides the short way and fast Prev/Next presses retarget cleanly.
+Grid↔detail is an approximate FLIP: the card scales into the centre panel while
+the grid cross-fades (`detailTransitionMs`, transform+opacity only; input is
+locked mid-transition). `prefers-reduced-motion` cuts the scale to a plain fade.
+
 ## Content pipeline
 
 Cards come from a typed manifest in [`src/content.ts`](src/content.ts): each
@@ -184,7 +206,7 @@ The feel and layout values are a small **reactive store**:
 loop and handlers read directly each frame, plus `useConfig()` for components to
 subscribe and re-render. In development a **DialKit** panel
 ([`src/dev/Dials.tsx`](src/dev/Dials.tsx)) wires those values to live sliders,
-grouped MOTION / DEPTH / LAYOUT / FOCUS / OVERLAY, and pushes changes through `setConfig`
+grouped MOTION / DEPTH / LAYOUT / FOCUS / DETAIL / OVERLAY, and pushes changes through `setConfig`
 so they propagate without a reload. It is loaded behind an `import.meta.env.DEV`
 dynamic import, so **neither the panel nor the `dialkit` dependency is in the
 production bundle** (Rollup drops the dead branch); production uses the `DEFAULTS`.
@@ -222,11 +244,13 @@ src/
   hooks/
     useTicker.ts             # the single requestAnimationFrame loop
     usePanController.ts      # drag + keyboard → continuous grid position
+    useDetail.ts             # detail mode + activeItem + hash routing
   components/
     BackgroundLayer.tsx      # layer 1: backdrop + dot matrix
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
     CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
-    MiniMap.tsx              # bottom-left position carousel (interactive)
+    DetailView.tsx           # the 3-panel detail reading state
+    MiniMap.tsx              # bottom-left position carousel (interactive, both modes)
     FrameHUD.tsx             # layer 3: fixed HUD overlay
 public/posters/              # poster images referenced by the manifest
 ```

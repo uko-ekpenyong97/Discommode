@@ -4,3 +4,20 @@
   height: 100%;
   overflow: hidden;
 }
+
+/* The grid layers (cards + HUD). Fades out as the detail view opens and fades
+   back in as it closes; locked from input whenever the detail view is up. */
+.grid-stage {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  transition: opacity var(--detail-ms, 450ms) ease;
+}
+
+.grid-stage--hidden {
+  opacity: 0;
+}
+
+.grid-stage[data-locked] {
+  pointer-events: none;
+}

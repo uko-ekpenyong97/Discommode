@@ -99,6 +99,13 @@ export interface LiveConfig {
   farOpacity: number;
   /** Mini-map: number of items shown on each side of the current item. */
   miniMapSpan: number;
+  // DETAIL — grid ↔ detail transition + in-detail slide (Phase 10)
+  /** Grid ↔ detail expand/collapse duration, in ms. */
+  detailTransitionMs: number;
+  /** How much of the neighbouring detail panels peek at the edges, in px. */
+  detailPeekPx: number;
+  /** Time constant (ms) for the prev/next panel slide settle. */
+  detailSlideMs: number;
 }
 
 /** Production defaults — also the starting point for every dial. */
@@ -131,6 +138,9 @@ export const DEFAULTS: LiveConfig = {
   unfocusedOpacity: 0.55,
   farOpacity: 0.4,
   miniMapSpan: 3,
+  detailTransitionMs: 450,
+  detailPeekPx: 56,
+  detailSlideMs: 420,
 };
 
 // --- Mini-map static sizes (px) ----------------------------------------------

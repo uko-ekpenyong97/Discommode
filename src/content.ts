@@ -19,6 +19,8 @@ import { mod } from './grid';
 export interface PosterItem {
   id: number;
   title: string;
+  /** URL-hash slug for deep-linking the detail view (e.g. "item-07"). */
+  slug: string;
   /** Optional poster image from /public/posters/. If absent, `hue` is used. */
   image?: string;
   /** Fallback tint (HSL hue) when there is no image. */
@@ -45,6 +47,7 @@ export const CONTENT: PosterItem[] = Array.from({ length: COUNT }, (_, i) => {
   return {
     id: i,
     title,
+    slug: `item-${title}`,
     image: SAMPLE_IMAGES[i],
     hue,
     captions: [`NO ${title}`, `HUE ${hue}`, 'INDEXED'],
@@ -53,6 +56,11 @@ export const CONTENT: PosterItem[] = Array.from({ length: COUNT }, (_, i) => {
 });
 
 export const CONTENT_COUNT = COUNT;
+
+/** Content index for a slug, or -1 if no item matches. */
+export function indexForSlug(slug: string): number {
+  return CONTENT.findIndex((item) => item.slug === slug);
+}
 
 /**
  * Deterministic mapping from any world cell to a content index, using the live

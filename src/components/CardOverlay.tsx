@@ -5,6 +5,8 @@ import './CardOverlay.css';
 
 interface CardOverlayProps {
   item: PosterItem;
+  /** Open the detail view for this item (CTA click). */
+  onOpen: (contentIndex: number) => void;
 }
 
 /**
@@ -20,18 +22,17 @@ interface CardOverlayProps {
  * `translateZ` would not), and falls back to flat when the vars are absent
  * (reduced motion) — the overlay still fades, it just doesn't parallax.
  */
-export function CardOverlay({ item }: CardOverlayProps) {
+export function CardOverlay({ item, onOpen }: CardOverlayProps) {
   const cfg = useConfig();
   const cardW = cfg.cardWidth;
   const cardH = (cardW * CARD_ASPECT_H) / CARD_ASPECT_W;
 
   const onCta = (e: MouseEvent<HTMLButtonElement>) => {
-    // Detail view is wired in a later phase; for now log + pulse.
-    console.log(`[overlay] open item ${item.id}`);
     e.currentTarget.animate(
       [{ transform: 'scale(1)' }, { transform: 'scale(0.9)' }, { transform: 'scale(1)' }],
-      { duration: 280, easing: 'ease-out' },
+      { duration: 220, easing: 'ease-out' },
     );
+    onOpen(item.id);
   };
 
   const depth = (factor: number) => ({ '--depth-k': factor - 1 }) as CSSProperties;

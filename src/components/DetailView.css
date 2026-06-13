@@ -1,0 +1,170 @@
+/* Full-viewport reading state. Grid↔detail is a scale+fade keyed by data-phase;
+   the strip translate is written imperatively. */
+.detail {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(8, 8, 8, 0.94);
+  opacity: 1;
+  transform: scale(1);
+  transform-origin: center center;
+  transition:
+    opacity var(--detail-ms, 450ms) ease,
+    transform var(--detail-ms, 450ms) cubic-bezier(0.22, 1, 0.36, 1);
+  overflow: hidden;
+  touch-action: none;
+}
+
+.detail[data-phase='enter'],
+.detail[data-phase='exit'] {
+  opacity: 0;
+  transform: scale(var(--enter-scale, 0.8));
+  pointer-events: none; /* ignore input mid-transition */
+}
+
+.detail__strip {
+  position: absolute;
+  inset: 0;
+  /* translateX written imperatively each frame */
+  will-change: transform;
+}
+
+.detail__panel {
+  position: absolute;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  /* left / width / height / opacity supplied inline */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  transition:
+    opacity 240ms ease,
+    box-shadow 240ms ease;
+}
+
+.detail__panel--center {
+  cursor: default;
+}
+
+.detail__media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.detail__panel-num {
+  position: absolute;
+  left: 14px;
+  bottom: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.detail__meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  text-align: center;
+  color: #fff;
+  pointer-events: none;
+  padding: 0 16px;
+}
+
+.detail__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.detail__captions {
+  margin: 6px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.detail__bar {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 2;
+}
+
+.detail__btn,
+.detail__select {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.detail__btn:hover,
+.detail__select:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.detail__select {
+  padding: 8px 10px;
+}
+
+.detail__close {
+  position: absolute;
+  top: 22px;
+  right: 24px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+}
+
+.detail__close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.detail__btn:focus-visible,
+.detail__select:focus-visible,
+.detail__close:focus-visible,
+.detail__panel:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail {
+    transition: opacity var(--detail-ms, 450ms) ease;
+  }
+  .detail[data-phase='enter'],
+  .detail[data-phase='exit'] {
+    transform: none;
+  }
+}

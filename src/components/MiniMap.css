@@ -2,9 +2,10 @@
    only HUD element with pointer events. Hidden on very narrow viewports so it
    never collides with the other HUD readouts. */
 .mini-map {
-  position: absolute;
+  position: fixed;
   left: 24px;
   bottom: 20px;
+  z-index: 30; /* above the detail view, so it stays usable in both modes */
   height: 34px;
   overflow: hidden;
   pointer-events: auto;
