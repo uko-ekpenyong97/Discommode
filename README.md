@@ -3,10 +3,11 @@
 An interactive portfolio site inspired by infinite-grid journal sites, built
 with Vite + React + TypeScript.
 
-**Phase 8 — free 2D navigation + per-card facing.** Dragging now pans both axes
-at once (no axis lock), and every card individually rotates to face the cursor,
-its angle growing with distance — a wave of attention that sweeps across the
-grid. Builds on the position model, the rAF loop, and the imperative tilt path.
+**Phase 9 — focus emphasis + mini-map.** The focused card scales up and stays
+fully opaque while others shrink and fade (continuous with distance), and a
+small interactive mini-map at bottom-left mirrors the position and navigates to
+any item by shortest path. Builds on the per-card transform path; motion,
+recycling, and tilt are unchanged.
 
 ## Getting started
 
@@ -140,6 +141,29 @@ On touch there is no hover, so a tap on the focused card toggles it instead (a
 touch that crosses the drag dead zone is a drag, not a tap). Under
 `prefers-reduced-motion` the overlay still fades but does not parallax.
 
+## Focus emphasis + mini-map
+
+The focused (centre-nearest) card is emphasised by two continuous functions of a
+card's distance from centre — like the brightness dimming, they *flow* across
+cards during a pan rather than toggling. **Scale**: `focusScale` at the centre,
+easing to 1.0 by one cell — written into the same per-card face transform that
+carries the cursor-facing rotation (`scale() rotateX() rotateY()`), so it
+composes without fighting the layout, and re-applied on a settled grid whenever a
+dial changes. **Opacity**: 1.0 at the centre, `unfocusedOpacity` by one cell and
+`farOpacity` by two, multiplied with the brightness in render. The hover overlay
+scales with the focused card so its type tracks the scaled edges.
+
+A small **mini-map** (`MiniMap`) sits at bottom-left — in the HUD layer, but the
+only HUD element with pointer events. It's a tiny carousel of squares for the
+content sequence centred on the current item (larger, framed, labelled; neighbours
+shrink and fade), re-centring with an eased slide on every focus change via a
+continuous accumulated index so it slides the short way even across the wrap.
+Squares are real buttons (focusable, Enter/click): clicking one navigates to that
+content index by the **shortest path** — the controller finds the world cell with
+that index nearest the current position (inverting the `mod(row·stride + col, N)`
+mapping per nearby row, picking minimal euclidean travel) and glides there. It
+hides on very narrow viewports so it never collides with the other HUD readouts.
+
 ## Content pipeline
 
 Cards come from a typed manifest in [`src/content.ts`](src/content.ts): each
@@ -160,7 +184,7 @@ The feel and layout values are a small **reactive store**:
 loop and handlers read directly each frame, plus `useConfig()` for components to
 subscribe and re-render. In development a **DialKit** panel
 ([`src/dev/Dials.tsx`](src/dev/Dials.tsx)) wires those values to live sliders,
-grouped MOTION / DEPTH / LAYOUT / OVERLAY, and pushes changes through `setConfig`
+grouped MOTION / DEPTH / LAYOUT / FOCUS / OVERLAY, and pushes changes through `setConfig`
 so they propagate without a reload. It is loaded behind an `import.meta.env.DEV`
 dynamic import, so **neither the panel nor the `dialkit` dependency is in the
 production bundle** (Rollup drops the dead branch); production uses the `DEFAULTS`.
@@ -169,7 +193,8 @@ emits a paste-ready snippet for promoting tuned numbers back into `DEFAULTS`.
 
 The DEPTH group includes the per-card facing dials (`cursorDepthPx`,
 `cardFaceStrength`, `maxCardTiltDeg`, `cardTiltLerpMs`) alongside the global tilt;
-both are independently dialable.
+both are independently dialable. The FOCUS group dials the focus emphasis
+(`focusScale`, `unfocusedOpacity`, `farOpacity`).
 
 Retuning **layout** live is handled end-to-end: changing `cardWidth`/`gap`
 recomputes the cell span used by pan/flick math, re-derives the slot-window size
@@ -186,7 +211,7 @@ gone; Phase 8 replaced the axis lock with free 2D panning, so the former
 ```
 src/
   config.ts                  # reactive config store (DEFAULTS + setConfig + useConfig)
-  grid.ts                    # pure grid math (modulo, brightness)
+  grid.ts                    # pure grid math (modulo, brightness, focus scale/opacity)
   content.ts                 # poster manifest (PosterItem) + cell → item wrap
   motion.ts                  # pure momentum math (velocity window, flick target, settle)
   App.tsx                    # owns the controller, composes the layers (+ dev panel)
@@ -201,6 +226,7 @@ src/
     BackgroundLayer.tsx      # layer 1: backdrop + dot matrix
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
     CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
+    MiniMap.tsx              # bottom-left position carousel (interactive)
     FrameHUD.tsx             # layer 3: fixed HUD overlay
 public/posters/              # poster images referenced by the manifest
 ```

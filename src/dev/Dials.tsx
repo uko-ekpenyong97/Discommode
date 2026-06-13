@@ -61,6 +61,12 @@ function Dials() {
     wrapStride: [start.wrapStride, 3, 8, 1],
   });
 
+  const focus = useDialKit('FOCUS', {
+    focusScale: [start.focusScale, 1, 1.4],
+    unfocusedOpacity: [start.unfocusedOpacity, 0.1, 1],
+    farOpacity: [start.farOpacity, 0.05, 1],
+  });
+
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
   // Reads the live `config` singleton directly, so it needs no stale-closure ref.
   const onAction = useCallback((action: string) => {
@@ -110,6 +116,10 @@ function Dials() {
       overlayFadeMs: overlay.overlayFadeMs,
       overlayCardDim: overlay.overlayCardDim,
       ctaHoverScale: overlay.ctaHoverScale,
+      focusScale: focus.focusScale,
+      unfocusedOpacity: focus.unfocusedOpacity,
+      farOpacity: focus.farOpacity,
+      miniMapSpan: start.miniMapSpan,
     };
     setConfig(next);
     try {
@@ -117,7 +127,7 @@ function Dials() {
     } catch {
       // best effort
     }
-  }, [motion, depth, layout, overlay]);
+  }, [motion, depth, layout, focus, overlay, start.miniMapSpan]);
 
   // Test hooks (dev only; this module never ships to production).
   useEffect(() => {

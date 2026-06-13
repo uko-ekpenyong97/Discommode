@@ -8,8 +8,11 @@ import {
   cellSpanY,
   config,
   dragDeadZonePx,
+  subscribeConfig,
 } from '../config';
 import type { GridPos } from '../grid';
+import { focusScaleForDistance, mod } from '../grid';
+import { CONTENT_COUNT } from '../content';
 import { releaseVelocity, settleTauSeconds } from '../motion';
 import type { PointerSample } from '../motion';
 import { useTicker } from './useTicker';
@@ -70,6 +73,11 @@ export interface PanController {
   bgRef: RefObject<HTMLDivElement | null>;
   /** GridPlane fills this with the rendered card faces; the ticker rotates them. */
   cardsRef: RefObject<CardFace[]>;
+  /** GridPlane calls this after (re)collecting faces so the ticker re-applies them. */
+  markCardsChanged: () => void;
+  /** Glide the grid to the world cell with this content index nearest the
+   *  current position (shortest euclidean travel). Used by the mini-map. */
+  navigateToContent: (contentIndex: number) => void;
 }
 
 /** Whether a viewport point is over the focused card (centred when settled). */
@@ -165,15 +173,26 @@ export function usePanController(): PanController {
     settlingRef.current = true;
   }, []);
 
-  // Ease all card faces to flat immediately (reduced motion / disable).
+  // Zero each card's facing rotation, then mark dirty so the loop re-applies the
+  // focus scale with a flat rotation next frame (the scale emphasis stays under
+  // reduced motion; only the cursor-facing rotation is removed).
   const flattenCards = useCallback(() => {
     for (const c of cardsRef.current) {
       c.rx = 0;
       c.ry = 0;
-      if (c.el) c.el.style.transform = '';
     }
-    cardFaceDirtyRef.current = false;
+    cardFaceDirtyRef.current = true;
   }, []);
+
+  // GridPlane calls this after (re)collecting the faces, so the ticker applies
+  // the focus scale to the (possibly new) faces even on a settled grid.
+  const markCardsChanged = useCallback(() => {
+    cardFaceDirtyRef.current = true;
+  }, []);
+
+  // The per-card scale/rotation are written imperatively (read live config), so a
+  // dial change while settled must re-run the loop once to take effect.
+  useEffect(() => subscribeConfig(() => { cardFaceDirtyRef.current = true; }), []);
 
   useTicker((dt) => {
     if (draggingRef.current) {
@@ -244,14 +263,16 @@ export function usePanController(): PanController {
       }
     }
 
-    // Per-card cursor-facing rotation — each card rotates to face a cursor that
-    // floats `cursorDepthPx` in front of the plane: under-cursor ≈ flat, farther
-    // cards turn more (saturating with distance). Eased per card, written to its
-    // face wrapper. Runs while moving (the cursor or the grid) and eases to flat
-    // when disabled (touch / reduced motion / pointer left the viewport).
-    if (!reducedMotionRef.current && cardFaceDirtyRef.current) {
+    // Per-card transforms: focus scale (focused card grows, easing to 1.0 by one
+    // cell — a continuous function of distance, like the brightness) composed
+    // with the cursor-facing rotation (each card turns to face a cursor floating
+    // `cursorDepthPx` in front: under-cursor ≈ flat, farther cards turn more).
+    // Both written to the face wrapper as `scale() rotateX() rotateY()`. Runs
+    // while the cursor or the grid moves. Rotation is disabled (forced flat) for
+    // touch / reduced motion / pointer-left; the scale stays.
+    if (cardFaceDirtyRef.current) {
       const cards = cardsRef.current;
-      const enabled = cursorActiveRef.current;
+      const rotate = cursorActiveRef.current && !reducedMotionRef.current;
       const fcol = posRef.current.col - viewRef.current.cc;
       const frow = posRef.current.row - viewRef.current.cr;
       const spanX = cellSpanX();
@@ -267,9 +288,11 @@ export function usePanController(): PanController {
       let maxDelta = 0;
 
       for (const c of cards) {
+        const dist = Math.max(Math.abs(c.dc - fcol), Math.abs(c.dr - frow));
+        const scale = focusScaleForDistance(dist);
         let targetY = 0;
         let targetX = 0;
-        if (enabled) {
+        if (rotate) {
           const cx = hw + (c.dc - fcol) * spanX;
           const cy = hh + (c.dr - frow) * spanY;
           targetY = clampDeg(Math.atan2(px - cx, depth) * RAD2DEG * strength, maxDeg);
@@ -282,10 +305,13 @@ export function usePanController(): PanController {
         c.ry += (targetY - c.ry) * kc;
         c.rx += (targetX - c.rx) * kc;
         /* eslint-enable react-hooks/immutability */
-        if (c.el) c.el.style.transform = `rotateX(${c.rx}deg) rotateY(${c.ry}deg)`;
+        if (c.el) {
+          c.el.style.transform = `scale(${scale}) rotateX(${c.rx}deg) rotateY(${c.ry}deg)`;
+        }
       }
 
-      // Stop once the cards have reached rest and nothing is moving them.
+      // Stop once the rotation has reached rest and nothing is moving the grid
+      // (the scale is static while settled, so the last write holds it).
       if (maxDelta < CARD_TILT_EPSILON && !draggingRef.current && !settlingRef.current) {
         cardFaceDirtyRef.current = false;
       }
@@ -398,6 +424,34 @@ export function usePanController(): PanController {
     [startSettle],
   );
 
+  // Glide to the world cell holding a given content index with the least
+  // euclidean travel from the current position. Cells with this index lie on a
+  // lattice (row*stride + col ≡ idx mod N); for each nearby row the matching col
+  // is col ≡ idx - row*stride (mod N), and we take the nearest copy to the
+  // current col, then pick the closest row.
+  const navigateToContent = useCallback(
+    (contentIndex: number) => {
+      const N = CONTENT_COUNT;
+      const stride = config.wrapStride;
+      const pCol = posRef.current.col;
+      const pRow = posRef.current.row;
+      const r0 = Math.round(pRow);
+      let best: GridPos | null = null;
+      let bestDist = Infinity;
+      for (let row = r0 - N; row <= r0 + N; row++) {
+        const base = mod(contentIndex - row * stride, N);
+        const col = base + Math.round((pCol - base) / N) * N;
+        const d = Math.hypot(col - pCol, row - pRow);
+        if (d < bestDist) {
+          bestDist = d;
+          best = { col, row };
+        }
+      }
+      if (best) startSettle(best.col, best.row);
+    },
+    [startSettle],
+  );
+
   // Keyboard: one cell per arrow press. Ignored mid-drag, but a press during a
   // glide retargets from the in-flight target (lands one cell past it). No clamp.
   useEffect(() => {
@@ -496,5 +550,7 @@ export function usePanController(): PanController {
     tiltRef,
     bgRef,
     cardsRef,
+    markCardsChanged,
+    navigateToContent,
   };
 }

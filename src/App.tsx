@@ -34,9 +34,14 @@ export default function App() {
         onPointerUp={pan.onPointerUp}
         tiltRef={pan.tiltRef}
         cardsRef={pan.cardsRef}
+        markCardsChanged={pan.markCardsChanged}
         overlayVisible={pan.overlayVisible}
       />
-      <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
+      <FrameHUD
+        worldCol={pan.world.col}
+        worldRow={pan.world.row}
+        onNavigate={pan.navigateToContent}
+      />
       {DevDials && (
         <Suspense fallback={null}>
           <DevDials />

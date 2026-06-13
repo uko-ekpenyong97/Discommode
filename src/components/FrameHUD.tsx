@@ -10,6 +10,7 @@ import {
   useConfig,
 } from '../config';
 import { CONTENT_COUNT, contentIndex } from '../content';
+import { MiniMap } from './MiniMap';
 import './FrameHUD.css';
 
 /** Colour tokens exposed to the stylesheet as CSS custom properties. */
@@ -22,6 +23,8 @@ interface FrameHUDProps {
   /** Focused world cell coordinates: drive both the counter and the readout. */
   worldCol: number;
   worldRow: number;
+  /** Navigate to a content index (mini-map square clicks). */
+  onNavigate: (contentIndex: number) => void;
 }
 
 /**
@@ -33,7 +36,7 @@ interface FrameHUDProps {
  * numbers that change only when the window shifts), so the per-frame plane
  * motion never re-renders it.
  */
-export const FrameHUD = memo(function FrameHUD({ worldCol, worldRow }: FrameHUDProps) {
+export const FrameHUD = memo(function FrameHUD({ worldCol, worldRow, onNavigate }: FrameHUDProps) {
   const cfg = useConfig();
   // Focused content index derived here from the world cell + live wrap stride,
   // so retuning the stride updates the counter (this component subscribes to it).
@@ -88,6 +91,9 @@ export const FrameHUD = memo(function FrameHUD({ worldCol, worldRow }: FrameHUDP
         c:{worldCol}&ensp;r:{worldRow}
       </div>
       <div className="hud-coords">X&nbsp;+000.0&ensp;Y&nbsp;+000.0</div>
+
+      {/* bottom-left: interactive mini-map position indicator */}
+      <MiniMap focusedIndex={focusedIndex} onNavigate={onNavigate} />
     </div>
   );
 });

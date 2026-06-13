@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
 import { CARD_ASPECT_H, CARD_ASPECT_W, PERSPECTIVE, useConfig } from '../config';
-import { brightnessForDistance } from '../grid';
+import { brightnessForDistance, focusOpacityForDistance } from '../grid';
 import type { GridPos } from '../grid';
 import { CONTENT, contentIndex } from '../content';
 import type { PosterItem } from '../content';
@@ -35,6 +35,8 @@ interface GridPlaneProps {
   tiltRef: Ref<HTMLDivElement>;
   /** Collected card-face wrappers — the controller rotates them per cursor. */
   cardsRef: RefObject<CardFace[]>;
+  /** Notify the controller after (re)collecting faces so it re-applies them. */
+  markCardsChanged: () => void;
   /** Whether the focused card's hover overlay is shown. */
   overlayVisible: boolean;
 }
@@ -71,6 +73,7 @@ export function GridPlane({
   onPointerUp,
   tiltRef,
   cardsRef,
+  markCardsChanged,
   overlayVisible,
 }: GridPlaneProps) {
   const cfg = useConfig();
@@ -130,10 +133,11 @@ export function GridPlane({
     if (!grid) return;
     const faces = grid.querySelectorAll<HTMLElement>('.grid-card__face');
     cardsRef.current = Array.from(faces, (el) => {
-      el.style.transform = ''; // start flat; the ticker re-faces on next move
+      el.style.transform = ''; // start flat; the ticker re-faces on next frame
       return { dc: Number(el.dataset.dc), dr: Number(el.dataset.dr), el, rx: 0, ry: 0 };
     });
-  }, [ring, cardsRef]);
+    markCardsChanged(); // apply the focus scale even on a settled grid
+  }, [ring, cardsRef, markCardsChanged]);
 
   return (
     <div
@@ -163,7 +167,12 @@ export function GridPlane({
               // Outer cell carries layout + per-card perspective; the inner face
               // carries the hue/image/brightness and the cursor-facing rotation
               // (written imperatively), so rotation, layout, and filter don't fight.
-              <div key={`${s.dc}|${s.dr}`} className="grid-card" style={{ width: `${cardW}px`, height: `${cardH}px` }}>
+              <div
+                key={`${s.dc}|${s.dr}`}
+                className="grid-card"
+                // Focused card scales up and overlaps its neighbours, so paint it on top.
+                style={{ width: `${cardW}px`, height: `${cardH}px`, zIndex: isFocused ? 2 : 1 }}
+              >
                 <div
                   className="grid-card__face"
                   data-dc={s.dc}
@@ -171,6 +180,7 @@ export function GridPlane({
                   style={{
                     backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
                     filter: `brightness(${brightness})`,
+                    opacity: focusOpacityForDistance(distance),
                   }}
                 >
                   {s.item.image && (

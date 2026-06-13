@@ -42,6 +42,10 @@ export function CardOverlay({ item }: CardOverlayProps) {
       style={{
         width: `${cardW}px`,
         height: `${cardH}px`,
+        // Match the focused card's focus scale so the type tracks its scaled
+        // edges (the overlay only shows when settled, where that card is at
+        // exactly focusScale). Keeps the centring translate.
+        transform: `translate(-50%, -50%) scale(${cfg.focusScale})`,
         animationDuration: `${cfg.overlayFadeMs}ms`,
       }}
     >

@@ -90,6 +90,15 @@ export interface LiveConfig {
   overlayFadeMs: number;
   overlayCardDim: number;
   ctaHoverScale: number;
+  // FOCUS — emphasis on the focused (centre-nearest) card (Phase 9)
+  /** Scale of the focused card; eases to 1.0 by one cell of distance. */
+  focusScale: number;
+  /** Opacity one cell from centre (1.0 at centre). */
+  unfocusedOpacity: number;
+  /** Opacity two or more cells from centre. */
+  farOpacity: number;
+  /** Mini-map: number of items shown on each side of the current item. */
+  miniMapSpan: number;
 }
 
 /** Production defaults — also the starting point for every dial. */
@@ -118,7 +127,17 @@ export const DEFAULTS: LiveConfig = {
   overlayFadeMs: 180,
   overlayCardDim: 0.75,
   ctaHoverScale: 1.08,
+  focusScale: 1.12,
+  unfocusedOpacity: 0.55,
+  farOpacity: 0.4,
+  miniMapSpan: 3,
 };
+
+// --- Mini-map static sizes (px) ----------------------------------------------
+/** Centre-to-centre spacing of mini-map squares. */
+export const MINIMAP_PITCH = 26;
+/** Base square edge (the current square renders at full scale, neighbours shrink). */
+export const MINIMAP_SQUARE = 20;
 
 /** Live values. Mutated in place so imperative readers (the rAF loop, event
  *  handlers) always see the current value without re-subscribing. */
@@ -143,7 +162,9 @@ export function setConfig(patch: Partial<LiveConfig>): void {
   }
 }
 
-function subscribe(fn: () => void): () => void {
+/** Subscribe to any live config change. Returns an unsubscribe function. Used by
+ *  `useConfig` (React) and by the controller to re-apply imperative effects. */
+export function subscribeConfig(fn: () => void): () => void {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
@@ -158,7 +179,7 @@ function subscribe(fn: () => void): () => void {
  */
 export function useConfig(): LiveConfig {
   useSyncExternalStore(
-    subscribe,
+    subscribeConfig,
     () => version,
     () => version,
   );
