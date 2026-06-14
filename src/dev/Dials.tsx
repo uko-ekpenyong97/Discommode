@@ -1,8 +1,27 @@
-import { memo, useCallback, useEffect, useMemo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { DialRoot, DialStore, useDialKit } from 'dialkit';
 import 'dialkit/styles.css';
 import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
+import { setEnvOverride } from '../env';
+import type { Condition, EnvState } from '../env';
+
+/** Conditions in WMO-ish order, indexed by the `previewCondition` dial. */
+const CONDITIONS: Condition[] = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'snow', 'storm'];
+
+/** Build a forced EnvState for the sky preview (Phase 12). */
+function previewEnv(sunElevation: number, condition: Condition): EnvState {
+  return {
+    sunElevation,
+    isDay: sunElevation > 0.15,
+    condition,
+    cloudiness: 0,
+    precipitation: 0,
+    windSpeed: 0,
+    rawWeatherCode: -1,
+    fetchedAt: Date.now(),
+  };
+}
 
 /**
  * Dev-only DialKit panel for live feel/layout tuning. This whole module is
@@ -45,7 +64,6 @@ function Dials() {
     maxTiltDeg: [start.maxTiltDeg, 0, 12],
     parallaxShiftPx: [start.parallaxShiftPx, 0, 40],
     tiltLerpMs: [start.tiltLerpMs, 50, 600],
-    backgroundParallaxFactor: [start.backgroundParallaxFactor, 0, 1],
     overlayDepthHeadline: [start.overlayDepthHeadline, 1, 2.5],
     overlayDepthCaptions: [start.overlayDepthCaptions, 1, 2],
     overlayDepthCta: [start.overlayDepthCta, 1, 1.5],
@@ -72,6 +90,41 @@ function Dials() {
     detailPeekPx: [start.detailPeekPx, 0, 200],
     detailSlideMs: [start.detailSlideMs, 150, 900],
   });
+
+  // SKY preview: the "Toggle sky preview" action forces an EnvState via
+  // setEnvOverride so the `previewSun`/`previewCondition` dials sweep
+  // night→dawn→day live without waiting for real time. Toggling it off clears
+  // the override. `skyRef` holds the latest dial values for the action callback
+  // (which is memoised and can't read the not-yet-defined `sky`).
+  const previewOnRef = useRef(false);
+  const skyRef = useRef({ sun: 0.5, condition: 0 });
+  const onSkyAction = useCallback((action: string) => {
+    if (action !== 'previewSky') return;
+    previewOnRef.current = !previewOnRef.current;
+    const { sun, condition } = skyRef.current;
+    setEnvOverride(previewOnRef.current ? previewEnv(sun, CONDITIONS[Math.round(condition)]) : null);
+  }, []);
+
+  const sky = useDialKit(
+    'SKY',
+    {
+      skyTransitionMs: [start.skyTransitionMs, 150, 4000],
+      skyParallax: [start.skyParallax, 0, 0.2],
+      previewSun: [0.5, 0, 1],
+      previewCondition: [0, 0, CONDITIONS.length - 1, 1],
+      previewSky: { type: 'action', label: 'Toggle sky preview' },
+    },
+    { onAction: onSkyAction },
+  );
+
+  // Track the latest dial values; while preview is on, keep the forced EnvState
+  // in sync as the dials move.
+  useEffect(() => {
+    skyRef.current = { sun: sky.previewSun, condition: sky.previewCondition };
+    if (previewOnRef.current) {
+      setEnvOverride(previewEnv(sky.previewSun, CONDITIONS[Math.round(sky.previewCondition)]));
+    }
+  }, [sky.previewSun, sky.previewCondition]);
 
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
   // Reads the live `config` singleton directly, so it needs no stale-closure ref.
@@ -108,7 +161,6 @@ function Dials() {
       maxTiltDeg: depth.maxTiltDeg,
       parallaxShiftPx: depth.parallaxShiftPx,
       tiltLerpMs: depth.tiltLerpMs,
-      backgroundParallaxFactor: depth.backgroundParallaxFactor,
       overlayDepthHeadline: depth.overlayDepthHeadline,
       overlayDepthCaptions: depth.overlayDepthCaptions,
       overlayDepthCta: depth.overlayDepthCta,
@@ -129,6 +181,8 @@ function Dials() {
       detailTransitionMs: detail.detailTransitionMs,
       detailPeekPx: detail.detailPeekPx,
       detailSlideMs: detail.detailSlideMs,
+      skyTransitionMs: sky.skyTransitionMs,
+      skyParallax: sky.skyParallax,
     };
     setConfig(next);
     try {
@@ -136,7 +190,7 @@ function Dials() {
     } catch {
       // best effort
     }
-  }, [motion, depth, layout, focus, detail, overlay, start.miniMapSpan]);
+  }, [motion, depth, layout, focus, detail, overlay, sky, start.miniMapSpan]);
 
   // Test hooks (dev only; this module never ships to production).
   useEffect(() => {

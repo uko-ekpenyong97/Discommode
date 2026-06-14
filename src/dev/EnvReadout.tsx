@@ -1,21 +1,19 @@
 import { memo, useEffect } from 'react';
-import { ATTRIBUTION, setEnvOverride, useEnvState } from '../env';
+import { ATTRIBUTION, setEnvOverride } from '../env';
+import type { EnvSnapshot } from '../env';
 import './EnvReadout.css';
 
 /**
- * Dev-only text readout of the live {@link EnvState}. There is no renderer yet
- * (Phase 11 is data-only), so this is how we verify the data layer: it shows the
- * current condition, sunElevation, isDay and status as plain text.
+ * Dev-only text readout of the live {@link EnvState}, for verifying the data
+ * layer: it shows the current condition, sunElevation, isDay and status as plain
+ * text alongside the WebGL sky (Phase 12). Loaded behind an `import.meta.env.DEV`
+ * dynamic import (see App), so it never ships to production.
  *
- * Loaded behind an `import.meta.env.DEV` dynamic import (see App), so it and the
- * whole `env` data layer ride into the dev-only chunk — zero production bundle
- * impact until the renderer promotes `useEnvState` to App level in a later phase.
- *
- * Calling `useEnvState()` here makes this the current consumer of the hook (the
- * fetch + minute/15-min timers run from here for now).
+ * The snapshot is owned by App (which feeds the same data to the SkyLayer), so
+ * the readout and the sky always agree.
  */
-function EnvReadout() {
-  const { env, status, overridden } = useEnvState();
+function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
+  const { env, status, overridden } = snapshot;
 
   // Expose the override setter for manual testing (e.g. force fog at low sun),
   // mirroring the `__setConfig` dev test-hook in Dials.

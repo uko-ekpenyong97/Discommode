@@ -1,7 +1,0 @@
-.background-layer {
-  position: absolute;
-  /* Oversized so the parallax translate (a few px) never reveals an edge. */
-  inset: -16px;
-  z-index: 0;
-  will-change: transform;
-}

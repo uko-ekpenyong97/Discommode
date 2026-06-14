@@ -21,10 +21,10 @@ npm test         # run the unit tests (Vitest)
 ## Layer architecture
 
 The scene is composed of three stacked, independent layers, rendered by `App`
-in z-order: **`BackgroundLayer`** fills the viewport with a near-black backdrop
-(`#0d0d0d`) and a subtle, repeating white dot matrix drawn entirely in CSS (a
-tiled `radial-gradient`, no image assets) that parallaxes slightly with the
-cursor as the deepest layer; **`GridPlane`** sits above it and holds a fixed
+in z-order: **`SkyLayer`** fills the viewport as the deepest layer — a
+full-screen WebGL2 fragment shader drawing a day-night gradient and sun disc
+driven by the live environment data (see _Sky (WebGL)_ below; it replaced the
+original CSS dot-matrix backdrop); **`GridPlane`** sits above it and holds a fixed
 window of 3:4 "poster" cards inside a `perspective: 1200px` container that
 recycles content to feel infinite and leans toward the cursor in 3D, translating
 so the focused card sits at the viewport centre at full brightness while every
@@ -101,10 +101,12 @@ over a settled grid and never affect pan, snap, focus, or recycling.
 normalized to `[-1, 1]`), plus a small `parallaxShiftPx` translate opposite the
 cursor, eased with its own `tiltLerpMs`. The pan offset lives on the inner grid
 (pre-rotation space), so pan and tilt compose without fighting. The three layers
-move at different rates: `BackgroundLayer` shifts at `backgroundParallaxFactor` of
-the plane's shift (the deepest layer), `GridPlane` carries the tilt, and
-`FrameHUD` never moves. From Phase 8 the global tilt is gentle (`maxTiltDeg` 2°)
-so the per-card effect leads.
+move at different rates: the `SkyLayer` can shift its gradient/sun slightly with
+the cursor via the `skyParallax` uniform (off by default — it replaced the old
+dot-matrix's `backgroundParallaxFactor` CSS-transform parallax, which was
+removed with the dot matrix), `GridPlane` carries the tilt, and `FrameHUD` never
+moves. From Phase 8 the global tilt is gentle (`maxTiltDeg` 2°) so the per-card
+effect leads.
 
 **Per-card cursor facing.** Each visible card *individually* rotates to face a
 cursor that floats `cursorDepthPx` in front of the plane: for a card centred at
@@ -191,8 +193,8 @@ locked mid-transition). `prefers-reduced-motion` cuts the scale to a plain fade.
 
 [`src/env/`](src/env) determines San Francisco's current sky state (day/night +
 weather) from real data and exposes it as a normalized, typed **`EnvState`** —
-the single contract a future sky renderer will consume. *This is data only: no
-shader, no visual change yet.* The state carries a continuous `sunElevation`
+the single contract the WebGL sky renderer (see _Sky (WebGL)_) consumes. The
+state carries a continuous `sunElevation`
 (0 = deep night, 1 = high noon — not just `is_day`), `isDay`, a `condition`
 (`clear`/`partly`/`cloudy`/`fog`/`rain`/`snow`/`storm`), `cloudiness`,
 `precipitation`, `windSpeed`, the `rawWeatherCode`, and `fetchedAt`.
@@ -214,10 +216,38 @@ moves continuously), and refetches the weather **every ~15 min**. It never
 throws or blocks render: a failed fetch falls back to a clock-only state
 (condition `clear`, sun curve from a fixed SF estimate) and `status` reports
 `loading` / `live` / `fallback`. An exported `setEnvOverride()` forces any
-`EnvState` — the hook DialKit will later use to preview any weather/time. A
-dev-only text readout ([`dev/EnvReadout.tsx`](src/dev/EnvReadout.tsx), gated the
-same way as DialKit) shows the live state so the data layer is verifiable with no
-renderer; the WMO mapping and sun model are unit-tested (`npm test`, Vitest).
+`EnvState`; DialKit's SKY group uses it to preview any sun elevation / condition
+live. `App` owns a single `useEnvState()` snapshot and feeds it to both the sky
+renderer and a dev-only text readout
+([`dev/EnvReadout.tsx`](src/dev/EnvReadout.tsx), gated the same way as DialKit).
+The WMO mapping and sun model are unit-tested (`npm test`, Vitest).
+
+## Sky (WebGL)
+
+[`SkyLayer`](src/components/SkyLayer.tsx) is the deepest layer — a single
+full-screen primitive drawn by a raw **WebGL2** fragment shader (no three.js),
+driven by the `EnvState` above. The renderer ([`src/sky/skyEngine.ts`](src/sky/skyEngine.ts))
+is framework-free (like `motion.ts`): React only feeds it *targets*; one
+persistent context + program owns a self-contained rAF loop that **lerps** the
+sun elevation toward its target each frame (the same exponential ease as the grid
+motion) so any `EnvState` change — real or a forced override — cross-fades over
+`skyTransitionMs` (~1.5 s) instead of snapping. The loop **idles** once settled
+(there is no time-based animation yet) and **pauses entirely while the tab is
+hidden** (no background rAF work). It's DPR-aware (capped at 2×) and resize-aware.
+
+The visual this phase is the **base gradient only** (no fog/clouds/rain/stars
+yet): a vertical horizon→zenith blend plus a soft sun disc whose height tracks
+`sunElevation`. Colors come from an easily-replaced table of placeholder hex
+anchors per time band ([`src/sky/palette.ts`](src/sky/palette.ts)) — `night`,
+`dawn`, `day`, `dusk` — blended continuously by `sunElevation` (0.15–0.35 blends
+dawn→day). Because a single elevation scalar can't tell a rising sun from a
+setting one, dawn and dusk share the low-sun region for now; the `dusk` anchors
+wait in the table for a future rising/setting signal. DialKit's **SKY** group
+exposes `skyTransitionMs` + `skyParallax` and a `previewSun` / `previewCondition`
+sweep (via `setEnvOverride`). If WebGL2 is unavailable, the layer falls back to a
+static CSS `linear-gradient` of the current palette (logged) so it's never blank;
+`prefers-reduced-motion` keeps transitions but makes them quick. The palette
+blend + sun helpers are unit-tested.
 
 ## Content pipeline
 
@@ -239,7 +269,7 @@ The feel and layout values are a small **reactive store**:
 loop and handlers read directly each frame, plus `useConfig()` for components to
 subscribe and re-render. In development a **DialKit** panel
 ([`src/dev/Dials.tsx`](src/dev/Dials.tsx)) wires those values to live sliders,
-grouped MOTION / DEPTH / LAYOUT / FOCUS / DETAIL / OVERLAY, and pushes changes through `setConfig`
+grouped MOTION / DEPTH / LAYOUT / FOCUS / DETAIL / SKY / OVERLAY, and pushes changes through `setConfig`
 so they propagate without a reload. It is loaded behind an `import.meta.env.DEV`
 dynamic import, so **neither the panel nor the `dialkit` dependency is in the
 production bundle** (Rollup drops the dead branch); production uses the `DEFAULTS`.
@@ -278,6 +308,9 @@ src/
     sun.ts                   #   continuous sunElevation model (unit-tested)
     openMeteo.ts             #   fetch/parse + EnvState derivation + fallback
     useEnvState.ts           #   live hook (fetch, minute clock, refetch, override)
+  sky/                       # WebGL sky renderer (driven by EnvState)
+    palette.ts               #   time-of-day color table + sunElevation blend (unit-tested)
+    skyEngine.ts             #   raw WebGL2 engine (program, eased uniforms, rAF loop)
   dev/
     Dials.tsx                # dev-only DialKit panel (excluded from production)
     EnvReadout.tsx           # dev-only EnvState text readout (excluded from production)
@@ -286,7 +319,7 @@ src/
     usePanController.ts      # drag + keyboard → continuous grid position
     useDetail.ts             # detail mode + activeItem + hash routing
   components/
-    BackgroundLayer.tsx      # layer 1: backdrop + dot matrix
+    SkyLayer.tsx             # layer 0: WebGL day-night sky (CSS-gradient fallback)
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
     CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
     DetailView.tsx           # the 3-panel detail reading state

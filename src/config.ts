@@ -14,13 +14,6 @@ import { useSyncExternalStore } from 'react';
 /** CSS perspective applied to the grid container, in px. */
 export const PERSPECTIVE = 1200;
 
-/** Near-black page background. */
-export const BG_COLOR = '#0d0d0d';
-/** Dot matrix spacing / radius / opacity. */
-export const DOT_SPACING = 24;
-export const DOT_RADIUS = 1;
-export const DOT_OPACITY = 0.06;
-
 /** HUD line + text colours and the left ruler. */
 export const HUD_LINE_COLOR = 'rgba(255, 255, 255, 0.28)';
 export const HUD_TEXT_COLOR = 'rgba(255, 255, 255, 0.5)';
@@ -63,7 +56,6 @@ export interface LiveConfig {
   maxTiltDeg: number;
   parallaxShiftPx: number;
   tiltLerpMs: number;
-  backgroundParallaxFactor: number;
   overlayDepthHeadline: number;
   overlayDepthCaptions: number;
   overlayDepthCta: number;
@@ -106,6 +98,11 @@ export interface LiveConfig {
   detailPeekPx: number;
   /** Time constant (ms) for the prev/next panel slide settle. */
   detailSlideMs: number;
+  // SKY — WebGL day-night gradient driven by EnvState (Phase 12)
+  /** Cross-fade time constant (ms) when the sky's EnvState target changes. */
+  skyTransitionMs: number;
+  /** Cursor-Y parallax shift of the gradient/sun (0 = off). Subtle when on. */
+  skyParallax: number;
 }
 
 /** Production defaults — also the starting point for every dial. */
@@ -120,7 +117,6 @@ export const DEFAULTS: LiveConfig = {
   maxTiltDeg: 2,
   parallaxShiftPx: 12,
   tiltLerpMs: 200,
-  backgroundParallaxFactor: 0.3,
   overlayDepthHeadline: 1.6,
   overlayDepthCaptions: 1.3,
   overlayDepthCta: 1.15,
@@ -141,6 +137,8 @@ export const DEFAULTS: LiveConfig = {
   detailTransitionMs: 450,
   detailPeekPx: 56,
   detailSlideMs: 420,
+  skyTransitionMs: 1500,
+  skyParallax: 0,
 };
 
 // --- Mini-map static sizes (px) ----------------------------------------------

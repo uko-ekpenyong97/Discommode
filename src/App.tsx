@@ -1,12 +1,13 @@
 import { Suspense, lazy, useCallback, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
-import { BackgroundLayer } from './components/BackgroundLayer';
+import SkyLayer from './components/SkyLayer';
 import { GridPlane } from './components/GridPlane';
 import { FrameHUD } from './components/FrameHUD';
 import { MiniMap } from './components/MiniMap';
 import { DetailView } from './components/DetailView';
 import { usePanController } from './hooks/usePanController';
 import { useDetail } from './hooks/useDetail';
+import { useEnvState } from './env';
 import { config, useConfig } from './config';
 import { contentIndex } from './content';
 import './App.css';
@@ -48,6 +49,9 @@ export default function App() {
 
   const pan = usePanController({ isSuspended, onTap });
   const detail = useDetail(pan.navigateToContent);
+  // The live SF sky state (Phase 11). Drives the WebGL SkyLayer (Phase 12) and
+  // the dev EnvReadout from one shared, stable snapshot.
+  const envSnapshot = useEnvState();
 
   useEffect(() => {
     detailModeRef.current = detail.mode;
@@ -73,7 +77,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <BackgroundLayer parallaxRef={pan.bgRef} />
+      <SkyLayer env={envSnapshot.env} />
       <div
         className={
           gridVisible
@@ -111,7 +115,7 @@ export default function App() {
 
       {DevEnvReadout && (
         <Suspense fallback={null}>
-          <DevEnvReadout />
+          <DevEnvReadout snapshot={envSnapshot} />
         </Suspense>
       )}
     </div>

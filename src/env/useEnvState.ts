@@ -115,9 +115,10 @@ export function useEnvState(location: GeoLocation = DEFAULT_LOCATION): EnvSnapsh
   // parent re-render.
   const live = useMemo(() => computeEnvState(base, nowMs), [base, nowMs]);
 
-  return {
-    env: override ?? live,
-    status,
-    overridden: override != null,
-  };
+  // Stable snapshot identity: only changes when the data actually changes, so a
+  // parent that re-renders every frame (the grid) doesn't churn consumers.
+  return useMemo<EnvSnapshot>(
+    () => ({ env: override ?? live, status, overridden: override != null }),
+    [override, live, status],
+  );
 }

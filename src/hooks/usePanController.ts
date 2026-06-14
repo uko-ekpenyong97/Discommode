@@ -69,8 +69,6 @@ export interface PanController {
   onPointerUp: (e: ReactPointerEvent) => void;
   /** Attach to the plane's tilt wrapper; the ticker writes its transform. */
   tiltRef: RefObject<HTMLDivElement | null>;
-  /** Attach to the background layer; the ticker writes its parallax transform. */
-  bgRef: RefObject<HTMLDivElement | null>;
   /** GridPlane fills this with the rendered card faces; the ticker rotates them. */
   cardsRef: RefObject<CardFace[]>;
   /** GridPlane calls this after (re)collecting faces so the ticker re-applies them. */
@@ -140,7 +138,6 @@ export function usePanController(options: PanOptions = {}): PanController {
   // the cursor; curTilt eases toward it. Refs, not state, so the only thing
   // moving is the transform of two DOM nodes.
   const tiltRef = useRef<HTMLDivElement | null>(null);
-  const bgRef = useRef<HTMLDivElement | null>(null);
   const targetTiltRef = useRef<Tilt>({ nx: 0, ny: 0 });
   const curTiltRef = useRef<Tilt>({ nx: 0, ny: 0 });
   const tiltDirtyRef = useRef(false);
@@ -270,10 +267,6 @@ export function usePanController(options: PanOptions = {}): PanController {
         // Expose the shift to the overlay so its layers can parallax further.
         tiltRef.current.style.setProperty('--tsx', `${shiftX}px`);
         tiltRef.current.style.setProperty('--tsy', `${shiftY}px`);
-      }
-      if (bgRef.current) {
-        bgRef.current.style.transform =
-          `translate3d(${config.backgroundParallaxFactor * shiftX}px, ${config.backgroundParallaxFactor * shiftY}px, 0)`;
       }
     }
 
@@ -521,7 +514,6 @@ export function usePanController(options: PanOptions = {}): PanController {
       targetTiltRef.current = { nx: 0, ny: 0 };
       tiltDirtyRef.current = false;
       if (tiltRef.current) tiltRef.current.style.transform = '';
-      if (bgRef.current) bgRef.current.style.transform = '';
       flattenCards();
     };
     const syncMq = () => {
@@ -574,7 +566,6 @@ export function usePanController(options: PanOptions = {}): PanController {
     onPointerMove,
     onPointerUp,
     tiltRef,
-    bgRef,
     cardsRef,
     markCardsChanged,
     navigateToContent,
