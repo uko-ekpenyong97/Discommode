@@ -15,6 +15,7 @@ the item just viewed. Built as a state layer over the grid.
 npm install
 npm run dev      # start the dev server
 npm run build    # type-check + production build
+npm test         # run the unit tests (Vitest)
 ```
 
 ## Layer architecture
@@ -186,6 +187,38 @@ Grid↔detail is an approximate FLIP: the card scales into the centre panel whil
 the grid cross-fades (`detailTransitionMs`, transform+opacity only; input is
 locked mid-transition). `prefers-reduced-motion` cuts the scale to a plain fade.
 
+## Environment data layer
+
+[`src/env/`](src/env) determines San Francisco's current sky state (day/night +
+weather) from real data and exposes it as a normalized, typed **`EnvState`** —
+the single contract a future sky renderer will consume. *This is data only: no
+shader, no visual change yet.* The state carries a continuous `sunElevation`
+(0 = deep night, 1 = high noon — not just `is_day`), `isDay`, a `condition`
+(`clear`/`partly`/`cloudy`/`fog`/`rain`/`snow`/`storm`), `cloudiness`,
+`precipitation`, `windSpeed`, the `rawWeatherCode`, and `fetchedAt`.
+
+Data comes from the free, keyless **Open-Meteo** API (one fetch; SF coordinates
+are an *input* in [`types.ts`](src/env/types.ts), not baked into logic, so user
+geolocation can replace them later — attribution: *Weather data by Open-Meteo,
+CC BY 4.0*). The WMO weathercode is mapped to a condition (+ cloud/precip hints)
+in one documented table ([`wmo.ts`](src/env/wmo.ts)) where fog (45/48) is a
+first-class state. `sunElevation` is a smooth, time-driven curve
+([`sun.ts`](src/env/sun.ts)): a sine hump scaled to the day's daylight length,
+an inverted hump over the night, mapped to 0..1 with a twilight band so
+sunrise/sunset read as *low* values — continuous so a renderer can animate
+dawn → day → dusk → night.
+
+`useEnvState()` ([`useEnvState.ts`](src/env/useEnvState.ts)) fetches on mount,
+recomputes `sunElevation` from the clock **every minute** (no refetch — the sun
+moves continuously), and refetches the weather **every ~15 min**. It never
+throws or blocks render: a failed fetch falls back to a clock-only state
+(condition `clear`, sun curve from a fixed SF estimate) and `status` reports
+`loading` / `live` / `fallback`. An exported `setEnvOverride()` forces any
+`EnvState` — the hook DialKit will later use to preview any weather/time. A
+dev-only text readout ([`dev/EnvReadout.tsx`](src/dev/EnvReadout.tsx), gated the
+same way as DialKit) shows the live state so the data layer is verifiable with no
+renderer; the WMO mapping and sun model are unit-tested (`npm test`, Vitest).
+
 ## Content pipeline
 
 Cards come from a typed manifest in [`src/content.ts`](src/content.ts): each
@@ -239,8 +272,15 @@ src/
   App.tsx                    # owns the controller, composes the layers (+ dev panel)
   main.tsx                   # React entry point
   index.css                  # global reset + viewport lock
+  env/                       # environment data layer (Open-Meteo → typed EnvState)
+    types.ts                 #   EnvState contract + SF location + attribution
+    wmo.ts                   #   WMO weathercode → condition table (unit-tested)
+    sun.ts                   #   continuous sunElevation model (unit-tested)
+    openMeteo.ts             #   fetch/parse + EnvState derivation + fallback
+    useEnvState.ts           #   live hook (fetch, minute clock, refetch, override)
   dev/
     Dials.tsx                # dev-only DialKit panel (excluded from production)
+    EnvReadout.tsx           # dev-only EnvState text readout (excluded from production)
   hooks/
     useTicker.ts             # the single requestAnimationFrame loop
     usePanController.ts      # drag + keyboard → continuous grid position

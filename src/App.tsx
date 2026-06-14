@@ -19,6 +19,13 @@ import './App.css';
 const DevDials = import.meta.env.DEV ? lazy(() => import('./dev/Dials')) : null;
 
 /**
+ * Dev-only EnvState readout (Phase 11, data-only). Dev-gated the same way, so
+ * the `env` data layer it consumes is tree-shaken from production until a future
+ * renderer promotes `useEnvState` to App level.
+ */
+const DevEnvReadout = import.meta.env.DEV ? lazy(() => import('./dev/EnvReadout')) : null;
+
+/**
  * App owns the grid controller and the detail-view router, and cross-fades
  * between the two modes. The grid stays mounted (just faded) so the focused card
  * can morph into the detail page and back. The mini-map lives here so it persists
@@ -99,6 +106,12 @@ export default function App() {
       {DevDials && (
         <Suspense fallback={null}>
           <DevDials />
+        </Suspense>
+      )}
+
+      {DevEnvReadout && (
+        <Suspense fallback={null}>
+          <DevEnvReadout />
         </Suspense>
       )}
     </div>

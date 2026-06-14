@@ -1,0 +1,46 @@
+/* Dev-only EnvState readout. Top-left, below the HUD index counter; clear of the
+   DialKit panel (top-right) and the mini-map (bottom-left). Plain text — there is
+   no sky renderer yet, this just verifies the data layer. */
+.env-readout {
+  position: fixed;
+  top: 56px;
+  left: 26px;
+  z-index: 20;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.08em;
+  color: var(--hud-text);
+  background: rgba(13, 13, 13, 0.55);
+  border: 1px solid var(--hud-line);
+  padding: 8px 10px;
+  min-width: 160px;
+}
+
+.env-readout__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.env-readout__key {
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.env-readout__val {
+  color: #fff;
+}
+
+.env-readout__val--live {
+  color: #6fe27a;
+}
+
+.env-readout__val--fallback {
+  color: #e2a86f;
+}
+
+.env-readout__val--loading {
+  color: #6fa8e2;
+}
