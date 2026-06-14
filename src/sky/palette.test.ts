@@ -1,57 +1,76 @@
 import { describe, expect, it } from 'vitest';
-import { PALETTE_HEX, hexToRgb, paletteAt, sunOpacity, sunScreenY } from './palette';
+import {
+  PALETTE_FIELDS,
+  applyFieldWeather,
+  fieldColorsAt,
+  hexToRgb,
+} from './palette';
+import type { FieldColors } from './palette';
 
-/** The palette blend must be continuous and pin to the band anchors. */
-describe('paletteAt', () => {
-  it('returns the night palette at elevation 0', () => {
-    expect(paletteAt(0).horizon).toEqual(hexToRgb(PALETTE_HEX.night.horizon));
+const eqColor = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
+const eqField = (f: FieldColors, hexes: readonly string[]) =>
+  f.every((c, i) => eqColor(c, hexToRgb(hexes[i])));
+
+describe('fieldColorsAt', () => {
+  it('returns the night set at elevation 0', () => {
+    expect(eqField(fieldColorsAt(0, 'rising'), PALETTE_FIELDS.night)).toBe(true);
   });
 
-  it('returns the day palette at high elevation', () => {
-    expect(paletteAt(1).zenith).toEqual(hexToRgb(PALETTE_HEX.day.zenith));
-    expect(paletteAt(0.35).zenith).toEqual(hexToRgb(PALETTE_HEX.day.zenith));
+  it('returns the day set at high elevation', () => {
+    expect(eqField(fieldColorsAt(1, 'rising'), PALETTE_FIELDS.day)).toBe(true);
+    expect(eqField(fieldColorsAt(0.35, 'setting'), PALETTE_FIELDS.day)).toBe(true);
   });
 
-  it('blends dawn→day across 0.15–0.35 (a value strictly between the anchors)', () => {
-    const dawn = hexToRgb(PALETTE_HEX.dawn.horizon);
-    const day = hexToRgb(PALETTE_HEX.day.horizon);
-    const mid = paletteAt(0.25).horizon; // halfway between 0.15 and 0.35
-    for (let c = 0; c < 3; c++) {
-      const lo = Math.min(dawn[c], day[c]);
-      const hi = Math.max(dawn[c], day[c]);
-      expect(mid[c]).toBeGreaterThanOrEqual(lo - 1e-9);
-      expect(mid[c]).toBeLessThanOrEqual(hi + 1e-9);
-    }
+  it('uses dawn when rising and dusk when setting at the low-sun peak', () => {
+    expect(eqField(fieldColorsAt(0.15, 'rising'), PALETTE_FIELDS.dawn)).toBe(true);
+    expect(eqField(fieldColorsAt(0.15, 'setting'), PALETTE_FIELDS.dusk)).toBe(true);
   });
 
-  it('is continuous (no jumps) when swept across the whole range', () => {
-    let prev = paletteAt(0).horizon;
+  it('produces four colors and stays continuous across a sweep', () => {
+    let prev = fieldColorsAt(0, 'rising');
     for (let e = 0; e <= 1.0001; e += 0.01) {
-      const cur = paletteAt(e).horizon;
-      for (let c = 0; c < 3; c++) {
-        expect(Math.abs(cur[c] - prev[c])).toBeLessThan(0.1); // small step → no snap
+      const cur = fieldColorsAt(e, 'rising');
+      expect(cur).toHaveLength(4);
+      for (let c = 0; c < 4; c++) {
+        for (let ch = 0; ch < 3; ch++) {
+          expect(Math.abs(cur[c][ch] - prev[c][ch])).toBeLessThan(0.2); // no snap
+        }
       }
       prev = cur;
     }
   });
-
-  it('keeps every channel within 0..1', () => {
-    for (let e = 0; e <= 1.0001; e += 0.05) {
-      const p = paletteAt(e);
-      for (const rgb of [p.horizon, p.zenith, p.sun]) {
-        for (const ch of rgb) {
-          expect(ch).toBeGreaterThanOrEqual(0);
-          expect(ch).toBeLessThanOrEqual(1);
-        }
-      }
-    }
-  });
 });
 
-describe('sun disc', () => {
-  it('rises with elevation and is gone at night', () => {
-    expect(sunScreenY(1)).toBeGreaterThan(sunScreenY(0.2));
-    expect(sunOpacity(0)).toBe(0); // no sun in deep night
-    expect(sunOpacity(1)).toBeCloseTo(1, 5); // full sun at noon
+describe('applyFieldWeather', () => {
+  const dials = { fogDesaturation: 0.7, fogLift: 0.5, cloudMute: 0.5, stormDarken: 0.45 };
+  const base = fieldColorsAt(0.15, 'setting'); // a saturated dusk field
+
+  it('is identity with no weather', () => {
+    const out = applyFieldWeather(base, { fog: 0, cloud: 0, storm: 0 }, dials);
+    expect(out.every((c, i) => eqColor(c, base[i]))).toBe(true);
+  });
+
+  it('fog desaturates AND lightens the field toward gray', () => {
+    const out = applyFieldWeather(base, { fog: 1, cloud: 0, storm: 0 }, dials);
+    const sat = (c: number[]) => Math.max(...c) - Math.min(...c);
+    const lum = (c: number[]) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+    // The most saturated base color loses saturation and gains lightness.
+    const i = base.map(sat).indexOf(Math.max(...base.map(sat)));
+    expect(sat(out[i])).toBeLessThan(sat(base[i]));
+    expect(lum(out[i])).toBeGreaterThan(lum(base[i]));
+  });
+
+  it('storm darkens the field', () => {
+    const out = applyFieldWeather(base, { fog: 0, cloud: 0, storm: 1 }, dials);
+    const lum = (c: number[]) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+    expect(lum(out[0])).toBeLessThan(lum(base[0]));
+  });
+
+  it('keeps every channel within 0..1', () => {
+    const out = applyFieldWeather(base, { fog: 1, cloud: 1, storm: 1 }, dials);
+    for (const c of out) for (const ch of c) {
+      expect(ch).toBeGreaterThanOrEqual(0);
+      expect(ch).toBeLessThanOrEqual(1);
+    }
   });
 });

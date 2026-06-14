@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDaytime, sunElevation, sunHeight } from './sun';
+import { dayPhaseAt, isDaytime, sunElevation, sunHeight } from './sun';
 import type { SunDay } from './sun';
 
 /**
@@ -71,5 +71,28 @@ describe('isDaytime', () => {
   it('is true between sunrise and sunset, false at night', () => {
     expect(isDaytime(noon, DAYS)).toBe(true);
     expect(isDaytime(deepNight, DAYS)).toBe(false);
+  });
+});
+
+describe('dayPhaseAt', () => {
+  it('is rising in the morning (after sunrise, before solar noon)', () => {
+    expect(dayPhaseAt(base + 8 * H, DAYS)).toBe('rising'); // 08:00, before 13:00 noon
+  });
+
+  it('is setting in the afternoon (after solar noon, before sunset)', () => {
+    expect(dayPhaseAt(base + 17 * H, DAYS)).toBe('setting'); // 17:00, past noon
+  });
+
+  it('distinguishes dawn (rising) from dusk (setting) near the horizon', () => {
+    // Just before sunrise = pre-dawn, sun still climbing → rising.
+    expect(dayPhaseAt(sunrise - 30 * 60_000, DAYS)).toBe('rising');
+    // Just after sunset = dusk, sun still falling → setting.
+    expect(dayPhaseAt(sunset + 30 * 60_000, DAYS)).toBe('setting');
+  });
+
+  it('flips to rising again after solar midnight', () => {
+    const solarMidnight = (day(-1).sunset + day(0).sunrise) / 2;
+    expect(dayPhaseAt(solarMidnight - 30 * 60_000, DAYS)).toBe('setting'); // before midnight
+    expect(dayPhaseAt(solarMidnight + 30 * 60_000, DAYS)).toBe('rising'); // after midnight
   });
 });

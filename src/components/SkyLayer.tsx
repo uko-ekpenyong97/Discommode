@@ -2,8 +2,8 @@ import { memo, useEffect, useRef, useState } from 'react';
 import type { EnvState } from '../env';
 import { config } from '../config';
 import { createSkyEngine } from '../sky/skyEngine';
-import type { SkyEngine } from '../sky/skyEngine';
-import { gradientCss, paletteAt } from '../sky/palette';
+import type { SkyEngine, SkyTarget } from '../sky/skyEngine';
+import { applyFieldWeather, fieldColorsAt, fieldFallbackCss } from '../sky/palette';
 import './SkyLayer.css';
 
 interface SkyLayerProps {
@@ -11,22 +11,37 @@ interface SkyLayerProps {
   env: EnvState;
 }
 
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/**
+ * Derive the continuous weather amounts the renderer lerps toward. Fog is the
+ * SF hero state — `condition: 'fog'`, or very high cloudiness, drives it.
+ */
+function envToTarget(env: EnvState): SkyTarget {
+  return {
+    sun: env.sunElevation,
+    dayPhase: env.dayPhase,
+    fog: env.condition === 'fog' ? 1 : clamp01((env.cloudiness - 0.85) / 0.15),
+    cloud: clamp01(env.cloudiness),
+    storm: clamp01(Math.max(env.precipitation, env.condition === 'storm' ? 0.8 : 0)),
+    wind: clamp01(env.windSpeed),
+  };
+}
+
 /**
  * Layer 0 — the deepest layer, behind the grid. A full-screen WebGL2 fragment
- * shader draws a day-night gradient + sun disc driven by `env.sunElevation`.
- * Replaces the old dot-matrix BackgroundLayer.
+ * shader draws a slowly-drifting atmospheric color field (no horizon, no sun
+ * disc) driven by `EnvState`: time of day picks the palette, weather modifies it.
  *
  * React only feeds *targets* into the imperative {@link SkyEngine} (the per-frame
  * lerp + render happen there, off the React path), so the per-frame grid
- * re-renders never touch the sky. The component is `memo`'d and `env` is a
- * stable reference from the hook, so it re-runs effects only when data changes.
+ * re-renders never touch the sky. `memo`'d, and `env` is a stable reference from
+ * the hook, so effects re-run only when data changes.
  *
- * Optional cursor parallax (default off, `skyParallax` 0) feeds `uParallax` via
- * the engine — the sky's reuse of the old background cursor-parallax idea, now
- * as a uniform instead of a DOM transform (the canvas can't be translated).
- *
- * If WebGL2 is unavailable, falls back to a static CSS linear-gradient of the
- * current palette so the background is never blank.
+ * If WebGL2 is unavailable, falls back to a static CSS gradient of the current
+ * (weather-modified) palette so the background is never blank.
  */
 function SkyLayer({ env }: SkyLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -44,8 +59,7 @@ function SkyLayer({ env }: SkyLayerProps) {
       return;
     }
     engineRef.current = engine;
-    // Snap to the current elevation on first paint (no cross-fade from 0).
-    engine.setSun(env.sunElevation, true);
+    engine.setEnv(envToTarget(env), true); // snap to the current state on first paint
 
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
     const syncMq = () => engine.setReducedMotion(mq.matches);
@@ -57,15 +71,15 @@ function SkyLayer({ env }: SkyLayerProps) {
       engine.dispose();
       engineRef.current = null;
     };
-    // Run once: the first elevation is read here; later changes go via the effect
+    // Run once: the first state is read here; later changes go via the effect
     // below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cross-fade toward the live elevation whenever EnvState changes.
+  // Cross-fade toward the live EnvState whenever it changes.
   useEffect(() => {
-    engineRef.current?.setSun(env.sunElevation);
-  }, [env.sunElevation]);
+    engineRef.current?.setEnv(envToTarget(env));
+  }, [env]);
 
   // Optional cursor-Y parallax (off by default). Tracks the pointer and feeds
   // the eased target; the engine lerps + renders it.
@@ -86,12 +100,18 @@ function SkyLayer({ env }: SkyLayerProps) {
   }, [fallback]);
 
   if (fallback) {
-    return (
-      <div
-        className="sky-layer sky-layer--fallback"
-        style={{ background: gradientCss(paletteAt(env.sunElevation)) }}
-      />
+    const t = envToTarget(env);
+    const field = applyFieldWeather(
+      fieldColorsAt(t.sun, t.dayPhase),
+      { fog: t.fog, cloud: t.cloud, storm: t.storm },
+      {
+        fogDesaturation: config.fogDesaturation,
+        fogLift: config.fogLift,
+        cloudMute: config.cloudMute,
+        stormDarken: config.stormDarken,
+      },
     );
+    return <div className="sky-layer sky-layer--fallback" style={{ background: fieldFallbackCss(field) }} />;
   }
 
   return <canvas ref={canvasRef} className="sky-layer" />;

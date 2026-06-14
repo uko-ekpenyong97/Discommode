@@ -4,19 +4,32 @@ import 'dialkit/styles.css';
 import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
 import { setEnvOverride } from '../env';
-import type { Condition, EnvState } from '../env';
+import type { Condition, DayPhase, EnvState } from '../env';
 
 /** Conditions in WMO-ish order, indexed by the `previewCondition` dial. */
 const CONDITIONS: Condition[] = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'snow', 'storm'];
 
-/** Build a forced EnvState for the sky preview (Phase 12). */
-function previewEnv(sunElevation: number, condition: Condition): EnvState {
+/** Representative cloud/precip per condition so the preview shows weather. */
+const PREVIEW_WEATHER: Record<Condition, { cloudiness: number; precipitation: number }> = {
+  clear: { cloudiness: 0, precipitation: 0 },
+  partly: { cloudiness: 0.5, precipitation: 0 },
+  cloudy: { cloudiness: 1, precipitation: 0 },
+  fog: { cloudiness: 0.9, precipitation: 0 },
+  rain: { cloudiness: 0.9, precipitation: 0.6 },
+  snow: { cloudiness: 0.9, precipitation: 0.5 },
+  storm: { cloudiness: 1, precipitation: 0.85 },
+};
+
+/** Build a forced EnvState for the sky preview (Phase 12 / 12b). */
+function previewEnv(sunElevation: number, condition: Condition, dayPhase: DayPhase): EnvState {
+  const w = PREVIEW_WEATHER[condition];
   return {
     sunElevation,
     isDay: sunElevation > 0.15,
+    dayPhase,
     condition,
-    cloudiness: 0,
-    precipitation: 0,
+    cloudiness: w.cloudiness,
+    precipitation: w.precipitation,
     windSpeed: 0,
     rawWeatherCode: -1,
     fetchedAt: Date.now(),
@@ -91,39 +104,64 @@ function Dials() {
     detailSlideMs: [start.detailSlideMs, 150, 900],
   });
 
-  // SKY preview: the "Toggle sky preview" action forces an EnvState via
-  // setEnvOverride so the `previewSun`/`previewCondition` dials sweep
-  // night→dawn→day live without waiting for real time. Toggling it off clears
-  // the override. `skyRef` holds the latest dial values for the action callback
-  // (which is memoised and can't read the not-yet-defined `sky`).
+  // SKY preview: "Toggle sky preview" forces an EnvState via setEnvOverride so
+  // the previewSun / previewCondition / dayPhase dials sweep the full
+  // time × weather matrix live without waiting for real conditions. "Toggle
+  // dayPhase" flips rising↔setting so dusk can be previewed. `skyRef` holds the
+  // latest dial values for the action callbacks (memoised, can't read `sky`).
   const previewOnRef = useRef(false);
-  const skyRef = useRef({ sun: 0.5, condition: 0 });
-  const onSkyAction = useCallback((action: string) => {
-    if (action !== 'previewSky') return;
-    previewOnRef.current = !previewOnRef.current;
-    const { sun, condition } = skyRef.current;
-    setEnvOverride(previewOnRef.current ? previewEnv(sun, CONDITIONS[Math.round(condition)]) : null);
+  const skyRef = useRef<{ sun: number; condition: number; phase: DayPhase }>({
+    sun: 0.5,
+    condition: 0,
+    phase: 'rising',
+  });
+  const applyPreview = useCallback(() => {
+    const { sun, condition, phase } = skyRef.current;
+    setEnvOverride(previewOnRef.current ? previewEnv(sun, CONDITIONS[Math.round(condition)], phase) : null);
   }, []);
+  const onSkyAction = useCallback(
+    (action: string) => {
+      if (action === 'previewSky') {
+        previewOnRef.current = !previewOnRef.current;
+        applyPreview();
+      } else if (action === 'previewPhase') {
+        skyRef.current.phase = skyRef.current.phase === 'rising' ? 'setting' : 'rising';
+        if (previewOnRef.current) applyPreview();
+      }
+    },
+    [applyPreview],
+  );
 
   const sky = useDialKit(
     'SKY',
     {
       skyTransitionMs: [start.skyTransitionMs, 150, 4000],
       skyParallax: [start.skyParallax, 0, 0.2],
+      fieldDriftSpeed: [start.fieldDriftSpeed, 0, 0.15],
+      fieldSoftness: [start.fieldSoftness, 0, 1],
+      fieldGrain: [start.fieldGrain, 0, 0.12],
+      fogDesaturation: [start.fogDesaturation, 0, 1],
+      fogLift: [start.fogLift, 0, 1],
+      cloudMute: [start.cloudMute, 0, 1],
+      stormDarken: [start.stormDarken, 0, 1],
+      stormDrift: [start.stormDrift, 0, 3],
+      windDriftFactor: [start.windDriftFactor, 0, 0.2],
       previewSun: [0.5, 0, 1],
       previewCondition: [0, 0, CONDITIONS.length - 1, 1],
       previewSky: { type: 'action', label: 'Toggle sky preview' },
+      previewPhase: { type: 'action', label: 'Toggle dayPhase (dawn/dusk)' },
     },
     { onAction: onSkyAction },
   );
 
-  // Track the latest dial values; while preview is on, keep the forced EnvState
-  // in sync as the dials move.
+  // Track the latest preview dial values; while preview is on, keep the forced
+  // EnvState in sync as the dials move.
   useEffect(() => {
-    skyRef.current = { sun: sky.previewSun, condition: sky.previewCondition };
-    if (previewOnRef.current) {
-      setEnvOverride(previewEnv(sky.previewSun, CONDITIONS[Math.round(sky.previewCondition)]));
-    }
+    skyRef.current.sun = sky.previewSun;
+    skyRef.current.condition = sky.previewCondition;
+    if (previewOnRef.current) applyPreview();
+    // applyPreview reads refs only; intentionally not a dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sky.previewSun, sky.previewCondition]);
 
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
@@ -183,6 +221,15 @@ function Dials() {
       detailSlideMs: detail.detailSlideMs,
       skyTransitionMs: sky.skyTransitionMs,
       skyParallax: sky.skyParallax,
+      fieldDriftSpeed: sky.fieldDriftSpeed,
+      fieldSoftness: sky.fieldSoftness,
+      fieldGrain: sky.fieldGrain,
+      fogDesaturation: sky.fogDesaturation,
+      fogLift: sky.fogLift,
+      cloudMute: sky.cloudMute,
+      stormDarken: sky.stormDarken,
+      stormDrift: sky.stormDrift,
+      windDriftFactor: sky.windDriftFactor,
     };
     setConfig(next);
     try {

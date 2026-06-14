@@ -98,11 +98,29 @@ export interface LiveConfig {
   detailPeekPx: number;
   /** Time constant (ms) for the prev/next panel slide settle. */
   detailSlideMs: number;
-  // SKY — WebGL day-night gradient driven by EnvState (Phase 12)
+  // SKY — WebGL atmospheric color field driven by EnvState (Phase 12 / 12b)
   /** Cross-fade time constant (ms) when the sky's EnvState target changes. */
   skyTransitionMs: number;
-  /** Cursor-Y parallax shift of the gradient/sun (0 = off). Subtle when on. */
+  /** Cursor-Y parallax shift of the field (0 = off). Subtle when on. */
   skyParallax: number;
+  /** Noise-domain drift per second — "alive but barely". */
+  fieldDriftSpeed: number;
+  /** Color-boundary diffuseness: 0 = crisp, 1 = watercolor bleed. */
+  fieldSoftness: number;
+  /** Subtle additive grain strength over the field. */
+  fieldGrain: number;
+  /** Fog: how strongly it desaturates the field toward gray (SF hero state). */
+  fogDesaturation: number;
+  /** Fog: how strongly it lifts/lightens the field toward soft gray. */
+  fogLift: number;
+  /** Cloudiness: saturation mute + slight darken strength. */
+  cloudMute: number;
+  /** Precip/storm: darken strength. */
+  stormDarken: number;
+  /** Precip/storm: extra drift agitation (multiplier on drift at storm=1). */
+  stormDrift: number;
+  /** Wind: additive drift-speed contribution per unit of normalized windSpeed. */
+  windDriftFactor: number;
 }
 
 /** Production defaults — also the starting point for every dial. */
@@ -139,6 +157,15 @@ export const DEFAULTS: LiveConfig = {
   detailSlideMs: 420,
   skyTransitionMs: 1500,
   skyParallax: 0,
+  fieldDriftSpeed: 0.02,
+  fieldSoftness: 0.6,
+  fieldGrain: 0.03,
+  fogDesaturation: 0.7,
+  fogLift: 0.5,
+  cloudMute: 0.5,
+  stormDarken: 0.45,
+  stormDrift: 1,
+  windDriftFactor: 0.04,
 };
 
 // --- Mini-map static sizes (px) ----------------------------------------------

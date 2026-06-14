@@ -44,6 +44,10 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
         <span className="env-readout__val">{String(env.isDay)}</span>
       </div>
       <div className="env-readout__row">
+        <span className="env-readout__key">dayPhase</span>
+        <span className="env-readout__val">{env.dayPhase}</span>
+      </div>
+      <div className="env-readout__row">
         <span className="env-readout__key">cloud / precip</span>
         <span className="env-readout__val">
           {env.cloudiness.toFixed(2)} / {env.precipitation.toFixed(2)}

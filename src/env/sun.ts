@@ -78,6 +78,31 @@ export function isDaytime(nowMs: number, days: SunDay[]): boolean {
 }
 
 /**
+ * Whether the sun is rising (height increasing) or setting (decreasing) at
+ * `nowMs` — i.e. before vs after the nearest solar noon, derived from the
+ * fetched sunrise/sunset. Distinguishes dawn (rising) from dusk (setting).
+ *
+ * Daytime: before the day's solar noon = rising, after = setting.
+ * Nighttime: after sunset, before solar midnight = still setting; after solar
+ * midnight, heading to sunrise = rising.
+ */
+export function dayPhaseAt(nowMs: number, days: SunDay[]): 'rising' | 'setting' {
+  for (let i = 0; i < days.length; i++) {
+    const d = days[i];
+    if (nowMs >= d.sunrise && nowMs < d.sunset) {
+      const solarNoon = (d.sunrise + d.sunset) / 2;
+      return nowMs < solarNoon ? 'rising' : 'setting';
+    }
+    const next = days[i + 1];
+    if (next && nowMs >= d.sunset && nowMs < next.sunrise) {
+      const solarMidnight = (d.sunset + next.sunrise) / 2;
+      return nowMs < solarMidnight ? 'setting' : 'rising';
+    }
+  }
+  return 'rising';
+}
+
+/**
  * Synthesize yesterday/today/tomorrow sun windows from a fixed SF sunrise/sunset
  * estimate using the *local* clock — the offline fallback when the API is
  * unreachable. Three days guarantee `nowMs` is always bracketed (incl. the

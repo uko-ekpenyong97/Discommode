@@ -22,9 +22,9 @@ npm test         # run the unit tests (Vitest)
 
 The scene is composed of three stacked, independent layers, rendered by `App`
 in z-order: **`SkyLayer`** fills the viewport as the deepest layer — a
-full-screen WebGL2 fragment shader drawing a day-night gradient and sun disc
-driven by the live environment data (see _Sky (WebGL)_ below; it replaced the
-original CSS dot-matrix backdrop); **`GridPlane`** sits above it and holds a fixed
+full-screen WebGL2 fragment shader drawing a slowly-drifting atmospheric color
+field driven by the live environment data (see _Sky (WebGL)_ below; it replaced
+the original CSS dot-matrix backdrop); **`GridPlane`** sits above it and holds a fixed
 window of 3:4 "poster" cards inside a `perspective: 1200px` container that
 recycles content to feel infinite and leans toward the cursor in 3D, translating
 so the focused card sits at the viewport centre at full brightness while every
@@ -195,7 +195,9 @@ locked mid-transition). `prefers-reduced-motion` cuts the scale to a plain fade.
 weather) from real data and exposes it as a normalized, typed **`EnvState`** —
 the single contract the WebGL sky renderer (see _Sky (WebGL)_) consumes. The
 state carries a continuous `sunElevation`
-(0 = deep night, 1 = high noon — not just `is_day`), `isDay`, a `condition`
+(0 = deep night, 1 = high noon — not just `is_day`), `isDay`, a `dayPhase`
+(`rising`/`setting`, from before/after solar noon — distinguishes dawn from
+dusk), a `condition`
 (`clear`/`partly`/`cloudy`/`fog`/`rain`/`snow`/`storm`), `cloudiness`,
 `precipitation`, `windSpeed`, the `rawWeatherCode`, and `fetchedAt`.
 
@@ -229,25 +231,33 @@ full-screen primitive drawn by a raw **WebGL2** fragment shader (no three.js),
 driven by the `EnvState` above. The renderer ([`src/sky/skyEngine.ts`](src/sky/skyEngine.ts))
 is framework-free (like `motion.ts`): React only feeds it *targets*; one
 persistent context + program owns a self-contained rAF loop that **lerps** the
-sun elevation toward its target each frame (the same exponential ease as the grid
-motion) so any `EnvState` change — real or a forced override — cross-fades over
-`skyTransitionMs` (~1.5 s) instead of snapping. The loop **idles** once settled
-(there is no time-based animation yet) and **pauses entirely while the tab is
-hidden** (no background rAF work). It's DPR-aware (capped at 2×) and resize-aware.
+EnvState-derived scalars (sun elevation, fog, cloud, storm, wind, parallax)
+toward their targets each frame (the same exponential ease as the grid motion) so
+any weather/time change — real or a forced override — cross-fades over
+`skyTransitionMs` (~1.5 s) instead of snapping. It's DPR-aware (capped at 2×),
+resize-aware, and **pauses entirely while the tab is hidden** (no background rAF).
 
-The visual this phase is the **base gradient only** (no fog/clouds/rain/stars
-yet): a vertical horizon→zenith blend plus a soft sun disc whose height tracks
-`sunElevation`. Colors come from an easily-replaced table of placeholder hex
-anchors per time band ([`src/sky/palette.ts`](src/sky/palette.ts)) — `night`,
-`dawn`, `day`, `dusk` — blended continuously by `sunElevation` (0.15–0.35 blends
-dawn→day). Because a single elevation scalar can't tell a rising sun from a
-setting one, dawn and dusk share the low-sun region for now; the `dusk` anchors
-wait in the table for a future rising/setting signal. DialKit's **SKY** group
-exposes `skyTransitionMs` + `skyParallax` and a `previewSun` / `previewCondition`
-sweep (via `setEnvOverride`). If WebGL2 is unavailable, the layer falls back to a
-static CSS `linear-gradient` of the current palette (logged) so it's never blank;
-`prefers-reduced-motion` keeps transitions but makes them quick. The palette
-blend + sun helpers are unit-tested.
+The visual is an **atmospheric color field** (no horizon, no sun disc): the
+fragment shader flows layered value-noise (fbm) to mix between four active field
+colors, so soft regions of color form, drift, and dissolve with watercolor edges.
+The noise domain advances with `uTime` at a slow, tunable `fieldDriftSpeed`
+("alive but barely"); `fieldSoftness` controls boundary diffuseness and
+`fieldGrain` adds faint texture. Colors come from an easily-replaced table of
+placeholder hex anchors — a **set of four field colors per time band**
+([`src/sky/palette.ts`](src/sky/palette.ts)): `night`, `dawn`, `day`, `dusk`.
+`sunElevation` picks the band; the **`dayPhase`** signal (rising vs setting, from
+before/after solar noon — added to `EnvState`) resolves the low-sun band to dawn
+(rising) or dusk (setting). Weather modifies the field continuously on top: **fog**
+desaturates + lifts toward soft gray (the SF hero state), **cloudiness** mutes +
+darkens, **precipitation/storm** darkens + cools + agitates the drift, and
+**windSpeed** nudges drift up — all lerped so they cross-fade. DialKit's **SKY**
+group exposes the look + weather-response dials and a `previewSun` /
+`previewCondition` / `dayPhase` sweep (via `setEnvOverride`) covering the full
+time × weather matrix. If WebGL2 is unavailable, the layer falls back to a static
+CSS gradient of the current (weather-modified) palette (logged) so it's never
+blank; `prefers-reduced-motion` freezes the drift to a static field but keeps the
+correct palette and (quick) transitions. The palette blend, weather modifiers,
+and `dayPhase` derivation are unit-tested.
 
 ## Content pipeline
 
@@ -309,8 +319,8 @@ src/
     openMeteo.ts             #   fetch/parse + EnvState derivation + fallback
     useEnvState.ts           #   live hook (fetch, minute clock, refetch, override)
   sky/                       # WebGL sky renderer (driven by EnvState)
-    palette.ts               #   time-of-day color table + sunElevation blend (unit-tested)
-    skyEngine.ts             #   raw WebGL2 engine (program, eased uniforms, rAF loop)
+    palette.ts               #   per-band field-color sets + dayPhase blend + weather mods (unit-tested)
+    skyEngine.ts             #   raw WebGL2 engine (fbm color-field shader, eased uniforms, rAF loop)
   dev/
     Dials.tsx                # dev-only DialKit panel (excluded from production)
     EnvReadout.tsx           # dev-only EnvState text readout (excluded from production)
@@ -319,7 +329,7 @@ src/
     usePanController.ts      # drag + keyboard → continuous grid position
     useDetail.ts             # detail mode + activeItem + hash routing
   components/
-    SkyLayer.tsx             # layer 0: WebGL day-night sky (CSS-gradient fallback)
+    SkyLayer.tsx             # layer 0: WebGL atmospheric color field (CSS-gradient fallback)
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
     CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
     DetailView.tsx           # the 3-panel detail reading state

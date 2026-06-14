@@ -27,6 +27,13 @@ export type Condition =
 export type EnvStatus = 'loading' | 'live' | 'fallback';
 
 /**
+ * Whether the sun is on its way up (before solar noon) or down (after). Resolves
+ * the dawn-vs-dusk ambiguity that a single symmetric `sunElevation` can't: low
+ * sun + rising = dawn, low sun + setting = dusk.
+ */
+export type DayPhase = 'rising' | 'setting';
+
+/**
  * A geographic point + its IANA timezone. Coordinates are an *input* to the
  * data layer (never baked into logic) so we can later swap in user geolocation.
  */
@@ -58,6 +65,8 @@ export interface EnvState {
   sunElevation: number;
   /** True while the sun is above the horizon (API `is_day`, or sun-model fallback). */
   isDay: boolean;
+  /** Sun rising (pre-solar-noon) or setting (post) — distinguishes dawn from dusk. */
+  dayPhase: DayPhase;
   /** Sky condition mapped from the WMO weathercode. */
   condition: Condition;
   /** Cloud cover, 0..1 (from the WMO mapping). */

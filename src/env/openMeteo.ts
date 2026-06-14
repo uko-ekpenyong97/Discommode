@@ -10,7 +10,7 @@
  */
 import type { EnvState, GeoLocation } from './types';
 import { classifyWeather } from './wmo';
-import { clamp01, estimateSunDays, isDaytime, sunElevation } from './sun';
+import { clamp01, dayPhaseAt, estimateSunDays, isDaytime, sunElevation } from './sun';
 import type { SunDay } from './sun';
 
 export const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -125,6 +125,7 @@ export function computeEnvState(base: EnvBase, nowMs: number): EnvState {
   return {
     sunElevation: sunElevation(nowMs, base.days),
     isDay: base.isDayApi ?? isDaytime(nowMs, base.days),
+    dayPhase: dayPhaseAt(nowMs, base.days),
     condition: base.condition,
     cloudiness: base.cloudiness,
     precipitation: base.precipitation,
