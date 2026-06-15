@@ -111,6 +111,7 @@ function Dials() {
     detailGap: [start.detailGap, 0, 160],
     detailHoverDim: [start.detailHoverDim, 0, 1],
     detailScrimOpacity: [start.detailScrimOpacity, 0, 0.8],
+    detailChromeFadeMs: [start.detailChromeFadeMs, 50, 600],
     detailSlideMs: [start.detailSlideMs, 150, 900],
   });
 
@@ -235,6 +236,7 @@ function Dials() {
       detailGap: detail.detailGap,
       detailHoverDim: detail.detailHoverDim,
       detailScrimOpacity: detail.detailScrimOpacity,
+      detailChromeFadeMs: detail.detailChromeFadeMs,
       detailSlideMs: detail.detailSlideMs,
       skyTransitionMs: sky.skyTransitionMs,
       skyParallax: sky.skyParallax,

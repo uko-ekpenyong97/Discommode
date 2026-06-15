@@ -1,57 +1,63 @@
-import { Suspense, lazy, useCallback, useEffect, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import SkyLayer from './components/SkyLayer';
 import { GridPlane } from './components/GridPlane';
 import { FrameHUD } from './components/FrameHUD';
 import { MiniMap } from './components/MiniMap';
 import { DetailView } from './components/DetailView';
+import DetailMorph from './components/DetailMorph';
+import type { MorphCard } from './components/DetailMorph';
 import { usePanController } from './hooks/usePanController';
 import { useDetail } from './hooks/useDetail';
 import type { FlipOrigin } from './hooks/useDetail';
+import { computeDetailLayout, detailCardRects, gridCardRects } from './detailLayout';
 import { useEnvState } from './env';
-import { config, useConfig } from './config';
-import { contentIndex } from './content';
+import { cardHeight, cellSpanX, config, useConfig } from './config';
+import { CONTENT, CONTENT_COUNT, contentIndex } from './content';
+import { mod } from './grid';
 import './App.css';
 
-/**
- * Dev-only DialKit panel. The dynamic import sits in a branch that is statically
- * `false` in production (`import.meta.env.DEV`), so Rollup drops the branch and
- * neither `./dev/Dials` nor `dialkit` is emitted to the production bundle.
- */
 const DevDials = import.meta.env.DEV ? lazy(() => import('./dev/Dials')) : null;
-
-/**
- * Dev-only EnvState readout (Phase 11, data-only). Dev-gated the same way, so
- * the `env` data layer it consumes is tree-shaken from production until a future
- * renderer promotes `useEnvState` to App level.
- */
 const DevEnvReadout = import.meta.env.DEV ? lazy(() => import('./dev/EnvReadout')) : null;
 
+/** Small buffer so the morph finishes painting at its end before the phase flips. */
+const TRANS_BUFFER_MS = 60;
+
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const on = () => setReduced(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return reduced;
+}
+
 /**
- * App owns the grid controller and the detail-view router, and cross-fades
- * between the two modes. The grid stays mounted (just faded) so the focused card
- * can morph into the detail page and back. The mini-map lives here so it persists
- * across both modes.
+ * App owns the grid controller and the detail-view router. Grid↔detail is a true
+ * positional FLIP (Phase 15): the three participating cards (centred card + L/R
+ * neighbours, which are exactly the detail's active/prev/next) physically travel
+ * and scale between their grid rects and their detail rects via `DetailMorph` —
+ * no cross-fade on those cards. The rest of the grid cross-fades; the detail
+ * chrome fades. Deep-link / reduced-motion fall back to a quick fade.
  */
 export default function App() {
-  useConfig(); // re-render on layout/feel changes (e.g. wrapStride → focused index)
+  useConfig(); // re-render on layout/feel changes
+  const reducedMotion = useReducedMotion();
 
-  // Refs break the controller ↔ detail cycle: the controller needs tap/suspend
-  // callbacks; the detail router needs the controller's grid-focus navigation.
   const detailModeRef = useRef<'grid' | 'detail'>('grid');
   const openRef = useRef<(index: number, origin?: FlipOrigin | null) => void>(() => {});
 
   const isSuspended = useCallback(() => detailModeRef.current !== 'grid', []);
-  // A tap on ANY card opens its detail view, animating the FLIP from the card's
-  // actual on-screen rect (drag / flick / arrows / mini-map still move the grid).
   const onTap = useCallback((col: number, row: number, origin: FlipOrigin) => {
     openRef.current(contentIndex(col, row), origin);
   }, []);
 
   const pan = usePanController({ isSuspended, onTap });
-  const detail = useDetail(pan.navigateToContent);
-  // The live SF sky state (Phase 11). Drives the WebGL SkyLayer (Phase 12) and
-  // the dev EnvReadout from one shared, stable snapshot.
+  const detail = useDetail();
   const envSnapshot = useEnvState();
 
   useEffect(() => {
@@ -59,17 +65,62 @@ export default function App() {
     openRef.current = detail.open;
   });
 
-  const inDetail = detail.mode === 'detail';
-  // Grid is visible in grid mode, and again while the detail is exiting (so they
-  // cross-fade). It only accepts input in grid mode (input ignored mid-transition).
-  const gridVisible = !inDetail || detail.phase === 'exit';
+  const { phase, activeIndex, origin } = detail;
+  const { centerContentInstant, navigateToContent } = pan;
+  const { finishEnter, finishExit } = detail;
 
-  // Mini-map reflects the focused grid item, or the active detail item, and
-  // navigates within whichever mode is active (without leaving detail).
-  const miniIndex = inDetail
-    ? detail.activeIndex
-    : contentIndex(pan.world.col, pan.world.row);
-  const miniNavigate = inDetail ? detail.goto : pan.navigateToContent;
+  // A morph (vs a fade) runs only when opened from a grid card (origin present)
+  // and motion is allowed.
+  const useMorph = !!origin && !reducedMotion;
+  const transitioning = phase !== 'active';
+
+  // Drive the transition timing: the morph/fade runs for `dur`, then the phase
+  // settles. On exit, instantly re-centre the grid on the viewed item first, so
+  // the FLIP's grid endpoints are valid and the cards land exactly in their slots.
+  useEffect(() => {
+    if (phase === 'enter') {
+      const dur = useMorph ? config.detailTransitionMs : config.detailChromeFadeMs;
+      const t = setTimeout(finishEnter, dur + TRANS_BUFFER_MS);
+      return () => clearTimeout(t);
+    }
+    if (phase === 'exit') {
+      centerContentInstant(activeIndex);
+      const dur = useMorph ? config.detailTransitionMs : config.detailChromeFadeMs;
+      const t = setTimeout(finishExit, dur + TRANS_BUFFER_MS);
+      return () => clearTimeout(t);
+    }
+  }, [phase, activeIndex, useMorph, centerContentInstant, finishEnter, finishExit]);
+
+  const inDetail = detail.mode === 'detail';
+  // Grid is visible in grid mode and while the detail is exiting (so the rest of
+  // the grid cross-fades back in under the morph). Input only in grid mode.
+  const gridVisible = !inDetail || phase === 'exit';
+
+  const miniIndex = inDetail ? activeIndex : contentIndex(pan.world.col, pan.world.row);
+  const miniNavigate = inDetail ? detail.goto : navigateToContent;
+
+  // The three FLIP cards while morphing: active/prev/next, from grid rects to
+  // detail rects (enter) or detail → grid (exit).
+  let morphCards: MorphCard[] | null = null;
+  if (useMorph && (phase === 'enter' || phase === 'exit')) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const layout = computeDetailLayout(vw, vh, config.detailCardScale, config.detailSideScale, config.detailGap);
+    const d = detailCardRects(vw, vh, layout, config.detailSideScale);
+    const g = gridCardRects(vw, vh, config.cardWidth, cardHeight(), cellSpanX(), config.focusScale);
+    const items = {
+      left: CONTENT[mod(activeIndex - 1, CONTENT_COUNT)],
+      center: CONTENT[activeIndex],
+      right: CONTENT[mod(activeIndex + 1, CONTENT_COUNT)],
+    } as const;
+    const entering = phase === 'enter';
+    const card = (k: 'left' | 'center' | 'right'): MorphCard => ({
+      item: items[k],
+      from: entering ? g[k] : d[k],
+      to: entering ? d[k] : g[k],
+    });
+    morphCards = [card('left'), card('center'), card('right')];
+  }
 
   const stageStyle = { '--detail-ms': `${config.detailTransitionMs}ms` } as CSSProperties;
 
@@ -77,11 +128,7 @@ export default function App() {
     <div className="app">
       <SkyLayer env={envSnapshot.env} />
       <div
-        className={
-          gridVisible
-            ? 'grid-stage'
-            : 'grid-stage grid-stage--hidden'
-        }
+        className={gridVisible ? 'grid-stage' : 'grid-stage grid-stage--hidden'}
         data-locked={inDetail || undefined}
         style={stageStyle}
       >
@@ -101,9 +148,19 @@ export default function App() {
         <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
       </div>
 
-      {inDetail && <DetailView detail={detail} />}
+      {inDetail && <DetailView detail={detail} transition={useMorph ? 'morph' : 'fade'} />}
 
-      <MiniMap focusedIndex={miniIndex} onNavigate={miniNavigate} />
+      {morphCards && (
+        <DetailMorph cards={morphCards} durationMs={config.detailTransitionMs} />
+      )}
+
+      <div
+        className="minimap-wrap"
+        data-dim={transitioning || undefined}
+        style={{ '--detail-chrome-ms': `${config.detailChromeFadeMs}ms` } as CSSProperties}
+      >
+        <MiniMap focusedIndex={miniIndex} onNavigate={miniNavigate} />
+      </div>
 
       {DevDials && (
         <Suspense fallback={null}>

@@ -15,25 +15,25 @@ const PANEL_BUFFER = 2;
 /** Swipe thresholds (px) for touch prev/next and exit-down. */
 const SWIPE_X = 48;
 const SWIPE_DOWN = 80;
-/** Vertical centre of the panel strip as a fraction of viewport height (= CSS `top`). */
-const PANEL_CY = 0.44;
-
 interface DetailViewProps {
   detail: DetailController;
+  /** 'morph' = the positional FLIP runs on a separate layer (strip hidden during
+   *  the transition); 'fade' = the whole view cross-fades (deep-link / reduced motion). */
+  transition: 'morph' | 'fade';
 }
 
 /**
- * The detail reading state: a horizontal strip of panels centred on the active
- * item (neighbours peek at the edges, dimmed), a meta block, and a bottom bar
- * (Prev / title dropdown / Next). The strip slides between items with the grid's
- * exponential-settle feel — a continuous position eased in the rAF loop toward a
- * carousel target that accumulates signed steps (so it slides the short way and
- * retargets cleanly on fast Prev/Next). Grid↔detail expand/collapse is the
- * `data-phase` scale+fade in CSS; arrow keys and horizontal swipes drive
- * prev/next; a down-swipe or the close button exits.
+ * The detail reading state: a 3-card strip (large centre, side cards flanking),
+ * a meta block, and a bottom bar (Prev / title dropdown / Next). The strip slides
+ * between items with the grid's exponential-settle feel (continuous position
+ * eased in the rAF loop toward a signed-accumulating carousel target). The
+ * grid↔detail transition itself is the positional FLIP on `DetailMorph` (Phase
+ * 15); this view's strip is hidden during the morph and appears (matching the
+ * morph's end) when settled, while the chrome fades. Clicking empty backdrop
+ * dismisses; arrow keys / horizontal swipes drive prev/next; a down-swipe exits.
  */
-export function DetailView({ detail }: DetailViewProps) {
-  const { activeIndex, phase, origin, next, prev, goto, close, transitioning } = detail;
+export function DetailView({ detail, transition }: DetailViewProps) {
+  const { activeIndex, phase, next, prev, goto, close, transitioning } = detail;
   useConfig(); // re-render on layout/feel dial changes
 
   const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
@@ -58,17 +58,6 @@ export function DetailView({ detail }: DetailViewProps) {
     config.detailSideScale,
     config.detailGap,
   );
-
-  // FLIP transform: ENTER expands from the clicked card's actual rect; EXIT (and
-  // deep-link / back, which have no origin) collapses to the centre at a card's
-  // size. transform-origin is the centre panel, so the scale grows/shrinks there.
-  const centerCx = viewport.w / 2;
-  const centerCy = viewport.h * PANEL_CY;
-  const fromOrigin = origin && phase === 'enter';
-  const centerScale = (config.cardWidth * config.focusScale) / panelW;
-  const enterScale = fromOrigin ? origin.w / panelW : centerScale;
-  const enterTx = fromOrigin ? origin.cx - centerCx : 0;
-  const enterTy = fromOrigin ? origin.cy - centerCy : 0;
 
   // Continuous carousel slide: target accumulates signed shortest steps as the
   // active item changes; the rAF loop eases the live position toward it and
@@ -182,18 +171,17 @@ export function DetailView({ detail }: DetailViewProps) {
     <div
       className="detail"
       data-phase={phase}
+      data-trans={transition}
       style={
         {
-          '--enter-scale': enterScale,
-          '--enter-tx': `${enterTx}px`,
-          '--enter-ty': `${enterTy}px`,
           '--detail-ms': `${config.detailTransitionMs}ms`,
+          '--detail-chrome-ms': `${config.detailChromeFadeMs}ms`,
           '--detail-scrim': config.detailScrimOpacity,
-          transformOrigin: `${centerCx}px ${centerCy}px`,
         } as CSSProperties
       }
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
+      onClick={close} // click on the empty backdrop dismisses (panels/bar stop propagation)
     >
       <div className="detail__strip" ref={trackRef}>
         {panels.map((p) => {
@@ -213,7 +201,10 @@ export function DetailView({ detail }: DetailViewProps) {
                 width: `${panelW}px`,
                 height: `${panelH}px`,
               }}
-              onClick={() => !isCenter && goto(p.idx)}
+              onClick={(e) => {
+                e.stopPropagation(); // a card is not backdrop — don't dismiss
+                if (!isCenter) goto(p.idx);
+              }}
               onPointerEnter={(e) => e.pointerType !== 'touch' && (hoveredRef.current = p.i)}
               onPointerLeave={(e) => e.pointerType !== 'touch' && (hoveredRef.current = null)}
               tabIndex={isCenter ? -1 : 0}
@@ -239,7 +230,7 @@ export function DetailView({ detail }: DetailViewProps) {
         <p className="detail__captions">{activeItem.captions.join('  ·  ')}</p>
       </div>
 
-      <div className="detail__bar">
+      <div className="detail__bar" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="detail__btn" onClick={prev} aria-label="Previous item">
           ‹ Prev
         </button>
@@ -259,10 +250,6 @@ export function DetailView({ detail }: DetailViewProps) {
           Next ›
         </button>
       </div>
-
-      <button type="button" className="detail__close" onClick={close} aria-label="Close detail">
-        ✕
-      </button>
     </div>
   );
 }

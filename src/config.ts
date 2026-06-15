@@ -111,6 +111,8 @@ export interface LiveConfig {
   detailHoverDim: number;
   /** Opacity of the bottom scrim behind the detail text (0 = none). */
   detailScrimOpacity: number;
+  /** Fade time (ms) for the detail chrome (bar/title/mini-map) around the morph. */
+  detailChromeFadeMs: number;
   /** Time constant (ms) for the prev/next panel slide settle. */
   detailSlideMs: number;
   // SKY — WebGL atmospheric color field driven by EnvState (Phase 12 / 12b)
@@ -176,6 +178,7 @@ export const DEFAULTS: LiveConfig = {
   detailGap: 40,
   detailHoverDim: 0.45,
   detailScrimOpacity: 0.2,
+  detailChromeFadeMs: 200,
   detailSlideMs: 420,
   skyTransitionMs: 1500,
   skyParallax: 0,

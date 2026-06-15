@@ -22,6 +22,24 @@ export interface DetailLayout {
   panelStep: number;
 }
 
+/** A card's on-screen rect as a centre point + size (px). */
+export interface Rect {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+/** A trio of card rects: the previous (left), active (centre), next (right). */
+export interface CardTrio {
+  left: Rect;
+  center: Rect;
+  right: Rect;
+}
+
+/** Vertical centre of the detail strip as a fraction of viewport height (= CSS `top`). */
+export const PANEL_CY_RATIO = 0.44;
+
 export function computeDetailLayout(
   vw: number,
   vh: number,
@@ -44,4 +62,49 @@ export function computeDetailLayout(
   const sideW = panelW * sideScale;
   const panelStep = panelW / 2 + gap + sideW / 2;
   return { panelW, panelH, panelStep };
+}
+
+/**
+ * The on-screen rects of the three detail cards (prev/active/next) in the settled
+ * 3-card layout — the FLIP transition's "detail" endpoints. The centre card sits
+ * at the strip centre; the sides flank it at `panelStep`, scaled by `sideScale`.
+ */
+export function detailCardRects(
+  vw: number,
+  vh: number,
+  layout: DetailLayout,
+  sideScale: number,
+): CardTrio {
+  const cy = vh * PANEL_CY_RATIO;
+  const sideW = layout.panelW * sideScale;
+  const sideH = layout.panelH * sideScale;
+  return {
+    center: { cx: vw / 2, cy, w: layout.panelW, h: layout.panelH },
+    left: { cx: vw / 2 - layout.panelStep, cy, w: sideW, h: sideH },
+    right: { cx: vw / 2 + layout.panelStep, cy, w: sideW, h: sideH },
+  };
+}
+
+/**
+ * The on-screen rects of the centred grid card and its left/right neighbours —
+ * the FLIP transition's "grid" endpoints. Valid only when the grid is settled
+ * with the active card centred (which Phase 14's glide-to-centre guarantees):
+ * the centre card sits at the viewport centre scaled by `focusScale`, the
+ * neighbours one cell-span away at scale 1. Computed (not measured) so the rects
+ * are flat — tilt is neutralised by construction.
+ */
+export function gridCardRects(
+  vw: number,
+  vh: number,
+  cardW: number,
+  cardH: number,
+  cellSpanX: number,
+  focusScale: number,
+): CardTrio {
+  const cy = vh / 2;
+  return {
+    center: { cx: vw / 2, cy, w: cardW * focusScale, h: cardH * focusScale },
+    left: { cx: vw / 2 - cellSpanX, cy, w: cardW, h: cardH },
+    right: { cx: vw / 2 + cellSpanX, cy, w: cardW, h: cardH },
+  };
 }

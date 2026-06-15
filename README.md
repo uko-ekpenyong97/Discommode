@@ -182,23 +182,38 @@ Clicking **any** card (or its CTA) opens a full-viewport reading state
 the grid. Routing (`useDetail`) makes the **URL hash the source of truth** — a
 slug means detail, no hash means grid: deep-linking `#item-07` opens straight into
 that item, browser back/forward arrive as `popstate` and the state follows, and
-Esc / the close button / a down-swipe clear the hash via history without trapping
-the back button. Every item view pushes a history entry, so back/forward walk the
-visited sequence. On exit the grid re-centres on the item just viewed (the
-Phase 9 shortest-path glide).
+Esc / clicking the empty backdrop / a down-swipe clear the hash via history
+without trapping the back button. Every item view pushes a history entry, so
+back/forward walk the visited sequence.
 
-**Entry — centre, then expand (Phase 14).** Clicking a card first **glides it to
-the centre** of the grid (the existing snap glide, capped snappy by
-`clickCenterMaxMs`), and the instant that glide settles, runs the grid→detail
-FLIP from the now-centred card — chained so it reads as one continuous motion
-(rather than a teleport-scale from an off-centre position), communicating that
-the grid is traversable. Clicking the already-centred card skips the glide and
-FLIPs immediately; Enter on the focused card does the same. The CTA follows the
-identical path. During the glide+transition input is locked, so rapid clicks
-can't double-open. The FLIP itself expands from the (centred) card's rect into
-the centre panel while the grid cross-fades (`detailTransitionMs`, transform +
-opacity only; deep-link / back use a centred scale). `prefers-reduced-motion`
-cuts it to a plain fade.
+**Entry — centre, then morph (Phase 14 + 15).** Clicking a card first **glides it
+to the centre** of the grid (the snap glide, capped snappy by `clickCenterMaxMs`),
+and the instant that glide settles, runs the grid→detail transition from the
+now-centred card. Clicking the already-centred card skips the glide; Enter on the
+focused card and the CTA follow the identical path. Input is locked during the
+sequence, so rapid clicks can't double-open.
+
+**The transition is a true positional FLIP** ([`DetailMorph`](src/components/DetailMorph.tsx),
+Phase 15): the **three** participating cards — the centred card and its left/right
+grid neighbours, which are exactly the detail's active/prev/next (horizontal grid
+neighbours differ by one content index) — **physically travel and scale** between
+their grid rects and their detail rects, with **no cross-fade on those cards**.
+They animate on a shared layer (Web Animations API, `cubic-bezier` ease) from each
+FROM rect to its TO rect over `detailTransitionMs`; the rest of the grid
+cross-fades and the detail chrome (bar / title / mini-map) fades over
+`detailChromeFadeMs`. The rects are **computed** from the settled layout (grid:
+centre at `focusScale`, neighbours a cell-span away; detail: from
+[`detailLayout.ts`](src/detailLayout.ts)) and **flat** — the controller
+neutralises the three cards' tilt at both seams — so FROM exactly matches the grid
+card and TO the detail panel (no pop at either end, verified to the pixel). On
+exit the grid is re-centred on the viewed item **instantly** and the cards travel
+back into their slots. Deep-link / back / `prefers-reduced-motion` fall back to a
+quick cross-fade (no morph).
+
+**Dismiss.** There is no close button: clicking the **empty backdrop** (anywhere
+not occupied by the three cards or the bottom nav bar / mini-map) dismisses; the
+cards and controls stop propagation so they keep their own behaviour. Esc and a
+down-swipe also dismiss.
 
 **Layout — a true 3-card view** ([`src/detailLayout.ts`](src/detailLayout.ts),
 pure + unit-tested): the active card sits large in the middle —
@@ -325,8 +340,9 @@ both are independently dialable. The FOCUS group dials the focus emphasis
 hovered card's opacity lift). The GRID group dials `clickCenterMaxMs` (the
 click-to-centre glide cap). The DETAIL group dials the 3-card layout
 (`detailCardScale`, `detailSideScale`, `detailSideOpacity`, `detailGap`), the
-hover-isolate dim (`detailHoverDim`), the sky scrim (`detailScrimOpacity`), and
-the transition / slide times.
+hover-isolate dim (`detailHoverDim`), the sky scrim (`detailScrimOpacity`), the
+FLIP morph duration (`detailTransitionMs`) and chrome fade (`detailChromeFadeMs`),
+and the slide time.
 
 Retuning **layout** live is handled end-to-end: changing `cardWidth`/`gap`
 recomputes the cell span used by pan/flick math, re-derives the slot-window size
@@ -369,8 +385,9 @@ src/
   components/
     SkyLayer.tsx             # layer 0: WebGL atmospheric color field (CSS-gradient fallback)
     GridPlane.tsx            # layer 2: recycled-slot infinite poster grid
-    CardOverlay.tsx          # hover overlay on the focused card (headline/captions/CTA)
-    DetailView.tsx           # the 3-panel detail reading state
+    CardOverlay.tsx          # hover overlay on any card (headline/captions/CTA)
+    DetailView.tsx           # the 3-card detail reading state
+    DetailMorph.tsx          # grid↔detail positional FLIP layer (the three cards travel)
     MiniMap.tsx              # bottom-left position carousel (interactive, both modes)
     FrameHUD.tsx             # layer 3: fixed HUD overlay
 public/posters/              # poster images referenced by the manifest

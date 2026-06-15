@@ -97,6 +97,8 @@ export interface PanController {
   /** Glide the grid to the world cell with this content index nearest the
    *  current position (shortest euclidean travel). Used by the mini-map. */
   navigateToContent: (contentIndex: number) => void;
+  /** Centre a content index instantly (no glide) + flatten the hero cards (detail exit). */
+  centerContentInstant: (contentIndex: number) => void;
   /** Open the detail view for a window cell: glide it to centre (if needed), then FLIP. */
   requestCardOpen: (dc: number, dr: number) => void;
 }
@@ -262,6 +264,23 @@ export function usePanController(options: PanOptions = {}): PanController {
     [],
   );
 
+  // Flatten the three "hero" cards (centred card + immediate L/R neighbours) to a
+  // pure scale — no cursor-facing rotation — so the grid↔detail FLIP starts/ends
+  // from clean, flat rects (Phase 15). The grid is hidden/fading during the morph,
+  // so the ticker re-tilting them next frame is invisible.
+  const flattenHeroCards = useCallback(() => {
+    for (const c of cardsRef.current) {
+      if (c.dr === 0 && (c.dc === -1 || c.dc === 0 || c.dc === 1)) {
+        // Imperative ticker-owned state, mutated outside render — intentional.
+        /* eslint-disable react-hooks/immutability */
+        c.rx = 0;
+        c.ry = 0;
+        /* eslint-enable react-hooks/immutability */
+        if (c.el) c.el.style.transform = `scale(${focusScaleForDistance(Math.abs(c.dc))})`;
+      }
+    }
+  }, []);
+
   // Open a card's detail (Phase 14 sequence): if the card is already centred,
   // FLIP immediately; otherwise glide it to centre (snappy, capped) and mark the
   // open pending — the ticker fires it the instant the glide settles. Ignored
@@ -277,13 +296,14 @@ export function usePanController(options: PanOptions = {}): PanController {
       const centered =
         atRest && col === Math.round(posRef.current.col) && row === Math.round(posRef.current.row);
       if (centered) {
+        flattenHeroCards(); // clean flat FROM rects for the morph
         optionsRef.current.onTap?.(col, row, centeredCardOrigin());
       } else {
         pendingOpenRef.current = { col, row };
         startSettle(col, row, config.clickCenterMaxMs);
       }
     },
-    [startSettle, centeredCardOrigin],
+    [startSettle, centeredCardOrigin, flattenHeroCards],
   );
 
   useTicker((dt) => {
@@ -330,6 +350,7 @@ export function usePanController(options: PanOptions = {}): PanController {
     if (pendingOpenRef.current && settled) {
       const { col, row } = pendingOpenRef.current;
       pendingOpenRef.current = null;
+      flattenHeroCards(); // clean flat FROM rects for the morph
       optionsRef.current.onTap?.(col, row, centeredCardOrigin());
     }
 
@@ -549,32 +570,54 @@ export function usePanController(options: PanOptions = {}): PanController {
     [startSettle, cardHitAt, requestCardOpen],
   );
 
-  // Glide to the world cell holding a given content index with the least
-  // euclidean travel from the current position. Cells with this index lie on a
-  // lattice (row*stride + col ≡ idx mod N); for each nearby row the matching col
-  // is col ≡ idx - row*stride (mod N), and we take the nearest copy to the
-  // current col, then pick the closest row.
+  // The world cell holding a given content index with the least euclidean travel
+  // from the current position. Cells with this index lie on a lattice
+  // (row*stride + col ≡ idx mod N); for each nearby row the matching col is
+  // col ≡ idx - row*stride (mod N) — take the nearest copy to the current col,
+  // then pick the closest row.
+  const nearestCellForContent = useCallback((contentIndex: number): GridPos => {
+    const N = CONTENT_COUNT;
+    const stride = config.wrapStride;
+    const pCol = posRef.current.col;
+    const pRow = posRef.current.row;
+    const r0 = Math.round(pRow);
+    let best: GridPos = { col: Math.round(pCol), row: r0 };
+    let bestDist = Infinity;
+    for (let row = r0 - N; row <= r0 + N; row++) {
+      const base = mod(contentIndex - row * stride, N);
+      const col = base + Math.round((pCol - base) / N) * N;
+      const d = Math.hypot(col - pCol, row - pRow);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { col, row };
+      }
+    }
+    return best;
+  }, []);
+
+  // Glide the grid so the nearest cell with this content index is centred.
   const navigateToContent = useCallback(
     (contentIndex: number) => {
-      const N = CONTENT_COUNT;
-      const stride = config.wrapStride;
-      const pCol = posRef.current.col;
-      const pRow = posRef.current.row;
-      const r0 = Math.round(pRow);
-      let best: GridPos | null = null;
-      let bestDist = Infinity;
-      for (let row = r0 - N; row <= r0 + N; row++) {
-        const base = mod(contentIndex - row * stride, N);
-        const col = base + Math.round((pCol - base) / N) * N;
-        const d = Math.hypot(col - pCol, row - pRow);
-        if (d < bestDist) {
-          bestDist = d;
-          best = { col, row };
-        }
-      }
-      if (best) startSettle(best.col, best.row);
+      const cell = nearestCellForContent(contentIndex);
+      startSettle(cell.col, cell.row);
     },
-    [startSettle],
+    [startSettle, nearestCellForContent],
+  );
+
+  // Centre the grid on a content index INSTANTLY (no glide) and flatten the hero
+  // cards — used on detail exit so the grid is settled-centred and flat the
+  // moment the FLIP lands the cards back into their slots.
+  const centerContentInstant = useCallback(
+    (contentIndex: number) => {
+      const cell = nearestCellForContent(contentIndex);
+      posRef.current.col = cell.col;
+      posRef.current.row = cell.row;
+      targetRef.current = { col: cell.col, row: cell.row };
+      settlingRef.current = false;
+      sync();
+      flattenHeroCards();
+    },
+    [nearestCellForContent, sync, flattenHeroCards],
   );
 
   // Keyboard: one cell per arrow press. Ignored mid-drag, but a press during a
@@ -683,6 +726,7 @@ export function usePanController(options: PanOptions = {}): PanController {
     cardsRef,
     markCardsChanged,
     navigateToContent,
+    centerContentInstant,
     requestCardOpen,
   };
 }

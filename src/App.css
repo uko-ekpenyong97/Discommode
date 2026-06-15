@@ -21,3 +21,14 @@
 .grid-stage[data-locked] {
   pointer-events: none;
 }
+
+/* Mini-map is detail chrome: it fades out during the grid↔detail morph and back
+   in once settled (the MiniMap inside positions itself fixed). */
+.minimap-wrap {
+  transition: opacity var(--detail-chrome-ms, 200ms) ease;
+}
+
+.minimap-wrap[data-dim] {
+  opacity: 0;
+  pointer-events: none;
+}

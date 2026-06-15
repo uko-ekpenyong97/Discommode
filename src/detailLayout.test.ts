@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { computeDetailLayout } from './detailLayout';
+import {
+  PANEL_CY_RATIO,
+  computeDetailLayout,
+  detailCardRects,
+  gridCardRects,
+} from './detailLayout';
 
 describe('computeDetailLayout (3-card)', () => {
   it('makes a large centre card (~cardScale of viewport height, 3:4)', () => {
@@ -37,5 +42,32 @@ describe('computeDetailLayout (3-card)', () => {
     const small = computeDetailLayout(1440, 900, 0.82, 0.6, 40).panelStep;
     const big = computeDetailLayout(1440, 900, 0.82, 0.95, 40).panelStep;
     expect(big).toBeGreaterThan(small);
+  });
+});
+
+describe('FLIP rects', () => {
+  const vw = 1440, vh = 900;
+
+  it('detailCardRects: centre at strip centre, sides flanking at panelStep, scaled', () => {
+    const layout = computeDetailLayout(vw, vh, 0.82, 0.85, 40);
+    const t = detailCardRects(vw, vh, layout, 0.85);
+    expect(t.center.cx).toBe(vw / 2);
+    expect(t.center.cy).toBeCloseTo(vh * PANEL_CY_RATIO, 5);
+    expect(t.center.w).toBeCloseTo(layout.panelW, 5);
+    expect(t.left.cx).toBeCloseTo(vw / 2 - layout.panelStep, 5);
+    expect(t.right.cx).toBeCloseTo(vw / 2 + layout.panelStep, 5);
+    expect(t.left.w).toBeCloseTo(layout.panelW * 0.85, 5); // sides scaled
+    expect(t.right.h).toBeCloseTo(layout.panelH * 0.85, 5);
+  });
+
+  it('gridCardRects: centre scaled by focusScale, neighbours one cell-span away at scale 1', () => {
+    const t = gridCardRects(vw, vh, 300, 400, 420, 1.12);
+    expect(t.center.cx).toBe(vw / 2);
+    expect(t.center.cy).toBe(vh / 2);
+    expect(t.center.w).toBeCloseTo(300 * 1.12, 5);
+    expect(t.left.cx).toBe(vw / 2 - 420);
+    expect(t.right.cx).toBe(vw / 2 + 420);
+    expect(t.left.w).toBe(300); // neighbours unscaled
+    expect(t.right.h).toBe(400);
   });
 });

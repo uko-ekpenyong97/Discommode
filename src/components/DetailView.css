@@ -1,27 +1,50 @@
 /* Full-viewport reading state. The background is TRANSPARENT so the global
-   SkyLayer (weather color field) shows through behind the panels — same sky as
-   the homepage. Grid↔detail is a FLIP (scale + translate from the clicked card)
-   keyed by data-phase; transform-origin is set inline (the centre panel). The
-   strip translate is written imperatively. */
+   SkyLayer shows through. Grid↔detail is a positional FLIP on a separate layer
+   (DetailMorph, Phase 15): in 'morph' mode this view's strip is hidden during the
+   transition and appears (matching the morph's end) when settled, while the
+   chrome fades. In 'fade' mode (deep-link / reduced motion) the whole view
+   cross-fades. Clicking the empty backdrop dismisses. */
 .detail {
   position: fixed;
   inset: 0;
   z-index: 20;
   background: transparent;
   opacity: 1;
-  transform: none;
-  transition:
-    opacity var(--detail-ms, 450ms) ease,
-    transform var(--detail-ms, 450ms) cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--detail-chrome-ms, 200ms) ease;
   overflow: hidden;
   touch-action: none;
+  cursor: zoom-out; /* affordance: empty backdrop dismisses */
 }
 
+/* FADE mode: the whole view cross-fades in/out. */
+.detail[data-trans='fade'][data-phase='enter'],
+.detail[data-trans='fade'][data-phase='exit'] {
+  opacity: 0;
+}
+
+/* Input is locked during either transition. */
 .detail[data-phase='enter'],
 .detail[data-phase='exit'] {
+  pointer-events: none;
+}
+
+/* MORPH mode: the strip is hidden while the morph layer carries the three cards;
+   it appears INSTANTLY when settled (no transition), matching the morph's last
+   frame so there is no dip at the seam. */
+.detail[data-trans='morph'][data-phase='enter'] .detail__strip,
+.detail[data-trans='morph'][data-phase='exit'] .detail__strip {
   opacity: 0;
-  transform: translate(var(--enter-tx, 0px), var(--enter-ty, 0px)) scale(var(--enter-scale, 0.8));
-  pointer-events: none; /* ignore input mid-transition */
+}
+
+/* MORPH mode: the chrome fades in after / out before the card morph. */
+.detail__scrim,
+.detail__meta,
+.detail__bar {
+  transition: opacity var(--detail-chrome-ms, 200ms) ease;
+}
+.detail[data-trans='morph'][data-phase='enter'] :is(.detail__scrim, .detail__meta, .detail__bar),
+.detail[data-trans='morph'][data-phase='exit'] :is(.detail__scrim, .detail__meta, .detail__bar) {
+  opacity: 0;
 }
 
 /* Bottom scrim for text legibility over the live sky (opacity from config). */
@@ -121,6 +144,7 @@
   align-items: center;
   gap: 12px;
   z-index: 2;
+  cursor: default; /* the bar is chrome, not dismissable backdrop */
 }
 
 .detail__btn,
@@ -144,41 +168,9 @@
   padding: 8px 10px;
 }
 
-.detail__close {
-  position: absolute;
-  top: 22px;
-  right: 24px;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: #fff;
-  font-size: 15px;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  z-index: 2;
-}
-
-.detail__close:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-
 .detail__btn:focus-visible,
 .detail__select:focus-visible,
-.detail__close:focus-visible,
 .detail__panel:focus-visible {
   outline: 1px solid #fff;
   outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .detail {
-    transition: opacity var(--detail-ms, 450ms) ease;
-  }
-  .detail[data-phase='enter'],
-  .detail[data-phase='exit'] {
-    transform: none;
-  }
 }
