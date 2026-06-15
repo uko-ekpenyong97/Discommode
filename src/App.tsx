@@ -74,27 +74,36 @@ export default function App() {
   const useMorph = !!origin && !reducedMotion;
   const transitioning = phase !== 'active';
 
-  // Drive the transition timing: the morph/fade runs for `dur`, then the phase
-  // settles. On exit, instantly re-centre the grid on the viewed item first, so
-  // the FLIP's grid endpoints are valid and the cards land exactly in their slots.
+  // Finish exiting: re-centre the grid on the viewed item + flatten the hero
+  // cards INSTANTLY (still hidden), then reveal it — so the grid appears exactly
+  // under the morph cards' final positions, in one frame. The grid stays fully
+  // hidden for the whole exit (see gridClass), so the cards never double.
+  const finishExitToGrid = useCallback(() => {
+    centerContentInstant(activeIndex);
+    finishExit();
+  }, [centerContentInstant, activeIndex, finishExit]);
+
+  // Drive completion. In morph mode the morph layer fires `onFinished` on its
+  // WAAPI `finished` (exact landing frame). In fade mode there is no morph layer,
+  // so a timer settles it.
   useEffect(() => {
-    if (phase === 'enter') {
-      const dur = useMorph ? config.detailTransitionMs : config.detailChromeFadeMs;
-      const t = setTimeout(finishEnter, dur + TRANS_BUFFER_MS);
-      return () => clearTimeout(t);
-    }
-    if (phase === 'exit') {
-      centerContentInstant(activeIndex);
-      const dur = useMorph ? config.detailTransitionMs : config.detailChromeFadeMs;
-      const t = setTimeout(finishExit, dur + TRANS_BUFFER_MS);
-      return () => clearTimeout(t);
-    }
-  }, [phase, activeIndex, useMorph, centerContentInstant, finishEnter, finishExit]);
+    if (useMorph || phase === 'active') return;
+    const done = phase === 'enter' ? finishEnter : finishExitToGrid;
+    const t = setTimeout(done, config.detailChromeFadeMs + TRANS_BUFFER_MS);
+    return () => clearTimeout(t);
+  }, [phase, useMorph, finishEnter, finishExitToGrid]);
 
   const inDetail = detail.mode === 'detail';
-  // Grid is visible in grid mode and while the detail is exiting (so the rest of
-  // the grid cross-fades back in under the morph). Input only in grid mode.
-  const gridVisible = !inDetail || phase === 'exit';
+  // The grid fades OUT on enter, then stays FULLY hidden through active + the
+  // whole exit (so the real cards never paint alongside the travelling morph
+  // cards). It is revealed INSTANTLY at the exit handoff (the base `.grid-stage`
+  // has no transition), exactly under the morph cards' final positions.
+  const gridClass =
+    phase === 'enter'
+      ? 'grid-stage grid-stage--fading'
+      : inDetail
+        ? 'grid-stage grid-stage--hidden'
+        : 'grid-stage';
 
   const miniIndex = inDetail ? activeIndex : contentIndex(pan.world.col, pan.world.row);
   const miniNavigate = inDetail ? detail.goto : navigateToContent;
@@ -127,11 +136,7 @@ export default function App() {
   return (
     <div className="app">
       <SkyLayer env={envSnapshot.env} />
-      <div
-        className={gridVisible ? 'grid-stage' : 'grid-stage grid-stage--hidden'}
-        data-locked={inDetail || undefined}
-        style={stageStyle}
-      >
+      <div className={gridClass} data-locked={inDetail || undefined} style={stageStyle}>
         <GridPlane
           position={pan.position}
           world={pan.world}
@@ -151,7 +156,11 @@ export default function App() {
       {inDetail && <DetailView detail={detail} transition={useMorph ? 'morph' : 'fade'} />}
 
       {morphCards && (
-        <DetailMorph cards={morphCards} durationMs={config.detailTransitionMs} />
+        <DetailMorph
+          cards={morphCards}
+          durationMs={config.detailTransitionMs}
+          onFinished={phase === 'enter' ? finishEnter : finishExitToGrid}
+        />
       )}
 
       <div

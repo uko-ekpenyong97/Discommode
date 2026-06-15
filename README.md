@@ -205,10 +205,17 @@ cross-fades and the detail chrome (bar / title / mini-map) fades over
 centre at `focusScale`, neighbours a cell-span away; detail: from
 [`detailLayout.ts`](src/detailLayout.ts)) and **flat** — the controller
 neutralises the three cards' tilt at both seams — so FROM exactly matches the grid
-card and TO the detail panel (no pop at either end, verified to the pixel). On
-exit the grid is re-centred on the viewed item **instantly** and the cards travel
-back into their slots. Deep-link / back / `prefers-reduced-motion` fall back to a
-quick cross-fade (no morph).
+card and TO the detail panel (no pop at either end, verified to the pixel).
+
+On **exit** the grid stays **fully hidden** (not painted) for the entire morph so
+the real cards never double with the travelling ones; the morph plays detail →
+grid, and on its WAAPI `finished` (not a timer) the grid — already re-centred on
+the viewed item and flattened — is **revealed instantly** in the same step the
+morph is removed, exactly under the cards' landing positions (verified: across
+every exit frame the grid is hidden while a morph card is visible, then both flip
+in one frame). The base `.grid-stage` has no opacity transition, so that reveal is
+instant; only the enter fade-out is transitioned. Deep-link / back /
+`prefers-reduced-motion` fall back to a quick cross-fade (no morph).
 
 **Dismiss.** There is no close button: clicking the **empty backdrop** (anywhere
 not occupied by the three cards or the bottom nav bar / mini-map) dismisses; the

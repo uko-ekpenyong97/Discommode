@@ -13,6 +13,9 @@ export interface MorphCard {
 interface DetailMorphProps {
   cards: MorphCard[];
   durationMs: number;
+  /** Fired the instant the travel animation finishes (WAAPI `finished`), so the
+   *  handoff to the static layout happens on the exact frame the cards land. */
+  onFinished?: () => void;
 }
 
 /**
@@ -28,21 +31,38 @@ interface DetailMorphProps {
  * FROM exactly matches the grid card and TO the detail panel — no pop at either
  * end.
  */
-function DetailMorph({ cards, durationMs }: DetailMorphProps) {
+function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
 
   useLayoutEffect(() => {
-    cards.forEach((c, i) => {
-      const el = refs.current[i];
-      if (!el) return;
-      const invert = `translate(${c.from.cx - c.to.cx}px, ${c.from.cy - c.to.cy}px) scale(${c.from.w / c.to.w})`;
-      el.animate(
-        [{ transform: invert }, { transform: 'none' }],
-        { duration: durationMs, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' },
-      );
-    });
-    // Run once on mount with the FROM/TO captured at transition start; the cards
-    // don't change mid-transition.
+    const anims = cards
+      .map((c, i) => {
+        const el = refs.current[i];
+        if (!el) return null;
+        const invert = `translate(${c.from.cx - c.to.cx}px, ${c.from.cy - c.to.cy}px) scale(${c.from.w / c.to.w})`;
+        return el.animate(
+          [{ transform: invert }, { transform: 'none' }],
+          { duration: durationMs, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' },
+        );
+      })
+      .filter((a): a is Animation => a !== null);
+
+    // Hand off the instant the travel lands (all three finish together) — the
+    // caller reveals the static layout on this exact frame.
+    // `onFinished` is captured at mount — the morph mounts fresh per direction
+    // (enter vs exit), so the mount-time callback is the right one.
+    let done = false;
+    Promise.all(anims.map((a) => a.finished))
+      .then(() => {
+        if (!done) onFinished?.();
+      })
+      .catch(() => {});
+    return () => {
+      done = true;
+      anims.forEach((a) => a.cancel());
+    };
+    // Run once on mount with the FROM/TO + onFinished captured at transition
+    // start; the cards don't change mid-transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -5,17 +5,28 @@
   overflow: hidden;
 }
 
-/* The grid layers (cards + HUD). Fades out as the detail view opens and fades
-   back in as it closes; locked from input whenever the detail view is up. */
+/* The grid layers (cards + HUD). On ENTER it fades out (--fading) as the morph
+   travels; through detail + the whole EXIT it stays fully hidden (--hidden, not
+   painted) so the real cards never double with the travelling morph cards. The
+   base class has NO transition, so the exit handoff REVEALS it instantly (full
+   opacity, exactly under the morph cards' final positions). Locked from input
+   whenever the detail view is up. */
 .grid-stage {
   position: absolute;
   inset: 0;
   opacity: 1;
+}
+
+/* Enter: cross-fade the rest of the grid out under the travelling morph. */
+.grid-stage--fading {
+  opacity: 0;
   transition: opacity var(--detail-ms, 450ms) ease;
 }
 
+/* Detail open + exit: hidden and not painted (instant on/off, no transition). */
 .grid-stage--hidden {
   opacity: 0;
+  visibility: hidden;
 }
 
 .grid-stage[data-locked] {
