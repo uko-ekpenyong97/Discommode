@@ -1,10 +1,8 @@
-/* Centred on the focused card inside the tilt wrapper, so it inherits the
-   card's 3D lean. Ignores pointer events except the CTA. Fades in only. */
+/* Fills the hovered card (a child of its transform wrapper), so it inherits the
+   card's scale + 3D rotation. Ignores pointer events except the CTA. Fades in. */
 .card-overlay {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
   pointer-events: none;
   z-index: 5;
   animation-name: card-overlay-fade;

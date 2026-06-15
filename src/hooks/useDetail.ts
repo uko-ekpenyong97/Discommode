@@ -7,15 +7,27 @@ export type DetailMode = 'grid' | 'detail';
 /** 'enter' / 'exit' are the transition phases; 'active' is settled in detail. */
 export type DetailPhase = 'enter' | 'active' | 'exit';
 
+/** The clicked card's on-screen rect — the FLIP transition expands from here. */
+export interface FlipOrigin {
+  /** Card centre in viewport px. */
+  cx: number;
+  cy: number;
+  /** Card size in viewport px (already scaled). */
+  w: number;
+  h: number;
+}
+
 export interface DetailController {
   mode: DetailMode;
   /** Content index of the active detail item. */
   activeIndex: number;
   phase: DetailPhase;
+  /** The grid card the view was opened from — the FLIP origin (null = deep-link). */
+  origin: FlipOrigin | null;
   /** True during the grid↔detail transition — input should be ignored. */
   transitioning: boolean;
-  /** Open the detail view on an item (from the grid). */
-  open: (index: number) => void;
+  /** Open the detail view on an item (from the grid), optionally from a card rect. */
+  open: (index: number, origin?: FlipOrigin | null) => void;
   /** Switch the active item without leaving detail (mini-map, dropdown, sides). */
   goto: (index: number) => void;
   next: () => void;
@@ -46,6 +58,9 @@ export function useDetail(onExitFocus: (index: number) => void): DetailControlle
   const [mode, setMode] = useState<DetailMode>(initial >= 0 ? 'detail' : 'grid');
   const [activeIndex, setActiveIndex] = useState(initial >= 0 ? initial : 0);
   const [phase, setPhase] = useState<DetailPhase>(initial >= 0 ? 'enter' : 'active');
+  // FLIP origin: the card rect a click opened from. Null for deep-link / back
+  // (no originating card) → the transition falls back to a centred scale.
+  const [origin, setOrigin] = useState<FlipOrigin | null>(null);
 
   const modeRef = useRef(mode);
   const activeRef = useRef(activeIndex);
@@ -74,10 +89,11 @@ export function useDetail(onExitFocus: (index: number) => void): DetailControlle
     exitTimer.current = setTimeout(finishExit, config.detailTransitionMs);
   }, [finishExit]);
 
-  const open = useCallback((index: number) => {
+  const open = useCallback((index: number, from: FlipOrigin | null = null) => {
     if (modeRef.current !== 'grid') return;
     pushDetail(index);
     clearTimeout(exitTimer.current);
+    setOrigin(from);
     setActiveIndex(index);
     setMode('detail');
     setPhase('enter');
@@ -113,6 +129,7 @@ export function useDetail(onExitFocus: (index: number) => void): DetailControlle
       if (idx >= 0) {
         clearTimeout(exitTimer.current);
         if (modeRef.current === 'grid') {
+          setOrigin(null); // back/forward into detail has no originating card rect
           setActiveIndex(idx);
           setMode('detail');
           setPhase('enter');
@@ -147,6 +164,7 @@ export function useDetail(onExitFocus: (index: number) => void): DetailControlle
     mode,
     activeIndex,
     phase,
+    origin,
     transitioning: phase !== 'active',
     open,
     goto,

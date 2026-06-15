@@ -89,13 +89,23 @@ export interface LiveConfig {
   unfocusedOpacity: number;
   /** Opacity two or more cells from centre. */
   farOpacity: number;
+  /** Hovered card's opacity is lifted toward this so its overlay reads (Phase 13). */
+  hoverLiftOpacity: number;
   /** Mini-map: number of items shown on each side of the current item. */
   miniMapSpan: number;
-  // DETAIL — grid ↔ detail transition + in-detail slide (Phase 10)
+  // DETAIL — grid ↔ detail transition + in-detail slide (Phase 10) + sizing (13)
   /** Grid ↔ detail expand/collapse duration, in ms. */
   detailTransitionMs: number;
+  /** Centre detail card height as a fraction of viewport height (3:4 preserved). */
+  detailCardScale: number;
+  /** Horizontal space (px) between the centre detail card and each side card. */
+  detailGap: number;
   /** How much of the neighbouring detail panels peek at the edges, in px. */
   detailPeekPx: number;
+  /** Non-hovered detail panels dim to this while another is hovered. */
+  detailHoverDim: number;
+  /** Opacity of the bottom scrim behind the detail text (0 = none). */
+  detailScrimOpacity: number;
   /** Time constant (ms) for the prev/next panel slide settle. */
   detailSlideMs: number;
   // SKY — WebGL atmospheric color field driven by EnvState (Phase 12 / 12b)
@@ -151,9 +161,14 @@ export const DEFAULTS: LiveConfig = {
   focusScale: 1.12,
   unfocusedOpacity: 0.55,
   farOpacity: 0.4,
+  hoverLiftOpacity: 0.9,
   miniMapSpan: 3,
   detailTransitionMs: 450,
+  detailCardScale: 0.82,
+  detailGap: 48,
   detailPeekPx: 56,
+  detailHoverDim: 0.45,
+  detailScrimOpacity: 0.2,
   detailSlideMs: 420,
   skyTransitionMs: 1500,
   skyParallax: 0,

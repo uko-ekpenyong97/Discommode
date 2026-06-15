@@ -7,6 +7,7 @@ import { MiniMap } from './components/MiniMap';
 import { DetailView } from './components/DetailView';
 import { usePanController } from './hooks/usePanController';
 import { useDetail } from './hooks/useDetail';
+import type { FlipOrigin } from './hooks/useDetail';
 import { useEnvState } from './env';
 import { config, useConfig } from './config';
 import { contentIndex } from './content';
@@ -38,13 +39,13 @@ export default function App() {
   // Refs break the controller ↔ detail cycle: the controller needs tap/suspend
   // callbacks; the detail router needs the controller's grid-focus navigation.
   const detailModeRef = useRef<'grid' | 'detail'>('grid');
-  const openRef = useRef<(index: number) => void>(() => {});
-  const navCellRef = useRef<(col: number, row: number) => void>(() => {});
+  const openRef = useRef<(index: number, origin?: FlipOrigin | null) => void>(() => {});
 
   const isSuspended = useCallback(() => detailModeRef.current !== 'grid', []);
-  const onTap = useCallback((col: number, row: number, focused: boolean) => {
-    if (focused) openRef.current(contentIndex(col, row));
-    else navCellRef.current(col, row);
+  // A tap on ANY card opens its detail view, animating the FLIP from the card's
+  // actual on-screen rect (drag / flick / arrows / mini-map still move the grid).
+  const onTap = useCallback((col: number, row: number, origin: FlipOrigin) => {
+    openRef.current(contentIndex(col, row), origin);
   }, []);
 
   const pan = usePanController({ isSuspended, onTap });
@@ -56,10 +57,12 @@ export default function App() {
   useEffect(() => {
     detailModeRef.current = detail.mode;
     openRef.current = detail.open;
-    navCellRef.current = pan.navigateToCell;
   });
 
-  const onOpenDetail = useCallback((index: number) => openRef.current(index), []);
+  const onOpenDetail = useCallback(
+    (index: number, origin: FlipOrigin | null) => openRef.current(index, origin),
+    [],
+  );
 
   const inDetail = detail.mode === 'detail';
   // Grid is visible in grid mode, and again while the detail is exiting (so they
@@ -97,7 +100,7 @@ export default function App() {
           tiltRef={pan.tiltRef}
           cardsRef={pan.cardsRef}
           markCardsChanged={pan.markCardsChanged}
-          overlayVisible={pan.overlayVisible && !inDetail}
+          overlayCell={inDetail ? null : pan.overlayCell}
           onOpenDetail={onOpenDetail}
         />
         <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />

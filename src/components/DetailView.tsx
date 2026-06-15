@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { CARD_ASPECT_H, CARD_ASPECT_W, useConfig } from '../config';
+import { useConfig } from '../config';
 import { config } from '../config';
 import { mod } from '../grid';
 import { CONTENT, CONTENT_COUNT } from '../content';
+import { computeDetailLayout } from '../detailLayout';
 import { useTicker } from '../hooks/useTicker';
 import type { DetailController } from '../hooks/useDetail';
 import './DetailView.css';
@@ -14,6 +15,8 @@ const PANEL_BUFFER = 2;
 /** Swipe thresholds (px) for touch prev/next and exit-down. */
 const SWIPE_X = 48;
 const SWIPE_DOWN = 80;
+/** Vertical centre of the panel strip as a fraction of viewport height (= CSS `top`). */
+const PANEL_CY = 0.44;
 
 interface DetailViewProps {
   detail: DetailController;
@@ -30,7 +33,7 @@ interface DetailViewProps {
  * prev/next; a down-swipe or the close button exits.
  */
 export function DetailView({ detail }: DetailViewProps) {
-  const { activeIndex, phase, next, prev, goto, close, transitioning } = detail;
+  const { activeIndex, phase, origin, next, prev, goto, close, transitioning } = detail;
   useConfig(); // re-render on layout/feel dial changes
 
   const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
@@ -40,11 +43,28 @@ export function DetailView({ detail }: DetailViewProps) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Panel geometry (3:4), sized to the viewport, with neighbours peeking.
-  const panelH = Math.min(viewport.h * 0.64, ((viewport.w * 0.6) * CARD_ASPECT_H) / CARD_ASPECT_W);
-  const panelW = (panelH * CARD_ASPECT_W) / CARD_ASPECT_H;
-  const panelStep = viewport.w / 2 + panelW / 2 - config.detailPeekPx;
-  const enterScale = (config.cardWidth * config.focusScale) / panelW;
+  // Hover-to-isolate: the panel under the cursor stays full, the rest dim.
+  const [hoveredPanel, setHoveredPanel] = useState<number | null>(null);
+
+  // Hero panel geometry (large centre card, side cards peeking).
+  const { panelW, panelH, panelStep } = computeDetailLayout(
+    viewport.w,
+    viewport.h,
+    config.detailCardScale,
+    config.detailGap,
+    config.detailPeekPx,
+  );
+
+  // FLIP transform: ENTER expands from the clicked card's actual rect; EXIT (and
+  // deep-link / back, which have no origin) collapses to the centre at a card's
+  // size. transform-origin is the centre panel, so the scale grows/shrinks there.
+  const centerCx = viewport.w / 2;
+  const centerCy = viewport.h * PANEL_CY;
+  const fromOrigin = origin && phase === 'enter';
+  const centerScale = (config.cardWidth * config.focusScale) / panelW;
+  const enterScale = fromOrigin ? origin.w / panelW : centerScale;
+  const enterTx = fromOrigin ? origin.cx - centerCx : 0;
+  const enterTy = fromOrigin ? origin.cy - centerCy : 0;
 
   // Continuous carousel slide: target accumulates signed shortest steps as the
   // active item changes; the rAF loop eases the live position toward it and
@@ -135,7 +155,12 @@ export function DetailView({ detail }: DetailViewProps) {
       style={
         {
           '--enter-scale': enterScale,
+          '--enter-tx': `${enterTx}px`,
+          '--enter-ty': `${enterTy}px`,
           '--detail-ms': `${config.detailTransitionMs}ms`,
+          '--detail-scrim': config.detailScrimOpacity,
+          '--detail-hover-ms': `${config.overlayFadeMs}ms`,
+          transformOrigin: `${centerCx}px ${centerCy}px`,
         } as CSSProperties
       }
       onPointerDown={onPointerDown}
@@ -146,6 +171,8 @@ export function DetailView({ detail }: DetailViewProps) {
           const distance = Math.abs(p.i - center);
           const isCenter = distance === 0;
           const item = CONTENT[p.idx];
+          // Default: all panels full. Hovering one isolates it (others dim).
+          const opacity = hoveredPanel === null ? 1 : p.i === hoveredPanel ? 1 : config.detailHoverDim;
           return (
             <button
               key={p.i}
@@ -155,9 +182,11 @@ export function DetailView({ detail }: DetailViewProps) {
                 left: `${p.i * panelStep}px`,
                 width: `${panelW}px`,
                 height: `${panelH}px`,
-                opacity: isCenter ? 1 : config.unfocusedOpacity,
+                opacity,
               }}
               onClick={() => !isCenter && goto(p.idx)}
+              onPointerEnter={(e) => e.pointerType !== 'touch' && setHoveredPanel(p.i)}
+              onPointerLeave={(e) => e.pointerType !== 'touch' && setHoveredPanel(null)}
               tabIndex={isCenter ? -1 : 0}
               aria-label={isCenter ? undefined : `Go to item ${item.title}`}
               aria-hidden={isCenter ? true : undefined}
@@ -172,6 +201,9 @@ export function DetailView({ detail }: DetailViewProps) {
           );
         })}
       </div>
+
+      {/* Low-opacity bottom scrim for text legibility over the live sky. */}
+      <div className="detail__scrim" aria-hidden="true" />
 
       <div className="detail__meta">
         <h1 className="detail__title">Item {activeItem.title}</h1>

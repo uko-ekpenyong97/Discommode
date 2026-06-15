@@ -96,11 +96,16 @@ function Dials() {
     focusScale: [start.focusScale, 1, 1.4],
     unfocusedOpacity: [start.unfocusedOpacity, 0.1, 1],
     farOpacity: [start.farOpacity, 0.05, 1],
+    hoverLiftOpacity: [start.hoverLiftOpacity, 0.1, 1],
   });
 
   const detail = useDialKit('DETAIL', {
     detailTransitionMs: [start.detailTransitionMs, 150, 900],
+    detailCardScale: [start.detailCardScale, 0.3, 1],
+    detailGap: [start.detailGap, 0, 200],
     detailPeekPx: [start.detailPeekPx, 0, 200],
+    detailHoverDim: [start.detailHoverDim, 0, 1],
+    detailScrimOpacity: [start.detailScrimOpacity, 0, 0.8],
     detailSlideMs: [start.detailSlideMs, 150, 900],
   });
 
@@ -215,9 +220,14 @@ function Dials() {
       focusScale: focus.focusScale,
       unfocusedOpacity: focus.unfocusedOpacity,
       farOpacity: focus.farOpacity,
+      hoverLiftOpacity: focus.hoverLiftOpacity,
       miniMapSpan: start.miniMapSpan,
       detailTransitionMs: detail.detailTransitionMs,
+      detailCardScale: detail.detailCardScale,
+      detailGap: detail.detailGap,
       detailPeekPx: detail.detailPeekPx,
+      detailHoverDim: detail.detailHoverDim,
+      detailScrimOpacity: detail.detailScrimOpacity,
       detailSlideMs: detail.detailSlideMs,
       skyTransitionMs: sky.skyTransitionMs,
       skyParallax: sky.skyParallax,

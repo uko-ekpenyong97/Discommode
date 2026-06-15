@@ -28,8 +28,9 @@ the original CSS dot-matrix backdrop); **`GridPlane`** sits above it and holds a
 window of 3:4 "poster" cards inside a `perspective: 1200px` container that
 recycles content to feel infinite and leans toward the cursor in 3D, translating
 so the focused card sits at the viewport centre at full brightness while every
-other card is dimmed as a continuous function of its distance from centre (and,
-on hover, that focused card reveals a typographic overlay); and
+other card is dimmed as a continuous function of its distance from centre (and
+any hovered card reveals a typographic overlay and, on click, opens its detail
+view); and
 **`FrameHUD`** is a fixed, full-viewport overlay
 that never moves and ignores pointer events (`pointer-events: none`), holding
 the minimal instrumentation — a left-edge tick ruler, crosshairs at the corners
@@ -125,23 +126,30 @@ leaves the viewport; pan/snap, being user-initiated, remain.
 
 ## Hover overlay
 
-Hovering the focused card (only while the grid is settled — not dragging, not
-gliding) fades in a `CardOverlay`: a bold headline overlapping the top-left
-corner, monospace captions along the bottom-right edge, and a circular CTA
-centred on the card, all from the item's data in [`src/content.ts`](src/content.ts).
-It lives inside the tilt wrapper, so it inherits the card's 3D lean, and its
-layers float at different depths — `overlayDepthHeadline`/`Captions`/`Cta`. The
-depth parallax reuses the tilt path: the controller writes the cursor-tilt shift
-as `--tsx`/`--tsy` CSS variables on the wrapper, and each layer multiplies them
-by `(depthFactor − 1)` in a `calc()` transform, so the type slides *more* than
-the card and reads as floating above it. (Chosen over `translateZ`, which doesn't
-compose cleanly with the slot/pan transforms; and it degrades to flat when the
-variables are absent.) The focused card dims to `overlayCardDim` so the white
-type reads. The overlay ignores pointer events except the CTA — a real, focusable
-`<button>` (Enter/Space activate it) that logs the item and pulses. It fades in
+Hovering **any** card (the one under the cursor, only while the grid is settled —
+not dragging, not gliding) fades in a `CardOverlay`: a bold headline overlapping
+the top-left corner, monospace captions along the bottom-right edge, and a
+circular CTA centred on the card, all from the item's data in
+[`src/content.ts`](src/content.ts). Only one shows at a time; the hovered cell is
+hit-tested each frame from the cursor + live position (so it tracks the grid
+sliding beneath a still cursor, and a cursor in a gap shows nothing). It is
+rendered as a child of the hovered card's **transform wrapper** — the element
+that carries the imperative per-card scale + cursor-facing rotation — so it
+inherits that card's exact transform automatically (it tracks scaled/rotated
+non-centre cards without doubling or drifting), while the brightness filter stays
+on the inner face so the overlay isn't dimmed by it. Its layers float at
+different depths — `overlayDepthHeadline`/`Captions`/`Cta`: the controller writes
+the cursor-tilt shift as `--tsx`/`--tsy` CSS variables on the tilt wrapper, and
+each layer multiplies them by `(depthFactor − 1)` in a `calc()` transform, so the
+type slides *more* than the card. (Chosen over `translateZ`; degrades to flat
+when the variables are absent.) The hovered card dims to `overlayCardDim` so the
+white type reads, and — since non-centre cards are dim — its opacity is **lifted
+toward `hoverLiftOpacity`** (eased on the per-card opacity, which the ticker now
+owns alongside the scale/rotation) so the overlay is legible; it eases back on
+leave. The overlay ignores pointer events except the CTA — a real, focusable
+`<button>` that opens that card's detail (FLIP from the card's rect). It fades in
 over `overlayFadeMs` and vanishes instantly on drag, glide, or leaving the card.
-On touch there is no hover, so a tap on the focused card toggles it instead (a
-touch that crosses the drag dead zone is a drag, not a tap). Under
+On touch there is no hover; a tap opens the tapped card's detail directly. Under
 `prefers-reduced-motion` the overlay still fades but does not parallax.
 
 ## Focus emphasis + mini-map
@@ -169,25 +177,39 @@ hides on very narrow viewports so it never collides with the other HUD readouts.
 
 ## Detail view
 
-Clicking the focused card (or its CTA) opens a full-viewport reading state
-(`DetailView`); clicking a non-focused card navigates the grid to it instead.
-Routing (`useDetail`) makes the **URL hash the source of truth** — a slug means
-detail, no hash means grid: deep-linking `#item-07` opens straight into that
-item, browser back/forward arrive as `popstate` and the state follows, and Esc /
-the close button / a down-swipe clear the hash via history without trapping the
-back button. Every item view pushes a history entry, so back/forward walk the
+Clicking **any** card (or its CTA) opens a full-viewport reading state
+(`DetailView`) for that card's item — drag / flick / arrows / mini-map still move
+the grid. Routing (`useDetail`) makes the **URL hash the source of truth** — a
+slug means detail, no hash means grid: deep-linking `#item-07` opens straight into
+that item, browser back/forward arrive as `popstate` and the state follows, and
+Esc / the close button / a down-swipe clear the hash via history without trapping
+the back button. Every item view pushes a history entry, so back/forward walk the
 visited sequence. On exit the grid re-centres on the item just viewed (the
-Phase 9 shortest-path glide). The layout is a horizontal strip — the active item
-large with title + captions, the previous/next items peeking dimmed at the edges
-(clickable) — over a bar with Prev / a title dropdown / Next. Prev/Next, arrow
+Phase 9 shortest-path glide).
+
+The layout is a **hero carousel** ([`src/detailLayout.ts`](src/detailLayout.ts),
+pure + unit-tested): the centre card is large — `detailCardScale` of the viewport
+height (3:4 preserved, capped so it never overflows) — with the previous/next
+cards just **peeking** by `detailPeekPx` at the edges; `detailGap` is the minimum
+gap between centre and side cards and shrinks the card gracefully on narrow
+viewports. The backdrop is **transparent**, so the same global `SkyLayer`
+(weather colour field) shows through behind the panels — only a low bottom scrim
+(`detailScrimOpacity`) sits behind the text for legibility; the card panels stay
+opaque. Hovering one panel **isolates** it (it stays full; the others dim to
+`detailHoverDim`, eased with the overlay-fade feel); leaving restores all to full
+(touch has no hover). A bar holds Prev / a title dropdown / Next; Prev/Next, arrow
 keys, horizontal swipes, the dropdown, side-panel clicks, and the (persistent)
 mini-map all change the active item, wrapping the `content.ts` order. The strip
 **slides** between items with the grid's exponential-settle feel — a continuous
 position eased in an rAF loop toward a carousel target that accumulates signed
 steps, so it slides the short way and fast Prev/Next presses retarget cleanly.
-Grid↔detail is an approximate FLIP: the card scales into the centre panel while
-the grid cross-fades (`detailTransitionMs`, transform+opacity only; input is
-locked mid-transition). `prefers-reduced-motion` cuts the scale to a plain fade.
+
+Grid↔detail is an approximate **FLIP from the clicked card**: the detail expands
+from the card's actual on-screen rect (its scale + translate, `transform-origin`
+the centre panel) into the centre panel while the grid cross-fades
+(`detailTransitionMs`, transform+opacity only; input locked mid-transition;
+deep-link / back have no origin and use a centred scale). `prefers-reduced-motion`
+cuts it to a plain fade.
 
 ## Environment data layer
 
@@ -289,7 +311,11 @@ emits a paste-ready snippet for promoting tuned numbers back into `DEFAULTS`.
 The DEPTH group includes the per-card facing dials (`cursorDepthPx`,
 `cardFaceStrength`, `maxCardTiltDeg`, `cardTiltLerpMs`) alongside the global tilt;
 both are independently dialable. The FOCUS group dials the focus emphasis
-(`focusScale`, `unfocusedOpacity`, `farOpacity`).
+(`focusScale`, `unfocusedOpacity`, `farOpacity`) plus `hoverLiftOpacity` (the
+hovered card's opacity lift). The DETAIL group dials the hero carousel
+(`detailCardScale`, `detailGap`, `detailPeekPx`), the hover-isolate dim
+(`detailHoverDim`), the sky scrim (`detailScrimOpacity`), and the transition /
+slide times.
 
 Retuning **layout** live is handled end-to-end: changing `cardWidth`/`gap`
 recomputes the cell span used by pan/flick math, re-derives the slot-window size
@@ -309,6 +335,7 @@ src/
   grid.ts                    # pure grid math (modulo, brightness, focus scale/opacity)
   content.ts                 # poster manifest (PosterItem) + cell → item wrap
   motion.ts                  # pure momentum math (velocity window, flick target, settle)
+  detailLayout.ts            # pure detail hero-carousel geometry (unit-tested)
   App.tsx                    # owns the controller, composes the layers (+ dev panel)
   main.tsx                   # React entry point
   index.css                  # global reset + viewport lock

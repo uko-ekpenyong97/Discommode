@@ -1,55 +1,51 @@
 import type { CSSProperties, MouseEvent } from 'react';
-import { CARD_ASPECT_H, CARD_ASPECT_W, useConfig } from '../config';
+import { useConfig } from '../config';
 import type { PosterItem } from '../content';
+import type { FlipOrigin } from '../hooks/useDetail';
 import './CardOverlay.css';
 
 interface CardOverlayProps {
   item: PosterItem;
-  /** Open the detail view for this item (CTA click). */
-  onOpen: (contentIndex: number) => void;
+  /** Open the detail view for this item (CTA click), from the card's rect. */
+  onOpen: (contentIndex: number, origin: FlipOrigin | null) => void;
 }
 
 /**
- * Hover overlay for the focused card: a headline, caption fragments, and a CTA
- * arranged around the card edges, each floating at a different depth.
+ * Hover overlay for whichever card the cursor is over: a headline, caption
+ * fragments, and a CTA arranged around the card edges, each floating at a
+ * different depth. Rendered as a child of the hovered card's transform wrapper,
+ * so it inherits that card's scale + cursor-facing rotation automatically (it
+ * tracks the card without doubling or drifting) — it fills the card (inset: 0)
+ * and adds no transform of its own.
  *
  * Depth parallax is done with CSS variables, not `translateZ`. The controller
  * writes the cursor-tilt shift to `--tsx`/`--tsy` on the tilt wrapper each frame;
  * each layer here multiplies it by its own `--depth-k` (= depthFactor − 1) in a
  * `calc()` transform, so layers slide *more* than the card and read as floating
- * above it. This keeps the parallax on the existing imperative tilt path (no
- * per-element refs), composes cleanly with the slot/pan transforms (which
- * `translateZ` would not), and falls back to flat when the vars are absent
- * (reduced motion) — the overlay still fades, it just doesn't parallax.
+ * above it. Falls back to flat when the vars are absent (reduced motion) — the
+ * overlay still fades, it just doesn't parallax.
  */
 export function CardOverlay({ item, onOpen }: CardOverlayProps) {
   const cfg = useConfig();
-  const cardW = cfg.cardWidth;
-  const cardH = (cardW * CARD_ASPECT_H) / CARD_ASPECT_W;
 
   const onCta = (e: MouseEvent<HTMLButtonElement>) => {
     e.currentTarget.animate(
       [{ transform: 'scale(1)' }, { transform: 'scale(0.9)' }, { transform: 'scale(1)' }],
       { duration: 220, easing: 'ease-out' },
     );
-    onOpen(item.id);
+    // FLIP from this card's actual rect (the overlay's `.grid-card` ancestor).
+    const card = e.currentTarget.closest('.grid-card');
+    const r = card?.getBoundingClientRect();
+    const origin: FlipOrigin | null = r
+      ? { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height }
+      : null;
+    onOpen(item.id, origin);
   };
 
   const depth = (factor: number) => ({ '--depth-k': factor - 1 }) as CSSProperties;
 
   return (
-    <div
-      className="card-overlay"
-      style={{
-        width: `${cardW}px`,
-        height: `${cardH}px`,
-        // Match the focused card's focus scale so the type tracks its scaled
-        // edges (the overlay only shows when settled, where that card is at
-        // exactly focusScale). Keeps the centring translate.
-        transform: `translate(-50%, -50%) scale(${cfg.focusScale})`,
-        animationDuration: `${cfg.overlayFadeMs}ms`,
-      }}
-    >
+    <div className="card-overlay" style={{ animationDuration: `${cfg.overlayFadeMs}ms` }}>
       <div className="card-overlay__headline" style={depth(cfg.overlayDepthHeadline)}>
         {item.title}
       </div>

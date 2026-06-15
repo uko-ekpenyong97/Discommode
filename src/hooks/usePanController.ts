@@ -11,10 +11,11 @@ import {
   subscribeConfig,
 } from '../config';
 import type { GridPos } from '../grid';
-import { focusScaleForDistance, mod } from '../grid';
+import { focusOpacityForDistance, focusScaleForDistance, mod } from '../grid';
 import { CONTENT_COUNT } from '../content';
 import { releaseVelocity, settleTauSeconds } from '../motion';
 import type { PointerSample } from '../motion';
+import type { FlipOrigin } from './useDetail';
 import { useTicker } from './useTicker';
 
 /** Once both axes are within this many cells of target, finish the snap. */
@@ -35,14 +36,30 @@ interface Tilt {
   ny: number;
 }
 
-/** A rendered card's facing wrapper + its eased rotation state. GridPlane fills
- *  in `dc/dr/el` per window; the ticker maintains `rx/ry` and writes the transform. */
+/** A rendered card's transform wrapper + its eased state. GridPlane fills in
+ *  `dc/dr/el` per window; the ticker maintains `rx/ry/op` and writes the
+ *  transform + opacity. `op` starts < 0 (uninitialised) so it snaps on first use. */
 export interface CardFace {
   dc: number;
   dr: number;
   el: HTMLElement;
   rx: number;
   ry: number;
+  op: number;
+}
+
+/** A window-relative cell offset from the centre slot. */
+export interface CellOffset {
+  dc: number;
+  dr: number;
+}
+
+/** A hit-tested card: its window offset, on-screen centre, and scaled size. */
+interface CardHit extends CellOffset {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
 }
 
 /** Continuous position plus the integer window centre it rounds to. Bundled in
@@ -62,8 +79,8 @@ export interface PanController {
   world: GridPos;
   /** True while a pointer drag gesture is in progress. */
   isDragging: boolean;
-  /** True when the focused card's hover overlay should be shown. */
-  overlayVisible: boolean;
+  /** The window cell currently showing its hover overlay (settled + hovered), or null. */
+  overlayCell: CellOffset | null;
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerMove: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;
@@ -76,23 +93,13 @@ export interface PanController {
   /** Glide the grid to the world cell with this content index nearest the
    *  current position (shortest euclidean travel). Used by the mini-map. */
   navigateToContent: (contentIndex: number) => void;
-  /** Glide the grid so a specific world cell is centred. */
-  navigateToCell: (col: number, row: number) => void;
 }
 
 interface PanOptions {
   /** When this returns true (e.g. detail view open), arrow keys are ignored. */
   isSuspended?: () => boolean;
-  /** A clean mouse click on a card: the tapped world cell + whether it's focused. */
-  onTap?: (col: number, row: number, focused: boolean) => void;
-}
-
-/** Whether a viewport point is over the focused card (centred when settled). */
-function isOverFocusedCard(x: number, y: number): boolean {
-  return (
-    Math.abs(x - window.innerWidth / 2) <= config.cardWidth / 2 &&
-    Math.abs(y - window.innerHeight / 2) <= cardHeight() / 2
-  );
+  /** A clean tap on a card: its world cell + the card's on-screen rect (FLIP origin). */
+  onTap?: (col: number, row: number, origin: FlipOrigin) => void;
 }
 
 const START: View = {
@@ -152,13 +159,13 @@ export function usePanController(options: PanOptions = {}): PanController {
   const cursorActiveRef = useRef(false);
   const cardFaceDirtyRef = useRef(false);
 
-  // Hover overlay on the focused card. overCard tracks the mouse; touchToggle is
-  // the tap state on touch. Visibility (settled + over/toggled) is computed in
-  // the ticker so every transition — drag, glide, settle, hover — is caught.
-  const [overlayVisible, setOverlayVisible] = useState(false);
-  const overlayVisibleRef = useRef(false);
-  const overCardRef = useRef(false);
-  const touchToggleRef = useRef(false);
+  // Hover overlay on ANY card: the card under the cursor, shown only when the
+  // grid is settled. The hovered cell is hit-tested each frame from the cursor +
+  // live position (so it tracks the grid sliding under a still cursor); the
+  // visible cell is published to React when it changes.
+  const [overlayCell, setOverlayCell] = useState<CellOffset | null>(null);
+  const overlayCellRef = useRef<CellOffset | null>(null);
+  const hoverCellRef = useRef<CardHit | null>(null);
 
   // Push the live position into React state only when it actually changed (so a
   // held-still finger or a settled plane stops re-rendering). The integer
@@ -205,6 +212,31 @@ export function usePanController(options: PanOptions = {}): PanController {
   // dial change while settled must re-run the loop once to take effect.
   useEffect(() => subscribeConfig(() => { cardFaceDirtyRef.current = true; }), []);
 
+  // Hit-test a viewport point to the card under it (or null if it lands in a
+  // gap). Returns the card's window offset, on-screen centre, and scaled size —
+  // used both for the hover overlay and for a tap's FLIP origin. Layout-based
+  // (ignores the small per-card facing tilt), which is plenty for both uses.
+  const cardHitAt = useCallback((px: number, py: number): CardHit | null => {
+    const spanX = cellSpanX();
+    const spanY = cellSpanY();
+    const hw = window.innerWidth / 2;
+    const hh = window.innerHeight / 2;
+    const fcol = posRef.current.col - viewRef.current.cc;
+    const frow = posRef.current.row - viewRef.current.cr;
+    const dc = Math.round(fcol + (px - hw) / spanX);
+    const dr = Math.round(frow + (py - hh) / spanY);
+    const cx = hw + (dc - fcol) * spanX;
+    const cy = hh + (dr - frow) * spanY;
+    const dist = Math.max(Math.abs(dc - fcol), Math.abs(dr - frow));
+    const scale = focusScaleForDistance(dist);
+    const w = config.cardWidth * scale;
+    const h = cardHeight() * scale;
+    if (Math.abs(px - cx) <= w / 2 && Math.abs(py - cy) <= h / 2) {
+      return { dc, dr, cx, cy, w, h };
+    }
+    return null;
+  }, []);
+
   useTicker((dt) => {
     if (draggingRef.current) {
       // Free 2D pan: follow the finger 1:1 on both axes at once (no axis lock),
@@ -239,6 +271,10 @@ export function usePanController(options: PanOptions = {}): PanController {
     }
 
     sync();
+
+    // Grid is "settled" when neither dragging nor gliding — the only time the
+    // hover overlay shows.
+    const settled = !draggingRef.current && !settlingRef.current;
 
     // Tilt + layered parallax — eased in this same loop, written straight to the
     // DOM. Only runs while the tilt is moving, so a still cursor does no work.
@@ -292,7 +328,17 @@ export function usePanController(options: PanOptions = {}): PanController {
       const strength = config.cardFaceStrength;
       const maxDeg = config.maxCardTiltDeg;
       const kc = 1 - Math.exp(-dt / (config.cardTiltLerpMs / 1000));
+      const kOp = 1 - Math.exp(-dt / (config.overlayFadeMs / 1000));
       let maxDelta = 0;
+      let opMoving = false;
+
+      // The card under the cursor (null in a gap); hit-tested each frame so it
+      // tracks the grid sliding beneath a still cursor. Drives the hover overlay
+      // (when settled) and the per-card opacity lift.
+      const hover = cursorActiveRef.current ? cardHitAt(px, py) : null;
+      hoverCellRef.current = hover;
+      const overlayActive = settled && hover !== null;
+      const liftOp = config.hoverLiftOpacity;
 
       for (const c of cards) {
         const dist = Math.max(Math.abs(c.dc - fcol), Math.abs(c.dr - frow));
@@ -305,34 +351,46 @@ export function usePanController(options: PanOptions = {}): PanController {
           targetY = clampDeg(Math.atan2(px - cx, depth) * RAD2DEG * strength, maxDeg);
           targetX = clampDeg(-Math.atan2(py - cy, depth) * RAD2DEG * strength, maxDeg);
         }
+        // Opacity: the focus-distance dimming, lifted toward `hoverLiftOpacity`
+        // while this card is the hovered (overlay) card so its overlay reads.
+        const isHover = overlayActive && hover.dc === c.dc && hover.dr === c.dr;
+        const baseOp = focusOpacityForDistance(dist);
+        const targetOp = isHover ? Math.max(baseOp, liftOp) : baseOp;
+
         maxDelta = Math.max(maxDelta, Math.abs(targetY - c.ry), Math.abs(targetX - c.rx));
-        // Per-frame eased rotation state, advanced imperatively in the rAF loop
-        // (not during render) — mutating the ticker-owned card is intentional.
+        if (Math.abs(targetOp - c.op) > 0.001) opMoving = true;
+        // Per-frame eased state, advanced imperatively in the rAF loop (not during
+        // render) — mutating the ticker-owned card is intentional.
         /* eslint-disable react-hooks/immutability */
         c.ry += (targetY - c.ry) * kc;
         c.rx += (targetX - c.rx) * kc;
+        c.op = c.op < 0 ? targetOp : c.op + (targetOp - c.op) * kOp;
         /* eslint-enable react-hooks/immutability */
         if (c.el) {
           c.el.style.transform = `scale(${scale}) rotateX(${c.rx}deg) rotateY(${c.ry}deg)`;
+          c.el.style.opacity = String(c.op);
         }
       }
 
-      // Stop once the rotation has reached rest and nothing is moving the grid
+      // Stop once rotation + opacity have reached rest and nothing moves the grid
       // (the scale is static while settled, so the last write holds it).
-      if (maxDelta < CARD_TILT_EPSILON && !draggingRef.current && !settlingRef.current) {
+      if (maxDelta < CARD_TILT_EPSILON && !opMoving && !draggingRef.current && !settlingRef.current) {
         cardFaceDirtyRef.current = false;
       }
     }
 
-    // Overlay shows only on the focused card, only when the grid is settled
-    // (not dragging, not gliding), while the mouse is over it or it has been
-    // tapped (touch). Computed here so every transition is caught on the frame
-    // it happens; setState fires only on an actual change.
-    const settled = !draggingRef.current && !settlingRef.current;
-    const wantOverlay = settled && (overCardRef.current || touchToggleRef.current);
-    if (wantOverlay !== overlayVisibleRef.current) {
-      overlayVisibleRef.current = wantOverlay;
-      setOverlayVisible(wantOverlay);
+    // Publish the hover-overlay cell: the hovered card when settled, else none.
+    // Computed every frame so drag/glide/settle/hover transitions are all caught;
+    // setState fires only on an actual change.
+    const hoverCell = hoverCellRef.current;
+    const wantCell = settled && hoverCell ? { dc: hoverCell.dc, dr: hoverCell.dr } : null;
+    const curCell = overlayCellRef.current;
+    const sameCell =
+      (!wantCell && !curCell) ||
+      (!!wantCell && !!curCell && wantCell.dc === curCell.dc && wantCell.dr === curCell.dr);
+    if (!sameCell) {
+      overlayCellRef.current = wantCell;
+      setOverlayCell(wantCell);
     }
   });
 
@@ -354,9 +412,9 @@ export function usePanController(options: PanOptions = {}): PanController {
     };
     samplesRef.current = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }];
     // The overlay vanishes the instant a drag begins (don't wait for the ticker).
-    if (overlayVisibleRef.current) {
-      overlayVisibleRef.current = false;
-      setOverlayVisible(false);
+    if (overlayCellRef.current) {
+      overlayCellRef.current = null;
+      setOverlayCell(null);
     }
     setIsDragging(true);
   }, []);
@@ -415,30 +473,24 @@ export function usePanController(options: PanOptions = {}): PanController {
       }
       samplesRef.current = [];
 
-      // Touch: a press that never crossed the dead zone is a tap, not a drag. A
-      // tap on the focused card toggles its overlay; a tap elsewhere (or any
-      // drag) clears it. (Mouse uses hover — overCardRef — instead.)
-      if (e.pointerType === 'touch') {
-        touchToggleRef.current =
-          !dragged && isOverFocusedCard(e.clientX, e.clientY)
-            ? !touchToggleRef.current
-            : false;
-      }
-
-      // Mouse click (no drag): report which cell was tapped so the app can open
-      // the detail view (focused card) or navigate the grid to it (others).
-      if (e.pointerType !== 'touch' && !dragged && !optionsRef.current.isSuspended?.()) {
-        const offCol = Math.round((e.clientX - window.innerWidth / 2) / cellSpanX());
-        const offRow = Math.round((e.clientY - window.innerHeight / 2) / cellSpanY());
-        const col = Math.round(posRef.current.col) + offCol;
-        const row = Math.round(posRef.current.row) + offRow;
-        optionsRef.current.onTap?.(col, row, offCol === 0 && offRow === 0);
+      // A clean tap (no drag, mouse or touch) on a card opens its detail view.
+      // The hit-test resolves the tapped slot to its world cell and on-screen
+      // rect, which becomes the FLIP origin. A tap in a gap does nothing.
+      if (!dragged && !optionsRef.current.isSuspended?.()) {
+        const hit = cardHitAt(e.clientX, e.clientY);
+        if (hit) {
+          optionsRef.current.onTap?.(
+            viewRef.current.cc + hit.dc,
+            viewRef.current.cr + hit.dr,
+            { cx: hit.cx, cy: hit.cy, w: hit.w, h: hit.h },
+          );
+        }
       }
 
       startSettle(targetCol, targetRow);
       setIsDragging(false);
     },
-    [startSettle],
+    [startSettle, cardHitAt],
   );
 
   // Glide to the world cell holding a given content index with the least
@@ -468,8 +520,6 @@ export function usePanController(options: PanOptions = {}): PanController {
     },
     [startSettle],
   );
-
-  const navigateToCell = useCallback((col: number, row: number) => startSettle(col, row), [startSettle]);
 
   // Keyboard: one cell per arrow press. Ignored mid-drag, but a press during a
   // glide retargets from the in-flight target (lands one cell past it). No clamp.
@@ -524,22 +574,21 @@ export function usePanController(options: PanOptions = {}): PanController {
 
     const onMove = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return;
-      // Hover detection drives the overlay even under reduced motion.
-      overCardRef.current = isOverFocusedCard(e.clientX, e.clientY);
       cursorRef.current = { x: e.clientX, y: e.clientY };
       cursorActiveRef.current = true;
+      // Re-run the card loop to re-hit-test the hover overlay + opacity lift,
+      // even under reduced motion (where the rotation stays flat).
+      cardFaceDirtyRef.current = true;
       if (reducedMotionRef.current) return;
       targetTiltRef.current = {
         nx: (e.clientX / window.innerWidth) * 2 - 1,
         ny: (e.clientY / window.innerHeight) * 2 - 1,
       };
       tiltDirtyRef.current = true;
-      cardFaceDirtyRef.current = true;
     };
     const onLeave = () => {
-      overCardRef.current = false;
       cursorActiveRef.current = false;
-      cardFaceDirtyRef.current = true; // ease all cards back to flat
+      cardFaceDirtyRef.current = true; // ease cards flat + clear the hover overlay
       if (reducedMotionRef.current) return;
       targetTiltRef.current = { nx: 0, ny: 0 };
       tiltDirtyRef.current = true;
@@ -561,7 +610,7 @@ export function usePanController(options: PanOptions = {}): PanController {
     position: { col: view.col, row: view.row },
     world: { col: view.cc, row: view.cr },
     isDragging,
-    overlayVisible,
+    overlayCell,
     onPointerDown,
     onPointerMove,
     onPointerUp,
@@ -569,6 +618,5 @@ export function usePanController(options: PanOptions = {}): PanController {
     cardsRef,
     markCardsChanged,
     navigateToContent,
-    navigateToCell,
   };
 }

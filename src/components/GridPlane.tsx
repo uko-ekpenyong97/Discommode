@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
 import { CARD_ASPECT_H, CARD_ASPECT_W, PERSPECTIVE, useConfig } from '../config';
-import { brightnessForDistance, focusOpacityForDistance } from '../grid';
+import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
 import { CONTENT, contentIndex } from '../content';
 import type { PosterItem } from '../content';
-import type { CardFace } from '../hooks/usePanController';
+import type { CardFace, CellOffset } from '../hooks/usePanController';
+import type { FlipOrigin } from '../hooks/useDetail';
 import { CardOverlay } from './CardOverlay';
 import './GridPlane.css';
 
@@ -37,10 +38,10 @@ interface GridPlaneProps {
   cardsRef: RefObject<CardFace[]>;
   /** Notify the controller after (re)collecting faces so it re-applies them. */
   markCardsChanged: () => void;
-  /** Whether the focused card's hover overlay is shown. */
-  overlayVisible: boolean;
-  /** Open the detail view for a content index (overlay CTA). */
-  onOpenDetail: (contentIndex: number) => void;
+  /** The window cell currently showing its hover overlay (null = none). */
+  overlayCell: CellOffset | null;
+  /** Open the detail view for a content index (overlay CTA), from the card rect. */
+  onOpenDetail: (contentIndex: number, origin: FlipOrigin | null) => void;
 }
 
 interface Slot {
@@ -76,7 +77,7 @@ export function GridPlane({
   tiltRef,
   cardsRef,
   markCardsChanged,
-  overlayVisible,
+  overlayCell,
   onOpenDetail,
 }: GridPlaneProps) {
   const cfg = useConfig();
@@ -124,22 +125,21 @@ export function GridPlane({
   const tx = -fracCol * (cardW + gap);
   const ty = -fracRow * (cardH + gap);
 
-  // The focused (centre) card backs the overlay; it is dimmed while it shows.
-  const focusedItem = CONTENT[contentIndex(world.col, world.row)];
-
-  // Collect the card-face wrappers for the controller's per-card rotation. The
-  // faces are stable across window shifts (keyed by offset), so we re-collect
-  // only when the window size (ring) changes — e.g. a resize or card-size dial.
+  // Collect the per-card transform wrappers for the controller's imperative
+  // scale/rotation/opacity. They are stable across window shifts (keyed by
+  // offset), so we re-collect only when the window size (ring) changes — e.g. a
+  // resize or card-size dial. `op: -1` flags the opacity as uninitialised so the
+  // ticker snaps it to the correct value on the first frame (no fade-in).
   const gridRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const grid = gridRef.current;
     if (!grid) return;
-    const faces = grid.querySelectorAll<HTMLElement>('.grid-card__face');
+    const faces = grid.querySelectorAll<HTMLElement>('.grid-card__transform');
     cardsRef.current = Array.from(faces, (el) => {
       el.style.transform = ''; // start flat; the ticker re-faces on next frame
-      return { dc: Number(el.dataset.dc), dr: Number(el.dataset.dr), el, rx: 0, ry: 0 };
+      return { dc: Number(el.dataset.dc), dr: Number(el.dataset.dr), el, rx: 0, ry: 0, op: -1 };
     });
-    markCardsChanged(); // apply the focus scale even on a settled grid
+    markCardsChanged(); // apply the focus scale/opacity even on a settled grid
   }, [ring, cardsRef, markCardsChanged]);
 
   return (
@@ -164,44 +164,47 @@ export function GridPlane({
           {slots.map((s) => {
             const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
             const isFocused = s.dc === 0 && s.dr === 0;
-            const brightness =
-              brightnessForDistance(distance) * (isFocused && overlayVisible ? cfg.overlayCardDim : 1);
+            const isOverlay = !!overlayCell && overlayCell.dc === s.dc && overlayCell.dr === s.dr;
+            // The hovered card dims slightly so its white overlay type reads.
+            const brightness = brightnessForDistance(distance) * (isOverlay ? cfg.overlayCardDim : 1);
             return (
-              // Outer cell carries layout + per-card perspective; the inner face
-              // carries the hue/image/brightness and the cursor-facing rotation
-              // (written imperatively), so rotation, layout, and filter don't fight.
+              // Outer cell: layout slot + per-card perspective. The transform
+              // wrapper carries the imperatively-written scale/rotation/opacity
+              // (so they don't fight layout); the inner face carries the
+              // hue/image + brightness; the overlay (when hovered) is a sibling of
+              // the face inside the wrapper, so it inherits the card's transform
+              // but NOT its brightness filter.
               <div
                 key={`${s.dc}|${s.dr}`}
                 className="grid-card"
-                // Focused card scales up and overlaps its neighbours, so paint it on top.
-                style={{ width: `${cardW}px`, height: `${cardH}px`, zIndex: isFocused ? 2 : 1 }}
+                // The focused card overlaps neighbours; the hovered card sits on top of all.
+                style={{ width: `${cardW}px`, height: `${cardH}px`, zIndex: isOverlay ? 3 : isFocused ? 2 : 1 }}
               >
-                <div
-                  className="grid-card__face"
-                  data-dc={s.dc}
-                  data-dr={s.dr}
-                  style={{
-                    backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
-                    filter: `brightness(${brightness})`,
-                    opacity: focusOpacityForDistance(distance),
-                  }}
-                >
-                  {s.item.image && (
-                    <img
-                      className="grid-card__img"
-                      src={s.item.image}
-                      alt=""
-                      draggable={false}
-                      loading={s.eager ? 'eager' : 'lazy'}
-                    />
-                  )}
-                  <span className="grid-card__index">{s.item.title}</span>
+                <div className="grid-card__transform" data-dc={s.dc} data-dr={s.dr}>
+                  <div
+                    className="grid-card__face"
+                    style={{
+                      backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
+                      filter: `brightness(${brightness})`,
+                    }}
+                  >
+                    {s.item.image && (
+                      <img
+                        className="grid-card__img"
+                        src={s.item.image}
+                        alt=""
+                        draggable={false}
+                        loading={s.eager ? 'eager' : 'lazy'}
+                      />
+                    )}
+                    <span className="grid-card__index">{s.item.title}</span>
+                  </div>
+                  {isOverlay && <CardOverlay item={s.item} onOpen={onOpenDetail} />}
                 </div>
               </div>
             );
           })}
         </div>
-        {overlayVisible && <CardOverlay item={focusedItem} onOpen={onOpenDetail} />}
       </div>
     </div>
   );
