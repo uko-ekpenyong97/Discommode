@@ -91,6 +91,7 @@ export function useDetail(onExitFocus: (index: number) => void): DetailControlle
 
   const open = useCallback((index: number, from: FlipOrigin | null = null) => {
     if (modeRef.current !== 'grid') return;
+    modeRef.current = 'detail'; // synchronously block a duplicate open in the same tick
     pushDetail(index);
     clearTimeout(exitTimer.current);
     setOrigin(from);

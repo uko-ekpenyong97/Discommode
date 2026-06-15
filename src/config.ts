@@ -52,6 +52,9 @@ export interface LiveConfig {
   maxFlickCells: number;
   velocityWindowMs: number;
   settleTauPerCell: number;
+  // GRID
+  /** Cap (ms) on the click-to-centre glide before a card opens its detail (Phase 14). */
+  clickCenterMaxMs: number;
   // DEPTH — global plane tilt (Phase 5)
   maxTiltDeg: number;
   parallaxShiftPx: number;
@@ -93,15 +96,17 @@ export interface LiveConfig {
   hoverLiftOpacity: number;
   /** Mini-map: number of items shown on each side of the current item. */
   miniMapSpan: number;
-  // DETAIL — grid ↔ detail transition + in-detail slide (Phase 10) + sizing (13)
+  // DETAIL — grid ↔ detail transition + in-detail slide (Phase 10) + 3-card layout (13/14)
   /** Grid ↔ detail expand/collapse duration, in ms. */
   detailTransitionMs: number;
   /** Centre detail card height as a fraction of viewport height (3:4 preserved). */
   detailCardScale: number;
-  /** Horizontal space (px) between the centre detail card and each side card. */
+  /** Side detail card size as a fraction of the centre card (the 3-up look). */
+  detailSideScale: number;
+  /** Side detail cards' resting opacity (distinct from the hover-isolate dim). */
+  detailSideOpacity: number;
+  /** Horizontal gap (px) between adjacent detail cards. */
   detailGap: number;
-  /** How much of the neighbouring detail panels peek at the edges, in px. */
-  detailPeekPx: number;
   /** Non-hovered detail panels dim to this while another is hovered. */
   detailHoverDim: number;
   /** Opacity of the bottom scrim behind the detail text (0 = none). */
@@ -141,6 +146,7 @@ export const DEFAULTS: LiveConfig = {
   maxFlickCells: 4,
   velocityWindowMs: 120,
   settleTauPerCell: 0.15,
+  clickCenterMaxMs: 500,
   // Global plane tilt reduced to 2° so the per-card facing leads (Phase 8).
   maxTiltDeg: 2,
   parallaxShiftPx: 12,
@@ -165,8 +171,9 @@ export const DEFAULTS: LiveConfig = {
   miniMapSpan: 3,
   detailTransitionMs: 450,
   detailCardScale: 0.82,
-  detailGap: 48,
-  detailPeekPx: 56,
+  detailSideScale: 0.85,
+  detailSideOpacity: 0.85,
+  detailGap: 40,
   detailHoverDim: 0.45,
   detailScrimOpacity: 0.2,
   detailSlideMs: 420,

@@ -21,6 +21,10 @@ import { useTicker } from './useTicker';
 /** Once both axes are within this many cells of target, finish the snap. */
 const SNAP_EPSILON = 0.0008;
 
+/** Time constants to reach SNAP_EPSILON — so the click-centre cap bounds the
+ *  real (wall-clock) settle, not a looser 1% one. */
+const SNAP_DECAY = Math.log(1 / SNAP_EPSILON);
+
 /** "Settled" threshold for the tilt ease (its time constant is config.tiltLerpMs). */
 const TILT_EPSILON = 0.0005;
 
@@ -93,6 +97,8 @@ export interface PanController {
   /** Glide the grid to the world cell with this content index nearest the
    *  current position (shortest euclidean travel). Used by the mini-map. */
   navigateToContent: (contentIndex: number) => void;
+  /** Open the detail view for a window cell: glide it to centre (if needed), then FLIP. */
+  requestCardOpen: (dc: number, dr: number) => void;
 }
 
 interface PanOptions {
@@ -136,6 +142,10 @@ export function usePanController(options: PanOptions = {}): PanController {
   const draggingRef = useRef(false);
   const draggedRef = useRef(false); // crossed the dead zone (a real drag, not a tap)
   const settlingRef = useRef(false);
+  // Phase 14: a card tap glides the card to centre, THEN opens detail. While a
+  // glide-to-open is pending, input is locked and the ticker fires the open the
+  // instant the glide settles.
+  const pendingOpenRef = useRef<GridPos | null>(null);
   const pointerRef = useRef({ x: 0, y: 0 });
   const originRef = useRef({ pointer: { x: 0, y: 0 }, pos: { col: START.col, row: START.row } });
   const samplesRef = useRef<PointerSample[]>([]);
@@ -184,10 +194,13 @@ export function usePanController(options: PanOptions = {}): PanController {
   // Begin (or retarget) an exponential glide to an integer cell. Both axes share
   // one settle (one tau), so a diagonal glide is one eased 2D motion that lands
   // on both axes together. The settle time scales with the euclidean distance.
-  const startSettle = useCallback((col: number, row: number) => {
+  const startSettle = useCallback((col: number, row: number, maxMs?: number) => {
     targetRef.current = { col, row };
     const travel = Math.hypot(col - posRef.current.col, row - posRef.current.row);
-    settleTauRef.current = settleTauSeconds(travel);
+    let tau = settleTauSeconds(travel);
+    // Cap the settle so a far click-to-centre glide stays snappy (≈ maxMs total).
+    if (maxMs) tau = Math.min(tau, maxMs / 1000 / SNAP_DECAY);
+    settleTauRef.current = tau;
     settlingRef.current = true;
   }, []);
 
@@ -237,6 +250,42 @@ export function usePanController(options: PanOptions = {}): PanController {
     return null;
   }, []);
 
+  // The FLIP origin for the centred (focused) card — where a card lands after the
+  // click-to-centre glide, so the detail expands from the viewport centre.
+  const centeredCardOrigin = useCallback(
+    (): FlipOrigin => ({
+      cx: window.innerWidth / 2,
+      cy: window.innerHeight / 2,
+      w: config.cardWidth * config.focusScale,
+      h: cardHeight() * config.focusScale,
+    }),
+    [],
+  );
+
+  // Open a card's detail (Phase 14 sequence): if the card is already centred,
+  // FLIP immediately; otherwise glide it to centre (snappy, capped) and mark the
+  // open pending — the ticker fires it the instant the glide settles. Ignored
+  // while another open is already pending or the detail is open (input lock).
+  const requestCardOpen = useCallback(
+    (dc: number, dr: number) => {
+      if (pendingOpenRef.current || optionsRef.current.isSuspended?.()) return;
+      const col = viewRef.current.cc + dc;
+      const row = viewRef.current.cr + dr;
+      const atRest =
+        Math.abs(posRef.current.col - Math.round(posRef.current.col)) < 0.01 &&
+        Math.abs(posRef.current.row - Math.round(posRef.current.row)) < 0.01;
+      const centered =
+        atRest && col === Math.round(posRef.current.col) && row === Math.round(posRef.current.row);
+      if (centered) {
+        optionsRef.current.onTap?.(col, row, centeredCardOrigin());
+      } else {
+        pendingOpenRef.current = { col, row };
+        startSettle(col, row, config.clickCenterMaxMs);
+      }
+    },
+    [startSettle, centeredCardOrigin],
+  );
+
   useTicker((dt) => {
     if (draggingRef.current) {
       // Free 2D pan: follow the finger 1:1 on both axes at once (no axis lock),
@@ -275,6 +324,14 @@ export function usePanController(options: PanOptions = {}): PanController {
     // Grid is "settled" when neither dragging nor gliding — the only time the
     // hover overlay shows.
     const settled = !draggingRef.current && !settlingRef.current;
+
+    // Phase 14: a click-to-centre glide has just settled → chain into the detail
+    // FLIP (begin it as the glide lands, so it reads as one continuous motion).
+    if (pendingOpenRef.current && settled) {
+      const { col, row } = pendingOpenRef.current;
+      pendingOpenRef.current = null;
+      optionsRef.current.onTap?.(col, row, centeredCardOrigin());
+    }
 
     // Tilt + layered parallax — eased in this same loop, written straight to the
     // DOM. Only runs while the tilt is moving, so a still cursor does no work.
@@ -395,6 +452,8 @@ export function usePanController(options: PanOptions = {}): PanController {
   });
 
   const onPointerDown = useCallback((e: ReactPointerEvent) => {
+    // Input is locked while a click-to-centre glide+open is in flight.
+    if (pendingOpenRef.current) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -473,24 +532,21 @@ export function usePanController(options: PanOptions = {}): PanController {
       }
       samplesRef.current = [];
 
-      // A clean tap (no drag, mouse or touch) on a card opens its detail view.
-      // The hit-test resolves the tapped slot to its world cell and on-screen
-      // rect, which becomes the FLIP origin. A tap in a gap does nothing.
+      // A clean tap (no drag, mouse or touch) on a card opens its detail view:
+      // glide it to centre, then FLIP (Phase 14). A tap in a gap just snaps.
       if (!dragged && !optionsRef.current.isSuspended?.()) {
         const hit = cardHitAt(e.clientX, e.clientY);
         if (hit) {
-          optionsRef.current.onTap?.(
-            viewRef.current.cc + hit.dc,
-            viewRef.current.cr + hit.dr,
-            { cx: hit.cx, cy: hit.cy, w: hit.w, h: hit.h },
-          );
+          requestCardOpen(hit.dc, hit.dr);
+          setIsDragging(false);
+          return;
         }
       }
 
       startSettle(targetCol, targetRow);
       setIsDragging(false);
     },
-    [startSettle, cardHitAt],
+    [startSettle, cardHitAt, requestCardOpen],
   );
 
   // Glide to the world cell holding a given content index with the least
@@ -525,7 +581,16 @@ export function usePanController(options: PanOptions = {}): PanController {
   // glide retargets from the in-flight target (lands one cell past it). No clamp.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (draggingRef.current || optionsRef.current.isSuspended?.()) return;
+      if (draggingRef.current || pendingOpenRef.current || optionsRef.current.isSuspended?.()) return;
+      // Enter opens the focused (centred) card — unless a focusable control (e.g.
+      // a card's CTA) has focus and should handle Enter itself.
+      if (e.key === 'Enter') {
+        const ae = document.activeElement;
+        if (ae && /^(BUTTON|SELECT|INPUT|TEXTAREA|A)$/.test(ae.tagName)) return;
+        e.preventDefault();
+        requestCardOpen(0, 0);
+        return;
+      }
       let dCol = 0;
       let dRow = 0;
       switch (e.key) {
@@ -552,7 +617,7 @@ export function usePanController(options: PanOptions = {}): PanController {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [startSettle]);
+  }, [startSettle, requestCardOpen]);
 
   // Cursor tracking: the global plane tilt and the per-card facing rotation both
   // follow the pointer over the whole viewport (independent of dragging),
@@ -618,5 +683,6 @@ export function usePanController(options: PanOptions = {}): PanController {
     cardsRef,
     markCardsChanged,
     navigateToContent,
+    requestCardOpen,
   };
 }

@@ -46,8 +46,9 @@
 .detail__panel {
   position: absolute;
   top: 44%;
+  /* transform (translate + per-panel scale), opacity, and z-index are written
+     imperatively by the ticker; left / width / height come inline. */
   transform: translate(-50%, -50%);
-  /* left / width / height / opacity supplied inline */
   margin: 0;
   padding: 0;
   border: 0;
@@ -56,9 +57,7 @@
   overflow: hidden;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
   cursor: pointer;
-  transition:
-    opacity var(--detail-hover-ms, 180ms) ease,
-    box-shadow 240ms ease;
+  transition: box-shadow 240ms ease;
 }
 
 .detail__panel--center {

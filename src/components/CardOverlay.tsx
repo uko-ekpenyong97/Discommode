@@ -1,13 +1,12 @@
 import type { CSSProperties, MouseEvent } from 'react';
 import { useConfig } from '../config';
 import type { PosterItem } from '../content';
-import type { FlipOrigin } from '../hooks/useDetail';
 import './CardOverlay.css';
 
 interface CardOverlayProps {
   item: PosterItem;
-  /** Open the detail view for this item (CTA click), from the card's rect. */
-  onOpen: (contentIndex: number, origin: FlipOrigin | null) => void;
+  /** Open this card's detail (CTA click) — same glide-to-centre-then-FLIP path. */
+  onOpen: () => void;
 }
 
 /**
@@ -33,13 +32,7 @@ export function CardOverlay({ item, onOpen }: CardOverlayProps) {
       [{ transform: 'scale(1)' }, { transform: 'scale(0.9)' }, { transform: 'scale(1)' }],
       { duration: 220, easing: 'ease-out' },
     );
-    // FLIP from this card's actual rect (the overlay's `.grid-card` ancestor).
-    const card = e.currentTarget.closest('.grid-card');
-    const r = card?.getBoundingClientRect();
-    const origin: FlipOrigin | null = r
-      ? { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height }
-      : null;
-    onOpen(item.id, origin);
+    onOpen();
   };
 
   const depth = (factor: number) => ({ '--depth-k': factor - 1 }) as CSSProperties;

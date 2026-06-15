@@ -43,16 +43,20 @@ export function DetailView({ detail }: DetailViewProps) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Hover-to-isolate: the panel under the cursor stays full, the rest dim.
-  const [hoveredPanel, setHoveredPanel] = useState<number | null>(null);
+  // Hover-to-isolate: the panel under the cursor stays full, the rest dim. Held
+  // in a ref (read by the ticker), so hovering doesn't re-render.
+  const hoveredRef = useRef<number | null>(null);
+  // Per-panel eased opacity, keyed by element (survives slides; React reuses
+  // panel DOM by key, so a continuing panel keeps its eased value).
+  const opByEl = useRef(new WeakMap<Element, number>()).current;
 
-  // Hero panel geometry (large centre card, side cards peeking).
+  // True 3-card geometry: large centre card, side cards at detailSideScale.
   const { panelW, panelH, panelStep } = computeDetailLayout(
     viewport.w,
     viewport.h,
     config.detailCardScale,
+    config.detailSideScale,
     config.detailGap,
-    config.detailPeekPx,
   );
 
   // FLIP transform: ENTER expands from the clicked card's actual rect; EXIT (and
@@ -92,9 +96,35 @@ export function DetailView({ detail }: DetailViewProps) {
     let pos = posRef.current + (target - posRef.current) * k;
     if (Math.abs(target - pos) < 0.0005) pos = target;
     posRef.current = pos;
-    if (trackRef.current) {
-      trackRef.current.style.transform = `translateX(${viewport.w / 2 - pos * panelStep}px)`;
+
+    const track = trackRef.current;
+    if (track) {
+      track.style.transform = `translateX(${viewport.w / 2 - pos * panelStep}px)`;
+
+      // Per-panel: continuous scale (centre = 1 → side = detailSideScale) and
+      // opacity (resting fade to detailSideOpacity, or the hover-isolate state),
+      // driven by the continuous distance from centre so the slide interpolates
+      // smoothly with no size/opacity pop at the crossover.
+      const sideScale = config.detailSideScale;
+      const sideOp = config.detailSideOpacity;
+      const hoverDim = config.detailHoverDim;
+      const hov = hoveredRef.current;
+      const kOp = 1 - Math.exp(-dt / (config.overlayFadeMs / 1000));
+      track.querySelectorAll<HTMLElement>('.detail__panel').forEach((el) => {
+        const i = Number(el.dataset.i);
+        const d = Math.min(Math.abs(i - pos), 1);
+        const scale = 1 + (sideScale - 1) * d;
+        const restOp = 1 + (sideOp - 1) * d;
+        const targetOp = hov === null ? restOp : i === hov ? 1 : hoverDim;
+        const prev = opByEl.get(el);
+        const op = prev === undefined ? targetOp : prev + (targetOp - prev) * kOp;
+        opByEl.set(el, op);
+        el.style.transform = `translate(-50%, -50%) scale(${scale})`;
+        el.style.opacity = String(op);
+        el.style.zIndex = String(Math.round(100 - Math.abs(i - pos) * 10));
+      });
     }
+
     const c = Math.round(pos);
     if (c !== centerRef.current) {
       centerRef.current = c;
@@ -159,7 +189,6 @@ export function DetailView({ detail }: DetailViewProps) {
           '--enter-ty': `${enterTy}px`,
           '--detail-ms': `${config.detailTransitionMs}ms`,
           '--detail-scrim': config.detailScrimOpacity,
-          '--detail-hover-ms': `${config.overlayFadeMs}ms`,
           transformOrigin: `${centerCx}px ${centerCy}px`,
         } as CSSProperties
       }
@@ -171,22 +200,22 @@ export function DetailView({ detail }: DetailViewProps) {
           const distance = Math.abs(p.i - center);
           const isCenter = distance === 0;
           const item = CONTENT[p.idx];
-          // Default: all panels full. Hovering one isolates it (others dim).
-          const opacity = hoveredPanel === null ? 1 : p.i === hoveredPanel ? 1 : config.detailHoverDim;
+          // Size, opacity, and z-index are written imperatively by the ticker
+          // (continuous in the slide position); base size is the centre size.
           return (
             <button
               key={p.i}
               type="button"
+              data-i={p.i}
               className={isCenter ? 'detail__panel detail__panel--center' : 'detail__panel'}
               style={{
                 left: `${p.i * panelStep}px`,
                 width: `${panelW}px`,
                 height: `${panelH}px`,
-                opacity,
               }}
               onClick={() => !isCenter && goto(p.idx)}
-              onPointerEnter={(e) => e.pointerType !== 'touch' && setHoveredPanel(p.i)}
-              onPointerLeave={(e) => e.pointerType !== 'touch' && setHoveredPanel(null)}
+              onPointerEnter={(e) => e.pointerType !== 'touch' && (hoveredRef.current = p.i)}
+              onPointerLeave={(e) => e.pointerType !== 'touch' && (hoveredRef.current = null)}
               tabIndex={isCenter ? -1 : 0}
               aria-label={isCenter ? undefined : `Go to item ${item.title}`}
               aria-hidden={isCenter ? true : undefined}

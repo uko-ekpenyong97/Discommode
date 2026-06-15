@@ -187,29 +187,39 @@ the back button. Every item view pushes a history entry, so back/forward walk th
 visited sequence. On exit the grid re-centres on the item just viewed (the
 Phase 9 shortest-path glide).
 
-The layout is a **hero carousel** ([`src/detailLayout.ts`](src/detailLayout.ts),
-pure + unit-tested): the centre card is large — `detailCardScale` of the viewport
-height (3:4 preserved, capped so it never overflows) — with the previous/next
-cards just **peeking** by `detailPeekPx` at the edges; `detailGap` is the minimum
-gap between centre and side cards and shrinks the card gracefully on narrow
-viewports. The backdrop is **transparent**, so the same global `SkyLayer`
-(weather colour field) shows through behind the panels — only a low bottom scrim
-(`detailScrimOpacity`) sits behind the text for legibility; the card panels stay
-opaque. Hovering one panel **isolates** it (it stays full; the others dim to
-`detailHoverDim`, eased with the overlay-fade feel); leaving restores all to full
-(touch has no hover). A bar holds Prev / a title dropdown / Next; Prev/Next, arrow
-keys, horizontal swipes, the dropdown, side-panel clicks, and the (persistent)
-mini-map all change the active item, wrapping the `content.ts` order. The strip
-**slides** between items with the grid's exponential-settle feel — a continuous
-position eased in an rAF loop toward a carousel target that accumulates signed
-steps, so it slides the short way and fast Prev/Next presses retarget cleanly.
-
-Grid↔detail is an approximate **FLIP from the clicked card**: the detail expands
-from the card's actual on-screen rect (its scale + translate, `transform-origin`
-the centre panel) into the centre panel while the grid cross-fades
-(`detailTransitionMs`, transform+opacity only; input locked mid-transition;
-deep-link / back have no origin and use a centred scale). `prefers-reduced-motion`
+**Entry — centre, then expand (Phase 14).** Clicking a card first **glides it to
+the centre** of the grid (the existing snap glide, capped snappy by
+`clickCenterMaxMs`), and the instant that glide settles, runs the grid→detail
+FLIP from the now-centred card — chained so it reads as one continuous motion
+(rather than a teleport-scale from an off-centre position), communicating that
+the grid is traversable. Clicking the already-centred card skips the glide and
+FLIPs immediately; Enter on the focused card does the same. The CTA follows the
+identical path. During the glide+transition input is locked, so rapid clicks
+can't double-open. The FLIP itself expands from the (centred) card's rect into
+the centre panel while the grid cross-fades (`detailTransitionMs`, transform +
+opacity only; deep-link / back use a centred scale). `prefers-reduced-motion`
 cuts it to a plain fade.
+
+**Layout — a true 3-card view** ([`src/detailLayout.ts`](src/detailLayout.ts),
+pure + unit-tested): the active card sits large in the middle —
+`detailCardScale` of the viewport height (3:4 preserved, capped) — flanked by the
+previous/next cards at `detailSideScale` of the centre (default 0.85, clearly
+readable, not edge slivers), separated by `detailGap`, all centred as a group.
+Every panel renders at the centre size and is scaled down to `detailSideScale`
+for the sides **imperatively per frame** from the continuous slide position, so
+the slide interpolates the scale/opacity smoothly with no pop at the crossover;
+side cards rest at `detailSideOpacity`. The backdrop is **transparent**, so the
+same global `SkyLayer` (weather colour field) shows through behind the panels —
+only a low bottom scrim (`detailScrimOpacity`) sits behind the text for
+legibility; the card panels stay opaque. Hovering one of the three **isolates**
+it (it stays full; the others dim to `detailHoverDim`, eased) — composing with the
+resting `detailSideOpacity`; leaving restores all (touch has no hover). A bar
+holds Prev / a title dropdown / Next; Prev/Next, arrow keys, horizontal swipes,
+the dropdown, side-panel clicks, and the (persistent) mini-map all change the
+active item, wrapping the `content.ts` order. The group **slides** one card-width
+between items with the grid's exponential-settle feel — a continuous position
+eased in an rAF loop toward a carousel target that accumulates signed steps, so it
+slides the short way and fast Prev/Next presses retarget cleanly.
 
 ## Environment data layer
 
@@ -301,7 +311,7 @@ The feel and layout values are a small **reactive store**:
 loop and handlers read directly each frame, plus `useConfig()` for components to
 subscribe and re-render. In development a **DialKit** panel
 ([`src/dev/Dials.tsx`](src/dev/Dials.tsx)) wires those values to live sliders,
-grouped MOTION / DEPTH / LAYOUT / FOCUS / DETAIL / SKY / OVERLAY, and pushes changes through `setConfig`
+grouped MOTION / GRID / DEPTH / LAYOUT / FOCUS / DETAIL / SKY / OVERLAY, and pushes changes through `setConfig`
 so they propagate without a reload. It is loaded behind an `import.meta.env.DEV`
 dynamic import, so **neither the panel nor the `dialkit` dependency is in the
 production bundle** (Rollup drops the dead branch); production uses the `DEFAULTS`.
@@ -312,10 +322,11 @@ The DEPTH group includes the per-card facing dials (`cursorDepthPx`,
 `cardFaceStrength`, `maxCardTiltDeg`, `cardTiltLerpMs`) alongside the global tilt;
 both are independently dialable. The FOCUS group dials the focus emphasis
 (`focusScale`, `unfocusedOpacity`, `farOpacity`) plus `hoverLiftOpacity` (the
-hovered card's opacity lift). The DETAIL group dials the hero carousel
-(`detailCardScale`, `detailGap`, `detailPeekPx`), the hover-isolate dim
-(`detailHoverDim`), the sky scrim (`detailScrimOpacity`), and the transition /
-slide times.
+hovered card's opacity lift). The GRID group dials `clickCenterMaxMs` (the
+click-to-centre glide cap). The DETAIL group dials the 3-card layout
+(`detailCardScale`, `detailSideScale`, `detailSideOpacity`, `detailGap`), the
+hover-isolate dim (`detailHoverDim`), the sky scrim (`detailScrimOpacity`), and
+the transition / slide times.
 
 Retuning **layout** live is handled end-to-end: changing `cardWidth`/`gap`
 recomputes the cell span used by pan/flick math, re-derives the slot-window size
@@ -335,7 +346,7 @@ src/
   grid.ts                    # pure grid math (modulo, brightness, focus scale/opacity)
   content.ts                 # poster manifest (PosterItem) + cell → item wrap
   motion.ts                  # pure momentum math (velocity window, flick target, settle)
-  detailLayout.ts            # pure detail hero-carousel geometry (unit-tested)
+  detailLayout.ts            # pure detail 3-card geometry (unit-tested)
   App.tsx                    # owns the controller, composes the layers (+ dev panel)
   main.tsx                   # React entry point
   index.css                  # global reset + viewport lock

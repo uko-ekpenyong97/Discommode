@@ -59,11 +59,6 @@ export default function App() {
     openRef.current = detail.open;
   });
 
-  const onOpenDetail = useCallback(
-    (index: number, origin: FlipOrigin | null) => openRef.current(index, origin),
-    [],
-  );
-
   const inDetail = detail.mode === 'detail';
   // Grid is visible in grid mode, and again while the detail is exiting (so they
   // cross-fade). It only accepts input in grid mode (input ignored mid-transition).
@@ -101,7 +96,7 @@ export default function App() {
           cardsRef={pan.cardsRef}
           markCardsChanged={pan.markCardsChanged}
           overlayCell={inDetail ? null : pan.overlayCell}
-          onOpenDetail={onOpenDetail}
+          onRequestOpen={pan.requestCardOpen}
         />
         <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
       </div>

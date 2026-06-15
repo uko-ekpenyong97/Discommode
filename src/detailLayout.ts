@@ -1,17 +1,21 @@
 /**
- * Pure geometry for the detail view's hero carousel (Phase 13). Kept free of
- * React so it can be unit-tested.
+ * Pure geometry for the detail view's true 3-card layout (Phase 14). Kept free
+ * of React so it can be unit-tested.
  *
- * The centre card is a large hero (its height is `cardScale` of the viewport
- * height, 3:4 preserved); the side cards peek by `peek` px at the viewport
- * edges. `gap` is the minimum horizontal space between the centre card and a
- * side card: when the viewport is too narrow to fit `card + gap + peek` on each
- * side, the card is shrunk gracefully so the gap is preserved.
+ * Three cards share the stage as a centred group: the active card in the middle
+ * (largest, height `cardScale` of the viewport height, 3:4 preserved), flanked
+ * by the previous/next cards at `sideScale` of the centre, separated by `gap`.
+ * Every panel is rendered at the CENTRE size and scaled down to `sideScale` for
+ * the sides (so the slide can interpolate the scale continuously); `panelStep`
+ * is the centre-to-centre spacing that yields exactly `gap` between a centre and
+ * a side card's edges. Side cards may extend partly off-screen — that's fine.
+ *
+ * On a narrow viewport the centre card is shrunk so it never overflows width.
  */
 import { CARD_ASPECT_H, CARD_ASPECT_W } from './config';
 
 export interface DetailLayout {
-  /** Centre/side panel size in px (all panels share it). */
+  /** Centre (full-size) panel dimensions in px — the base size every panel renders at. */
   panelW: number;
   panelH: number;
   /** Centre-to-centre spacing between adjacent panels in the strip. */
@@ -22,22 +26,22 @@ export function computeDetailLayout(
   vw: number,
   vh: number,
   cardScale: number,
+  sideScale: number,
   gap: number,
-  peek: number,
 ): DetailLayout {
-  // Hero height from the scale, capped so it never exceeds the viewport.
+  // Centre height from the scale, capped so it never exceeds the viewport.
   let panelH = Math.min(vh * cardScale, vh * 0.96);
   let panelW = (panelH * CARD_ASPECT_W) / CARD_ASPECT_H;
 
-  // Keep a `gap + peek` margin on each side; if the card is too wide for the
-  // viewport, shrink it (graceful narrow-viewport handling).
-  const maxW = Math.max(120, vw - 2 * (gap + peek));
+  // Narrow viewport: keep the centre card within the width (graceful shrink).
+  const maxW = Math.max(120, vw * 0.9);
   if (panelW > maxW) {
     panelW = maxW;
     panelH = (panelW * CARD_ASPECT_H) / CARD_ASPECT_W;
   }
 
-  // Side cards sit so exactly `peek` of each shows at the viewport edge.
-  const panelStep = vw / 2 + panelW / 2 - peek;
+  // Spacing so a centre↔side edge gap equals `gap` (side rendered at sideScale).
+  const sideW = panelW * sideScale;
+  const panelStep = panelW / 2 + gap + sideW / 2;
   return { panelW, panelH, panelStep };
 }

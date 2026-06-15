@@ -73,6 +73,10 @@ function Dials() {
     settleTauPerCell: [start.settleTauPerCell, 0, 0.5],
   });
 
+  const grid = useDialKit('GRID', {
+    clickCenterMaxMs: [start.clickCenterMaxMs, 150, 1200],
+  });
+
   const depth = useDialKit('DEPTH', {
     maxTiltDeg: [start.maxTiltDeg, 0, 12],
     parallaxShiftPx: [start.parallaxShiftPx, 0, 40],
@@ -102,8 +106,9 @@ function Dials() {
   const detail = useDialKit('DETAIL', {
     detailTransitionMs: [start.detailTransitionMs, 150, 900],
     detailCardScale: [start.detailCardScale, 0.3, 1],
-    detailGap: [start.detailGap, 0, 200],
-    detailPeekPx: [start.detailPeekPx, 0, 200],
+    detailSideScale: [start.detailSideScale, 0.3, 1],
+    detailSideOpacity: [start.detailSideOpacity, 0.1, 1],
+    detailGap: [start.detailGap, 0, 160],
     detailHoverDim: [start.detailHoverDim, 0, 1],
     detailScrimOpacity: [start.detailScrimOpacity, 0, 0.8],
     detailSlideMs: [start.detailSlideMs, 150, 900],
@@ -201,6 +206,7 @@ function Dials() {
       maxFlickCells: Math.round(motion.maxFlickCells),
       velocityWindowMs: motion.velocityWindowMs,
       settleTauPerCell: motion.settleTauPerCell,
+      clickCenterMaxMs: grid.clickCenterMaxMs,
       maxTiltDeg: depth.maxTiltDeg,
       parallaxShiftPx: depth.parallaxShiftPx,
       tiltLerpMs: depth.tiltLerpMs,
@@ -224,8 +230,9 @@ function Dials() {
       miniMapSpan: start.miniMapSpan,
       detailTransitionMs: detail.detailTransitionMs,
       detailCardScale: detail.detailCardScale,
+      detailSideScale: detail.detailSideScale,
+      detailSideOpacity: detail.detailSideOpacity,
       detailGap: detail.detailGap,
-      detailPeekPx: detail.detailPeekPx,
       detailHoverDim: detail.detailHoverDim,
       detailScrimOpacity: detail.detailScrimOpacity,
       detailSlideMs: detail.detailSlideMs,
@@ -247,7 +254,7 @@ function Dials() {
     } catch {
       // best effort
     }
-  }, [motion, depth, layout, focus, detail, overlay, sky, start.miniMapSpan]);
+  }, [motion, grid, depth, layout, focus, detail, overlay, sky, start.miniMapSpan]);
 
   // Test hooks (dev only; this module never ships to production).
   useEffect(() => {

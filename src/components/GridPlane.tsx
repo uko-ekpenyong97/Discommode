@@ -6,7 +6,6 @@ import type { GridPos } from '../grid';
 import { CONTENT, contentIndex } from '../content';
 import type { PosterItem } from '../content';
 import type { CardFace, CellOffset } from '../hooks/usePanController';
-import type { FlipOrigin } from '../hooks/useDetail';
 import { CardOverlay } from './CardOverlay';
 import './GridPlane.css';
 
@@ -40,8 +39,8 @@ interface GridPlaneProps {
   markCardsChanged: () => void;
   /** The window cell currently showing its hover overlay (null = none). */
   overlayCell: CellOffset | null;
-  /** Open the detail view for a content index (overlay CTA), from the card rect. */
-  onOpenDetail: (contentIndex: number, origin: FlipOrigin | null) => void;
+  /** Open a window cell's detail (overlay CTA) — glide to centre, then FLIP. */
+  onRequestOpen: (dc: number, dr: number) => void;
 }
 
 interface Slot {
@@ -78,7 +77,7 @@ export function GridPlane({
   cardsRef,
   markCardsChanged,
   overlayCell,
-  onOpenDetail,
+  onRequestOpen,
 }: GridPlaneProps) {
   const cfg = useConfig();
   const cardW = cfg.cardWidth;
@@ -199,7 +198,7 @@ export function GridPlane({
                     )}
                     <span className="grid-card__index">{s.item.title}</span>
                   </div>
-                  {isOverlay && <CardOverlay item={s.item} onOpen={onOpenDetail} />}
+                  {isOverlay && <CardOverlay item={s.item} onOpen={() => onRequestOpen(s.dc, s.dr)} />}
                 </div>
               </div>
             );
