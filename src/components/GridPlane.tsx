@@ -41,6 +41,9 @@ interface GridPlaneProps {
   overlayCell: CellOffset | null;
   /** Open a window cell's detail (overlay CTA) — glide to centre, then FLIP. */
   onRequestOpen: (dc: number, dr: number) => void;
+  /** Hide the three hero cells (centre + L/R, `dr 0`) — they're handled by the
+   *  detail→grid morph until its handoff, so they don't double (Phase 17). */
+  hideHero: boolean;
 }
 
 interface Slot {
@@ -78,6 +81,7 @@ export function GridPlane({
   markCardsChanged,
   overlayCell,
   onRequestOpen,
+  hideHero,
 }: GridPlaneProps) {
   const cfg = useConfig();
   const cardW = cfg.cardWidth;
@@ -164,6 +168,10 @@ export function GridPlane({
             const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
             const isFocused = s.dc === 0 && s.dr === 0;
             const isOverlay = !!overlayCell && overlayCell.dc === s.dc && overlayCell.dr === s.dr;
+            // During a morph exit, the three hero cells (centre + L/R neighbours)
+            // are carried by the morph layer until handoff — hide them so they
+            // don't double; the rest of the grid fades in around them.
+            const isHeroHidden = hideHero && s.dr === 0 && Math.abs(s.dc) <= 1;
             // The hovered card dims slightly so its white overlay type reads.
             const brightness = brightnessForDistance(distance) * (isOverlay ? cfg.overlayCardDim : 1);
             return (
@@ -177,7 +185,12 @@ export function GridPlane({
                 key={`${s.dc}|${s.dr}`}
                 className="grid-card"
                 // The focused card overlaps neighbours; the hovered card sits on top of all.
-                style={{ width: `${cardW}px`, height: `${cardH}px`, zIndex: isOverlay ? 3 : isFocused ? 2 : 1 }}
+                style={{
+                  width: `${cardW}px`,
+                  height: `${cardH}px`,
+                  zIndex: isOverlay ? 3 : isFocused ? 2 : 1,
+                  visibility: isHeroHidden ? 'hidden' : undefined,
+                }}
               >
                 <div className="grid-card__transform" data-dc={s.dc} data-dr={s.dr}>
                   <div

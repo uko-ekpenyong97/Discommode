@@ -207,14 +207,18 @@ centre at `focusScale`, neighbours a cell-span away; detail: from
 neutralises the three cards' tilt at both seams — so FROM exactly matches the grid
 card and TO the detail panel (no pop at either end, verified to the pixel).
 
-On **exit** the grid stays **fully hidden** (not painted) for the entire morph so
-the real cards never double with the travelling ones; the morph plays detail →
-grid, and on its WAAPI `finished` (not a timer) the grid — already re-centred on
-the viewed item and flattened — is **revealed instantly** in the same step the
-morph is removed, exactly under the cards' landing positions (verified: across
-every exit frame the grid is hidden while a morph card is visible, then both flip
-in one frame). The base `.grid-stage` has no opacity transition, so that reveal is
-instant; only the enter fade-out is transitioned. Deep-link / back /
+On **exit** the grid's visibility is **split** so the layer fades back in without
+ever doubling the morph cards. The **three hero cells** (centre + L/R neighbours,
+the ones the morph carries) stay hidden — `visibility: hidden` via GridPlane's
+`hideHero` — for the whole morph, so they're never a second copy; the morph plays
+detail → grid, and on its WAAPI `finished` (not a timer) the grid — already
+re-centred on the viewed item and flattened — reveals those cells in the same step
+the morph is removed, exactly under the cards' landing positions (verified: across
+every exit frame the hero cells are hidden while a morph card is visible, then
+both flip in one frame). Meanwhile the **rest of the grid fades back in** over the
+exit (the `--fading-in` layer opacity, mirroring the enter fade-out) so the
+background reappears smoothly rather than snapping; by the handoff it's already at
+full opacity, so the hero reveal is seamless. Deep-link / back /
 `prefers-reduced-motion` fall back to a quick cross-fade (no morph).
 
 **Dismiss.** There is no close button: clicking the **empty backdrop** (anywhere

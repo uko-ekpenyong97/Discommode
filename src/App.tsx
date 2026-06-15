@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import SkyLayer from './components/SkyLayer';
 import { GridPlane } from './components/GridPlane';
@@ -94,16 +94,31 @@ export default function App() {
   }, [phase, useMorph, finishEnter, finishExitToGrid]);
 
   const inDetail = detail.mode === 'detail';
-  // The grid fades OUT on enter, then stays FULLY hidden through active + the
-  // whole exit (so the real cards never paint alongside the travelling morph
-  // cards). It is revealed INSTANTLY at the exit handoff (the base `.grid-stage`
-  // has no transition), exactly under the morph cards' final positions.
+  // Grid-stage opacity:
+  //  - enter: fade OUT (the rest of the grid recedes under the travelling morph),
+  //  - active: hidden (not painted),
+  //  - exit: fade IN — the NON-hero cards reappear smoothly (the three hero cards
+  //    are gated separately, hidden until the morph's handoff; see hideHero),
+  //  - grid: visible. The base `.grid-stage` has no transition, so when the exit
+  //    handoff flips to grid + reveals the hero cells, they appear instantly.
   const gridClass =
     phase === 'enter'
       ? 'grid-stage grid-stage--fading'
-      : inDetail
-        ? 'grid-stage grid-stage--hidden'
-        : 'grid-stage';
+      : phase === 'exit'
+        ? 'grid-stage grid-stage--fading-in'
+        : inDetail
+          ? 'grid-stage grid-stage--hidden'
+          : 'grid-stage';
+  // The three hero cards are carried by the morph until handoff — hide their grid
+  // cells for the whole morph exit so they don't double (Phase 16/17).
+  const hideHero = phase === 'exit' && useMorph;
+
+  // On exit start, re-centre the grid on the viewed item (before paint) so the
+  // non-hero cards fade in at their FINAL positions — no jump at the handoff even
+  // if the user navigated inside detail. (The grid is at ~0 opacity here.)
+  useLayoutEffect(() => {
+    if (phase === 'exit') centerContentInstant(activeIndex);
+  }, [phase, activeIndex, centerContentInstant]);
 
   const miniIndex = inDetail ? activeIndex : contentIndex(pan.world.col, pan.world.row);
   const miniNavigate = inDetail ? detail.goto : navigateToContent;
@@ -149,6 +164,7 @@ export default function App() {
           markCardsChanged={pan.markCardsChanged}
           overlayCell={inDetail ? null : pan.overlayCell}
           onRequestOpen={pan.requestCardOpen}
+          hideHero={hideHero}
         />
         <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
       </div>

@@ -23,10 +23,17 @@
   transition: opacity var(--detail-ms, 450ms) ease;
 }
 
-/* Detail open + exit: hidden and not painted (instant on/off, no transition). */
+/* Exit: fade the grid back in (the non-hero cards reappear smoothly; the three
+   hero cells are hidden until the morph handoff via GridPlane's hideHero). */
+.grid-stage--fading-in {
+  opacity: 1;
+  transition: opacity var(--detail-ms, 450ms) ease;
+}
+
+/* Detail open: hidden (opacity 0, instant, no transition). Pure opacity (no
+   visibility:hidden) so the exit fade-in transitions cleanly out of this state. */
 .grid-stage--hidden {
   opacity: 0;
-  visibility: hidden;
 }
 
 .grid-stage[data-locked] {
