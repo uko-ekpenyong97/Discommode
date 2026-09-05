@@ -32,8 +32,10 @@ export default function ReaderGate() {
   const hash = useSyncExternalStore(subscribe, getHash);
   if (!hash.startsWith(PREFIX)) return <App />;
 
-  // `#read-01` or `#read-01?debug` — flags are '&'-separated after the id.
-  const [id, query = ''] = hash.slice(PREFIX.length).split('?');
+  // `#read-01`, `#read-01/5`, `#read-01/5?debug`. The spread after the slash is
+  // ReaderPage's business; the gate only needs the issue id and the flags.
+  const [path, query = ''] = hash.slice(PREFIX.length).split('?');
+  const id = path.split('/')[0];
   const debug = query.split('&').includes('debug');
   return <ReaderPage issue={id} debug={debug} />;
 }
