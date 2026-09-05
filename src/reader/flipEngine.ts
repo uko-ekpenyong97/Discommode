@@ -40,7 +40,12 @@ const EASE: [number, number, number, number] = [0.42, 0.05, 0.25, 1];
  * here. Measured tip displacement against the landed position:
  *
  *   t=0.980  9.6px      t=0.990  4.6px      t=0.997  1.1px
- *   t=0.985  7.0px    > t=0.995  2.3px <    t=1.000  0.0px
+ * > t=0.985  7.0px <    t=0.995  2.3px      t=1.000  0.0px
+ *
+ * The jump is not snapped: the plate CROSSFADES in over the still-running chain
+ * (PLATE_FADE_MS), so the residual is dissolved across several frames. That is
+ * why the earlier, larger-jump threshold is the right one here — more motion to
+ * dissolve under.
  *
  * (at t=0.985 the tip is still ~28px out of plane, ~1% perspective scale). The
  * later the swap, the smaller the jump — but also the less motion there is to
@@ -50,7 +55,10 @@ const EASE: [number, number, number, number] = [0.42, 0.05, 0.25, 1];
  * Only the COMMIT and CANCEL tweens plate. A drag held past this t still shows
  * the real leaf, because the pointer path calls applyTurn directly.
  */
-const PLATE_T = 0.995;
+const PLATE_T = 0.985;
+
+/** Crossfade from the chain to the flat plate, in ms. */
+const PLATE_FADE_MS = 80;
 
 /** Fraction of the book's width that a full 0->1 drag covers. */
 const DRAG_SPAN = 0.62;
@@ -190,6 +198,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   let strips: HTMLDivElement[] = [];
   let drag: DragState | null = null;
   let tween: { stop: () => void } | null = null;
+  /** The chain -> plate crossfade, while it is running. */
+  let fade: Animation | null = null;
   /** Set when a turn has been committed and React has yet to paint the result. */
   let pendingCommit: number | null = null;
   /** Bumped by every startTurn, so a deferred handoff can tell it was superseded. */
@@ -288,6 +298,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   }
 
   function clearTurn(): void {
+    fade?.cancel();
+    fade = null;
     turnHost.replaceChildren(); // detaches the cached curl; it is reused as-is
     // Dropped in the SAME synchronous step as the layer, so the static page
     // reappears in the very frame the thing covering it goes away.
@@ -297,28 +309,12 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   }
 
   /**
-   * Swap the 28-strip chain for a single flat page element.
-   *
-   * A landed leaf is NOT a pixel-exact copy of the page it covers: Chrome snaps
-   * each strip to its 1/64px layout grid (21.4219px against an ideal 21.4289px),
-   * and because strip i+1 is positioned at `left: 100%` of strip i that error
-   * accumulates down the chain to ~0.19px at the outer edge. Every band's
-   * background-position is computed from the IDEAL grid, so each one sits
-   * fractionally off from where it actually landed. Flat artwork hides it; text
-   * and photographs do not, and dropping the layer snaps all 28 bands back at
-   * once. The transform is not the problem — at t=1, `--td` is already 0.000deg.
-   *
-   * The plate is built exactly as React builds the static slot, so it is
-   * pixel-identical by construction and removing the layer is a true no-op.
+   * Build the flat landing plate — exactly as React builds a static slot, so it
+   * is pixel-identical to what the turn lands on (verified 0/468000 differing).
    */
-  function landPlate(side: 'left' | 'right', src: string | null): void {
-    const layer = turnHost.firstElementChild;
-    if (!layer) return;
-    layer.querySelector('.flip-curl')?.remove(); // cached curl, reused as-is
-    strips = [];
-
+  function buildPlate(side: 'left' | 'right', src: string | null): HTMLDivElement {
     const plate = document.createElement('div');
-    plate.className = `book__page book__page--${side}`;
+    plate.className = `book__page book__page--${side} book__page--plate`;
     if (src) {
       const img = document.createElement('img');
       img.src = src;
@@ -326,7 +322,63 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       img.draggable = false;
       plate.append(img);
     }
-    layer.append(plate);
+    return plate;
+  }
+
+  /**
+   * Hand the chain over to the plate, once per turn, by CROSSFADE rather than a
+   * swap.
+   *
+   * A 28-strip leaf is composited through a 3D transform and its strips are
+   * promoted, so their quads snap independently; a flat <img> has neither
+   * property. The two can never rasterise identically, and cutting between them
+   * — at any t — reads as a settle. Fading instead spreads that residual across
+   * PLATE_FADE_MS while the chain is still running its own tween underneath, so
+   * there is no single frame where it all resolves at once.
+   *
+   * The chain is dropped when the fade lands; if the turn finishes first, the
+   * handoff waits for the fade rather than cutting it short.
+   */
+  function plateOnce(side: 'left' | 'right', src: string | null): void {
+    if (!state || state.plated) return;
+    const layer = turnHost.firstElementChild;
+    if (!layer) return;
+    state.plated = true;
+
+    const plate = buildPlate(side, src);
+    plate.style.opacity = '0';
+    layer.append(plate); // above the chain via .book__page--plate's z-index
+
+    const seq = turnSeq;
+    const anim = plate.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: PLATE_FADE_MS,
+      easing: 'linear',
+      fill: 'forwards',
+    });
+    fade = anim;
+    void anim.finished
+      .then(() => {
+        if (fade === anim) fade = null;
+        if (destroyed || turnSeq !== seq) return;
+        layer.querySelector('.flip-curl')?.remove(); // cached curl, reused as-is
+        strips = [];
+      })
+      .catch(() => {
+        if (fade === anim) fade = null;
+      });
+  }
+
+  /** Run `fn` once the crossfade has landed, or immediately if none is running. */
+  function afterFade(fn: () => void): void {
+    if (!fade) {
+      fn();
+      return;
+    }
+    const seq = turnSeq;
+    const done = () => {
+      if (!destroyed && turnSeq === seq) fn();
+    };
+    void fade.finished.then(done).catch(done);
   }
 
   function startTurn(dir: TurnDir): boolean {
@@ -435,13 +487,6 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     });
   }
 
-  /** Hand the chain over to the flat plate, once per turn. */
-  function plateOnce(side: 'left' | 'right', src: string | null): void {
-    if (!state || state.plated) return;
-    state.plated = true;
-    landPlate(side, src);
-  }
-
   /**
    * The spread swap and the layer removal are deliberately SPLIT:
    * `onSpreadChange` only asks React to re-render, and `handoff()` — called from
@@ -483,7 +528,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     tweenTo(
       0,
       duration,
-      clearTurn,
+      () => afterFade(clearTurn),
       (t) => {
         if (t <= 1 - PLATE_T) plateOnce(side, liftSrc);
       },
@@ -518,7 +563,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     // screen inside the layer for the whole tween. So drop it in this very frame:
     // no window in which the leaf sits on top of the finished spread.
     if (images.length > 0 && images.every((img) => img.complete)) {
-      clearTurn();
+      afterFade(clearTurn); // never cut the crossfade short
       return;
     }
 
@@ -616,6 +661,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     drag = null;
     ro.disconnect();
     killTween();
+    fade?.cancel();
+    fade = null;
     clearTurn();
     curls.next = null;
     curls.prev = null;

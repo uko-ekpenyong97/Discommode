@@ -111,6 +111,13 @@
   visibility: hidden;
 }
 
+/* The landing plate fades in over the chain, so it has to beat .flip-curl's
+   z-index. Both are coplanar by the time the fade finishes, so document order
+   alone would not decide it. */
+.book__page--plate {
+  z-index: 7;
+}
+
 /* Permanently empty as far as React is concerned; the engine owns its subtree.
    Both this and .book__turn must carry preserve-3d — see DEVIATION 1 above. */
 .book__turn-host,
@@ -142,17 +149,20 @@
   transform: rotateY(var(--tt));
 }
 
-/* NOT `will-change: transform`. Promoting all 28 nested strips gives each its own
-   compositor layer, and their quads snap independently — which drifts the leaf's
-   content out of register with the page by up to 13px across the spread (ruler
-   ramp 13px promoted vs 3px unpromoted; frozen-frame pixel diff 218k -> 179k).
-   Only the curl root is promoted; the strips ride along inside its layer. */
+/* Promoting all 28 nested strips costs registration: each gets its own compositor
+   layer, their quads snap independently, and the leaf's content drifts out of
+   register with the page by up to 13px across the spread (ruler ramp 13px
+   promoted vs 3px unpromoted; frozen-frame diff 218k vs 179k px). Unpromoting
+   fixes that but produces faint light hairlines at the seams during a drag on
+   real hardware. Promotion is the lesser artefact, and the ramp it reintroduces
+   is dissolved rather than snapped — see PLATE_T / the crossfade in flipEngine. */
 .flip-strip {
   position: absolute;
   top: 0;
   height: 100%;
   width: calc(var(--bw) * 0.5 / 28);
   transform-style: preserve-3d;
+  will-change: transform;
 }
 .flip-curl--next .flip-strip {
   transform-origin: left center;
