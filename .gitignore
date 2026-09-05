@@ -22,7 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Issue page scans: PNGs are the local drop folder from Figma (see
-# scripts/optimize-pages.mjs). The committed artefact is the WebP.
-public/issues/**/*.png

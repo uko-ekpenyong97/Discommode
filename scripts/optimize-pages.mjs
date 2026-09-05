@@ -1,19 +1,31 @@
 /**
  * PNG -> WebP for issue page scans.
  *
- * Figma is the master; the PNGs in public/issues/ are a local drop folder and are
- * gitignored. The WebPs this writes beside them are the committed artefact and
- * the only thing that ships, so run this after every export:
+ * Figma is the master. Drop full-size PNG exports into
+ *
+ *   ~/Discommode-pages/<issue>/NN.png      (01.png ... 42.png, cover.png, back.png)
+ *
+ * and this writes the WebPs the app actually loads into
+ *
+ *   public/issues/<issue>/NN.webp
+ *
+ * The source lives OUTSIDE the repo on purpose: gitignored files inside a
+ * checkout are invisible to every git safety net, and `git reset --hard` will
+ * happily destroy them. Only the WebPs are committed and deployed.
  *
  *   npm run pages           # only rebuilds pages whose PNG is newer
  *   npm run pages -- --force
  */
-import { readdir, stat } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
-const ISSUES_DIR = fileURLToPath(new URL('../public/issues/', import.meta.url));
+/** Where the PNG exports live — outside the repo. */
+const SOURCE_DIR = join(homedir(), 'Discommode-pages');
+/** Where the committed WebPs go. */
+const OUTPUT_DIR = fileURLToPath(new URL('../public/issues/', import.meta.url));
 
 /** WebP quality. 82 is visually lossless on these scans at 2000px wide. */
 const QUALITY = 82;
@@ -38,7 +50,7 @@ async function statOrNull(path) {
 }
 
 async function listIssues() {
-  const entries = await readdir(ISSUES_DIR, { withFileTypes: true });
+  const entries = await readdir(SOURCE_DIR, { withFileTypes: true });
   return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
 }
 
@@ -49,9 +61,9 @@ let skipped = 0;
 const warnings = [];
 
 async function convert(issue, name) {
-  const pngPath = join(ISSUES_DIR, issue, name);
+  const pngPath = join(SOURCE_DIR, issue, name);
   const webpName = name.replace(/\.png$/, '.webp');
-  const webpPath = join(ISSUES_DIR, issue, webpName);
+  const webpPath = join(OUTPUT_DIR, issue, webpName);
 
   const pngStat = await stat(pngPath);
   const webpStat = await statOrNull(webpPath);
@@ -81,15 +93,28 @@ async function convert(issue, name) {
   console.log(`  ${name.padEnd(10)} ${kb(pngStat.size).padStart(9)} → ${kb(out.size).padStart(9)}   ${String(saved).padStart(3)}% smaller`);
 }
 
+if ((await statOrNull(SOURCE_DIR)) === null) {
+  console.log(`
+!!  NO PAGE SOURCE FOLDER  !!
+!!  Expected PNG exports in: ${SOURCE_DIR}/<issue>/
+!!
+!!  This folder lives outside the repo so a git operation can never destroy it.
+!!  Create it and drop Figma exports in as ~/Discommode-pages/01/01.png etc,
+!!  then re-run \`npm run pages\`. Nothing to do until then.
+`);
+  process.exit(0);
+}
+
 const issues = await listIssues();
 if (issues.length === 0) {
-  console.log(`No issue folders in ${ISSUES_DIR}`);
+  console.log(`No issue folders in ${SOURCE_DIR}`);
   process.exit(0);
 }
 
 for (const issue of issues) {
-  const files = (await readdir(join(ISSUES_DIR, issue))).filter((f) => PAGE_RE.test(f)).sort();
+  const files = (await readdir(join(SOURCE_DIR, issue))).filter((f) => PAGE_RE.test(f)).sort();
   console.log(`\nissue ${issue}  (${files.length} page${files.length === 1 ? '' : 's'})`);
+  await mkdir(join(OUTPUT_DIR, issue), { recursive: true });
   for (const name of files) await convert(issue, name);
 }
 
