@@ -1,6 +1,11 @@
-/* Full-viewport reading stage. Sits on the page background (#0d0d0d from
-   index.css) — the grid, sky and detail layers are unmounted while it is up. */
+/* Full-viewport reading stage: the magazine lies on a wooden table. The stage
+   itself is fixed to the viewport, so the wood is cover-fit and never scrolls or
+   scales with the book. A dark fallback (#0d0d0d, matching index.css) shows
+   until the texture decodes, so nothing flashes. */
 .reader {
+  /* Vignette strength at the frame — dial to taste (0 = off). */
+  --stage-vignette: 0.4;
+
   position: fixed;
   inset: 0;
   display: flex;
@@ -9,6 +14,23 @@
   justify-content: center;
   gap: 20px;
   overflow: hidden;
+  background: #0d0d0d url(/backgrounds/wood.webp) center / cover no-repeat;
+}
+
+/* Darken the wood toward the frame so the magazine stays the subject. Sits above
+   the wood but BELOW the book and caption (z-index: -1 inside the stage's own
+   stacking context), so it dims the table without ever touching the pages. */
+.reader::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 40%,
+    rgba(0, 0, 0, var(--stage-vignette)) 100%
+  );
 }
 
 .reader__caption {
@@ -19,7 +41,9 @@
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.12em;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.5);
+  /* Legible over mid-tone wood without competing with the pages. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   user-select: none;
 }
 
