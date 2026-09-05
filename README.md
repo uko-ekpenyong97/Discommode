@@ -16,7 +16,14 @@ npm install
 npm run dev      # start the dev server
 npm run build    # type-check + production build
 npm test         # run the unit tests (Vitest)
+npm run pages    # convert issue page scans to WebP (see below)
 ```
+
+Reader page scans are **not** kept in the repo. Full-size PNG exports from Figma
+live in `~/Discommode-pages/<issue>/` (outside any checkout, so no git operation
+can destroy them); `npm run pages` converts them to the `public/issues/<issue>/`
+WebPs that are committed and deployed. Run it after every export — it skips
+pages whose WebP is already newer, and warns if a page isn't 2000x2600.
 
 ## Layer architecture
 

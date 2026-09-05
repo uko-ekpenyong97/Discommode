@@ -27,22 +27,25 @@ export interface Issue {
 /** One spread: [left, right]. A null slot renders empty (cover / back page). */
 export type Spread = [Page | null, Page | null];
 
-// All four pages are 2000x2600. Only the RATIO is load-bearing: the page slot is
+/** Pages exported so far. Bump as more land in public/issues/01/. */
+const PAGE_COUNT = 12;
+
+// Every page is 2000x2600. Only the RATIO is load-bearing: the page slot is
 // exactly `bw/2` by `0.65 * bw`, i.e. 2000/2600, so `object-fit: contain` on the
 // static page and `background-size: calc(var(--bw) * 0.5) auto` on a curl face
 // resolve to the same box — the flip has no size jump at either end.
+// `scripts/optimize-pages.mjs` (npm run pages) writes the .webp files the app
+// loads and warns if an export is the wrong size.
 export const issue01: Issue = {
   id: '01',
   pageW: 2000,
   pageH: 2600,
   hasCover: false,
   hasBack: false,
-  pages: [
-    { n: 1, src: '/issues/01/01.png' },
-    { n: 2, src: '/issues/01/02.png' },
-    { n: 3, src: '/issues/01/03.png' },
-    { n: 4, src: '/issues/01/04.png' },
-  ],
+  pages: Array.from({ length: PAGE_COUNT }, (_, i) => ({
+    n: i + 1,
+    src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
+  })),
 };
 
 export const ISSUES: Record<string, Issue> = {

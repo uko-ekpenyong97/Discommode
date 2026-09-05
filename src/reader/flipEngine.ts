@@ -252,6 +252,12 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
 
     const slot = document.createElement('div');
     slot.className = `book__page book__page--${dir === 'next' ? 'right' : 'left'}`;
+    // The curl's faces need a frame or two to rasterise their background images.
+    // Until they do they are transparent, and the revealed page shows straight
+    // through the leaf. Hide it until the curl has actually painted; what shows
+    // underneath meanwhile is the STATIC page, which at t=0 is the very page the
+    // curl's front face carries — so this is invisible when it works.
+    slot.style.visibility = 'hidden';
     if (under) {
       const img = document.createElement('img');
       img.src = under.src;
@@ -271,6 +277,18 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     turnHost.append(layer);
 
     applyTurn(0);
+
+    // Two frames guarantees at least one fully painted one. `turnSeq` catches a
+    // superseded turn; `isConnected` catches a cancelled one, which tears the
+    // layer down via clearTurn() WITHOUT bumping the token.
+    const seq = turnSeq;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (destroyed || turnSeq !== seq || !slot.isConnected) return;
+        slot.style.visibility = '';
+      });
+    });
+
     return true;
   }
 
