@@ -7,8 +7,12 @@
  */
 
 export interface Page {
+  /** Reading position. The cover is 0 and the back cover is PAGE_COUNT + 1, so
+   *  ordering stays meaningful; `label` is what keeps them out of the caption. */
   n: number;
   src: string;
+  /** Caption override. Numbered pages leave this unset and fall back to `n`. */
+  label?: string;
 }
 
 export interface Issue {
@@ -27,26 +31,35 @@ export interface Issue {
 /** One spread: [left, right]. A null slot renders empty (cover / back page). */
 export type Spread = [Page | null, Page | null];
 
-/** Pages exported so far. Bump as more land in public/issues/01/. */
-const PAGE_COUNT = 12;
+/** Numbered pages. The cover and back cover are separate entries below. */
+const PAGE_COUNT = 40;
 
 // Every page is 2000x2600. Only the RATIO is load-bearing: the page slot is
 // exactly `bw/2` by `0.65 * bw`, i.e. 2000/2600, so `object-fit: contain` on the
 // static page and `background-size: calc(var(--bw) * 0.5) auto` on a curl face
 // resolve to the same box — the flip has no size jump at either end.
 // `scripts/optimize-pages.mjs` (npm run pages) writes the .webp files the app
-// loads and warns if an export is the wrong size.
+// loads from ~/Discommode-pages/01/ and warns if an export is the wrong size.
 export const issue01: Issue = {
   id: '01',
   pageW: 2000,
   pageH: 2600,
-  hasCover: false,
-  hasBack: false,
-  pages: Array.from({ length: PAGE_COUNT }, (_, i) => ({
-    n: i + 1,
-    src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
-  })),
+  hasCover: true,
+  hasBack: true,
+  pages: [
+    { n: 0, src: '/issues/01/cover.webp', label: 'COVER' },
+    ...Array.from({ length: PAGE_COUNT }, (_, i) => ({
+      n: i + 1,
+      src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
+    })),
+    { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
+  ],
 };
+
+/** How a page reads in the caption: 'COVER', 'BACK', or a zero-padded number. */
+export function pageLabel(page: Page): string {
+  return page.label ?? String(page.n).padStart(2, '0');
+}
 
 export const ISSUES: Record<string, Issue> = {
   '01': issue01,

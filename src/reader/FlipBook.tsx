@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import type { Spread } from './issue-01';
+import type { Page, Spread } from './issue-01';
+import { pageLabel } from './issue-01';
 import { createFlipEngine } from './flipEngine';
 import type { FlipEngine } from './flipEngine';
 import { attachFixedT } from './devFixedT';
@@ -13,7 +14,8 @@ interface FlipBookProps {
   debug?: boolean;
 }
 
-const label = (n: number): string => String(n).padStart(2, '0');
+/** 'COVER' / 'BACK' for the plates, 'Page 07' for a numbered page. */
+const altFor = (page: Page): string => page.label ?? `Page ${pageLabel(page)}`;
 
 /**
  * Renders the STATIC spread and the empty host the engine builds its turn layer
@@ -99,7 +101,8 @@ export function FlipBook({ spreads, spread, onSpreadChange, debug = false }: Fli
   const turnPrev = useCallback(() => engineRef.current?.turn('prev'), []);
   const turnNext = useCallback(() => engineRef.current?.turn('next'), []);
 
-  const [left, right] = spreads[spread];
+  // Guard the index: a caller that hasn't clamped shouldn't throw here.
+  const [left, right] = spreads[spread] ?? [null, null];
 
   return (
     <div className="book-stage">
@@ -116,12 +119,12 @@ export function FlipBook({ spreads, spread, onSpreadChange, debug = false }: Fli
       <div className="book" ref={bookRef}>
         <div className="book__page book__page--left">
           {left && (
-            <img ref={leftImgRef} src={left.src} alt={`Page ${label(left.n)}`} draggable={false} />
+            <img ref={leftImgRef} src={left.src} alt={altFor(left)} draggable={false} />
           )}
         </div>
         <div className="book__page book__page--right">
           {right && (
-            <img ref={rightImgRef} src={right.src} alt={`Page ${label(right.n)}`} draggable={false} />
+            <img ref={rightImgRef} src={right.src} alt={altFor(right)} draggable={false} />
           )}
         </div>
         <div className="book__turn-host" ref={hostRef} />
