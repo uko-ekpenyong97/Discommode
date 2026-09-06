@@ -1,0 +1,51 @@
+/* The reader as a layer over the app: a fixed full-viewport pane above the
+   detail/morph/minimap stack (minimap is z-index 30). The inner `.reader` keeps
+   its own dark wood background, so animating this wrapper's opacity crossfades
+   the whole reader over the app beneath.
+
+   The fade is a CSS animation, not a JS opacity toggle: the layer mounts
+   synchronously from the hash (so it works in a background tab), and the
+   animation carries the fade with no dependency on requestAnimationFrame.
+   Asymmetric per the spec — 250ms in, 200ms out (FADE_OUT_MS in ReaderGate.tsx
+   must match the out duration). A direct load (no `data-enter`) appears at full
+   opacity with no fade. */
+.reader-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  opacity: 1;
+  will-change: opacity;
+}
+
+.reader-layer[data-enter] {
+  animation: reader-fade-in 250ms ease both;
+}
+
+.reader-layer[data-exiting] {
+  animation: reader-fade-out 200ms ease both;
+}
+
+@keyframes reader-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes reader-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-layer[data-enter],
+  .reader-layer[data-exiting] {
+    animation: none;
+  }
+}

@@ -1,4 +1,5 @@
 import { memo, useLayoutEffect, useRef } from 'react';
+import { itemFace } from '../content';
 import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
 import './DetailMorph.css';
@@ -68,22 +69,25 @@ function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
 
   return (
     <div className="detail-morph" aria-hidden="true">
-      {cards.map((c, i) => (
-        <div
-          key={i}
-          ref={(el) => {
-            refs.current[i] = el;
-          }}
-          className="detail-morph__card"
-          style={{ left: c.to.cx - c.to.w / 2, top: c.to.cy - c.to.h / 2, width: c.to.w, height: c.to.h }}
-        >
-          {c.item.image ? (
-            <img className="detail-morph__media" src={c.item.image} alt="" draggable={false} />
-          ) : (
-            <div className="detail-morph__media" style={{ background: `hsl(${c.item.hue}, 28%, 32%)` }} />
-          )}
-        </div>
-      ))}
+      {cards.map((c, i) => {
+        const face = itemFace(c.item);
+        return (
+          <div
+            key={i}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            className="detail-morph__card"
+            style={{ left: c.to.cx - c.to.w / 2, top: c.to.cy - c.to.h / 2, width: c.to.w, height: c.to.h }}
+          >
+            {face ? (
+              <img className="detail-morph__media" src={face} alt="" draggable={false} />
+            ) : (
+              <div className="detail-morph__media" style={{ background: `hsl(${c.item.hue}, 28%, 32%)` }} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

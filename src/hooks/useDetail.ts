@@ -57,7 +57,7 @@ function pushGrid(): void {
  * and calls `finishEnter` / `finishExit` when each completes; it also re-centres
  * the grid on the viewed item when an exit begins.
  */
-export function useDetail(): DetailController {
+export function useDetail(suspended = false): DetailController {
   const initial = indexForSlug(hashSlug());
   const [mode, setMode] = useState<DetailMode>(initial >= 0 ? 'detail' : 'grid');
   const [activeIndex, setActiveIndex] = useState(initial >= 0 ? initial : 0);
@@ -68,9 +68,13 @@ export function useDetail(): DetailController {
 
   const modeRef = useRef(mode);
   const activeRef = useRef(activeIndex);
+  // The reader layer is open above the app: Escape belongs to the reader, and a
+  // `#read-…` hash must not perturb the frozen detail view underneath.
+  const suspendedRef = useRef(suspended);
   useLayoutEffect(() => {
     modeRef.current = mode;
     activeRef.current = activeIndex;
+    suspendedRef.current = suspended;
   });
 
   // Settle into detail once the enter transition (morph or fade) completes.
@@ -121,6 +125,9 @@ export function useDetail(): DetailController {
   // Browser back/forward: reconcile state to the hash.
   useEffect(() => {
     const sync = () => {
+      // `#read-…` is the reader's namespace: ignore it so opening/closing the
+      // reader never collapses or re-enters the detail view underneath.
+      if (window.location.hash.startsWith('#read-')) return;
       const idx = indexForSlug(hashSlug());
       if (idx >= 0) {
         if (modeRef.current === 'grid') {
@@ -146,7 +153,7 @@ export function useDetail(): DetailController {
   // Esc closes from anywhere in detail.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && modeRef.current === 'detail') {
+      if (e.key === 'Escape' && modeRef.current === 'detail' && !suspendedRef.current) {
         e.preventDefault();
         close();
       }

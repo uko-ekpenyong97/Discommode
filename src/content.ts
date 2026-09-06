@@ -15,6 +15,7 @@
  */
 import { config } from './config';
 import { mod } from './grid';
+import { issueCover } from './reader/issue-01';
 
 export interface PosterItem {
   id: number;
@@ -23,6 +24,8 @@ export interface PosterItem {
   slug: string;
   /** Optional poster image from /public/posters/. If absent, `hue` is used. */
   image?: string;
+  /** Issue id (e.g. "01") when this item is a readable issue; opens the reader. */
+  issue?: string;
   /** Fallback tint (HSL hue) when there is no image. */
   hue: number;
   /** Short caption fragments shown around the card edges in the hover overlay. */
@@ -40,6 +43,11 @@ const SAMPLE_IMAGES: Record<number, string> = {
   14: '/posters/poster-03.svg',
 };
 
+/** Item id → issue id, for the items that are readable issues. */
+const ISSUE_BY_ID: Record<number, string> = {
+  0: '01',
+};
+
 /** N items: a mix of image posters and hue placeholders. */
 export const CONTENT: PosterItem[] = Array.from({ length: COUNT }, (_, i) => {
   const title = String(i + 1).padStart(2, '0');
@@ -49,6 +57,7 @@ export const CONTENT: PosterItem[] = Array.from({ length: COUNT }, (_, i) => {
     title,
     slug: `item-${title}`,
     image: SAMPLE_IMAGES[i],
+    issue: ISSUE_BY_ID[i],
     hue,
     captions: [`NO ${title}`, `HUE ${hue}`, 'INDEXED'],
     cta: 'OPEN',
@@ -56,6 +65,15 @@ export const CONTENT: PosterItem[] = Array.from({ length: COUNT }, (_, i) => {
 });
 
 export const CONTENT_COUNT = COUNT;
+
+/**
+ * The image a card/panel shows as its face: an issue cover takes precedence over
+ * a sample poster, and either falls back to the hue tint (undefined here). One
+ * place so the grid, detail view, and grid↔detail morph never disagree.
+ */
+export function itemFace(item: PosterItem): string | undefined {
+  return (item.issue ? issueCover(item.issue) : undefined) ?? item.image;
+}
 
 /** Content index for a slug, or -1 if no item matches. */
 export function indexForSlug(slug: string): number {

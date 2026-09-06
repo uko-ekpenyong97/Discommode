@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpreads, issue01, pageLabel } from './issue-01';
+import { buildSpreads, issue01, issueCover, pageLabel } from './issue-01';
 import type { Issue, Spread } from './issue-01';
 
 /** An issue of `count` numbered pages, with the two single-page flags. */
@@ -94,5 +94,15 @@ describe('issue 01', () => {
     expect(pageLabel(issue01.pages[41])).toBe('BACK');
     expect(pageLabel(issue01.pages[1])).toBe('01');
     expect(pageLabel(issue01.pages[40])).toBe('40');
+  });
+});
+
+describe('issueCover', () => {
+  it('returns the first page (the cover) for a known issue', () => {
+    expect(issueCover('01')).toBe('/issues/01/cover.webp');
+  });
+
+  it('is undefined for an unknown issue', () => {
+    expect(issueCover('99')).toBeUndefined();
   });
 });

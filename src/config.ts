@@ -193,11 +193,12 @@ export const DEFAULTS: LiveConfig = {
   windDriftFactor: 0.04,
 };
 
-// --- Mini-map static sizes (px) ----------------------------------------------
-/** Centre-to-centre spacing of mini-map squares. */
-export const MINIMAP_PITCH = 26;
-/** Base square edge (the current square renders at full scale, neighbours shrink). */
-export const MINIMAP_SQUARE = 20;
+// --- Mini-map / pagination squares static sizes (px) -------------------------
+/** Centre-to-centre spacing of the pagination squares. */
+export const MINIMAP_PITCH = 24;
+/** Square size (portrait, page-like): width × height. */
+export const MINIMAP_SQUARE_W = 16;
+export const MINIMAP_SQUARE_H = 20;
 
 /** Live values. Mutated in place so imperative readers (the rAF loop, event
  *  handlers) always see the current value without re-subscribing. */

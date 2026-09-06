@@ -682,6 +682,8 @@ export function usePanController(options: PanOptions = {}): PanController {
 
     const onMove = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return;
+      // Reader open (or any suspend) ⇒ don't drive tilt/facing on the inert grid.
+      if (optionsRef.current.isSuspended?.()) return;
       cursorRef.current = { x: e.clientX, y: e.clientY };
       cursorActiveRef.current = true;
       // Re-run the card loop to re-hit-test the hover overlay + opacity lift,

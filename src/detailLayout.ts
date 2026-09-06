@@ -37,8 +37,15 @@ export interface CardTrio {
   right: Rect;
 }
 
-/** Vertical centre of the detail strip as a fraction of viewport height (= CSS `top`). */
-export const PANEL_CY_RATIO = 0.44;
+/**
+ * Centre-to-centre spacing so a centre↔side edge gap equals `gap`, given the
+ * centre panel width and the side scale. Standalone so callers working from the
+ * hero rect (whose width may be clamped below `computeDetailLayout`'s) get a
+ * consistent step. Both the detail strip and the FLIP morph use this.
+ */
+export function panelStepFor(panelW: number, gap: number, sideScale: number): number {
+  return panelW / 2 + gap + (panelW * sideScale) / 2;
+}
 
 export function computeDetailLayout(
   vw: number,
@@ -59,30 +66,8 @@ export function computeDetailLayout(
   }
 
   // Spacing so a centre↔side edge gap equals `gap` (side rendered at sideScale).
-  const sideW = panelW * sideScale;
-  const panelStep = panelW / 2 + gap + sideW / 2;
+  const panelStep = panelStepFor(panelW, gap, sideScale);
   return { panelW, panelH, panelStep };
-}
-
-/**
- * The on-screen rects of the three detail cards (prev/active/next) in the settled
- * 3-card layout — the FLIP transition's "detail" endpoints. The centre card sits
- * at the strip centre; the sides flank it at `panelStep`, scaled by `sideScale`.
- */
-export function detailCardRects(
-  vw: number,
-  vh: number,
-  layout: DetailLayout,
-  sideScale: number,
-): CardTrio {
-  const cy = vh * PANEL_CY_RATIO;
-  const sideW = layout.panelW * sideScale;
-  const sideH = layout.panelH * sideScale;
-  return {
-    center: { cx: vw / 2, cy, w: layout.panelW, h: layout.panelH },
-    left: { cx: vw / 2 - layout.panelStep, cy, w: sideW, h: sideH },
-    right: { cx: vw / 2 + layout.panelStep, cy, w: sideW, h: sideH },
-  };
 }
 
 /**

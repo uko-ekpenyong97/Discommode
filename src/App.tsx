@@ -10,7 +10,8 @@ import type { MorphCard } from './components/DetailMorph';
 import { usePanController } from './hooks/usePanController';
 import { useDetail } from './hooks/useDetail';
 import type { FlipOrigin } from './hooks/useDetail';
-import { computeDetailLayout, detailCardRects, gridCardRects } from './detailLayout';
+import { gridCardRects, panelStepFor } from './detailLayout';
+import { useHeroRect } from './layout/hero';
 import { useEnvState } from './env';
 import { cardHeight, cellSpanX, config, useConfig } from './config';
 import { CONTENT, CONTENT_COUNT, contentIndex } from './content';
@@ -44,21 +45,39 @@ function useReducedMotion(): boolean {
  * no cross-fade on those cards. The rest of the grid cross-fades; the detail
  * chrome fades. Deep-link / reduced-motion fall back to a quick fade.
  */
-export default function App() {
+interface AppProps {
+  /** True while the reader layer is open above the app: every grid/detail input
+   *  path is gated so the app is fully inert but stays mounted (no re-init). */
+  suspended?: boolean;
+}
+
+export default function App({ suspended = false }: AppProps) {
   useConfig(); // re-render on layout/feel changes
   const reducedMotion = useReducedMotion();
 
   const detailModeRef = useRef<'grid' | 'detail'>('grid');
   const openRef = useRef<(index: number, origin?: FlipOrigin | null) => void>(() => {});
 
-  const isSuspended = useCallback(() => detailModeRef.current !== 'grid', []);
+  // The reader suspends every grid input path (keyboard, pointer, cursor tilt),
+  // on top of the existing detail-mode suspension.
+  const suspendedRef = useRef(suspended);
+  useEffect(() => {
+    suspendedRef.current = suspended;
+  });
+
+  const isSuspended = useCallback(
+    () => suspendedRef.current || detailModeRef.current !== 'grid',
+    [],
+  );
   const onTap = useCallback((col: number, row: number, origin: FlipOrigin) => {
     openRef.current(contentIndex(col, row), origin);
   }, []);
 
   const pan = usePanController({ isSuspended, onTap });
-  const detail = useDetail();
+  const detail = useDetail(suspended);
   const envSnapshot = useEnvState();
+  // The one hero rect the detail panel, the FLIP morph, and the reader all use.
+  const hero = useHeroRect();
 
   useEffect(() => {
     detailModeRef.current = detail.mode;
@@ -129,8 +148,19 @@ export default function App() {
   if (useMorph && (phase === 'enter' || phase === 'exit')) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const layout = computeDetailLayout(vw, vh, config.detailCardScale, config.detailSideScale, config.detailGap);
-    const d = detailCardRects(vw, vh, layout, config.detailSideScale);
+    // Detail endpoint = the hero rect (centre) + its neighbours at sideScale, so
+    // the morph lands exactly on the detail panel and the reader cover.
+    const sideScale = config.detailSideScale;
+    const cx = hero.x + hero.w / 2;
+    const cy = hero.y + hero.h / 2;
+    const step = panelStepFor(hero.w, config.detailGap, sideScale);
+    const sideW = hero.w * sideScale;
+    const sideH = hero.h * sideScale;
+    const d = {
+      center: { cx, cy, w: hero.w, h: hero.h },
+      left: { cx: cx - step, cy, w: sideW, h: sideH },
+      right: { cx: cx + step, cy, w: sideW, h: sideH },
+    };
     const g = gridCardRects(vw, vh, config.cardWidth, cardHeight(), cellSpanX(), config.focusScale);
     const items = {
       left: CONTENT[mod(activeIndex - 1, CONTENT_COUNT)],
@@ -149,7 +179,7 @@ export default function App() {
   const stageStyle = { '--detail-ms': `${config.detailTransitionMs}ms` } as CSSProperties;
 
   return (
-    <div className="app">
+    <div className="app" data-suspended={suspended || undefined}>
       <SkyLayer env={envSnapshot.env} />
       <div className={gridClass} data-locked={inDetail || undefined} style={stageStyle}>
         <GridPlane
@@ -169,7 +199,14 @@ export default function App() {
         <FrameHUD worldCol={pan.world.col} worldRow={pan.world.row} />
       </div>
 
-      {inDetail && <DetailView detail={detail} transition={useMorph ? 'morph' : 'fade'} />}
+      {inDetail && (
+        <DetailView
+          detail={detail}
+          transition={useMorph ? 'morph' : 'fade'}
+          suspended={suspended}
+          hero={hero}
+        />
+      )}
 
       {morphCards && (
         <DetailMorph
@@ -187,7 +224,7 @@ export default function App() {
         <MiniMap focusedIndex={miniIndex} onNavigate={miniNavigate} />
       </div>
 
-      {DevDials && (
+      {DevDials && !suspended && (
         <Suspense fallback={null}>
           <DevDials />
         </Suspense>

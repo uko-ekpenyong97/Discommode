@@ -34,6 +34,12 @@
 }
 
 .reader__caption {
+  /* The book is absolutely centred on the hero rect, so the caption sits in the
+     bottom band on its own rather than riding below the book in flow. */
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   gap: 18px;
   align-items: baseline;
