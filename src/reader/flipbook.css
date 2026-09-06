@@ -20,10 +20,11 @@
   height: 64px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.72);
+  /* A quiet dark chip: the old near-transparent white fill vanished on wood. */
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.78);
   font-family: var(--mono);
   font-size: 20px;
   line-height: 1;
@@ -31,8 +32,8 @@
   transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
 .book-nav:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.42);
+  border-color: rgba(255, 255, 255, 0.3);
   color: #fff;
 }
 .book-nav:disabled {
@@ -52,6 +53,16 @@
   --tt: 0deg;
   --td: 0deg;
   --shade: 0;
+
+  /* Table shadow under each page. Light from top-left, offsets small so a page
+     reads as lying ON the table, not floating. Two layers: a tight, dark contact
+     layer and a soft, wide ambient one. The ambient is biased OUTWARD, away from
+     the spine (--page-shadow-x), with a negative spread — so the wide soft part
+     falls on the outer edges while the gutter side is pulled in and the spine
+     reads continuous, no doubled band. The two occupied slots mirror the bias. */
+  --page-shadow-x: 10px;
+  --page-shadow-contact: 1px 2px rgba(0, 0, 0, 0.35);
+  --page-shadow-ambient: 18px 40px -6px rgba(0, 0, 0, 0.35);
 
   position: relative;
   width: min(1400px, 92vw, calc((100vh - 120px) * 1.5385));
@@ -93,6 +104,28 @@
   object-fit: contain;
   user-select: none;
   -webkit-user-drag: none;
+}
+
+/* Every OCCUPIED slot casts the table shadow. `:has(img)` catches exactly the
+   filled ones — the static React slots AND the revealed slot inside .book__turn
+   both carry an <img> only when their page exists, so an empty half (the cover's
+   left, the back's right) stays flush to the table with no shadow.
+   `:has()` is Baseline-widely-available; the repo sets no browserslist / Vite
+   target, so it ships as authored.
+
+   The landing plate is EXCLUDED: it crossfades in directly above the static
+   under-page, which already casts this exact, continuous shadow. A shadow on the
+   plate too would stack at the seam during the fade and pop back at handoff. The
+   curl gets no box-shadow either — its per-strip shading already implies form. */
+.book__page--left:has(img):not(.book__page--plate) {
+  box-shadow:
+    -1px var(--page-shadow-contact),
+    calc(-1 * var(--page-shadow-x)) var(--page-shadow-ambient);
+}
+.book__page--right:has(img):not(.book__page--plate) {
+  box-shadow:
+    1px var(--page-shadow-contact),
+    var(--page-shadow-x) var(--page-shadow-ambient);
 }
 
 /* While a leaf is in the air, its STATIC copy underneath must not show. On an

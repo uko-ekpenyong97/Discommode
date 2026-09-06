@@ -51,7 +51,11 @@ async function statOrNull(path) {
 
 async function listIssues() {
   const entries = await readdir(SOURCE_DIR, { withFileTypes: true });
-  return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  // `background/` is not an issue — it holds stage textures for optimize-backgrounds.mjs.
+  return entries
+    .filter((e) => e.isDirectory() && e.name !== 'background')
+    .map((e) => e.name)
+    .sort();
 }
 
 let pngTotal = 0;
