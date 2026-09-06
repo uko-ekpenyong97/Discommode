@@ -12,6 +12,12 @@ interface FlipBookProps {
   onSpreadChange: (index: number) => void;
   /** Dev-only frozen-t scrub, from `#read-NN?debug`. */
   debug?: boolean;
+  /**
+   * Dev-only: hands the freshly-created engine to a caller that drives it
+   * externally (the `?intro` entrance prototype). A no-op when absent, so the
+   * ordinary reader path is unchanged.
+   */
+  onEngineReady?: (engine: FlipEngine) => void;
 }
 
 /** 'COVER' / 'BACK' for the plates, 'Page 07' for a numbered page. */
@@ -25,7 +31,13 @@ const altFor = (page: Page): string => page.label ?? `Page ${pageLabel(page)}`;
  * The prev/next buttons live outside `.book` on purpose: `.book *` has
  * `pointer-events: none` so the book element itself can own the drag.
  */
-export function FlipBook({ spreads, spread, onSpreadChange, debug = false }: FlipBookProps) {
+export function FlipBook({
+  spreads,
+  spread,
+  onSpreadChange,
+  debug = false,
+  onEngineReady,
+}: FlipBookProps) {
   const bookRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<FlipEngine | null>(null);
@@ -54,12 +66,13 @@ export function FlipBook({ spreads, spread, onSpreadChange, debug = false }: Fli
       onSpreadChange,
     });
     engineRef.current = engine;
+    onEngineReady?.(engine);
 
     return () => {
       engine.destroy();
       engineRef.current = null;
     };
-  }, [onSpreadChange]);
+  }, [onSpreadChange, onEngineReady]);
 
   // DEVIATION 2: the turn layer is dropped HERE, after React has committed the
   // new static spread — not inside the engine's completion callback, where the

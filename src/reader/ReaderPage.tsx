@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlipBook } from './FlipBook';
+import type { FlipEngine } from './flipEngine';
 import { ISSUES, buildSpreads, issue01, pageLabel } from './issue-01';
 import './ReaderPage.css';
 
@@ -8,7 +9,13 @@ interface ReaderPageProps {
   issue: string;
   /** Dev-only frozen-t scrub, from `#read-NN?debug`. */
   debug?: boolean;
+  /** Dev-only entrance prototype, from `#read-NN?intro`. */
+  intro?: boolean;
 }
+
+// Dev-only: the entrance prototype and its `dialkit` timeline are behind an
+// `import.meta.env.DEV` dynamic import, so both tree-shake out of production.
+const ReaderIntro = import.meta.env.DEV ? lazy(() => import('./ReaderIntro')) : null;
 
 const HASH_PREFIX = '#read-';
 
@@ -38,11 +45,19 @@ const clamp = (n: number, max: number): number => Math.min(Math.max(n, 0), max);
  * listener below, and no history entries pile up — while the listener picks up
  * the hash being edited by hand.
  */
-export default function ReaderPage({ issue, debug = false }: ReaderPageProps) {
+export default function ReaderPage({ issue, debug = false, intro = false }: ReaderPageProps) {
   const data = ISSUES[issue] ?? issue01;
   const spreads = useMemo(() => buildSpreads(data), [data]);
   const lastSpread = spreads.length - 1;
   const [spread, setSpread] = useState(() => clamp(parseHash().spread, lastSpread));
+
+  // Entrance prototype wiring (dev-only). The stage element gives the intro the
+  // cover-slot rect and the LAND boundary; the engine handle lets OPEN drive the
+  // real turn. Both stay inert unless `?intro` is set on a dev build.
+  const introActive = import.meta.env.DEV && intro && ReaderIntro !== null;
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [engine, setEngine] = useState<FlipEngine | null>(null);
+  const resetToCover = useCallback(() => setSpread(0), []);
 
   // Mirror the current spread into the hash.
   useEffect(() => {
@@ -82,8 +97,14 @@ export default function ReaderPage({ issue, debug = false }: ReaderPageProps) {
   const labels = [left, right].filter((p) => p !== null).map(pageLabel);
 
   return (
-    <div className="reader">
-      <FlipBook spreads={spreads} spread={spread} onSpreadChange={goto} debug={debug} />
+    <div className="reader" ref={stageRef}>
+      <FlipBook
+        spreads={spreads}
+        spread={spread}
+        onSpreadChange={goto}
+        debug={debug}
+        onEngineReady={introActive ? setEngine : undefined}
+      />
       <p className="reader__caption">
         <span>
           ISSUE {data.id} — SPREAD {spread + 1} / {spreads.length}
@@ -91,6 +112,11 @@ export default function ReaderPage({ issue, debug = false }: ReaderPageProps) {
         <span aria-hidden="true">·</span>
         <span className="reader__pages">{labels.join(' – ')}</span>
       </p>
+      {introActive && ReaderIntro && (
+        <Suspense fallback={null}>
+          <ReaderIntro engine={engine} stageRef={stageRef} onResetToCover={resetToCover} />
+        </Suspense>
+      )}
     </div>
   );
 }
