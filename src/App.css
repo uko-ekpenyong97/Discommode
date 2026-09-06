@@ -5,6 +5,13 @@
   overflow: hidden;
 }
 
+/* Reader open: the whole app is inert. One rule covers both the grid and the
+   detail view beneath the reader layer (the keyboard/cursor paths are gated in
+   the hooks; this stops all pointer interaction). */
+.app[data-suspended] {
+  pointer-events: none;
+}
+
 /* The grid layers (cards + HUD). On ENTER it fades out (--fading) as the morph
    travels; through detail + the whole EXIT it stays fully hidden (--hidden, not
    painted) so the real cards never double with the travelling morph cards. The

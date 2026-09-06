@@ -5,6 +5,11 @@
    chrome fades. In 'fade' mode (deep-link / reduced motion) the whole view
    cross-fades. Clicking the empty backdrop dismisses. */
 .detail {
+  /* Outer margin (all sides) and the pill/bar height — the chrome lives in the
+     bands above and below the hero panel. */
+  --detail-margin: 24px;
+  --detail-chrome: 40px;
+
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -37,26 +42,39 @@
 }
 
 /* MORPH mode: the chrome fades in after / out before the card morph. */
-.detail__scrim,
-.detail__meta,
+.detail__back,
 .detail__bar {
   transition: opacity var(--detail-chrome-ms, 200ms) ease;
 }
-.detail[data-trans='morph'][data-phase='enter'] :is(.detail__scrim, .detail__meta, .detail__bar),
-.detail[data-trans='morph'][data-phase='exit'] :is(.detail__scrim, .detail__meta, .detail__bar) {
+.detail[data-trans='morph'][data-phase='enter'] :is(.detail__back, .detail__bar),
+.detail[data-trans='morph'][data-phase='exit'] :is(.detail__back, .detail__bar) {
   opacity: 0;
 }
 
-/* Bottom scrim for text legibility over the live sky (opacity from config). */
-.detail__scrim {
+/* Back pill: top-centre, sitting in the top band. Click = Escape. */
+.detail__back {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 280px;
-  z-index: 1;
-  pointer-events: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, var(--detail-scrim, 0.2)), transparent);
+  top: var(--detail-margin);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  height: var(--detail-chrome);
+  padding: 0 16px;
+  border: 0;
+  border-radius: 100px;
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: var(--mono);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 160ms ease, opacity var(--detail-chrome-ms, 200ms) ease;
+}
+.detail__back:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+.detail__back:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
 }
 
 .detail__strip {
@@ -68,7 +86,7 @@
 
 .detail__panel {
   position: absolute;
-  top: 44%;
+  top: 50%; /* hero centre = viewport centre (equal bands) */
   /* transform (translate + per-panel scale), opacity, and z-index are written
      imperatively by the ticker; left / width / height come inline. */
   transform: translate(-50%, -50%);
@@ -85,6 +103,11 @@
 
 .detail__panel--center {
   cursor: default;
+}
+
+/* A readable issue's centre panel is the doorway into the reader. */
+.detail__panel--readable {
+  cursor: pointer;
 }
 
 .detail__media {
@@ -107,65 +130,44 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
-.detail__meta {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 96px;
-  text-align: center;
-  color: #fff;
-  pointer-events: none;
-  padding: 0 16px;
-  z-index: 2; /* above the scrim */
-}
-
-.detail__title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.detail__captions {
-  margin: 6px 0 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.6);
-}
-
+/* Bar: bottom-centre, in the bottom band. Chips are 40 tall, radius 2, on a
+   translucent charcoal fill 8px apart; hover a step lighter. */
 .detail__bar {
   position: absolute;
   left: 50%;
-  bottom: 28px;
+  bottom: var(--detail-margin);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   z-index: 2;
   cursor: default; /* the bar is chrome, not dismissable backdrop */
 }
 
 .detail__btn,
 .detail__select {
+  height: var(--detail-chrome);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 16px;
   color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 6px;
-  padding: 8px 14px;
+  background: rgba(53, 53, 53, 0.4);
+  border: 0;
+  border-radius: 2px;
+  padding: 0 14px;
   cursor: pointer;
 }
 
 .detail__btn:hover,
 .detail__select:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(83, 83, 83, 0.5);
 }
 
-.detail__select {
-  padding: 8px 10px;
+/* The primary "Read issue" action reads a touch brighter than Prev/Next. */
+.detail__btn--read {
+  background: rgba(83, 83, 83, 0.5);
+}
+.detail__btn--read:hover {
+  background: rgba(108, 108, 108, 0.6);
 }
 
 .detail__btn:focus-visible,

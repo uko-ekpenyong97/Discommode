@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { FlipBook } from './FlipBook';
 import type { FlipEngine } from './flipEngine';
 import { ISSUES, buildSpreads, issue01, pageLabel } from './issue-01';
+import { closeReader } from './readerNav';
 import './ReaderPage.css';
 
 interface ReaderPageProps {
@@ -84,7 +85,7 @@ export default function ReaderPage({ issue, debug = false, intro = false }: Read
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        window.location.hash = '';
+        closeReader(); // back to the item that opened the reader (or #item-01)
       }
     };
     window.addEventListener('keydown', onKey);

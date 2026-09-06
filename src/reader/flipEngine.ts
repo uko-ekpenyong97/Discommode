@@ -121,6 +121,10 @@ interface TurnState {
   backSrc: string | null;
   /** True once the chain has handed over to the flat plate (see PLATE_T). */
   plated: boolean;
+  /** Book slide (Task 3), as a fraction of --bw, at t=0 and t=1: ∓0.25 on a
+   *  cover/back turn (half a page), 0 otherwise. `applyTurn` lerps between them. */
+  slideFromK: number;
+  slideToK: number;
 }
 
 /** A built strip chain, cached per direction and reused across turns. */
@@ -275,6 +279,13 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     book.style.setProperty('--td', `${(td * DEG).toFixed(3)}deg`);
     book.style.setProperty('--shade', Math.sin(Math.PI * t).toFixed(3));
 
+    // Book slide, tied to t so it tracks a drag and springs back on cancel. Only
+    // written for a cover/back turn; other turns leave the CSS data-pos value.
+    if (state && (state.slideFromK !== 0 || state.slideToK !== 0)) {
+      const k = state.slideFromK + (state.slideToK - state.slideFromK) * t;
+      book.style.setProperty('--book-slide', `${(k * book.clientWidth).toFixed(2)}px`);
+    }
+
     const last = strips.length - 1;
     for (let i = 0; i < strips.length; i++) {
       // cos^2, not |cos|: same 0..1 range with no cusp as a strip crosses edge-on.
@@ -304,6 +315,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     // Dropped in the SAME synchronous step as the layer, so the static page
     // reappears in the very frame the thing covering it goes away.
     book.classList.remove(LIFTING_CLASS.next, LIFTING_CLASS.prev);
+    // Hand the slide back to CSS (the settled data-pos value for the new spread).
+    book.style.removeProperty('--book-slide');
     strips = [];
     state = null;
   }
@@ -419,10 +432,17 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     paintCurl(curl, lift?.src ?? null, back?.src ?? null);
     layer.append(curl.root);
 
+    // Slide profile: the cover (spread 0) and back (last spread) rest half a page
+    // off-centre; every spread between rests centred. A turn touching either end
+    // slides between that offset and 0, tied to t.
+    const lastSpread = spreads.length - 1;
+    const slideK = (i: number): number => (i === 0 ? -0.25 : i === lastSpread ? 0.25 : 0);
+
     turnSeq++;
     state = {
       dir, from, to, t: 0, committed: false, plated: false,
       liftSrc: lift?.src ?? null, backSrc: back?.src ?? null,
+      slideFromK: slideK(from), slideToK: slideK(to),
     };
     strips = curl.strips;
     turnHost.append(layer);

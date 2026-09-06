@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
 import { CARD_ASPECT_H, CARD_ASPECT_W, PERSPECTIVE, useConfig } from '../config';
 import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
-import { CONTENT, contentIndex } from '../content';
+import { CONTENT, contentIndex, itemFace } from '../content';
 import type { PosterItem } from '../content';
 import type { CardFace, CellOffset } from '../hooks/usePanController';
 import { CardOverlay } from './CardOverlay';
@@ -174,6 +174,9 @@ export function GridPlane({
             const isHeroHidden = hideHero && s.dr === 0 && Math.abs(s.dc) <= 1;
             // The hovered card dims slightly so its white overlay type reads.
             const brightness = brightnessForDistance(distance) * (isOverlay ? cfg.overlayCardDim : 1);
+            // An issue cover (when the item is a readable issue) takes the card
+            // face; otherwise a sample poster; otherwise the hue fallback.
+            const face = itemFace(s.item);
             return (
               // Outer cell: layout slot + per-card perspective. The transform
               // wrapper carries the imperatively-written scale/rotation/opacity
@@ -200,10 +203,10 @@ export function GridPlane({
                       filter: `brightness(${brightness})`,
                     }}
                   >
-                    {s.item.image && (
+                    {face && (
                       <img
                         className="grid-card__img"
-                        src={s.item.image}
+                        src={face}
                         alt=""
                         draggable={false}
                         loading={s.eager ? 'eager' : 'lazy'}

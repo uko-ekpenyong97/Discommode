@@ -117,6 +117,10 @@ export function FlipBook({
   // Guard the index: a caller that hasn't clamped shouldn't throw here.
   const [left, right] = spreads[spread] ?? [null, null];
 
+  // Which closed/open position the book rests at (drives the settled slide via
+  // CSS; the engine takes over inline during a cover/back turn).
+  const pos = spread === 0 ? 'cover' : spread >= spreads.length - 1 ? 'back' : 'mid';
+
   return (
     <div className="book-stage">
       <button
@@ -129,7 +133,7 @@ export function FlipBook({
         &lsaquo;
       </button>
 
-      <div className="book" ref={bookRef}>
+      <div className="book" ref={bookRef} data-pos={pos}>
         <div className="book__page book__page--left">
           {left && (
             <img ref={leftImgRef} src={left.src} alt={altFor(left)} draggable={false} />

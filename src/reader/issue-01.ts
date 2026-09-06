@@ -61,6 +61,17 @@ export function pageLabel(page: Page): string {
   return page.label ?? String(page.n).padStart(2, '0');
 }
 
+/**
+ * The cover image for an issue, or undefined if the id is unknown or the issue
+ * has no cover. The cover is just the first page in reading order (see
+ * `buildSpreads`), so this is the single source of truth the grid, detail view,
+ * and reader all read from — no separate cover field to drift.
+ */
+export function issueCover(id: string): string | undefined {
+  const issue = ISSUES[id];
+  return issue?.hasCover ? issue.pages[0]?.src : undefined;
+}
+
 export const ISSUES: Record<string, Issue> = {
   '01': issue01,
 };

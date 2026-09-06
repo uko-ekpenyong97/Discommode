@@ -3,8 +3,10 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useConfig } from '../config';
 import { config } from '../config';
 import { mod } from '../grid';
-import { CONTENT, CONTENT_COUNT } from '../content';
-import { computeDetailLayout } from '../detailLayout';
+import { CONTENT, CONTENT_COUNT, itemFace } from '../content';
+import { openReader } from '../reader/readerNav';
+import { panelStepFor } from '../detailLayout';
+import type { HeroRect } from '../layout/hero';
 import { useTicker } from '../hooks/useTicker';
 import type { DetailController } from '../hooks/useDetail';
 import './DetailView.css';
@@ -20,6 +22,11 @@ interface DetailViewProps {
   /** 'morph' = the positional FLIP runs on a separate layer (strip hidden during
    *  the transition); 'fade' = the whole view cross-fades (deep-link / reduced motion). */
   transition: 'morph' | 'fade';
+  /** True while the reader layer is open above the app — arrow keys are ignored
+   *  (the reader owns input) and the view stays frozen under the reader. */
+  suspended?: boolean;
+  /** The shared hero rect: the centre panel is positioned and sized to it. */
+  hero: HeroRect;
 }
 
 /**
@@ -32,16 +39,9 @@ interface DetailViewProps {
  * morph's end) when settled, while the chrome fades. Clicking empty backdrop
  * dismisses; arrow keys / horizontal swipes drive prev/next; a down-swipe exits.
  */
-export function DetailView({ detail, transition }: DetailViewProps) {
+export function DetailView({ detail, transition, suspended = false, hero }: DetailViewProps) {
   const { activeIndex, phase, next, prev, goto, close, transitioning } = detail;
   useConfig(); // re-render on layout/feel dial changes
-
-  const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
-  useEffect(() => {
-    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   // Hover-to-isolate: the panel under the cursor stays full, the rest dim. Held
   // in a ref (read by the ticker), so hovering doesn't re-render.
@@ -50,14 +50,13 @@ export function DetailView({ detail, transition }: DetailViewProps) {
   // panel DOM by key, so a continuing panel keeps its eased value).
   const opByEl = useRef(new WeakMap<Element, number>()).current;
 
-  // True 3-card geometry: large centre card, side cards at detailSideScale.
-  const { panelW, panelH, panelStep } = computeDetailLayout(
-    viewport.w,
-    viewport.h,
-    config.detailCardScale,
-    config.detailSideScale,
-    config.detailGap,
-  );
+  // 3-card geometry from the shared hero rect: centre panel = hero, sides at
+  // detailSideScale. The hero's centre is the viewport centre (it's centred both
+  // ways), so the strip is laid out around it.
+  const panelW = hero.w;
+  const panelH = hero.h;
+  const panelStep = panelStepFor(hero.w, config.detailGap, config.detailSideScale);
+  const centerX = hero.x + hero.w / 2;
 
   // Continuous carousel slide: target accumulates signed shortest steps as the
   // active item changes; the rAF loop eases the live position toward it and
@@ -88,7 +87,7 @@ export function DetailView({ detail, transition }: DetailViewProps) {
 
     const track = trackRef.current;
     if (track) {
-      track.style.transform = `translateX(${viewport.w / 2 - pos * panelStep}px)`;
+      track.style.transform = `translateX(${centerX - pos * panelStep}px)`;
 
       // Per-panel: continuous scale (centre = 1 → side = detailSideScale) and
       // opacity (resting fade to detailSideOpacity, or the hover-isolate state),
@@ -132,7 +131,7 @@ export function DetailView({ detail, transition }: DetailViewProps) {
   // Keyboard: arrows drive prev/next while in detail (grid keys are suspended).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (transitioning) return;
+      if (transitioning || suspended) return; // reader open ⇒ it owns the keys
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         next();
@@ -143,7 +142,7 @@ export function DetailView({ detail, transition }: DetailViewProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [next, prev, transitioning]);
+  }, [next, prev, transitioning, suspended]);
 
   // Touch swipe: horizontal = prev/next, downward = close.
   const swipeRef = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -176,18 +175,32 @@ export function DetailView({ detail, transition }: DetailViewProps) {
         {
           '--detail-ms': `${config.detailTransitionMs}ms`,
           '--detail-chrome-ms': `${config.detailChromeFadeMs}ms`,
-          '--detail-scrim': config.detailScrimOpacity,
         } as CSSProperties
       }
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
       onClick={close} // click on the empty backdrop dismisses (panels/bar stop propagation)
     >
+      <button
+        type="button"
+        className="detail__back"
+        onClick={(e) => {
+          e.stopPropagation();
+          close();
+        }}
+      >
+        ← Back to the grid
+      </button>
+
       <div className="detail__strip" ref={trackRef}>
         {panels.map((p) => {
           const distance = Math.abs(p.i - center);
           const isCenter = distance === 0;
           const item = CONTENT[p.idx];
+          // The centre panel of a readable issue opens the reader; side panels
+          // navigate; a centre non-issue panel is inert (aria-hidden).
+          const canRead = isCenter && !!item.issue;
+          const face = itemFace(item);
           // Size, opacity, and z-index are written imperatively by the ticker
           // (continuous in the slide position); base size is the centre size.
           return (
@@ -195,7 +208,13 @@ export function DetailView({ detail, transition }: DetailViewProps) {
               key={p.i}
               type="button"
               data-i={p.i}
-              className={isCenter ? 'detail__panel detail__panel--center' : 'detail__panel'}
+              className={
+                canRead
+                  ? 'detail__panel detail__panel--center detail__panel--readable'
+                  : isCenter
+                    ? 'detail__panel detail__panel--center'
+                    : 'detail__panel'
+              }
               style={{
                 left: `${p.i * panelStep}px`,
                 width: `${panelW}px`,
@@ -204,15 +223,18 @@ export function DetailView({ detail, transition }: DetailViewProps) {
               onClick={(e) => {
                 e.stopPropagation(); // a card is not backdrop — don't dismiss
                 if (!isCenter) goto(p.idx);
+                else if (item.issue) openReader(item.issue);
               }}
               onPointerEnter={(e) => e.pointerType !== 'touch' && (hoveredRef.current = p.i)}
               onPointerLeave={(e) => e.pointerType !== 'touch' && (hoveredRef.current = null)}
-              tabIndex={isCenter ? -1 : 0}
-              aria-label={isCenter ? undefined : `Go to item ${item.title}`}
-              aria-hidden={isCenter ? true : undefined}
+              tabIndex={isCenter ? (canRead ? 0 : -1) : 0}
+              aria-label={
+                canRead ? `Read issue ${item.issue}` : isCenter ? undefined : `Go to item ${item.title}`
+              }
+              aria-hidden={isCenter && !canRead ? true : undefined}
             >
-              {item.image ? (
-                <img className="detail__media" src={item.image} alt={`Poster ${item.title}`} draggable={false} />
+              {face ? (
+                <img className="detail__media" src={face} alt={`Poster ${item.title}`} draggable={false} />
               ) : (
                 <div className="detail__media" style={{ background: `hsl(${item.hue}, 28%, 32%)` }} />
               )}
@@ -220,14 +242,6 @@ export function DetailView({ detail, transition }: DetailViewProps) {
             </button>
           );
         })}
-      </div>
-
-      {/* Low-opacity bottom scrim for text legibility over the live sky. */}
-      <div className="detail__scrim" aria-hidden="true" />
-
-      <div className="detail__meta">
-        <h1 className="detail__title">Item {activeItem.title}</h1>
-        <p className="detail__captions">{activeItem.captions.join('  ·  ')}</p>
       </div>
 
       <div className="detail__bar" onClick={(e) => e.stopPropagation()}>
@@ -246,6 +260,15 @@ export function DetailView({ detail, transition }: DetailViewProps) {
             </option>
           ))}
         </select>
+        {activeItem.issue && (
+          <button
+            type="button"
+            className="detail__btn detail__btn--read"
+            onClick={() => openReader(activeItem.issue!)}
+          >
+            Read issue
+          </button>
+        )}
         <button type="button" className="detail__btn" onClick={next} aria-label="Next item">
           Next ›
         </button>

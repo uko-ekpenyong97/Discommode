@@ -2,12 +2,18 @@
    engine fills with the turn layer. Everything in the curl is expressed against
    --bw (the book's live pixel width), so a resize needs no rebuild. */
 
+/* Absolutely centred on the viewport (vw/2, vh/2) so the book sits on the hero
+   rect regardless of the caption below — the cover then lands exactly on the
+   detail card. Full width so the nav buttons still flank near the viewport edges. */
 .book-stage {
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
 }
 
 /* Nav sits OUTSIDE .book (which disables pointer events on its subtree) and is
@@ -53,6 +59,10 @@
   --tt: 0deg;
   --td: 0deg;
   --shade: 0;
+  /* Half-page slide (Task 3): 0 open, ∓ page-width/2 on the cover / back spread.
+     The engine overrides this inline during a cover/back turn, tied to t; the
+     data-pos rules below own the settled/direct-open value. */
+  --book-slide: 0px;
 
   /* Table shadow under each page. Light from top-left, offsets small so a page
      reads as lying ON the table, not floating. Two layers: a tight, dark contact
@@ -65,8 +75,11 @@
   --page-shadow-ambient: 18px 40px -6px rgba(0, 0, 0, 0.35);
 
   position: relative;
-  width: min(1400px, 92vw, calc((100vh - 120px) * 1.5385));
-  aspect-ratio: 4000 / 2600;
+  /* The hero rect IS the rule: page height = hero height, width follows the 10:13
+     page ratio (so --bw = 2 pages = hero-h * 20/13 ≈ 2.05 × hero width). */
+  width: calc(var(--hero-h, 76vh) * 20 / 13);
+  height: var(--hero-h, 76vh);
+  transform: translateX(var(--book-slide, 0px));
   perspective: 2600px;
   /* DEVIATION 1: the spec puts `perspective` on .book but the curl is a
      grandchild (via .book__turn), and perspective only reaches DIRECT children
@@ -77,6 +90,15 @@
   cursor: grab;
   touch-action: pan-y;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Closed spreads: shift the book so the single occupied slot lands on the hero
+   rect (cover on the right, back on the left). page-width/2 = (hero-h·10/13)/2. */
+.book[data-pos='cover'] {
+  --book-slide: calc(var(--hero-h, 76vh) * -5 / 13);
+}
+.book[data-pos='back'] {
+  --book-slide: calc(var(--hero-h, 76vh) * 5 / 13);
 }
 
 /* The book itself owns pointer events; nothing inside intercepts them. */
