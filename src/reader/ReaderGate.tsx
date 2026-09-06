@@ -36,6 +36,8 @@ export default function ReaderGate() {
   // ReaderPage's business; the gate only needs the issue id and the flags.
   const [path, query = ''] = hash.slice(PREFIX.length).split('?');
   const id = path.split('/')[0];
-  const debug = query.split('&').includes('debug');
-  return <ReaderPage issue={id} debug={debug} />;
+  const flags = query.split('&');
+  const debug = flags.includes('debug');
+  const intro = flags.includes('intro');
+  return <ReaderPage issue={id} debug={debug} intro={intro} />;
 }
