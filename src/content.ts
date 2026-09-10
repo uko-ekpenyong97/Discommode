@@ -80,6 +80,13 @@ export function indexForSlug(slug: string): number {
   return CONTENT.findIndex((item) => item.slug === slug);
 }
 
+/** The issue id a slug reads (e.g. "item-01" → "01"), or null if it isn't a
+ *  readable issue. Used by the dev `#item-NN?intro` doorway-authoring path. */
+export function issueForSlug(slug: string): string | null {
+  const i = indexForSlug(slug);
+  return i >= 0 ? (CONTENT[i].issue ?? null) : null;
+}
+
 /**
  * Deterministic mapping from any world cell to a content index, using the live
  * `wrapStride` (rows are `wrapStride` apart in the list). A true modulo wraps

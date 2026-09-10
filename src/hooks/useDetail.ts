@@ -40,7 +40,9 @@ export interface DetailController {
 }
 
 function hashSlug(): string {
-  return window.location.hash.replace(/^#/, '');
+  // Drop the leading '#' and any query (e.g. the dev `?intro` doorway flag), so
+  // `#item-01?intro` still resolves to the item-01 detail view underneath.
+  return window.location.hash.replace(/^#/, '').split('?')[0];
 }
 function pushDetail(index: number): void {
   window.history.pushState(null, '', `#${CONTENT[index].slug}`);

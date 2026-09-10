@@ -12,8 +12,15 @@
  * returns the numeric rect for JS consumers (the detail panel + the FLIP morph).
  */
 import { useLayoutEffect, useState } from 'react';
-import { CARD_ASPECT_H, CARD_ASPECT_W, config, subscribeConfig } from '../config';
+import { config, subscribeConfig } from '../config';
 import { computeDetailLayout } from '../detailLayout';
+
+/**
+ * The reader's page ratio (10:13), NOT the grid card's 3:4. The hero rect uses
+ * this so the detail panel and the reader cover are the same rect (see below).
+ */
+export const PAGE_ASPECT_W = 10;
+export const PAGE_ASPECT_H = 13;
 
 /** Detail chrome that must fit inside each band (spec 4c-1b Task 2). */
 export const HERO_MARGIN = 24;
@@ -40,7 +47,13 @@ export function computeHeroRect(vw: number, vh: number): HeroRect {
   );
   // Clamp so each band (vh - h)/2 stays >= MIN_BAND for the chrome.
   const h = Math.min(panelH, Math.max(120, vh - 2 * MIN_BAND));
-  const w = (h * CARD_ASPECT_W) / CARD_ASPECT_H;
+  // The hero deliberately diverges from the grid's shared 3:4 (CARD_ASPECT_*):
+  // it is 10:13, the reader's page ratio. With this the detail centre panel and
+  // the FLIP endpoint land on the reader cover's rect to the pixel, so the reader
+  // cover coincides with the detail panel exactly — the doorway entrance (step
+  // 4c-2) can hold the cover opaque over the panel with only its contact shadow
+  // arriving. The grid stays 3:4 (CARD_ASPECT_* is unchanged).
+  const w = (h * PAGE_ASPECT_W) / PAGE_ASPECT_H;
   return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
 }
 

@@ -35,6 +35,8 @@
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
+  /* Fades in with the reader chrome (--doorway-chrome); 1 for the plain reader. */
+  opacity: var(--doorway-chrome, 1);
   transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
 .book-nav:hover:not(:disabled) {
@@ -43,7 +45,8 @@
   color: #fff;
 }
 .book-nav:disabled {
-  opacity: 0.22;
+  /* Still gated by the chrome fade, so a disabled ‹ isn't visible at REST. */
+  opacity: calc(0.22 * var(--doorway-chrome, 1));
   cursor: default;
 }
 .book-nav--prev {
@@ -69,10 +72,17 @@
      layer and a soft, wide ambient one. The ambient is biased OUTWARD, away from
      the spine (--page-shadow-x), with a negative spread — so the wide soft part
      falls on the outer edges while the gutter side is pulled in and the spine
-     reads continuous, no doubled band. The two occupied slots mirror the bias. */
+     reads continuous, no doubled band. The two occupied slots mirror the bias.
+
+     The shadow STRENGTH is driven by the doorway SETTLE channel: 0 at the start
+     of the entrance — the cover lies flush on the detail panel it coincides with
+     (same rect + image, so the cover being present is invisible) — fading to full
+     as the cover "sets down" on the table. 1 for the ordinary reader (no doorway),
+     and it fades back out on the reverse while the cover stays fully opaque. */
   --page-shadow-x: 10px;
-  --page-shadow-contact: 1px 2px rgba(0, 0, 0, 0.35);
-  --page-shadow-ambient: 18px 40px -6px rgba(0, 0, 0, 0.35);
+  --page-shadow-alpha: calc(0.35 * var(--doorway-settle, 1));
+  --page-shadow-contact: 1px 2px rgba(0, 0, 0, var(--page-shadow-alpha));
+  --page-shadow-ambient: 18px 40px -6px rgba(0, 0, 0, var(--page-shadow-alpha));
 
   position: relative;
   /* The hero rect IS the rule: page height = hero height, width follows the 10:13
