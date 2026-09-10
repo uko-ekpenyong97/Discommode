@@ -43,9 +43,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .reader-layer[data-enter],
-  .reader-layer[data-exiting] {
-    animation: none;
-  }
-}
+/* Reduced motion takes the PLAIN crossfade for BOTH open and close (spec 4c-2:
+   "crossfade only"): the doorway entrance never plays, and a gentle opacity fade
+   carries no vestibular motion, so it is kept rather than snapped to instant. */

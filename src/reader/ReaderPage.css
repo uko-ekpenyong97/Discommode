@@ -14,18 +14,37 @@
   justify-content: center;
   gap: 20px;
   overflow: hidden;
+  /* The wood is a fade layer (::before) so the doorway can crossfade sky → wood.
+     The stage itself is transparent; at REST (--doorway-table 0) the detail view
+     and sky show straight through the reader layer. */
+  background: transparent;
+}
+
+/* The table: a dark base + wood texture that crossfades in with the doorway
+   (--doorway-table 0 → 1). This IS the sky-darkening overlay — the WebGL sky
+   beneath is untouched; the wood simply covers and darkens it as it arrives.
+   Defaults to 1 so the ordinary reader (no doorway) is fully wood. */
+.reader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
   background: #0d0d0d url(/backgrounds/wood.webp) center / cover no-repeat;
+  opacity: var(--doorway-table, 1);
 }
 
 /* Darken the wood toward the frame so the magazine stays the subject. Sits above
    the wood but BELOW the book and caption (z-index: -1 inside the stage's own
-   stacking context), so it dims the table without ever touching the pages. */
+   stacking context), so it dims the table without ever touching the pages. Rides
+   in with the table so it never darkens the detail view at REST. */
 .reader::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
+  opacity: var(--doorway-table, 1);
   background: radial-gradient(
     ellipse at center,
     transparent 40%,
@@ -35,7 +54,9 @@
 
 .reader__caption {
   /* The book is absolutely centred on the hero rect, so the caption sits in the
-     bottom band on its own rather than riding below the book in flow. */
+     bottom band on its own rather than riding below the book in flow. Fades in
+     with the reader chrome (--doorway-chrome); 1 for the ordinary reader. */
+  opacity: var(--doorway-chrome, 1);
   position: absolute;
   bottom: 24px;
   left: 50%;

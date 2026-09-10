@@ -10,16 +10,25 @@
  * ignores it, keeping the detail view frozen underneath).
  */
 
+import { armAutoOpen } from './doorway';
+
 const READ_PREFIX = 'read-';
 
 /** The hash (slug, no leading '#') the reader was opened from, or null when it
  *  was opened directly by URL. Used to land Escape back on the opener. */
 let opener: string | null = null;
 
+/** True when the reader was opened from an item (vs a direct URL) — the doorway
+ *  entrance plays only in that case (a direct load appears as the plain reader). */
+export function hasOpener(): boolean {
+  return opener !== null;
+}
+
 /** Open the reader for an issue, remembering the item it was opened from. */
 export function openReader(issue: string): void {
   const current = window.location.hash.replace(/^#/, '');
   opener = current && !current.startsWith(READ_PREFIX) ? current : null;
+  armAutoOpen(); // latch the first-visit auto-open decision for this open
   // Assigning location.hash pushes a history entry + fires hashchange.
   window.location.hash = `${READ_PREFIX}${issue}`;
 }

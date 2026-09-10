@@ -5,6 +5,7 @@ import { config } from '../config';
 import { mod } from '../grid';
 import { CONTENT, CONTENT_COUNT, itemFace } from '../content';
 import { openReader } from '../reader/readerNav';
+import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
 import { panelStepFor } from '../detailLayout';
 import type { HeroRect } from '../layout/hero';
 import { useTicker } from '../hooks/useTicker';
@@ -63,6 +64,10 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   // writes the strip transform. `center` (round of the position) drives which
   // panels render — updated only when it shifts, like the grid window.
   const trackRef = useRef<HTMLDivElement>(null);
+  // The doorway (reader layer above) clears the app's detail chrome as it opens;
+  // the ticker fades + drifts these while `doorway.clear` > 0. See below.
+  const backRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef(activeIndex);
   const posRef = useRef(activeIndex);
   const [center, setCenter] = useState(activeIndex);
@@ -84,6 +89,12 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
     let pos = posRef.current + (target - posRef.current) * k;
     if (Math.abs(target - pos) < 0.0005) pos = target;
     posRef.current = pos;
+
+    // The doorway CLEAR channel (reader layer above): 0 normally, → 1 as the
+    // reader opens. It fades + drifts the NEIGHBOURS outward and clears the
+    // detail chrome, while the centre panel stays put (the reader cover settles
+    // onto it). `d` (0 at centre → 1 at a side) scopes the fade to the sides.
+    const clear = doorway.clear;
 
     const track = trackRef.current;
     if (track) {
@@ -107,10 +118,35 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         const prev = opByEl.get(el);
         const op = prev === undefined ? targetOp : prev + (targetOp - prev) * kOp;
         opByEl.set(el, op);
-        el.style.transform = `translate(-50%, -50%) scale(${scale})`;
-        el.style.opacity = String(op);
+        const driftX = clear === 0 ? 0 : Math.sign(i - pos) * clear * CLEAR_DRIFT_PX * d;
+        el.style.transform = `translate(-50%, -50%) translateX(${driftX.toFixed(2)}px) scale(${scale})`;
+        el.style.opacity = String(op * (1 - clear * d)); // sides fade; centre stays
         el.style.zIndex = String(Math.round(100 - Math.abs(i - pos) * 10));
       });
+    }
+
+    // Detail chrome (back pill / bottom bar): fade + drift out with CLEAR. Driven
+    // imperatively (transition off) so DialKit scrubbing stays instant; restored
+    // to the CSS-driven values once CLEAR returns to 0 (so morph-phase fades work).
+    const back = backRef.current;
+    const bar = barRef.current;
+    if (back && bar) {
+      if (clear > 0) {
+        const chromeOp = String(1 - clear);
+        back.style.transition = 'none';
+        bar.style.transition = 'none';
+        back.style.opacity = chromeOp;
+        bar.style.opacity = chromeOp;
+        back.style.transform = `translateX(-50%) translateY(${(-clear * CHROME_DRIFT_PX).toFixed(2)}px)`;
+        bar.style.transform = `translateX(-50%) translateY(${(clear * CHROME_DRIFT_PX).toFixed(2)}px)`;
+      } else if (back.style.opacity !== '') {
+        back.style.transition = '';
+        bar.style.transition = '';
+        back.style.opacity = '';
+        bar.style.opacity = '';
+        back.style.transform = '';
+        bar.style.transform = '';
+      }
     }
 
     const c = Math.round(pos);
@@ -182,6 +218,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
       onClick={close} // click on the empty backdrop dismisses (panels/bar stop propagation)
     >
       <button
+        ref={backRef}
         type="button"
         className="detail__back"
         onClick={(e) => {
@@ -244,7 +281,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         })}
       </div>
 
-      <div className="detail__bar" onClick={(e) => e.stopPropagation()}>
+      <div className="detail__bar" ref={barRef} onClick={(e) => e.stopPropagation()}>
         <button type="button" className="detail__btn" onClick={prev} aria-label="Previous item">
           ‹ Prev
         </button>
