@@ -15,7 +15,7 @@
  */
 import { config } from './config';
 import { mod } from './grid';
-import { issueCover } from './reader/issue-01';
+import { issueCover, issueOverlay } from './reader/issue-01';
 
 export interface PosterItem {
   id: number;
@@ -73,6 +73,15 @@ export const CONTENT_COUNT = COUNT;
  */
 export function itemFace(item: PosterItem): string | undefined {
   return (item.issue ? issueCover(item.issue) : undefined) ?? item.image;
+}
+
+/**
+ * The hover-state overlay plate for a card, or undefined if it has none. Only
+ * readable issues have one — sample posters and hue placeholders return
+ * undefined, and the grid then renders no overlay element at all for them.
+ */
+export function itemOverlay(item: PosterItem): string | undefined {
+  return item.issue ? issueOverlay(item.issue) : undefined;
 }
 
 /** Content index for a slug, or -1 if no item matches. */

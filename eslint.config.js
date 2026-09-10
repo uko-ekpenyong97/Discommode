@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // `.context` is Conductor's per-workspace scratch dir (gitignored) — agent
+  // notes and throwaway probe scripts, not project source.
+  globalIgnores(['dist', '.context']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

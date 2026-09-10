@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
 import { CARD_ASPECT_H, CARD_ASPECT_W, PERSPECTIVE, useConfig } from '../config';
 import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
-import { CONTENT, contentIndex, itemFace } from '../content';
+import { CONTENT, contentIndex, itemFace, itemOverlay } from '../content';
 import type { PosterItem } from '../content';
 import type { CardFace, CellOffset } from '../hooks/usePanController';
 import { CardOverlay } from './CardOverlay';
@@ -128,11 +128,16 @@ export function GridPlane({
   const tx = -fracCol * (cardW + gap);
   const ty = -fracRow * (cardH + gap);
 
-  // Collect the per-card transform wrappers for the controller's imperative
+  // Collect the per-card wrappers for the controller's imperative
   // scale/rotation/opacity. They are stable across window shifts (keyed by
   // offset), so we re-collect only when the window size (ring) changes — e.g. a
   // resize or card-size dial. `op: -1` flags the opacity as uninitialised so the
   // ticker snaps it to the correct value on the first frame (no fade-in).
+  //
+  // Two elements per card, not one: the transform goes on `.grid-card__transform`
+  // and the opacity on its `.grid-card__fade` parent, because an opacity below 1
+  // would force `transform-style: flat` and flatten the overlay plate's
+  // `translateZ` out of existence.
   const gridRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const grid = gridRef.current;
@@ -140,7 +145,8 @@ export function GridPlane({
     const faces = grid.querySelectorAll<HTMLElement>('.grid-card__transform');
     cardsRef.current = Array.from(faces, (el) => {
       el.style.transform = ''; // start flat; the ticker re-faces on next frame
-      return { dc: Number(el.dataset.dc), dr: Number(el.dataset.dr), el, rx: 0, ry: 0, op: -1 };
+      const fade = el.parentElement as HTMLElement;
+      return { dc: Number(el.dataset.dc), dr: Number(el.dataset.dr), el, fade, rx: 0, ry: 0, op: -1 };
     });
     markCardsChanged(); // apply the focus scale/opacity even on a settled grid
   }, [ring, cardsRef, markCardsChanged]);
@@ -158,11 +164,17 @@ export function GridPlane({
         <div
           ref={gridRef}
           className="grid-plane__grid"
-          style={{
-            gridTemplateColumns: `repeat(${cols}, ${cardW}px)`,
-            gap: `${gap}px`,
-            transform: `translate3d(${tx}px, ${ty}px, 0)`,
-          }}
+          style={
+            {
+              gridTemplateColumns: `repeat(${cols}, ${cardW}px)`,
+              gap: `${gap}px`,
+              transform: `translate3d(${tx}px, ${ty}px, 0)`,
+              // Overlay-plate knobs: declared once here and inherited by every
+              // card, so retuning them costs one style write, not one per card.
+              '--overlay-z': cfg.overlayZ,
+              '--overlay-fade-ms': `${cfg.overlayLayerFadeMs}ms`,
+            } as CSSProperties
+          }
         >
           {slots.map((s) => {
             const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
@@ -177,13 +189,20 @@ export function GridPlane({
             // An issue cover (when the item is a readable issue) takes the card
             // face; otherwise a sample poster; otherwise the hue fallback.
             const face = itemFace(s.item);
+            // Hover plate — only issues have one, so most cards render nothing here.
+            const overlayFace = itemOverlay(s.item);
             return (
-              // Outer cell: layout slot + per-card perspective. The transform
-              // wrapper carries the imperatively-written scale/rotation/opacity
-              // (so they don't fight layout); the inner face carries the
-              // hue/image + brightness; the overlay (when hovered) is a sibling of
-              // the face inside the wrapper, so it inherits the card's transform
-              // but NOT its brightness filter.
+              // Outer cell: the layout slot only. Inside it:
+              //   __fade      — per-card perspective + the imperative opacity
+              //   __transform — the imperative scale + cursor-facing rotation,
+              //                 and a preserve-3d context for its children
+              //   __face      — hue/image + brightness filter, at z = 0
+              //   __overlay   — the hover plate, floating at z = --overlay-z
+              //   .card-overlay — the hover headline/captions/CTA, just above it
+              // The overlay and the chrome are siblings of the face inside the
+              // transform wrapper, so they inherit the card's transform but NOT
+              // its brightness filter. The fade sits ABOVE the transform because
+              // opacity < 1 would flatten the 3D the plate depends on.
               <div
                 key={`${s.dc}|${s.dr}`}
                 className="grid-card"
@@ -195,26 +214,40 @@ export function GridPlane({
                   visibility: isHeroHidden ? 'hidden' : undefined,
                 }}
               >
-                <div className="grid-card__transform" data-dc={s.dc} data-dr={s.dr}>
-                  <div
-                    className="grid-card__face"
-                    style={{
-                      backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
-                      filter: `brightness(${brightness})`,
-                    }}
-                  >
-                    {face && (
+                <div className="grid-card__fade">
+                  <div className="grid-card__transform" data-dc={s.dc} data-dr={s.dr}>
+                    <div
+                      className="grid-card__face"
+                      style={{
+                        backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
+                        filter: `brightness(${brightness})`,
+                      }}
+                    >
+                      {face && (
+                        <img
+                          className="grid-card__img"
+                          src={face}
+                          alt=""
+                          draggable={false}
+                          loading={s.eager ? 'eager' : 'lazy'}
+                        />
+                      )}
+                      <span className="grid-card__index">{s.item.title}</span>
+                    </div>
+                    {overlayFace && (
                       <img
-                        className="grid-card__img"
-                        src={face}
+                        className="grid-card__overlay"
+                        src={overlayFace}
                         alt=""
                         draggable={false}
                         loading={s.eager ? 'eager' : 'lazy'}
+                        style={{ opacity: isOverlay ? 1 : 0 }}
                       />
                     )}
-                    <span className="grid-card__index">{s.item.title}</span>
+                    {isOverlay && (
+                      <CardOverlay item={s.item} onOpen={() => onRequestOpen(s.dc, s.dr)} />
+                    )}
                   </div>
-                  {isOverlay && <CardOverlay item={s.item} onOpen={() => onRequestOpen(s.dc, s.dr)} />}
                 </div>
               </div>
             );
