@@ -3,8 +3,10 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useConfig } from '../config';
 import { config } from '../config';
 import { mod } from '../grid';
-import { CONTENT, CONTENT_COUNT, itemFace } from '../content';
+import { CONTENT, CONTENT_COUNT, itemHeroFace } from '../content';
 import { openReader } from '../reader/readerNav';
+import { issueAnims } from '../reader/issue-01';
+import { CoverAnimLayer } from './CoverAnimLayer';
 import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
 import { panelStepFor } from '../detailLayout';
 import type { HeroRect } from '../layout/hero';
@@ -64,6 +66,10 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   // writes the strip transform. `center` (round of the position) drives which
   // panels render — updated only when it shifts, like the grid window.
   const trackRef = useRef<HTMLDivElement>(null);
+  // The live centre-panel element. The hover layer is drawn inside it and reads
+  // the pointer from it, and it is a DIFFERENT node after each slide, so this is
+  // state rather than a ref — the layer's listener has to be re-bound.
+  const [centerEl, setCenterEl] = useState<HTMLElement | null>(null);
   // The doorway (reader layer above) clears the app's detail chrome as it opens;
   // the ticker fades + drifts these while `doorway.clear` > 0. See below.
   const backRef = useRef<HTMLButtonElement>(null);
@@ -237,12 +243,17 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           // The centre panel of a readable issue opens the reader; side panels
           // navigate; a centre non-issue panel is inert (aria-hidden).
           const canRead = isCenter && !!item.issue;
-          const face = itemFace(item);
+          const face = itemHeroFace(item);
+          // Keyed off THIS panel's item, not the active one: mid-slide the
+          // centre panel and `activeIndex` can briefly disagree, and the layer
+          // must never draw one issue's objects onto another issue's cover.
+          const animsUrl = isCenter && item.issue ? issueAnims(item.issue) : undefined;
           // Size, opacity, and z-index are written imperatively by the ticker
           // (continuous in the slide position); base size is the centre size.
           return (
             <button
               key={p.i}
+              ref={isCenter ? setCenterEl : undefined}
               type="button"
               data-i={p.i}
               className={
@@ -274,6 +285,18 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
                 <img className="detail__media" src={face} alt={`Poster ${item.title}`} draggable={false} />
               ) : (
                 <div className="detail__media" style={{ background: `hsl(${item.hue}, 28%, 32%)` }} />
+              )}
+              {/* Hover animations, on the centre panel only: it is the one panel
+                  showing the cover at rest and at full size. Neighbours show the
+                  same resting illustration but stay still, and the layer is
+                  unmounted outright while a transition runs or the reader sits
+                  above.
+
+                  BEFORE the panel number, not after: the layer's plate is opaque
+                  (it has to be — it replaces the cover face while mounted), so
+                  anything drawn earlier in the panel would disappear behind it. */}
+              {animsUrl && phase === 'active' && !suspended && (
+                <CoverAnimLayer manifest={animsUrl} listen={centerEl} />
               )}
               <span className="detail__panel-num">{item.title}</span>
             </button>

@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { FlipBook } from './FlipBook';
 import type { FlipEngine } from './flipEngine';
-import { ISSUES, buildSpreads, issue01, pageLabel } from './issue-01';
+import { ISSUES, buildSpreads, issue01, issueAnims, pageLabel } from './issue-01';
 import { closeReader } from './readerNav';
 import { applyDoorwayRest } from './doorway';
 import { useDoorwayMotion } from './useDoorwayMotion';
@@ -137,6 +137,7 @@ export default function ReaderPage({
         onSpreadChange={goto}
         debug={debug}
         onEngineReady={needsEngine ? setEngine : undefined}
+        anims={issueAnims(issue)}
       />
       <p className="reader__caption">
         <span>

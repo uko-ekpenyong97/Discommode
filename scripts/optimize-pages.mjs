@@ -5,6 +5,7 @@
  *
  *   ~/Discommode-pages/<issue>/NN.png      (01.png ... 42.png, cover.png, back.png)
  *   ~/Discommode-pages/<issue>/overlay.png (the grid card's hover plate)
+ *   ~/Discommode-pages/<issue>/cover-plate.png (the drawn cover, objects hidden)
  *
  * and this writes the WebPs the app actually loads into
  *
@@ -40,10 +41,17 @@ const PAGE_W = 2000;
 const PAGE_H = 2600;
 
 /** `01.png` … `42.png`, plus the named plates. */
-const PAGE_RE = /^(\d{2}|cover|back|overlay)\.png$/;
+const PAGE_RE = /^(\d{2}|cover|cover-plate|back|overlay)\.png$/;
 
-/** Plates that are not pages: excluded from the page count, and alpha-checked. */
-const NON_PAGE = new Set(['overlay.png']);
+/** Plates that are not pages: excluded from the page count, and alpha-checked.
+ *  `cover-plate.png` is the drawn cover with all twenty animated objects HIDDEN
+ *  — the backdrop the hover layer draws its sprites onto, so nothing is baked
+ *  underneath them. The composited resting face the rest of the app shows
+ *  (`cover-rest.webp`) is built from it by scripts/optimize-anims.mjs, and
+ *  `cover-illustrated.png` — the drawn cover WITH its objects — stays a build
+ *  input only: it is what frames are registered against, and nothing loads it at
+ *  runtime, so it is deliberately not converted here. */
+const NON_PAGE = new Set(['overlay.png', 'cover-plate.png']);
 
 const force = process.argv.includes('--force');
 

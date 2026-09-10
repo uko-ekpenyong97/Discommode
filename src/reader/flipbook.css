@@ -331,3 +331,28 @@
   letter-spacing: 0.04em;
   pointer-events: none;
 }
+
+/* ── the cover's hover-animation layer ──────────────────────────────────── */
+
+/* Sits on the COVER SLOT, which at data-pos="cover" is exactly the hero rect:
+   the book is `hero-h * 20/13` wide and slid left by half a page, so its right
+   half lands at `(vw - page-width) / 2`. Rather than depend on that chain, this
+   box is placed directly — same page width, centred — inside .book-stage, whose
+   own box is already the hero band (full width, hero-h tall, centred on the
+   viewport). Deriving it the same way `.book` does keeps the two in step through
+   a resize or a dial change.
+
+   Never a descendant of `.book`: see the note at its use site in FlipBook.tsx. */
+.book-anim {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  left: calc(50% - var(--hero-h, 76vh) * 5 / 13);
+  width: calc(var(--hero-h, 76vh) * 10 / 13);
+  pointer-events: none;
+  /* Rides the doorway's SETTLE channel, the same one the cover's contact shadow
+     uses: during the entrance the cover is still lying flush on the detail panel
+     it coincides with, and the layer arrives with the shadow as it sets down. 1
+     for the ordinary reader, where the variable is unset. */
+  opacity: var(--doorway-settle, 1);
+}

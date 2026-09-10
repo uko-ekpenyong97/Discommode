@@ -83,6 +83,14 @@ export interface FlipEngineOptions {
   getSpreads: () => Spread[];
   getSpread: () => number;
   onSpreadChange: (index: number) => void;
+  /**
+   * True the instant a turn layer goes up, false the instant it comes down —
+   * every path, since `clearTurn` is the single teardown (commit handoff,
+   * cancel, a superseding turn, the doorway, destroy). Callers use it to get
+   * things that sit ON a page out of the way before the leaf lifts; the cover's
+   * hover-animation layer is the one that does today.
+   */
+  onTurnActive?: (active: boolean) => void;
 }
 
 export interface FlipEngine {
@@ -209,6 +217,9 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   /** Bumped by every startTurn, so a deferred handoff can tell it was superseded. */
   let turnSeq = 0;
   let destroyed = false;
+  /** Whether a turn layer is currently up. Reported on edges only, so a caller
+   *  can treat `onTurnActive` as a state change rather than a stream. */
+  let turnActive = false;
   // 196 nodes per curl is too much to allocate at pointerdown — the worst
   // possible moment. Both curls are built once, then detached and reattached;
   // only the two background images differ between turns, and every offset is
@@ -308,6 +319,12 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     tween = null;
   }
 
+  function setTurnActive(active: boolean): void {
+    if (turnActive === active) return;
+    turnActive = active;
+    opts.onTurnActive?.(active);
+  }
+
   function clearTurn(): void {
     fade?.cancel();
     fade = null;
@@ -319,6 +336,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     book.style.removeProperty('--book-slide');
     strips = [];
     state = null;
+    setTurnActive(false);
   }
 
   /**
@@ -469,6 +487,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       });
     });
 
+    setTurnActive(true);
     return true;
   }
 

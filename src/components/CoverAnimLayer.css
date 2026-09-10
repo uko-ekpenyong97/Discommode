@@ -1,0 +1,51 @@
+/* Sits over the illustrated cover wherever the cover rests: the detail centre
+   panel, and the reader's closed cover. The parent positions this box ON the
+   cover; the layer only ever fills it.
+
+   `pointer-events: none` is load-bearing, not hygiene. Underneath the layer are
+   a button that opens the reader and a book element that owns a drag gesture; if
+   twenty <img> elements could take the pointer, both would break. Hover is
+   resolved from coordinates on the host instead (see CoverAnimLayer.tsx). */
+.cover-anim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* The backdrop: the cover with every animated object HIDDEN. The layer paints
+   its own sprites on top, so nothing may be baked underneath them — an animation
+   that swings outside its first frame's box would otherwise uncover a copy of
+   itself. Opaque, so it also hides whatever the surface below is showing
+   (`cover-rest.webp`, this same composite, pre-flattened). */
+.cover-anim__plate {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* One box per object, at its displayRect — the alpha union across every frame,
+   so an animation that swings outside the resting pose is not clipped. The
+   stills are cropped to that same box, so the still and the loop are the same
+   rectangle and the swap moves nothing. */
+.cover-anim__obj {
+  position: absolute;
+}
+
+/* The animation and the still are stacked in the same box, the still on top: at
+   rest it is opaque and there is no animation element at all; while playing it
+   is transparent; on the way back it fades in over the loop's last frame. */
+.cover-anim__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}

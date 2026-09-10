@@ -32,6 +32,27 @@ export interface Issue {
    * reader never sees it. Absent when the issue has no overlay drawn yet.
    */
   overlay?: string;
+  /**
+   * The DRAWN cover at REST, as opposed to the photographed one in `pages[0]`.
+   * Built by `npm run anims`: the plate (objects hidden) with every animated
+   * object's FIRST frame composited back on. This is the face the detail view,
+   * the grid→detail morph and the reader's closed book show; the grid card keeps
+   * the photo. Absent when an issue has no illustrated cover.
+   *
+   * It is deliberately the resting state and not `cover-illustrated.png`, which
+   * carries whatever frame each object happened to be drawn at. Several loops
+   * build up — the shelf of books starts empty — so resting on the drawn state
+   * made the hover play backwards.
+   */
+  coverRest?: string;
+  /**
+   * URL of the cover-animation manifest written by `npm run anims`. It is
+   * FETCHED rather than bundled: it is generated output living in `public/`
+   * beside the WebPs it indexes, and only the two views that mount the hover
+   * layer ever need it. It carries the plate URL too. Absent when no animations
+   * are built.
+   */
+  anims?: string;
 }
 
 /** One spread: [left, right]. A null slot renders empty (cover / back page). */
@@ -61,6 +82,8 @@ export const issue01: Issue = {
     { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
   ],
   overlay: '/issues/01/overlay.webp',
+  coverRest: '/issues/01/cover-rest.webp',
+  anims: '/issues/01/anim/manifest.json',
 };
 
 /** How a page reads in the caption: 'COVER', 'BACK', or a zero-padded number. */
@@ -88,6 +111,22 @@ export function issueOverlay(id: string): string | undefined {
   return ISSUES[id]?.overlay;
 }
 
+/**
+ * The drawn cover at REST for an issue, falling back to the photographed one.
+ * The detail view, the grid→detail morph, and the reader's closed book all read
+ * this — the grid card is the one surface that deliberately keeps the photo.
+ */
+export function issueCoverRest(id: string): string | undefined {
+  const issue = ISSUES[id];
+  if (!issue) return undefined;
+  return issue.coverRest ?? issueCover(id);
+}
+
+/** The cover-animation manifest URL for an issue, if any have been built. */
+export function issueAnims(id: string): string | undefined {
+  return ISSUES[id]?.anims;
+}
+
 export const ISSUES: Record<string, Issue> = {
   '01': issue01,
 };
@@ -95,13 +134,23 @@ export const ISSUES: Record<string, Issue> = {
 /**
  * Pair the reading order into spreads. A cover takes the right slot of its own
  * spread (left empty); a back page takes the left slot of the last one.
+ *
+ * The cover page is substituted for `coverRest` here rather than at every call
+ * site. Doing it once, at the point the reader's page data is derived, means the
+ * static slot AND the flip engine's curl faces (which read their background
+ * images straight off these same page objects) both show the drawn cover, with
+ * no change to either — and because `coverRest` is exactly what the hover layer
+ * paints at rest, the strips the engine builds mid-turn match the layer that was
+ * just unmounted. `issue.pages[0]` keeps the photograph, so the grid card is
+ * unaffected.
  */
 export function buildSpreads(issue: Issue): Spread[] {
   const spreads: Spread[] = [];
   let rest = issue.pages;
 
   if (issue.hasCover && rest.length) {
-    spreads.push([null, rest[0]]);
+    const cover = issue.coverRest ? { ...rest[0], src: issue.coverRest } : rest[0];
+    spreads.push([null, cover]);
     rest = rest.slice(1);
   }
 
