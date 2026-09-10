@@ -17,13 +17,17 @@ npm run dev      # start the dev server
 npm run build    # type-check + production build
 npm test         # run the unit tests (Vitest)
 npm run pages    # convert issue page scans to WebP (see below)
+npm run anims    # build the cover hover animations (see below)
 ```
 
 Reader page scans are **not** kept in the repo. Full-size PNG exports from Figma
 live in `~/Discommode-pages/<issue>/` (outside any checkout, so no git operation
 can destroy them); `npm run pages` converts them to the `public/issues/<issue>/`
 WebPs that are committed and deployed. Run it after every export — it skips
-pages whose WebP is already newer, and warns if a page isn't 2000x2600.
+pages whose WebP is already newer, and warns if a page isn't 2000x2600. The same
+folder holds two plates that are not pages: `overlay.png` (the grid card's hover
+artwork) and `cover-plate.png` (the drawn cover with its animated objects hidden
+— see [Cover hover animations](#cover-hover-animations)).
 
 ## Layer architecture
 
@@ -336,6 +340,222 @@ top of `content.ts` documents the add-a-poster workflow (drop image → add entr
 push). The wrap stride that tiles the N items across the plane
 (`index = mod(row · wrapStride + col, N)`) is a live config value, not a magic
 number.
+
+## Cover hover animations
+
+Issue 01's cover exists three times, and the distinction matters:
+
+| file | what it is | who loads it |
+| --- | --- | --- |
+| `cover.webp` | the **photographed** cover | the grid card |
+| `cover-plate.webp` | the **drawn** cover with all twenty animated objects **hidden** | the hover layer, as its backdrop |
+| `cover-rest.webp` | the plate with every object's **resting frame** composited back on | everything that shows the drawn cover without the layer |
+
+`cover-illustrated.png` — the drawn cover *with* its objects — is a **build input
+only**. It is what frames are registered against; nothing loads it at runtime and
+it is deliberately not converted to WebP.
+
+Twenty of the objects in the drawing are hand-animated loops from Procreate, and
+they play under the pointer. Where each face is used:
+
+| surface | face | animations |
+| --- | --- | --- |
+| grid card | photo + hover overlay plate | no |
+| grid→detail morph | **rest** | no |
+| detail centre panel | **rest**, with the layer over it | **yes** |
+| detail neighbours | rest | no |
+| reader, closed cover (spread 0) | **rest**, with the layer over it | **yes** |
+
+The morph carries the resting drawn face so it lands continuous with the detail
+view; the grid card underneath keeps the photo, so the swap happens on the frame
+the morph layer mounts. The two covers share a layout, a palette and their
+captions and differ only in rendering, and the cut coincides with the card
+scaling up — but it *is* a hard cut, not a cross-fade.
+
+### Which frame the cover rests on
+
+The loop always **plays** from frame 1. What the cover **rests** on is a per-object
+choice, `rest` in `fps.json`:
+
+- **`"first"` (default)** — the resting image is frame 1, so starting the loop
+  changes nothing and the swap is instant. Nineteen of the twenty.
+- **`"last"`** — the resting image is the final frame. This is for a build-up that
+  should read as already finished: `libros` rests on a **full** shelf, and hovering
+  empties it and rebuilds. Here the still and frame 1 differ *on purpose*, so the
+  layer dissolves into the loop instead of cutting.
+
+Getting this wrong is very visible: resting on whatever frame each object happens
+to be drawn at in `cover-illustrated.png` made the build-ups play backwards.
+
+The registration still fits against `cover-illustrated.png` — that is the only
+image showing where each object belongs — and may well match a *third* frame
+again. That only picks the transform; every frame shares the crop, so any choice
+of resting frame lands in exactly the same place. `cover-rest.webp` is the plate
+with all twenty resting frames composited at their `displayRect`s.
+
+### Why there is a plate at all
+
+The layer cannot just draw sprites over the finished cover. An animation can
+leave the box its first frame occupies, and anything baked into the backdrop
+would show through the gap it moves out of — a second, motionless copy of the
+object. So the layer draws the **plate** (objects removed) and paints all twenty
+sprites itself.
+
+That makes the layer's rest state the same composite as `cover-rest.webp`, which
+is why the flattened file exists: surfaces that cannot carry the layer — the
+reader's flip strips, which the engine rebuilds mid-turn; the grid→detail morph;
+the detail neighbours — show it instead, and mounting or unmounting the layer
+changes nothing visible.
+
+They are not bit-identical, and cannot be: `cover-rest.webp` is its own WebP
+encode, and the browser scales one 2000×2600 image where the layer scales a plate
+plus twenty sprites. Measured on the detail panel that is a mean difference of
+~4/255 confined to contours, falling to ~1.9 as the render approaches 1:1 (and
+~1.1 compositing at full resolution, which is the encode floor). Alignment is
+exact — the aligned composite scores ~4× better than a one-pixel shift in any
+direction. The two are never on screen at the same time.
+
+### The build
+
+```bash
+npm run pages                # cover-plate.png -> cover-plate.webp (run this first)
+npm run anims                # only rebuilds objects whose PNGs are newer
+npm run anims -- --force
+npm run anims -- --only shark
+npm run anims -- --fps 8     # override every object (default 6)
+```
+
+Sources, outside the repo like the page scans:
+
+```
+~/Discommode-pages/01/cover-illustrated.png     2000x2600, objects drawn
+~/Discommode-pages/01/cover-plate.png           2000x2600, objects hidden
+~/Discommode-pages/01/anim/<object>/<Name>-<n>.png
+```
+
+Frames are ordered by the **trailing number**, numerically — `-10` comes after
+`-9`, and the prefix is ignored entirely (`op1-animation/` really does contain
+`OP-1-1.png`). Canvas size is read per object rather than assumed; the twenty
+current folders use three different ones.
+
+A per-folder `fps.json` overrides that object alone — either a bare number for the
+rate, or an object:
+
+```json
+{ "fps": 6, "mode": "once", "rest": "last" }
+```
+
+`mode` is `loop` (default) or `once`; a `once` object is encoded with `loop: 1`,
+so it plays through and holds its last frame for as long as the pointer stays on
+it. `rest` is `first` (default) or `last` — see above. The snippet is exactly what
+`libros/fps.json` carries: it rests on a full shelf, empties, rebuilds, and holds.
+
+Outputs, committed:
+
+```
+public/issues/01/cover-rest.webp        plate + every resting frame, flattened
+public/issues/01/anim/<id>.webp         animated, alpha, starts on frame 1
+public/issues/01/anim/<id>-still.webp   the resting frame, same crop
+public/issues/01/anim/manifest.json     geometry the hover layer reads
+```
+
+plus `~/Discommode-pages/01/anim/contact-sheet.png`, a QC sheet written **beside
+the source, not into `public/`** — it is for a human to look at, not to deploy.
+
+Animated WebP is muxed by **sharp itself** (`join: { animated: true }`, supported
+by the installed 0.35.x). No `img2webp`, no `brew install webp`. libwebp
+coalesces adjacent identical frames and sums their delays, so a file's page count
+can be lower than its source frame count (`uhaul` 4→3, `freewrite` 14→13); total
+duration is preserved exactly, and playback is unchanged.
+
+### Placing the frames: registration, not arithmetic
+
+[`src/reader/cover-anim-placements.json`](src/reader/cover-anim-placements.json)
+gives each object a `rect` from Figma in cover space. The obvious approach is to
+derive the scale from it — the rect's aspect should match either the source
+canvas or the alpha box of frame 1, and the scale is then `rect.w / sourceBox.w`.
+
+**That does not work on these assets.** Tested at a 1% aspect tolerance it
+resolves 5 of 20 objects, and registering the artwork against the cover shows the
+other 15 fail for a real reason: the drawn artwork is 3–17% *smaller* than its
+rect and inset from its top-left by a per-object margin. The rect is not a tight
+box around the ink, so it cannot set the scale.
+
+So [`scripts/cover-register.mjs`](scripts/cover-register.mjs) uses the cover as
+ground truth. The frames and the cover are the same drawing, so where the
+transform is right their pixels **agree**:
+
+```
+score(s, ox, oy) = Σ over candidate-opaque pixels ( |cover − art| < 28 ? +1 : −1 )
+```
+
+Shrinking the candidate loses agreeing pixels; growing it collects disagreeing
+ones, so the optimum is stationary in scale — unlike a ratio (maximised by
+shrinking onto flat background) or a masked correlation. Occlusion caps the
+attainable score without moving the optimum, which matters because these objects
+overlap. A four-level pyramid searches scale × offset coarse-to-fine, then
+coordinate descent at full resolution removes the grid quantisation. `rect` keeps
+two jobs: it seeds the search, and it stays the **hit** rectangle.
+
+Two numbers are reported per object. **Agreement** is the fraction of pixels that
+match; it falls with the artwork's spatial frequency and with occlusion, so a
+low figure does not by itself mean a bad placement — cherry blossoms and a shelf
+of titled book spines cannot agree pixel-for-pixel however well they are placed.
+**Peak margin** — agreement minus the mean agreement six pixels away — is immune
+to both, because the shifted comparisons carry the same artwork and the same
+occlusion. A large margin means the placement is pinned; a margin near zero means
+the objective is flat and the fit is a guess. Only the second is a real problem.
+
+### The layer
+
+[`CoverAnimLayer`](src/components/CoverAnimLayer.tsx) draws the plate, then one
+sprite per object at its `displayRect` — the alpha union across every frame, so an
+animation that swings outside the resting pose is not clipped.
+
+**Entering** is invisible for a `rest: "first"` object: the animated WebP starts
+on frame 1, and frame 1 is the still, in the same crop at the same place (measured
+difference across the swap: 0.4–0.7 of 255), so it cuts. A `rest: "last"` object
+opens on a frame that differs from the still by design — 115 of 255 for `libros`,
+a full shelf against an empty one — so `enterFadeMs` dissolves it in over 150ms
+instead.
+
+**Leaving does not snap.** Cutting a hand-drawn loop mid-pass reads as a glitch,
+so the animation runs out the remainder of its current pass — never more than one,
+so the wait is bounded by `frames × 1000/fps` — and only then does the still
+cross-fade back over it in 120ms. Re-entering during that wait cancels it and
+keeps the *same element* playing, so a pointer wandering back and forth never
+restarts the loop. Measured hold times land within ~30ms of
+`leavePlan(elapsed, object).wait + .fade`. One consequence worth knowing: leaving
+a moment *after* a loop boundary waits out the pass that just began, so a long
+loop can keep playing for its full duration after a flick across it.
+
+There is one case with provably nothing to wait for and nothing to dissolve: a
+`once` object resting on its `last` frame, once it has played out, is FROZEN on
+the very image it rests on. `leavePlan` returns `{ wait: 0, fade: 0 }` and the
+still is swapped straight back in. The two are separate WebP encodes of identical
+pixels, so the swap measures ~1.5 of 255 with the alpha channel bit-identical —
+not literally zero, but nothing an eye can find.
+
+The layer is `pointer-events: none`, and that is load-bearing rather than hygiene:
+underneath it are a button that opens the reader and a book element that owns a
+drag gesture, and twenty hover targets in front of them would eat both. **One**
+`pointermove` listener on the host resolves all twenty by testing the pointer
+against the hit rects in cover space, highest `z` first — the shark lies on the
+bed, inside its rect, so the overlap is the normal case. The plate and every still
+are decoded before the layer paints anything (until then the surface below is
+showing `cover-rest.webp`, which is the same picture, so the wait is invisible);
+the animations warm in parallel without gating the first paint. Issue 01 pulls
+5.2 MB in total: 4.0 MB of animations, 0.8 MB of stills, 0.4 MB of `cover-rest`
+and 77 KB of plate.
+
+In the reader the layer is a **sibling** of `.book`, never a descendant:
+everything inside `.book` has `pointer-events: none` so the book can own the drag,
+and the turn layer replaces that subtree wholesale mid-flip. The engine reports
+turns through `onTurnActive`, fired inside `startTurn` before the leaf has moved
+and again from `clearTurn` (the single teardown every path funnels through), so
+the layer is gone by the first frame of the lift and returns when the book lands
+back on spread 0. Touch is out of scope — a touch pointer is ignored, so the
+still simply stays.
 
 ## Tuning (DialKit, dev only)
 

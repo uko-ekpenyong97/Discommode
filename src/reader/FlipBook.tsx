@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Page, Spread } from './issue-01';
 import { pageLabel } from './issue-01';
 import { createFlipEngine } from './flipEngine';
 import type { FlipEngine } from './flipEngine';
 import { attachFixedT } from './devFixedT';
+import { CoverAnimLayer } from '../components/CoverAnimLayer';
 import './flipbook.css';
 
 interface FlipBookProps {
@@ -18,6 +19,8 @@ interface FlipBookProps {
    * ordinary reader path is unchanged.
    */
   onEngineReady?: (engine: FlipEngine) => void;
+  /** Cover-animation manifest URL (`Issue.anims`), if the issue has one. */
+  anims?: string;
 }
 
 /** 'COVER' / 'BACK' for the plates, 'Page 07' for a numbered page. */
@@ -37,8 +40,21 @@ export function FlipBook({
   onSpreadChange,
   debug = false,
   onEngineReady,
+  anims,
 }: FlipBookProps) {
   const bookRef = useRef<HTMLDivElement>(null);
+  // The book element is also the pointer host for the cover's hover layer (the
+  // layer itself takes no pointer events, and `.book *` cannot), so it is held
+  // in state as well as a ref — the layer's listener has to re-bind when it
+  // mounts.
+  const [bookEl, setBookEl] = useState<HTMLDivElement | null>(null);
+  const setBook = useCallback((el: HTMLDivElement | null) => {
+    bookRef.current = el;
+    setBookEl(el);
+  }, []);
+  // True from the frame a turn layer goes up to the frame it comes down.
+  const [turning, setTurning] = useState(false);
+  const onTurnActive = useCallback((active: boolean) => setTurning(active), []);
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<FlipEngine | null>(null);
   const leftImgRef = useRef<HTMLImageElement>(null);
@@ -64,6 +80,7 @@ export function FlipBook({
       getSpreads: () => spreadsRef.current,
       getSpread: () => spreadRef.current,
       onSpreadChange,
+      onTurnActive,
     });
     engineRef.current = engine;
     onEngineReady?.(engine);
@@ -72,7 +89,7 @@ export function FlipBook({
       engine.destroy();
       engineRef.current = null;
     };
-  }, [onSpreadChange, onEngineReady]);
+  }, [onSpreadChange, onEngineReady, onTurnActive]);
 
   // DEVIATION 2: the turn layer is dropped HERE, after React has committed the
   // new static spread — not inside the engine's completion callback, where the
@@ -133,7 +150,7 @@ export function FlipBook({
         &lsaquo;
       </button>
 
-      <div className="book" ref={bookRef} data-pos={pos}>
+      <div className="book" ref={setBook} data-pos={pos}>
         <div className="book__page book__page--left">
           {left && (
             <img ref={leftImgRef} src={left.src} alt={altFor(left)} draggable={false} />
@@ -146,6 +163,21 @@ export function FlipBook({
         </div>
         <div className="book__turn-host" ref={hostRef} />
       </div>
+
+      {/* The cover's hover animations. Deliberately a SIBLING of `.book`, not a
+          child: everything inside `.book` has `pointer-events: none` so the book
+          can own the drag, and the turn layer replaces that subtree wholesale
+          mid-flip. Kept out of both, this box just sits on the cover slot — which
+          at `data-pos="cover"` is exactly the hero rect (see the CSS).
+
+          It exists only while the closed cover is genuinely at rest: spread 0,
+          no turn in the air. `turning` flips true inside `startTurn`, before the
+          leaf has moved, so the layer is gone by the first frame of the lift. */}
+      {anims && spread === 0 && !turning && (
+        <div className="book-anim">
+          <CoverAnimLayer manifest={anims} listen={bookEl} />
+        </div>
+      )}
 
       <button
         type="button"

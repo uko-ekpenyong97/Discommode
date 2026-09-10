@@ -212,6 +212,7 @@ export default function App({ suspended = false }: AppProps) {
         <DetailMorph
           cards={morphCards}
           durationMs={config.detailTransitionMs}
+          entering={phase === 'enter'}
           onFinished={phase === 'enter' ? finishEnter : finishExitToGrid}
         />
       )}

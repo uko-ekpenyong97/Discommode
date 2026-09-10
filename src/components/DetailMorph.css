@@ -16,7 +16,12 @@
   will-change: transform;
 }
 
+/* Absolutely positioned so the two faces of a cross-fading card stack instead of
+   flowing — the outgoing one underneath, the incoming one fading in over it. A
+   card with a single face is unaffected: it still fills the box. */
 .detail-morph__media {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;

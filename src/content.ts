@@ -15,7 +15,7 @@
  */
 import { config } from './config';
 import { mod } from './grid';
-import { issueCover, issueOverlay } from './reader/issue-01';
+import { issueCover, issueCoverRest, issueOverlay } from './reader/issue-01';
 
 export interface PosterItem {
   id: number;
@@ -73,6 +73,20 @@ export const CONTENT_COUNT = COUNT;
  */
 export function itemFace(item: PosterItem): string | undefined {
   return (item.issue ? issueCover(item.issue) : undefined) ?? item.image;
+}
+
+/**
+ * The face a card shows once it is the HERO — the detail view's panels, and the
+ * grid→detail morph that lands on them. For a readable issue that is the drawn
+ * cover AT REST, not the photographed one: the detail panel is the surface the
+ * hover animations play on, and the reader's closed book (which the panel
+ * becomes) shows the same drawing, so the doorway stays continuous.
+ *
+ * `itemFace` remains the grid's, and stays the photograph — the switch is
+ * deliberate and happens as the morph starts.
+ */
+export function itemHeroFace(item: PosterItem): string | undefined {
+  return (item.issue ? issueCoverRest(item.issue) : undefined) ?? item.image;
 }
 
 /**

@@ -1,0 +1,230 @@
+{
+  "source": "Figma DM-I01.AUG.2026 › Cover-Drawing-Alpha (node 2208:1144), 2000×2600 cover space",
+  "coverW": 2000,
+  "coverH": 2600,
+  "objects": [
+    {
+      "id": "bed",
+      "figmaLayer": "Bed 1",
+      "rect": {
+        "x": 406,
+        "y": 614,
+        "w": 634,
+        "h": 647
+      },
+      "z": 1
+    },
+    {
+      "id": "shark",
+      "figmaLayer": "Shark 1 / Shark 2",
+      "rect": {
+        "x": 460,
+        "y": 895,
+        "w": 327,
+        "h": 197
+      },
+      "z": 2
+    },
+    {
+      "id": "uhaul",
+      "figmaLayer": "U-Haul 6",
+      "rect": {
+        "x": 1308.82,
+        "y": 645.58,
+        "w": 599,
+        "h": 463
+      },
+      "z": 3
+    },
+    {
+      "id": "halfframe",
+      "figmaLayer": "HalfFrame 1",
+      "rect": {
+        "x": 1069,
+        "y": 666,
+        "w": 205,
+        "h": 230
+      },
+      "z": 4
+    },
+    {
+      "id": "koii",
+      "figmaLayer": "KOII 1",
+      "rect": {
+        "x": 111,
+        "y": 692,
+        "w": 228,
+        "h": 303
+      },
+      "z": 5
+    },
+    {
+      "id": "rosas",
+      "figmaLayer": "Rosas 1",
+      "rect": {
+        "x": 93.93,
+        "y": 1081,
+        "w": 310.96,
+        "h": 396.8
+      },
+      "z": 6
+    },
+    {
+      "id": "op1",
+      "figmaLayer": "OP-1 1",
+      "rect": {
+        "x": 492,
+        "y": 1326,
+        "w": 381,
+        "h": 149
+      },
+      "z": 7,
+      "folder": "op1-animation"
+    },
+    {
+      "id": "xolo",
+      "figmaLayer": "Xolo 1",
+      "rect": {
+        "x": 941,
+        "y": 1275,
+        "w": 219,
+        "h": 289
+      },
+      "z": 8
+    },
+    {
+      "id": "polaroid",
+      "figmaLayer": "Polaroid 1",
+      "rect": {
+        "x": 1104,
+        "y": 1000,
+        "w": 313,
+        "h": 284
+      },
+      "z": 9
+    },
+    {
+      "id": "ipad",
+      "figmaLayer": "iPad_ 1",
+      "rect": {
+        "x": 1221,
+        "y": 1293,
+        "w": 453,
+        "h": 288
+      },
+      "z": 10
+    },
+    {
+      "id": "hippo",
+      "figmaLayer": "Hippo 1",
+      "rect": {
+        "x": 1624,
+        "y": 1176,
+        "w": 254,
+        "h": 211
+      },
+      "z": 11
+    },
+    {
+      "id": "blossoms",
+      "figmaLayer": "Cherry_Blossoms 1 / 2",
+      "rect": {
+        "x": 1689,
+        "y": 1519,
+        "w": 186,
+        "h": 368
+      },
+      "z": 12
+    },
+    {
+      "id": "uko",
+      "figmaLayer": "Uko 1",
+      "rect": {
+        "x": 1144.32,
+        "y": 1607,
+        "w": 545.71,
+        "h": 442.5
+      },
+      "z": 13,
+      "folder": "uko-animation"
+    },
+    {
+      "id": "patito",
+      "figmaLayer": "Patito 1",
+      "rect": {
+        "x": 746,
+        "y": 1556,
+        "w": 390,
+        "h": 297
+      },
+      "z": 14
+    },
+    {
+      "id": "lucero",
+      "figmaLayer": "Lucero 1",
+      "rect": {
+        "x": 436,
+        "y": 1528,
+        "w": 362,
+        "h": 660
+      },
+      "z": 15
+    },
+    {
+      "id": "libros",
+      "figmaLayer": "Libros 1",
+      "rect": {
+        "x": 137,
+        "y": 1556,
+        "w": 247,
+        "h": 286
+      },
+      "z": 16
+    },
+    {
+      "id": "carrito",
+      "figmaLayer": "Carrito 1",
+      "rect": {
+        "x": 118,
+        "y": 1958,
+        "w": 327,
+        "h": 496
+      },
+      "z": 17
+    },
+    {
+      "id": "bookshelf",
+      "figmaLayer": "Bookshelf 1",
+      "rect": {
+        "x": 504,
+        "y": 2173,
+        "w": 594,
+        "h": 327
+      },
+      "z": 18
+    },
+    {
+      "id": "freewrite",
+      "figmaLayer": "Freewrite_ 1",
+      "rect": {
+        "x": 822,
+        "y": 1931,
+        "w": 370,
+        "h": 199
+      },
+      "z": 19
+    },
+    {
+      "id": "specialized",
+      "figmaLayer": "Specialized 1",
+      "rect": {
+        "x": 1143,
+        "y": 2033,
+        "w": 769,
+        "h": 475
+      },
+      "z": 20
+    }
+  ],
+  "note": "Frames live in ~/Discommode-pages/01/anim/<folder or id>/; files are named <Object>-<n>.png and are ordered by the trailing number."
+}

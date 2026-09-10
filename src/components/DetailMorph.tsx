@@ -1,5 +1,5 @@
 import { memo, useLayoutEffect, useRef } from 'react';
-import { itemFace } from '../content';
+import { itemFace, itemHeroFace } from '../content';
 import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
 import './DetailMorph.css';
@@ -11,9 +11,16 @@ export interface MorphCard {
   to: Rect;
 }
 
+/** How long the centre card takes to change face. Short relative to the travel:
+ *  it is covering a substitution, not performing a transition of its own. */
+const FACE_CROSSFADE_MS = 200;
+
 interface DetailMorphProps {
   cards: MorphCard[];
   durationMs: number;
+  /** True for grid → detail, false for the way back. Decides which face the
+   *  cross-fade starts from. */
+  entering: boolean;
   /** Fired the instant the travel animation finishes (WAAPI `finished`), so the
    *  handoff to the static layout happens on the exact frame the cards land. */
   onFinished?: () => void;
@@ -31,9 +38,17 @@ interface DetailMorphProps {
  * are flat (the controller neutralises the hero cards' tilt at both seams), so
  * FROM exactly matches the grid card and TO the detail panel — no pop at either
  * end.
+ *
+ * A card whose grid face and hero face DIFFER also cross-fades between them
+ * while it travels. That is the issue cover: the grid shows the photograph and
+ * the detail panel shows the drawing, and cutting between them on the frame this
+ * layer mounts was visible. Cards whose two faces are the same — every sample
+ * poster and hue placeholder — render a single image and are untouched, so this
+ * costs nothing for them.
  */
-function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
+function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphProps) {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
+  const faceRefs = useRef<(HTMLImageElement | null)[]>([]);
 
   useLayoutEffect(() => {
     const anims = cards
@@ -48,6 +63,19 @@ function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
       })
       .filter((a): a is Animation => a !== null);
 
+    // The incoming face dissolves over the outgoing one. Driven by WAAPI on the
+    // same clock as the travel, and never longer than it, so the substitution is
+    // finished by the time the card lands.
+    const faces = faceRefs.current
+      .filter((el): el is HTMLImageElement => el !== null)
+      .map((el) =>
+        el.animate([{ opacity: 0 }, { opacity: 1 }], {
+          duration: Math.min(FACE_CROSSFADE_MS, durationMs),
+          easing: 'linear',
+          fill: 'both',
+        }),
+      );
+
     // Hand off the instant the travel lands (all three finish together) — the
     // caller reveals the static layout on this exact frame.
     // `onFinished` is captured at mount — the morph mounts fresh per direction
@@ -61,6 +89,7 @@ function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
     return () => {
       done = true;
       anims.forEach((a) => a.cancel());
+      faces.forEach((a) => a.cancel());
     };
     // Run once on mount with the FROM/TO + onFinished captured at transition
     // start; the cards don't change mid-transition.
@@ -70,7 +99,13 @@ function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
   return (
     <div className="detail-morph" aria-hidden="true">
       {cards.map((c, i) => {
-        const face = itemFace(c.item);
+        const gridFace = itemFace(c.item);
+        const heroFace = itemHeroFace(c.item);
+        // Only an issue cover has two different faces; everything else renders
+        // one image and skips the cross-fade entirely.
+        const changes = gridFace !== heroFace && !!gridFace && !!heroFace;
+        const from = entering ? gridFace : heroFace;
+        const to = entering ? heroFace : gridFace;
         return (
           <div
             key={i}
@@ -80,8 +115,19 @@ function DetailMorph({ cards, durationMs, onFinished }: DetailMorphProps) {
             className="detail-morph__card"
             style={{ left: c.to.cx - c.to.w / 2, top: c.to.cy - c.to.h / 2, width: c.to.w, height: c.to.h }}
           >
-            {face ? (
-              <img className="detail-morph__media" src={face} alt="" draggable={false} />
+            {to ? (
+              <>
+                {changes && <img className="detail-morph__media" src={from} alt="" draggable={false} />}
+                <img
+                  className="detail-morph__media"
+                  ref={(el) => {
+                    if (changes) faceRefs.current[i] = el;
+                  }}
+                  src={to}
+                  alt=""
+                  draggable={false}
+                />
+              </>
             ) : (
               <div className="detail-morph__media" style={{ background: `hsl(${c.item.hue}, 28%, 32%)` }} />
             )}
