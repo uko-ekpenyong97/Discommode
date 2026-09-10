@@ -26,6 +26,12 @@ export interface Issue {
   hasBack: boolean;
   /** Reading order. */
   pages: Page[];
+  /**
+   * Hover-state plate for the grid card — artwork with transparency that floats
+   * in front of the cover on hover. Not a page: it never enters `pages`, so the
+   * reader never sees it. Absent when the issue has no overlay drawn yet.
+   */
+  overlay?: string;
 }
 
 /** One spread: [left, right]. A null slot renders empty (cover / back page). */
@@ -54,6 +60,7 @@ export const issue01: Issue = {
     })),
     { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
   ],
+  overlay: '/issues/01/overlay.webp',
 };
 
 /** How a page reads in the caption: 'COVER', 'BACK', or a zero-padded number. */
@@ -70,6 +77,15 @@ export function pageLabel(page: Page): string {
 export function issueCover(id: string): string | undefined {
   const issue = ISSUES[id];
   return issue?.hasCover ? issue.pages[0]?.src : undefined;
+}
+
+/**
+ * The hover-state overlay plate for an issue, or undefined if the id is unknown
+ * or no overlay has been drawn. Counterpart to `issueCover` — same single source
+ * of truth, so only the grid needs to know the plate exists.
+ */
+export function issueOverlay(id: string): string | undefined {
+  return ISSUES[id]?.overlay;
 }
 
 export const ISSUES: Record<string, Issue> = {

@@ -1,10 +1,24 @@
 /* Fills the hovered card (a child of its transform wrapper), so it inherits the
-   card's scale + 3D rotation. Ignores pointer events except the CTA. Fades in. */
+   card's scale + 3D rotation. Ignores pointer events except the CTA. Fades in.
+
+   The transform wrapper is a preserve-3d context, where paint order follows Z
+   rather than z-index — so the chrome has to sit a hair in FRONT of the overlay
+   plate or the artwork would bury the CTA. `+ 2` is enough to win the sort
+   without reading as its own layer, and the matching counter-scale cancels the
+   perspective magnification, so at rest the chrome lands exactly where it always
+   did; it just gains a little real depth parallax as the card turns. The
+   fallbacks keep this flat (identity) in any context without a card perspective. */
 .card-overlay {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 5;
+  transform: translateZ(calc((var(--overlay-z, 0) + 2) * 1px))
+    scale(
+      calc(
+        (var(--card-perspective, 900) - var(--overlay-z, 0) - 2) / var(--card-perspective, 900)
+      )
+    );
   animation-name: card-overlay-fade;
   animation-timing-function: ease;
   animation-fill-mode: both;

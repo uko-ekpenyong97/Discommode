@@ -193,6 +193,11 @@ function Dials() {
       overlayFadeMs: [start.overlayFadeMs, 0, 600],
       overlayCardDim: [start.overlayCardDim, 0.2, 1],
       ctaHoverScale: [start.ctaHoverScale, 1, 1.4],
+      // Explicit steps: DialKit infers a coarse step from the range otherwise
+      // (0-120 snaps to multiples of 10, which quietly rewrote the 24 default to
+      // 20 and persisted it), and both of these want finer resolution than that.
+      overlayZ: [start.overlayZ, 0, 120, 1],
+      overlayLayerFadeMs: [start.overlayLayerFadeMs, 0, 200, 5],
       copy: { type: 'action', label: 'Copy config' },
     },
     { onAction },
@@ -224,6 +229,8 @@ function Dials() {
       overlayFadeMs: overlay.overlayFadeMs,
       overlayCardDim: overlay.overlayCardDim,
       ctaHoverScale: overlay.ctaHoverScale,
+      overlayZ: overlay.overlayZ,
+      overlayLayerFadeMs: overlay.overlayLayerFadeMs,
       focusScale: focus.focusScale,
       unfocusedOpacity: focus.unfocusedOpacity,
       farOpacity: focus.farOpacity,

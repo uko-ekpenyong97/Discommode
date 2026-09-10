@@ -41,12 +41,23 @@ interface Tilt {
 }
 
 /** A rendered card's transform wrapper + its eased state. GridPlane fills in
- *  `dc/dr/el` per window; the ticker maintains `rx/ry/op` and writes the
+ *  `dc/dr/el/fade` per window; the ticker maintains `rx/ry/op` and writes the
  *  transform + opacity. `op` starts < 0 (uninitialised) so it snaps on first use. */
 export interface CardFace {
   dc: number;
   dr: number;
+  /** `.grid-card__transform` — takes the scale + cursor-facing rotation. */
   el: HTMLElement;
+  /**
+   * `.grid-card__fade` — its parent, and where the opacity goes.
+   *
+   * The two are deliberately separate elements: `opacity < 1` forces
+   * `transform-style` to compute as `flat`, which would silently collapse the
+   * `translateZ` on the hover overlay plate inside `el`. Keeping the fade one
+   * level up leaves `el` free to `preserve-3d` while the whole card still fades
+   * as a single group.
+   */
+  fade: HTMLElement;
   rx: number;
   ry: number;
   op: number;
@@ -444,10 +455,8 @@ export function usePanController(options: PanOptions = {}): PanController {
         c.rx += (targetX - c.rx) * kc;
         c.op = c.op < 0 ? targetOp : c.op + (targetOp - c.op) * kOp;
         /* eslint-enable react-hooks/immutability */
-        if (c.el) {
-          c.el.style.transform = `scale(${scale}) rotateX(${c.rx}deg) rotateY(${c.ry}deg)`;
-          c.el.style.opacity = String(c.op);
-        }
+        if (c.el) c.el.style.transform = `scale(${scale}) rotateX(${c.rx}deg) rotateY(${c.ry}deg)`;
+        if (c.fade) c.fade.style.opacity = String(c.op);
       }
 
       // Stop once rotation + opacity have reached rest and nothing moves the grid

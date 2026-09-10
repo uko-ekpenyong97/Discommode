@@ -85,6 +85,20 @@ export interface LiveConfig {
   overlayFadeMs: number;
   overlayCardDim: number;
   ctaHoverScale: number;
+  /**
+   * How far in front of the card face the hover overlay plate floats, in the
+   * card's local CSS-px depth scale. Unitless on purpose: the plate is
+   * counter-scaled by `(perspective - z) / perspective` so it still registers
+   * pixel-exactly with the cover at rest, and that maths needs a bare number.
+   * Bigger = more parallax as the card turns under the cursor. 0 = flush.
+   */
+  overlayZ: number;
+  /**
+   * Fade time (ms) for the overlay plate appearing on hover. 0 is the default
+   * and matches the halfof8 reference — a hard switch, no tween. Distinct from
+   * `overlayFadeMs`, which times the *text* overlay and the card opacity lift.
+   */
+  overlayLayerFadeMs: number;
   // FOCUS — emphasis on the focused (centre-nearest) card (Phase 9)
   /** Scale of the focused card; eases to 1.0 by one cell of distance. */
   focusScale: number;
@@ -166,6 +180,8 @@ export const DEFAULTS: LiveConfig = {
   overlayFadeMs: 180,
   overlayCardDim: 0.75,
   ctaHoverScale: 1.08,
+  overlayZ: 24,
+  overlayLayerFadeMs: 0,
   focusScale: 1.12,
   unfocusedOpacity: 0.55,
   farOpacity: 0.4,

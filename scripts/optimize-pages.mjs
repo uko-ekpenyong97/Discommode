@@ -4,10 +4,16 @@
  * Figma is the master. Drop full-size PNG exports into
  *
  *   ~/Discommode-pages/<issue>/NN.png      (01.png ... 42.png, cover.png, back.png)
+ *   ~/Discommode-pages/<issue>/overlay.png (the grid card's hover plate)
  *
  * and this writes the WebPs the app actually loads into
  *
  *   public/issues/<issue>/NN.webp
+ *
+ * Everything is 2000x2600. `overlay.png` is the odd one out: it is not a page,
+ * it is the hover-state artwork that floats in front of the card in the grid, so
+ * its transparency is load-bearing. WebP keeps the alpha channel by default; we
+ * read each output back and complain loudly if a conversion ever drops it.
  *
  * The source lives OUTSIDE the repo on purpose: gitignored files inside a
  * checkout are invisible to every git safety net, and `git reset --hard` will
@@ -33,8 +39,11 @@ const QUALITY = 82;
 const PAGE_W = 2000;
 const PAGE_H = 2600;
 
-/** `01.png` … `42.png`, plus the two named plates. */
-const PAGE_RE = /^(\d{2}|cover|back)\.png$/;
+/** `01.png` … `42.png`, plus the named plates. */
+const PAGE_RE = /^(\d{2}|cover|back|overlay)\.png$/;
+
+/** Plates that are not pages: excluded from the page count, and alpha-checked. */
+const NON_PAGE = new Set(['overlay.png']);
 
 const force = process.argv.includes('--force');
 
@@ -63,6 +72,30 @@ let webpTotal = 0;
 let converted = 0;
 let skipped = 0;
 const warnings = [];
+
+/**
+ * A source with *real* transparency must still have it after the WebP round-trip
+ * — `overlay.png` is composited over the card, so a flattened alpha would show
+ * up as an opaque rectangle instead of floating artwork.
+ *
+ * "Real" is the operative word: the page scans are RGBA too, but every pixel is
+ * opaque, and libwebp correctly drops that redundant channel to save bytes. So
+ * the gate is the source's minimum alpha, not merely `hasAlpha` — otherwise
+ * every page would cry wolf. Returns the note appended to the conversion line.
+ */
+async function alphaNote(issue, name, pngPath, webpPath) {
+  const { hasAlpha } = await sharp(pngPath).metadata();
+  if (!hasAlpha) return '';
+  const { channels } = await sharp(pngPath).stats();
+  const alpha = channels[channels.length - 1];
+  if (alpha.min === 255) return ''; // opaque throughout; dropping it is a win
+  const out = await sharp(webpPath).metadata();
+  if (!out.hasAlpha) {
+    warnings.push(`${issue}/${name} lost its alpha channel in the WebP conversion`);
+    return '   !! ALPHA LOST !!';
+  }
+  return '   hasAlpha: true';
+}
 
 async function convert(issue, name) {
   const pngPath = join(SOURCE_DIR, issue, name);
@@ -94,7 +127,8 @@ async function convert(issue, name) {
   webpTotal += out.size;
   converted += 1;
   const saved = Math.round((1 - out.size / pngStat.size) * 100);
-  console.log(`  ${name.padEnd(10)} ${kb(pngStat.size).padStart(9)} → ${kb(out.size).padStart(9)}   ${String(saved).padStart(3)}% smaller`);
+  const alpha = await alphaNote(issue, name, pngPath, webpPath);
+  console.log(`  ${name.padEnd(10)} ${kb(pngStat.size).padStart(9)} → ${kb(out.size).padStart(9)}   ${String(saved).padStart(3)}% smaller${alpha}`);
 }
 
 if ((await statOrNull(SOURCE_DIR)) === null) {
@@ -117,7 +151,10 @@ if (issues.length === 0) {
 
 for (const issue of issues) {
   const files = (await readdir(join(SOURCE_DIR, issue))).filter((f) => PAGE_RE.test(f)).sort();
-  console.log(`\nissue ${issue}  (${files.length} page${files.length === 1 ? '' : 's'})`);
+  const pageCount = files.filter((f) => !NON_PAGE.has(f)).length;
+  const extras = files.length - pageCount;
+  const plates = extras > 0 ? ` + ${extras} plate${extras === 1 ? '' : 's'}` : '';
+  console.log(`\nissue ${issue}  (${pageCount} page${pageCount === 1 ? '' : 's'}${plates})`);
   await mkdir(join(OUTPUT_DIR, issue), { recursive: true });
   for (const name of files) await convert(issue, name);
 }
@@ -126,7 +163,7 @@ console.log(`\n${converted} converted, ${skipped} up to date`);
 console.log(`total  ${mb(pngTotal)} PNG → ${mb(webpTotal)} WebP   ${Math.round((1 - webpTotal / pngTotal) * 100)}% smaller`);
 
 if (warnings.length > 0) {
-  console.log(`\n!!  ${warnings.length} PAGE${warnings.length === 1 ? '' : 'S'} WITH THE WRONG DIMENSIONS  !!`);
+  console.log(`\n!!  ${warnings.length} PROBLEM${warnings.length === 1 ? '' : 'S'}  !!`);
   for (const w of warnings) console.log(`!!  ${w}`);
-  console.log('!!  Re-export at 2000x2600 before committing.\n');
+  console.log('!!  Re-export at 2000x2600 (overlay.png with transparency) before committing.\n');
 }

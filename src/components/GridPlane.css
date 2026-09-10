@@ -31,23 +31,40 @@
   will-change: transform;
 }
 
-/* Outer cell: grid layout slot + a perspective so the per-card cursor-facing
-   rotation renders in 3D. */
+/* Outer cell: the grid layout slot, nothing more. */
 .grid-card {
   position: relative;
-  perspective: 900px;
 }
 
-/* Transform wrapper: carries the per-card scale + cursor-facing rotation AND the
-   focus/hover opacity, all written imperatively by the ticker. The face and the
-   hover overlay are both children, so they share this transform (the overlay
-   tracks the card) while only the face takes the brightness filter. No overflow
-   clip here, so the overlay's headline can overhang the card edges. */
+/* Fade wrapper: the per-card perspective (so the cursor-facing rotation renders
+   in 3D) plus the focus/hover opacity, written imperatively by the ticker.
+
+   The opacity lives HERE rather than on the transform wrapper below on purpose.
+   `opacity < 1` is a grouping property, and a grouping property forces
+   `transform-style` to compute as `flat` — which would silently flatten the
+   overlay plate's translateZ and kill the whole effect. One level of separation
+   buys the 3D context back while the card still fades as a single group. */
+.grid-card__fade {
+  position: absolute;
+  inset: 0;
+  /* Unitless so the plate's counter-scale can divide by it. */
+  --card-perspective: 900;
+  perspective: calc(var(--card-perspective) * 1px);
+  will-change: opacity;
+}
+
+/* Transform wrapper: carries the per-card scale + cursor-facing rotation,
+   written imperatively by the ticker. The face, the overlay plate, and the hover
+   chrome are all children, so they share this transform (they track the card)
+   while only the face takes the brightness filter. `preserve-3d` is what lets
+   the plate's translateZ actually separate it from the face. No overflow clip
+   here, so the chrome's headline can overhang the card edges. */
 .grid-card__transform {
   position: absolute;
   inset: 0;
   transform-origin: center center;
-  will-change: transform, opacity;
+  transform-style: preserve-3d;
+  will-change: transform;
 }
 
 /* Inner face: carries the hue/image and the brightness filter. */
@@ -69,6 +86,34 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Hover overlay plate: a second piece of artwork (with alpha) floating in front
+   of the face. Same box and the same `object-fit: cover` as `.grid-card__img`, so
+   it crops identically and registers pixel-exactly with the cover at rest.
+
+   `translateZ` is what makes it read as depth: the card is continuously rotating
+   to face the cursor, and a layer sitting --overlay-z in front of a rotating card
+   slides against it. The `scale()` cancels the perspective magnification that
+   translateZ would otherwise add ((d - z) / d is exactly the reciprocal of the
+   d / (d - z) that projection applies), so the plate is the same size as the
+   cover when the card is flat and only *moves* once it turns.
+
+   Opacity is switched inline (0 / 1) from the same hovered-cell state that drives
+   the chrome. The transition is 0ms by default — a hard switch, like the
+   reference — and "Overlay Layer Fade Ms" is there to try a short fade. */
+.grid-card__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  transform: translateZ(calc(var(--overlay-z, 0) * 1px))
+    scale(calc((var(--card-perspective) - var(--overlay-z, 0)) / var(--card-perspective)));
+  transition: opacity var(--overlay-fade-ms, 0ms) linear;
   user-select: none;
   -webkit-user-drag: none;
 }
