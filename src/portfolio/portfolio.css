@@ -1,0 +1,226 @@
+/* The project view's anatomy: glass, sheet, scroller, strip, chrome.
+
+   Every number that is worth tuning is a `--pv-*` custom property written by
+   portfolioMotion.ts (defaults duplicated here as fallbacks, so the stylesheet
+   still reads correctly on its own and a missed write degrades to the shipped
+   look rather than to zero). The three ANIMATED channels — `--pv-scrim`,
+   `--pv-sheet`, `--pv-pill` — are written per frame by the driver; nothing in
+   this file has a transition on them, because the driver IS the curve. */
+
+.pv {
+  position: absolute;
+  inset: 0;
+  overflow: hidden; /* the sheet parks offscreen right before it slides in */
+  /* Centre-to-centre spacing of adjacent articles. */
+  --pv-step: calc(var(--pv-article-w, 44vw) + var(--pv-article-gap, 24px));
+  /* The app's only type token is `--mono`, which the labels and captions still
+     use. A project is prose, so it needs a reading face as well. */
+  --pv-sans: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
+  font-family: var(--pv-sans);
+  color: rgba(255, 255, 255, 0.88);
+}
+
+/* ── the glass ─────────────────────────────────────────────────────────── */
+
+/* Over the grid AND the detail view, so the hero card stays visible — blurred,
+   still live — behind it. Clicking dismisses, like the detail backdrop. */
+.pv-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, var(--pv-scrim-alpha, 0.4));
+  backdrop-filter: blur(var(--pv-scrim-blur, 16px));
+  -webkit-backdrop-filter: blur(var(--pv-scrim-blur, 16px));
+  opacity: var(--pv-scrim, 0);
+  will-change: opacity;
+  cursor: zoom-out;
+}
+
+/* ── the sheet + its scroller ──────────────────────────────────────────── */
+
+/* Parked one full width to the right at rest; `--pv-sheet` drives it home. */
+.pv-sheet {
+  position: absolute;
+  inset: 0;
+  transform: translateX(calc(100% * (1 - var(--pv-sheet, 0))));
+  will-change: transform;
+}
+
+/* Exactly one viewport, scrolled but never scrolling anything: the position is
+   read off it and applied as a translate to the centred article's column.
+   `overscroll-behavior: contain` stops a scroll past either end from reaching
+   the document (and the grid) underneath. The scrollbar is hidden — the
+   article is the only thing that should read as moving. */
+.pv-scroller {
+  width: 100vw;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.pv-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+/* Pinned for the whole scroll range, so the strip stays put while the spacer
+   behind it supplies the range. Sticky rather than a floating sibling: it has
+   to stay INSIDE the scroller for the wheel, the reveal observer's root and
+   every block's visibility test to resolve against the same box. */
+.pv-stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+/* Invisible, and the only reason the scroller has anywhere to go: its height is
+   the current article's content height minus the viewport already on screen. */
+.pv-spacer {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── the article strip ─────────────────────────────────────────────────── */
+
+.pv-strip {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--pv-crossfade, 600ms) cubic-bezier(0.4, 0, 0.1, 1);
+  will-change: transform;
+}
+
+/* Each article is its own window onto a project: one viewport tall, clipped,
+   and with a perspective so a frame inside it can turn in depth. */
+.pv-article {
+  position: absolute;
+  top: 0;
+  width: var(--pv-article-w, 44vw);
+  height: 100vh;
+  overflow: hidden;
+  perspective: 1000px;
+  transform: translateX(-50%);
+  opacity: var(--pv-neighbour-op, 0.2);
+  transition: opacity var(--pv-crossfade, 600ms) ease;
+}
+.pv-article[data-active] {
+  opacity: 1;
+}
+
+.pv-article__inner {
+  will-change: transform;
+}
+
+.pv-article__column {
+  width: min(var(--pv-column, 656px), calc(100% - 48px));
+  margin: 0 auto;
+  /* Clear the nav bar at the foot of the sheet. */
+  padding-bottom: 96px;
+}
+
+/* A peeking neighbour is a target, not a document. */
+.pv-article__hit {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.pv-article__hit:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: -4px;
+}
+
+/* ── chrome ────────────────────────────────────────────────────────────── */
+
+/* Circular, left edge, vertically centred; enters from up-and-out toward the
+   corner as `--pv-pill` runs 0 → 1. */
+.pv-close {
+  position: absolute;
+  left: 24px;
+  top: 50%;
+  z-index: 2;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(var(--pv-pill-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--pv-pill-blur, 8px));
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  opacity: var(--pv-pill, 0);
+  transform: translate(
+    calc(var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1)),
+    calc(-50% + var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1))
+  );
+  will-change: transform, opacity;
+}
+.pv-close svg {
+  width: 18px;
+  height: 18px;
+}
+.pv-close:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+.pv-close:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Prev / next, arriving with the pill. */
+.pv-nav {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 2;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  transform: translateX(-50%);
+  opacity: var(--pv-pill, 0);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.pv-nav__btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pv-nav__btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+.pv-nav__btn:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Reduced motion: no slide, no blur ramp — the view is simply there. The
+   reveals are neutralised in reveal.css. */
+@media (prefers-reduced-motion: reduce) {
+  .pv-sheet {
+    transform: none;
+  }
+  .pv-scrim,
+  .pv-close,
+  .pv-nav {
+    opacity: 1;
+  }
+  .pv-close {
+    transform: translateY(-50%);
+  }
+  .pv-strip,
+  .pv-article {
+    transition: none;
+  }
+}

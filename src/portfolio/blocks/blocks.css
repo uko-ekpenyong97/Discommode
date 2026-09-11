@@ -1,0 +1,227 @@
+/* Type and layout for the blocks. Nothing here animates the ENTRANCE of a
+   block — that is reveal.css — except the media crossfade, which belongs to
+   the media and not to the block (a block can be fully revealed while its
+   image is still decoding). */
+
+.pv-block {
+  margin: 0 0 28px;
+}
+.pv-block:last-child {
+  margin-bottom: 0;
+}
+
+/* Edge to edge of the ARTICLE, escaping the centred content column. */
+.pv-block--bleed {
+  width: var(--pv-article-w, 44vw);
+  margin-left: calc((100% - var(--pv-article-w, 44vw)) / 2);
+}
+
+/* ── type ──────────────────────────────────────────────────────────────── */
+
+.pv-title {
+  margin: 0;
+  font-size: clamp(48px, 8.5vw, 120px);
+  line-height: 0.94;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  color: #fff;
+}
+
+.pv-caption {
+  margin: 12px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pv-heading {
+  margin: 0 0 16px;
+  font-size: 22px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.pv-body {
+  margin: 0 0 16px;
+  font-size: 16px;
+  line-height: 1.62;
+  color: rgba(255, 255, 255, 0.72);
+}
+.pv-body:last-child {
+  margin-bottom: 0;
+}
+
+/* ── media ─────────────────────────────────────────────────────────────── */
+
+/* The frame is the placeholder: a flat tint the decoded image crossfades over,
+   and the box the flip reveal turns. */
+.pv-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pv-img,
+.pv-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+.pv-video {
+  transition-duration: 450ms;
+}
+.pv-img.is-loaded,
+.pv-video.is-loaded {
+  opacity: 1;
+}
+
+.pv-figure {
+  margin: 0;
+}
+
+.pv-figcaption {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ── two-up ────────────────────────────────────────────────────────────── */
+
+/* 52px between the columns, 24px between a frame and its paragraph. */
+.pv-twoup {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 52px;
+}
+
+.pv-twoup__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.pv-twoup__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* ── stat grid ─────────────────────────────────────────────────────────── */
+
+.pv-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.pv-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pv-stat__label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── link pill ─────────────────────────────────────────────────────────── */
+
+.pv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 100px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+.pv-pill:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+}
+.pv-pill__icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── rive ──────────────────────────────────────────────────────────────── */
+
+/* Reserved height so the lazy mount never reflows the article (and never
+   invalidates the scroll range the spacer was measured against). */
+.pv-rive {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pv-rive__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The stand-in for a project whose `.riv` has not landed yet. It animates only
+   while mounted, which is the point — watch it start and stop as the block
+   crosses the one-viewport window. */
+.pv-rive__stand-in {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.pv-rive__orbit {
+  position: absolute;
+  width: 38%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  animation: pv-rive-spin 2.4s linear infinite;
+}
+
+.pv-rive__label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+@keyframes pv-rive-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-rive__orbit {
+    animation: none;
+  }
+  .pv-img,
+  .pv-video {
+    opacity: 1;
+    transition: none;
+  }
+}

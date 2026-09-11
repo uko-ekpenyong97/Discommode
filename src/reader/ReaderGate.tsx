@@ -76,7 +76,14 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-export default function ReaderGate() {
+interface ReaderGateProps {
+  /** True when a layer ABOVE this one (the project view) is open: the app must
+   *  be suspended for that too, and this gate is the only thing that renders
+   *  it. ORed with the reader's own reason for suspending. */
+  suspended?: boolean;
+}
+
+export default function ReaderGate({ suspended = false }: ReaderGateProps) {
   const hash = useSyncExternalStore(subscribe, getHash);
   const target = parseTarget(hash);
 
@@ -129,7 +136,7 @@ export default function ReaderGate() {
 
   return (
     <>
-      <App suspended={target !== null || shown !== null} />
+      <App suspended={suspended || target !== null || shown !== null} />
       {shown && (
         <div
           className="reader-layer"

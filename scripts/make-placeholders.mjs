@@ -131,7 +131,7 @@ async function writeVideo() {
   await run(ffmpeg, [
     '-y',
     '-f', 'lavfi',
-    '-i', 'gradients=s=960x540:d=4:speed=0.12:c0=0x22303c:c1=0x4a4038:n=2',
+    '-i', 'gradients=s=960x540:d=4:speed=0.12:c0=0x3f6079:c1=0x8c6a46:n=2',
     '-f', 'lavfi',
     '-i', 'color=c=0xcfdde9@0.55:s=40x540:d=4,format=rgba',
     '-filter_complex', "[0][1]overlay=x='mod(t*260,1000)-40':y=0:format=auto,format=yuv420p",
