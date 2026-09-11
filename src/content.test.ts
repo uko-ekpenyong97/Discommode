@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CONTENT, itemFace } from './content';
+import { START_COL, START_ROW } from './config';
+import { CONTENT, contentIndex, itemFace } from './content';
 
 describe('content issue mapping', () => {
   it('marks item-01 as issue 01 and nothing else', () => {
@@ -25,5 +26,12 @@ describe('itemFace', () => {
   it('is undefined for a plain hue item (renders the tint fallback)', () => {
     const plain = CONTENT.find((i) => !i.issue && !i.image)!;
     expect(itemFace(plain)).toBeUndefined();
+  });
+});
+
+describe('grid home position', () => {
+  it('centres the cold-load cell on the first card (01, Discommode)', () => {
+    expect(contentIndex(START_COL, START_ROW)).toBe(0);
+    expect(CONTENT[contentIndex(START_COL, START_ROW)].slug).toBe('item-01');
   });
 });
