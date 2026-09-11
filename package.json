@@ -9,6 +9,7 @@
     "pages": "node scripts/optimize-pages.mjs",
     "anims": "node scripts/optimize-anims.mjs",
     "backgrounds": "node scripts/optimize-backgrounds.mjs",
+    "placeholders": "node scripts/make-placeholders.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "preview": "vite preview"

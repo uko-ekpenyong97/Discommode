@@ -5,6 +5,7 @@ import { config } from '../config';
 import { mod } from '../grid';
 import { CONTENT, CONTENT_COUNT, itemHeroFace } from '../content';
 import { openReader } from '../reader/readerNav';
+import { openPortfolio } from '../portfolio/portfolioNav';
 import { issueAnims } from '../reader/issue-01';
 import { CoverAnimLayer } from './CoverAnimLayer';
 import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
@@ -240,9 +241,10 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           const distance = Math.abs(p.i - center);
           const isCenter = distance === 0;
           const item = CONTENT[p.idx];
-          // The centre panel of a readable issue opens the reader; side panels
-          // navigate; a centre non-issue panel is inert (aria-hidden).
-          const canRead = isCenter && !!item.issue;
+          // The centre panel opens what its kind opens — the reader for an
+          // issue, the project view for a portfolio card; side panels navigate.
+          // A centre panel with neither is inert (aria-hidden).
+          const canOpen = isCenter && !!(item.issue ?? item.project);
           const face = itemHeroFace(item);
           // Keyed off THIS panel's item, not the active one: mid-slide the
           // centre panel and `activeIndex` can briefly disagree, and the layer
@@ -257,7 +259,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               type="button"
               data-i={p.i}
               className={
-                canRead
+                canOpen
                   ? 'detail__panel detail__panel--center detail__panel--readable'
                   : isCenter
                     ? 'detail__panel detail__panel--center'
@@ -272,14 +274,21 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
                 e.stopPropagation(); // a card is not backdrop — don't dismiss
                 if (!isCenter) goto(p.idx);
                 else if (item.issue) openReader(item.issue);
+                else if (item.project) openPortfolio(item.project);
               }}
               onPointerEnter={(e) => e.pointerType !== 'touch' && (hoveredRef.current = p.i)}
               onPointerLeave={(e) => e.pointerType !== 'touch' && (hoveredRef.current = null)}
-              tabIndex={isCenter ? (canRead ? 0 : -1) : 0}
+              tabIndex={isCenter ? (canOpen ? 0 : -1) : 0}
               aria-label={
-                canRead ? `Read issue ${item.issue}` : isCenter ? undefined : `Go to item ${item.title}`
+                canOpen
+                  ? item.issue
+                    ? `Read issue ${item.issue}`
+                    : `Open project ${item.title}`
+                  : isCenter
+                    ? undefined
+                    : `Go to item ${item.title}`
               }
-              aria-hidden={isCenter && !canRead ? true : undefined}
+              aria-hidden={isCenter && !canOpen ? true : undefined}
             >
               {face ? (
                 <img className="detail__media" src={face} alt={`Poster ${item.title}`} draggable={false} />
@@ -320,7 +329,9 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
             </option>
           ))}
         </select>
-        {activeItem.issue && (
+        {/* The primary action follows the card's kind: the magazine reads, a
+            portfolio card opens its project view at `#view-NN`. */}
+        {activeItem.issue ? (
           <button
             type="button"
             className="detail__btn detail__btn--read"
@@ -328,7 +339,15 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           >
             Read issue
           </button>
-        )}
+        ) : activeItem.project ? (
+          <button
+            type="button"
+            className="detail__btn detail__btn--read"
+            onClick={() => openPortfolio(activeItem.project!)}
+          >
+            Open project
+          </button>
+        ) : null}
         <button type="button" className="detail__btn" onClick={next} aria-label="Next item">
           Next ›
         </button>
