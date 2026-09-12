@@ -67,7 +67,19 @@ function ExternalIcon() {
  * sheet can be closed at any scroll position, and a decoding video costs frames
  * wherever it is.
  */
-function VideoMedia({ src, poster, className }: { src: string; poster: string; className?: string }) {
+function VideoMedia({
+  src,
+  poster,
+  w,
+  h,
+  className,
+}: {
+  src: string;
+  poster: string;
+  w: number;
+  h: number;
+  className?: string;
+}) {
   const scroller = useScroller();
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -108,6 +120,11 @@ function VideoMedia({ src, poster, className }: { src: string; poster: string; c
       playsInline
       preload="metadata"
       src={src}
+      // The intrinsic size, so the box is the right height before a byte of
+      // video arrives — with `width: 100%; height: auto` the browser derives
+      // the aspect ratio from these and reserves the space.
+      width={w}
+      height={h}
     />
   );
 }
@@ -143,11 +160,15 @@ function RiveBlock({
   artboard,
   stateMachine,
   label,
+  w,
+  h,
 }: {
   src: string;
   artboard?: string;
   stateMachine?: string;
   label?: string;
+  w: number;
+  h: number;
 }) {
   const scroller = useScroller();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -209,7 +230,10 @@ function RiveBlock({
   }, [near, src, artboard, stateMachine]);
 
   return (
-    <div className="pv-rive" ref={hostRef}>
+    // The artboard's ratio holds the box open from the first frame: the lazy
+    // mount has to be invisible to layout, or arriving at the block would
+    // lengthen the page and move every page start behind it.
+    <div className="pv-rive" ref={hostRef} style={{ aspectRatio: `${w} / ${h}` }}>
       {near &&
         (missing ? (
           <div className="pv-rive__stand-in" role="img" aria-label={label ?? 'Animation placeholder'}>
@@ -225,7 +249,15 @@ function RiveBlock({
 
 function MediaView({ media, className }: { media: Media; className?: string }) {
   if (media.kind === 'video') {
-    return <VideoMedia src={media.src} poster={media.poster} className={className} />;
+    return (
+      <VideoMedia
+        src={media.src}
+        poster={media.poster}
+        w={media.w}
+        h={media.h}
+        className={className}
+      />
+    );
   }
   return (
     <img
@@ -236,6 +268,11 @@ function MediaView({ media, className }: { media: Media; className?: string }) {
       loading="lazy"
       decoding="async"
       draggable={false}
+      // Same reason as the video: the box has to be its final height before the
+      // image decodes, or the page grows under the reader and every page start
+      // behind it moves.
+      width={media.w}
+      height={media.h}
       onLoad={(e) => markLoaded(e.currentTarget)}
     />
   );
@@ -283,6 +320,8 @@ function StatCell({ stat }: { stat: Stat }) {
         loading="lazy"
         decoding="async"
         draggable={false}
+        width={stat.w}
+        height={stat.h}
         onLoad={(e) => markLoaded(e.currentTarget)}
       />
       <span className="pv-stat__label">{stat.label}</span>
@@ -318,7 +357,9 @@ function BlockBodyView({ block }: { block: Block }) {
       return (
         <figure className="pv-figure">
           <div className="pv-frame">
-            <MediaView media={{ kind: 'image', src: block.src, alt: block.alt }} />
+            <MediaView
+              media={{ kind: 'image', src: block.src, alt: block.alt, w: block.w, h: block.h }}
+            />
           </div>
           {block.caption && <figcaption className="pv-figcaption">{block.caption}</figcaption>}
         </figure>
@@ -342,7 +383,7 @@ function BlockBodyView({ block }: { block: Block }) {
       return (
         <figure className="pv-figure">
           <div className="pv-frame">
-            <VideoMedia src={block.src} poster={block.poster} />
+            <VideoMedia src={block.src} poster={block.poster} w={block.w} h={block.h} />
           </div>
           {block.caption && <figcaption className="pv-figcaption">{block.caption}</figcaption>}
         </figure>
@@ -354,6 +395,8 @@ function BlockBodyView({ block }: { block: Block }) {
           artboard={block.artboard}
           stateMachine={block.stateMachine}
           label={block.label}
+          w={block.w}
+          h={block.h}
         />
       );
   }

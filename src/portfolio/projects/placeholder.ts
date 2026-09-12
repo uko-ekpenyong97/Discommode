@@ -1,4 +1,5 @@
-import type { Block } from '../blocks/types';
+import type { Block, Media, Stat } from '../blocks/types';
+import ASSETS from './placeholder-assets.json';
 
 /**
  * The placeholder PAGE SHAPES — three lengths, between them using every block
@@ -11,10 +12,26 @@ import type { Block } from '../blocks/types';
  * Targets are in viewports at 1440x900 with the default 44vw page — see the
  * comment on each.
  *
+ * Every media block takes its dimensions from `placeholder-assets.json`, the
+ * same table the generator script writes the files from. That is what keeps a
+ * page the same height before and after its assets load.
+ *
  * Replacing any of this with a real project is a data change and nothing else:
  * write the pages and register them in `projects/index.ts`.
  */
 const M = '/projects/placeholder';
+
+type MediaFile = keyof typeof ASSETS.media;
+
+/** An image's src + intrinsic size, from the shared table. */
+function image(file: MediaFile): { src: string; w: number; h: number } {
+  const { w, h } = ASSETS.media[file];
+  return { src: `${M}/${file}`, w, h };
+}
+
+const imageMedia = (file: MediaFile): Media => ({ kind: 'image', alt: '', ...image(file) });
+
+const stat = (file: MediaFile, label: string): Stat => ({ ...image(file), label });
 
 /** Two columns of image + paragraph, the frames turning in from depth. */
 const twoUp = (): Block => ({
@@ -22,11 +39,11 @@ const twoUp = (): Block => ({
   flip: true,
   columns: [
     {
-      media: { kind: 'image', src: `${M}/two-up-a.webp`, alt: '' },
+      media: imageMedia('two-up-a.webp'),
       text: 'Two columns, each a frame and a paragraph. The frames flip in from depth; the paragraphs follow on the standard reveal.',
     },
     {
-      media: { kind: 'image', src: `${M}/two-up-b.webp`, alt: '' },
+      media: imageMedia('two-up-b.webp'),
       text: 'The gap is 52px between the columns and 24px between a frame and its text — the two rhythms the reference uses.',
     },
   ],
@@ -35,16 +52,15 @@ const twoUp = (): Block => ({
 const stats = (): Block => ({
   type: 'statGrid',
   stats: [
-    { src: `${M}/stat-1.webp`, label: 'FIRST' },
-    { src: `${M}/stat-2.webp`, label: 'SECOND' },
-    { src: `${M}/stat-3.webp`, label: 'THIRD' },
-    { src: `${M}/stat-4.webp`, label: 'FOURTH' },
+    stat('stat-1.webp', 'FIRST'),
+    stat('stat-2.webp', 'SECOND'),
+    stat('stat-3.webp', 'THIRD'),
+    stat('stat-4.webp', 'FOURTH'),
   ],
 });
 
 const opener = (title: string, caption: string): Block[] => [
-  // Every page opens on its own title: once a page is stacked, its title is all
-  // that shows in the sliver, and that is what makes the stack readable.
+  // Every page opens on its own title.
   { type: 'title', text: title },
   { type: 'caption', text: caption },
 ];
@@ -63,7 +79,7 @@ export function shortPage(title: string): Block[] {
         'Nothing about that is a separate animation — it is the same track position, read through a different segment.',
       ],
     },
-    { type: 'image', src: `${M}/wide.webp`, alt: '', caption: 'Full column width.' },
+    { type: 'image', alt: '', caption: 'Full column width.', ...image('wide.webp') },
     {
       type: 'text',
       heading: 'One scroll, no modes',
@@ -71,7 +87,7 @@ export function shortPage(title: string): Block[] {
         'There is no gesture to learn and no control to find: the wheel does the whole project. Where the vertical run of a page ends, the horizontal one begins, and the position is the same number throughout.',
       ],
     },
-    { type: 'image', src: `${M}/bleed.webp`, alt: '', bleed: true },
+    { type: 'image', alt: '', bleed: true, ...image('bleed.webp') },
     { type: 'linkPill', label: 'View the reference', href: 'https://halfof8.com/#space' },
   ];
 }
@@ -93,16 +109,18 @@ export function longPage(title: string): Block[] {
       newSection: true,
       heading: 'Media settles in',
       body: [
-        'Images crossfade from their placeholder tint as they decode. The video plays only while it is on screen and pauses the moment it leaves, so a page you have scrolled past costs nothing.',
+        'Images crossfade from their placeholder tint as they decode, but their boxes were the right size all along — nothing below them moves when they arrive. The video plays only while it is on screen and pauses the moment it leaves.',
       ],
     },
     {
       type: 'video',
-      src: `${M}/loop.mp4`,
+      src: `${M}/${ASSETS.video.file}`,
       poster: `${M}/video-poster.webp`,
+      w: ASSETS.video.w,
+      h: ASSETS.video.h,
       caption: 'Muted, looping, and paused the moment it leaves the scroller.',
     },
-    { type: 'image', src: `${M}/wide.webp`, alt: '' },
+    { type: 'image', alt: '', ...image('wide.webp') },
     {
       type: 'text',
       newSection: true,
@@ -118,9 +136,11 @@ export function longPage(title: string): Block[] {
       artboard: 'Main',
       stateMachine: 'State Machine 1',
       label: 'RIVE',
+      w: ASSETS.riveArtboard.w,
+      h: ASSETS.riveArtboard.h,
     },
     stats(),
-    { type: 'image', src: `${M}/bleed.webp`, alt: '', bleed: true, newSection: true },
+    { type: 'image', alt: '', bleed: true, newSection: true, ...image('bleed.webp') },
     {
       type: 'text',
       heading: 'Edge to edge',
@@ -139,7 +159,7 @@ export function longPage(title: string): Block[] {
       ],
     },
     twoUp(),
-    { type: 'image', src: `${M}/wide.webp`, alt: '', caption: 'Still page two.' },
+    { type: 'image', alt: '', caption: 'Still page two.', ...image('wide.webp') },
   ];
 }
 
@@ -147,7 +167,7 @@ export function longPage(title: string): Block[] {
 export function mediumPage(title: string): Block[] {
   return [
     ...opener(title, 'AND IT ENDS HERE'),
-    { type: 'image', src: `${M}/wide.webp`, alt: '' },
+    { type: 'image', alt: '', ...image('wide.webp') },
     {
       type: 'text',
       newSection: true,
@@ -163,10 +183,10 @@ export function mediumPage(title: string): Block[] {
       newSection: true,
       heading: 'Then you close it',
       body: [
-        'There is no way from here to another project, and there should not be: the pages either side of this one are this project\u2019s. Escape, or the pill on the left, takes you back to the card you came from with the grid exactly as you left it.',
+        'There is no way from here to another project, and there should not be: the pages either side of this one are this project’s. Escape, or the pill on the left, takes you back to the card you came from with the grid exactly as you left it.',
       ],
     },
-    { type: 'image', src: `${M}/wide.webp`, alt: '' },
+    { type: 'image', alt: '', ...image('wide.webp') },
     stats(),
     {
       type: 'text',

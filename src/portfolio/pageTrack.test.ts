@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { bottomOf, buildTrack, layout, maxPosition, positionOf } from './pageTrack';
+import {
+  bottomOf,
+  buildTrack,
+  layout,
+  maxPosition,
+  positionAt,
+  positionOf,
+  resolve,
+} from './pageTrack';
 import type { TrackMetrics } from './pageTrack';
 
 /** The reference measurements from halfof8.com at 2560x1352. */
@@ -197,5 +205,58 @@ describe('bottomOf', () => {
       expect(l.activeIndex).toBe(1);
       expect(l.movingHorizontal).toBe(false);
     }
+  });
+});
+
+describe('positionAt / resolve (carrying the reader across a rebuild)', () => {
+  it('keeps the page and the offset when the heights change under you', () => {
+    const before = buildTrack(metrics());
+    const y = before.start[1] + 800; // 800px down page 2
+    const at = positionAt(before, y);
+    expect(at).toEqual({ page: 1, offset: 800, slide: null });
+
+    // Page 1 grows by 900 and page 2 by 400 — every start behind them moves.
+    const after = buildTrack(metrics({ heights: [2250 + 900, 4500 + 400, 2700] }));
+    const y2 = resolve(after, at);
+
+    expect(y2).not.toBe(y); // the PIXEL position genuinely moved
+    expect(positionAt(after, y2)).toEqual(at); // the SEMANTIC one did not
+    expect(layout(after, y2).activeIndex).toBe(layout(before, y).activeIndex);
+    expect(layout(after, y2).scrollTop[1]).toBe(800);
+  });
+
+  it('keeps slide progress across a rebuild', () => {
+    const before = buildTrack(metrics());
+    const y = before.start[0] + before.pageScroll[0] + 0.25 * before.pageWidth;
+    const at = positionAt(before, y);
+    expect(at.page).toBe(0);
+    expect(at.slide).toBeCloseTo(0.25, 6);
+
+    const after = buildTrack(metrics({ heights: [3400, 4500, 2700] }));
+    const y2 = resolve(after, at);
+    const l = layout(after, y2);
+    expect(l.movingHorizontal).toBe(true);
+    expect(l.activeIndex).toBe(1);
+    expect(l.translateX[2]).toBeCloseTo(-0.25 * after.pageWidth, 4);
+  });
+
+  it('lands at the bottom of a page that shrank past where you were', () => {
+    const before = buildTrack(metrics());
+    const at = positionAt(before, before.start[1] + 3000);
+    const after = buildTrack(metrics({ heights: [2250, 1400, 2700] })); // page 2 now barely scrolls
+    const y2 = resolve(after, at);
+    expect(positionAt(after, y2)).toEqual({ page: 1, offset: after.pageScroll[1], slide: null });
+  });
+
+  it('round-trips every position on an unchanged track', () => {
+    const track = buildTrack(metrics());
+    for (let y = 0; y <= maxPosition(track); y += 137) {
+      expect(resolve(track, positionAt(track, y))).toBeCloseTo(y, 6);
+    }
+  });
+
+  it('drops a slide that has no page left to slide to', () => {
+    const track = buildTrack(metrics({ heights: [2250] }));
+    expect(resolve(track, { page: 0, offset: 1350, slide: 0.5 })).toBe(maxPosition(track));
   });
 });

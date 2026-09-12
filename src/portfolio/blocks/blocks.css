@@ -3,8 +3,13 @@
    the media and not to the block (a block can be fully revealed while its
    image is still decoding). */
 
+/* `contain: layout` keeps a block's internal layout its own business: nothing
+   inside one can collapse a margin through it or otherwise change the height of
+   anything else on the page. Page height is the input the whole track is built
+   from, so it has to be a function of the content alone. */
 .pv-block {
   margin: 0 0 28px;
+  contain: layout;
 }
 .pv-block:last-child {
   margin-bottom: 0;
@@ -58,7 +63,10 @@
 /* ── media ─────────────────────────────────────────────────────────────── */
 
 /* The frame is the placeholder: a flat tint the decoded image crossfades over,
-   and the box the flip reveal turns. */
+   and the box the flip reveal turns. It is already the right SIZE — the media
+   inside carries its intrinsic `width`/`height`, so the browser reserves the
+   box before the asset arrives and the page's height never changes under the
+   reader. */
 .pv-frame {
   position: relative;
   overflow: hidden;
@@ -167,11 +175,11 @@
 
 /* ── rive ──────────────────────────────────────────────────────────────── */
 
-/* Reserved height so the lazy mount never reflows the page (and never
-   invalidates the track the spacer was measured against). */
+/* The box is held open at the artboard's ratio (written inline from the block
+   data), so the lazy mount never reflows the page and never invalidates the
+   track the spacer was measured against. */
 .pv-rive {
   position: relative;
-  aspect-ratio: 3 / 2;
   border-radius: 2px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.06);

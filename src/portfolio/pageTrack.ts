@@ -54,6 +54,25 @@ export interface Track {
   viewportHeight: number;
 }
 
+/**
+ * WHERE YOU ARE, in the project's own terms rather than in pixels.
+ *
+ * The pixel position is meaningless across a rebuild: a page growing by 400px
+ * moves every start behind it, so the same `y` is a different place. This is
+ * what survives — the page, how far down it, and how far through the slide that
+ * follows it. Re-derive `y` from this after a rebuild ({@link resolve}) and the
+ * reader has not moved.
+ */
+export interface TrackPosition {
+  /** The page whose SEGMENT the position falls in (during a slide, the one
+   *  being left — the slide belongs to the page it follows). */
+  page: number;
+  /** How far down that page, in px. */
+  offset: number;
+  /** 0…1 through the slide after that page; null while the position is vertical. */
+  slide: number | null;
+}
+
 export interface TrackLayout {
   /** What to write to each page's own `scrollTop`. */
   scrollTop: number[];
@@ -151,6 +170,35 @@ export function maxPosition(track: Track): number {
 export function layout(track: Track, position: number): TrackLayout {
   const { start, pageScroll, rest, pageWidth: W } = track;
   const n = start.length;
+  const at = positionAt(track, position);
+  const k = at.page;
+
+  const movingHorizontal = at.slide !== null;
+  const rowOffset = -(k * W) - (at.slide ?? 0) * W;
+  // During a slide the page being slid TO is the one you are reading: it is
+  // what the preview fade, the z-order and the hash all follow.
+  const activeIndex = movingHorizontal ? Math.min(k + 1, n - 1) : k;
+
+  const scrollTop = start.map((_, j) =>
+    j < activeIndex
+      ? pageScroll[j] // finished: frozen at its bottom
+      : j === activeIndex
+        ? (movingHorizontal ? 0 : at.offset)
+        : 0,
+  );
+  const translateX = rest.map((r) => norm(Math.max(rowOffset, r)));
+
+  return { scrollTop, translateX, activeIndex, movingHorizontal };
+}
+
+/**
+ * Read a pixel position as a {@link TrackPosition}. The inverse of
+ * {@link resolve}, and the only place the segment a position falls in is
+ * decided — `layout` goes through here too, so the two can never disagree.
+ */
+export function positionAt(track: Track, position: number): TrackPosition {
+  const { start, pageScroll, pageWidth: W } = track;
+  const n = start.length;
   const y = clamp(position, 0, maxPosition(track));
 
   // The page whose segment (vertical, then the slide after it) contains y.
@@ -158,20 +206,25 @@ export function layout(track: Track, position: number): TrackLayout {
   while (k + 1 < n && y >= start[k + 1]) k++;
 
   const verticalEnd = start[k] + pageScroll[k];
-  const movingHorizontal = y > verticalEnd + SEGMENT_EPSILON;
-  const rowOffset = movingHorizontal ? -(k * W + (y - verticalEnd)) : -k * W;
-  // During a slide the page being slid TO is the one you are reading: it is
-  // what the preview fade, the z-order and the hash all follow.
-  const activeIndex = movingHorizontal ? k + 1 : k;
+  if (y > verticalEnd + SEGMENT_EPSILON) {
+    return { page: k, offset: pageScroll[k], slide: clamp((y - verticalEnd) / W, 0, 1) };
+  }
+  return { page: k, offset: clamp(y - start[k], 0, pageScroll[k]), slide: null };
+}
 
-  const scrollTop = start.map((_, j) =>
-    j < activeIndex
-      ? pageScroll[j] // finished: frozen at its bottom
-      : j === activeIndex
-        ? clamp(y - start[j], 0, pageScroll[j])
-        : 0,
-  );
-  const translateX = rest.map((r) => norm(Math.max(rowOffset, r)));
-
-  return { scrollTop, translateX, activeIndex, movingHorizontal };
+/**
+ * Put a {@link TrackPosition} back into pixels against a (possibly rebuilt)
+ * track. A page that got taller keeps you at the same distance down it; a page
+ * that got shorter than where you were puts you at its bottom.
+ */
+export function resolve(track: Track, at: TrackPosition): number {
+  const index = pageIndex(track, at.page);
+  // A slide only exists where there is a page after this one to slide to.
+  const sliding = at.slide !== null && index + 1 < track.start.length;
+  // A slide always begins at the BOTTOM of the page it follows, so that is the
+  // base however tall that page has become — carrying the old offset across
+  // would land the position back inside the page's vertical run.
+  const offset = sliding ? track.pageScroll[index] : clamp(at.offset, 0, track.pageScroll[index]);
+  const slide = sliding ? clamp(at.slide ?? 0, 0, 1) * track.pageWidth : 0;
+  return clamp(track.start[index] + offset + slide, 0, maxPosition(track));
 }

@@ -8,10 +8,21 @@
  * it), so the rhythm is authored in the data rather than inferred from types.
  */
 
+/**
+ * Intrinsic pixel size. Required on every piece of media, and not a nicety: the
+ * box is laid out from it BEFORE the asset loads, so a page's height is the
+ * same at mount as it is once everything has decoded. A height that changes
+ * moves every page start behind it, and the track is derived from those.
+ */
+export interface Sized {
+  w: number;
+  h: number;
+}
+
 /** A piece of media inside a composite block. */
 export type Media =
-  | { kind: 'image'; src: string; alt?: string }
-  | { kind: 'video'; src: string; poster: string };
+  | ({ kind: 'image'; src: string; alt?: string } & Sized)
+  | ({ kind: 'video'; src: string; poster: string } & Sized);
 
 export type BlockBody =
   /** ~120px display heading, revealed per character. */
@@ -22,23 +33,25 @@ export type BlockBody =
   | { type: 'text'; heading: string; body: string[] }
   /** Two columns, each media + paragraph. */
   | { type: 'twoUp'; columns: [TwoUpColumn, TwoUpColumn] }
-  /** Full column width, or edge-to-edge of the article with `bleed`. */
-  | { type: 'image'; src: string; alt?: string; bleed?: boolean; caption?: string }
+  /** Full column width, or edge-to-edge of the page with `bleed`. */
+  | ({ type: 'image'; src: string; alt?: string; bleed?: boolean; caption?: string } & Sized)
   /** Four columns of image + label. */
   | { type: 'statGrid'; stats: Stat[] }
   /** An outlined pill with an icon, linking out. */
   | { type: 'linkPill'; label: string; href: string }
   /** Muted, looping, plays only while in view. */
-  | { type: 'video'; src: string; poster: string; caption?: string }
-  /** Lazy-mounted Rive artboard; never runs once the view is closed. */
-  | { type: 'rive'; src: string; artboard?: string; stateMachine?: string; label?: string };
+  | ({ type: 'video'; src: string; poster: string; caption?: string } & Sized)
+  /** Lazy-mounted Rive artboard; never runs once the view is closed. `w`/`h` are
+   *  the ARTBOARD's ratio — the box is reserved at it, so the lazy mount never
+   *  reflows the page. */
+  | ({ type: 'rive'; src: string; artboard?: string; stateMachine?: string; label?: string } & Sized);
 
 export interface TwoUpColumn {
   media: Media;
   text: string;
 }
 
-export interface Stat {
+export interface Stat extends Sized {
   src: string;
   label: string;
 }

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import Lenis from 'lenis';
 import { PageRow } from './PageRow';
 import { look, subscribeLook } from './portfolioMotion';
-import { bottomOf, buildTrack, layout, maxPosition } from './pageTrack';
-import type { Track } from './pageTrack';
+import { bottomOf, buildTrack, layout, positionAt, resolve } from './pageTrack';
+import type { Track, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
@@ -29,6 +29,22 @@ import type { Project } from './blocks/types';
  * Smoothing is Lenis, scoped to this scroller via its `wrapper`/`content`
  * options — the grid keeps its own feel entirely. Lenis honours
  * `prefers-reduced-motion` itself by dropping to 1:1.
+ *
+ * TWO RULES keep the track honest, and both exist because the track is derived
+ * from MEASURED page heights:
+ *
+ *  1. The scroller stays LOCKED until the first layout is real — fonts ready
+ *     and every page measured at least once. Before that the heights are a
+ *     guess, and a guess you can scroll is a guess that throws you onto the
+ *     wrong page.
+ *  2. A rebuild preserves the SEMANTIC position (page, offset, slide progress),
+ *     never the pixel one. A page growing moves every start behind it, so the
+ *     same `y` is a different place; `positionAt` → `resolve` carries the
+ *     reader across instead, in the same frame as the height change.
+ *
+ * Neither should ever have to do any work: the blocks reserve their media boxes
+ * from intrinsic sizes, so a page's height is the same before and after its
+ * assets load. They are here because "should" is not a guarantee.
  */
 interface SheetProps {
   project: Project;
@@ -51,6 +67,8 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
   const pagesRef = useRef<HTMLElement[]>([]);
   const lenisRef = useRef<Lenis | null>(null);
   const activeRef = useRef(initialPage);
+  /** The first-layout gate (rule 1 above). `armed` unlocks the scroller. */
+  const readyRef = useRef({ fonts: false, measured: new Set<Element>(), armed: false, at: 0 });
   // Only read on the FIRST measure of a project; after that the position is
   // carried across from the previous track (see `measure`).
   const initialPageRef = useRef(initialPage);
@@ -58,6 +76,11 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
   // The scroller as a render input: the reveal observer and every block's
   // "am I on screen?" test need it as their root, and it only exists after the
   // first commit.
+  // False until the first layout is real. Rendered as `data-locked`, which
+  // takes the scroller out of overflow entirely: stopping Lenis is not enough
+  // on its own, because Lenis is created in a passive effect and the scroller
+  // scrolls NATIVELY in the frames before that.
+  const [armed, setArmed] = useState(false);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const attachScroller = useCallback((el: HTMLDivElement | null) => {
     scrollerRef.current = el;
@@ -112,9 +135,13 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
    * of them live). Runs on a resize AND whenever a page's content settles — a
    * late image extending page 1 has to extend the track with it.
    *
-   * The position is carried across: whatever page you were reading, and how far
-   * down it, survives a resize or a re-measure instead of being thrown back to
-   * the top.
+   * The position is carried across SEMANTICALLY — the page, how far down it,
+   * and how far through a slide — never as a pixel offset. A page that grew
+   * moves every start behind it, so the same `y` is a different place; see
+   * `positionAt` / `resolve`. It should never have to do anything (the blocks
+   * reserve their media boxes), but a rebuild that moves the reader is the one
+   * failure this whole path exists to prevent, so the dev log below shouts
+   * about it.
    */
   const measure = useCallback(() => {
     const sc = scrollerRef.current;
@@ -125,12 +152,12 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
     if (!sc || !row || !probe || !spacer || pages.length === 0) return;
 
     const previous = trackRef.current;
-    const held = previous
-      ? (() => {
-          const l = layout(previous, sc.scrollTop);
-          return { index: l.activeIndex, offset: l.scrollTop[l.activeIndex] };
-        })()
-      : { index: initialPageRef.current, offset: 0 };
+    const wasY = sc.scrollTop;
+    // Where the reader is, in the project's terms — not in pixels, which the
+    // rebuild is about to redefine.
+    const held: TrackPosition = previous
+      ? positionAt(previous, wasY)
+      : { page: initialPageRef.current, offset: 0, slide: null };
 
     const track = buildTrack({
       heights: pages.map((page) => {
@@ -151,19 +178,32 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
     // recomputed in CSS so the two can't disagree by a rounding step.
     row.style.setProperty('--pv-gutter', `${track.gutter}px`);
 
-    const index = Math.min(held.index, track.start.length - 1);
-    const position = Math.min(
-      track.start[index] + Math.min(held.offset, track.pageScroll[index]),
-      maxPosition(track),
-    );
+    // Back into pixels against the NEW track, synchronously — there must be no
+    // frame that paints the new starts against the old position.
+    const position = resolve(track, held);
     const lenis = lenisRef.current;
-    if (lenis) {
-      lenis.resize();
-      lenis.scrollTo(position, { immediate: true, force: true });
-    } else {
-      sc.scrollTop = position; // the first measure runs before Lenis is created
+    lenis?.resize();
+    if (Math.abs(sc.scrollTop - position) > 0.5) {
+      // Only when it actually moved: an unconditional `scrollTo` would kill the
+      // in-flight smooth scroll on every no-op re-measure.
+      if (lenis) lenis.scrollTo(position, { immediate: true, force: true });
+      else sc.scrollTop = position; // the first measure runs before Lenis exists
     }
     apply(position);
+
+    if (import.meta.env.DEV && previous) {
+      const before = layout(previous, wasY).activeIndex;
+      const after = layout(track, position).activeIndex;
+      const heights = track.pageScroll.map((v) => Math.round(v + track.viewportHeight));
+      const was = previous.pageScroll.map((v) => Math.round(v + previous.viewportHeight));
+      if (String(heights) !== String(was) || before !== after) {
+        const line = `[pv:track] heights ${was} → ${heights}  page ${before} → ${after}`;
+        // A rebuild that changes which page you are on is THE bug this is here
+        // to catch: it means the reader was moved by something loading.
+        if (before !== after) console.warn(`${line}  ← ACTIVE PAGE MOVED`);
+        else console.log(line);
+      }
+    }
   }, [apply]);
 
   // Retuning the look in the dev dock changes the geometry the track was built
@@ -182,6 +222,30 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
     [measure],
   );
 
+  /**
+   * Open the gate: the first layout is real, so build the track from it and let
+   * the scroller move. Everything before this point was a guess with the
+   * scroller locked — a guess you can scroll is a guess that throws you onto
+   * the wrong page halfway through reading the first one.
+   */
+  const arm = useCallback(() => {
+    const ready = readyRef.current;
+    if (ready.armed || !ready.fonts || ready.measured.size < pagesRef.current.length) return;
+    if (pagesRef.current.length === 0) return;
+    ready.armed = true;
+    setArmed(true);
+    measure();
+    lenisRef.current?.start();
+    if (import.meta.env.DEV) {
+      const heights = trackRef.current?.pageScroll.map((v) =>
+        Math.round(v + (trackRef.current?.viewportHeight ?? 0)),
+      );
+      console.log(
+        `[pv:track] armed in ${Math.round(performance.now() - ready.at)}ms  heights ${heights}`,
+      );
+    }
+  }, [measure]);
+
   // Collect the page elements and keep them measured. Re-runs when the project
   // changes, which is the only time the page count can change.
   useLayoutEffect(() => {
@@ -191,20 +255,43 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
     pagesRef.current = pages;
     trackRef.current = null; // a different project: nothing to carry across
     activeRef.current = initialPageRef.current;
-    measure();
+    readyRef.current = { fonts: false, measured: new Set(), armed: false, at: performance.now() };
+    measure(); // provisional: positions the row, but the scroller stays locked
 
-    const ro = new ResizeObserver(measure);
+    // The gate: fonts resolved AND every page through at least one layout pass.
+    // With the blocks reserving their media boxes this is a frame or two, but a
+    // gate that can never open is worse than a slightly stale track, so it also
+    // gives up after a second and arms anyway.
+    let fallback = 0;
+    void document.fonts.ready.then(() => {
+      readyRef.current.fonts = true;
+      arm();
+    });
+    fallback = window.setTimeout(() => {
+      if (readyRef.current.armed) return;
+      if (import.meta.env.DEV) console.warn('[pv:track] first layout timed out — arming anyway');
+      readyRef.current.fonts = true;
+      readyRef.current.measured = new Set(pages.map((p) => p.firstElementChild!));
+      arm();
+    }, 1000);
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) readyRef.current.measured.add(entry.target);
+      measure();
+      arm();
+    });
     for (const page of pages) {
       const inner = page.firstElementChild;
       if (inner) ro.observe(inner);
     }
     window.addEventListener('resize', measure);
     return () => {
+      window.clearTimeout(fallback);
       ro.disconnect();
       window.removeEventListener('resize', measure);
       pagesRef.current = [];
     };
-  }, [project.id, measure]);
+  }, [project.id, measure, arm]);
 
   // Smoothing + the scroll tick. The native listener is kept alongside Lenis's
   // so a programmatic `scrollTop` (the re-measure above) is applied too.
@@ -224,6 +311,9 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
       autoRaf: true,
     });
     lenisRef.current = lenis;
+    // Locked until the first layout is real — Lenis swallows the wheel while
+    // stopped, so there is no scroll to mis-resolve against a guessed track.
+    if (!readyRef.current.armed) lenis.stop();
     const offScroll = lenis.on('scroll', onScroll);
 
     return () => {
@@ -256,7 +346,7 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
 
   return (
     <div className="pv-sheet">
-      <div className="pv-scroller" ref={attachScroller}>
+      <div className="pv-scroller" ref={attachScroller} data-locked={armed ? undefined : ''}>
         <ScrollerContext.Provider value={scroller}>
           <div className="pv-content" ref={contentRef}>
             <div className="pv-stage">

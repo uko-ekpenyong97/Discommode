@@ -67,6 +67,14 @@
   display: none;
 }
 
+/* Locked until the first layout is real (see `Sheet`). Out of overflow, so the
+   wheel does nothing at all — not even the native scroll that would otherwise
+   run in the frames between mount and Lenis being created. Programmatic
+   `scrollTop` still works, which is all the provisional layout needs. */
+.pv-scroller[data-locked] {
+  overflow-y: hidden;
+}
+
 /* Lenis's content element: the scroller's single child, so its height is the
    track's full length and the smoothing measures the same extent the spacer
    creates. */

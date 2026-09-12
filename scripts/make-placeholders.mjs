@@ -4,8 +4,13 @@
  * project content exists.
  *
  * Unlike `optimize-pages` / `optimize-backgrounds`, there is no source folder
- * outside the repo: every byte here is synthesised from the tables below, so a
- * re-run reproduces the exact same files. Only the outputs are committed.
+ * outside the repo: every byte here is synthesised from `placeholder-assets.json`,
+ * so a re-run reproduces the exact same files. Only the outputs are committed.
+ *
+ * That table is shared with `projects/placeholder.ts`, which puts the same
+ * dimensions into the block data. It has to be one table: a media box laid out
+ * at the wrong size until its asset loads changes the page's height, and a page
+ * height that changes moves every page start behind it.
  *
  *   public/projects/0N/card.webp      grid + detail art, 2000x2600 (10:13 hero)
  *   public/projects/placeholder/*     the block media the placeholder project uses
@@ -23,6 +28,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import ASSETS from '../src/portfolio/projects/placeholder-assets.json' with { type: 'json' };
 
 const run = promisify(execFile);
 
@@ -46,17 +52,7 @@ const CARDS = [
 ];
 
 /** The block media the placeholder project points at, all solid colour. */
-const MEDIA = [
-  { file: 'wide.webp', w: 2000, h: 1200, bg: '#33404d', ink: '#dce6f0', label: 'IMAGE' },
-  { file: 'bleed.webp', w: 2400, h: 1100, bg: '#3d3444', ink: '#ece3f2', label: 'BLEED' },
-  { file: 'two-up-a.webp', w: 1000, h: 1200, bg: '#384a42', ink: '#e2efe8', label: 'A' },
-  { file: 'two-up-b.webp', w: 1000, h: 1200, bg: '#4a4038', ink: '#f2e8de', label: 'B' },
-  { file: 'stat-1.webp', w: 600, h: 600, bg: '#2e3b47', ink: '#dbe5ef', label: '01' },
-  { file: 'stat-2.webp', w: 600, h: 600, bg: '#3a3345', ink: '#e8e0f0', label: '02' },
-  { file: 'stat-3.webp', w: 600, h: 600, bg: '#33443c', ink: '#dfeee6', label: '03' },
-  { file: 'stat-4.webp', w: 600, h: 600, bg: '#453a30', ink: '#f0e6da', label: '04' },
-  { file: 'video-poster.webp', w: 1920, h: 1080, bg: '#22303c', ink: '#cfdde9', label: 'VIDEO' },
-];
+const MEDIA = Object.entries(ASSETS.media).map(([file, spec]) => ({ file, ...spec }));
 
 /** A flat rectangle with a centred monospace label, as an SVG buffer. */
 function plate({ w, h, bg, ink, label, kicker }) {
@@ -116,7 +112,7 @@ async function findFfmpeg() {
  * playing?" is answerable at a glance and pause-when-out-of-view is visible.
  */
 async function writeVideo() {
-  const rel = 'placeholder/loop.mp4';
+  const rel = `placeholder/${ASSETS.video.file}`;
   const out = join(OUTPUT_DIR, rel);
   if (!force && (await exists(out))) {
     console.log(`  skip   ${rel} (exists)`);
@@ -128,15 +124,16 @@ async function writeVideo() {
     return;
   }
   await mkdir(dirname(out), { recursive: true });
+  const V = ASSETS.video;
   await run(ffmpeg, [
     '-y',
     '-f', 'lavfi',
-    '-i', 'gradients=s=960x540:d=4:speed=0.12:c0=0x3f6079:c1=0x8c6a46:n=2',
+    '-i', `gradients=s=${V.w}x${V.h}:d=${V.seconds}:speed=0.12:c0=0x3f6079:c1=0x8c6a46:n=2`,
     '-f', 'lavfi',
-    '-i', 'color=c=0xcfdde9@0.55:s=40x540:d=4,format=rgba',
-    '-filter_complex', "[0][1]overlay=x='mod(t*260,1000)-40':y=0:format=auto,format=yuv420p",
+    '-i', `color=c=0xcfdde9@0.55:s=40x${V.h}:d=${V.seconds},format=rgba`,
+    '-filter_complex', `[0][1]overlay=x='mod(t*260,${V.w + 40})-40':y=0:format=auto,format=yuv420p`,
     '-r', '24',
-    '-t', '4',
+    '-t', String(V.seconds),
     '-c:v', 'libx264',
     '-preset', 'slow',
     '-crf', '30',
