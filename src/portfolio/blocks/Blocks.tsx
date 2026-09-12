@@ -86,14 +86,29 @@ function VideoMedia({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+
+    // TWO conditions, not one. On screen is the obvious half; the other is that
+    // this clip's section is still painting — a covered section is
+    // `visibility: hidden`, which IntersectionObserver does not notice, so
+    // without this a video would keep decoding under a page nobody can see
+    // through. `pv:shown` is the Sheet telling us the section is back.
+    const section = el.closest<HTMLElement>('.pv-section');
+    let onScreen = false;
+    const sync = () => {
+      const showing = !section || section.style.visibility !== 'hidden';
+      if (onScreen && showing) void el.play().catch(() => {});
+      else el.pause();
+    };
+
     const io = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) void el.play().catch(() => {});
-        else el.pause();
+        onScreen = entry.isIntersecting;
+        sync();
       },
       { root: scroller, threshold: 0.01 },
     );
     io.observe(el);
+    section?.addEventListener('pv:shown', sync);
 
     // The crossfade is driven off a native listener, not React's
     // `onLoadedData`: `loadeddata` can already have fired by the time the
@@ -105,6 +120,7 @@ function VideoMedia({
 
     return () => {
       io.disconnect();
+      section?.removeEventListener('pv:shown', sync);
       el.removeEventListener('loadeddata', onData);
       el.pause();
     };

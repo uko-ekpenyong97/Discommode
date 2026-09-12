@@ -10,15 +10,21 @@ import type { Block, Project } from './blocks/types';
  * The book is `tabWidth + pageWidth` wide and centred; the tabs occupy the left
  * `tabWidth` and the sections the right `pageWidth`. Nothing here moves on its
  * own — `Sheet` writes the whole arrangement imperatively from a single call to
- * `pageTrack`'s `layout()`: per section a `translateX`, a `scrollTop`, a
- * `zIndex` and a visibility, and per tab whether it is the flush one. No React
- * render happens while you scroll.
+ * `pageTrack`'s `layout()`. No React render happens while you scroll.
  *
- * Each section is its OWN scroll container (`overflow-y: hidden`, driven by
- * `scrollTop`) rather than a transformed inner column. That keeps a section a
- * real 100vh window onto its content, which is what lets a buried section hold
- * at the line you left it at, and what lets every block's visibility test
- * resolve by ordinary clipping.
+ * A SECTION IS THREE LAYERS, and the order matters:
+ *
+ *   __glass   one element carrying the tint and the `backdrop-filter`, spanning
+ *             the tab column AND the page, clipped to the union of the page and
+ *             this section's own tab slot (`glassClipPath`). One element,
+ *             because two adjacent ones do not join: each blurs its own
+ *             backdrop with its own edge clamping and the junction seams.
+ *   __flap    the label for that tab slot. It has no surface of its own — the
+ *             glass under it IS the surface — which is exactly why the active
+ *             tab reads as part of the page rather than as something next to it.
+ *   __scroll  the content, and the scroll container: `Sheet` writes `scrollTop`
+ *             here. It clips, the section does not, so the flap can hang out
+ *             past the page's left edge.
  */
 
 /** Consecutive blocks group into one run; `newRun` starts a fresh one. A run is
@@ -42,8 +48,9 @@ interface NotebookProps {
 export function Notebook({ project, bookRef, onSelect }: NotebookProps) {
   return (
     <div className="pv-book" ref={bookRef}>
-      {/* Tabs first in the DOM as well as lowest in z: they are the table of
-          contents, and they are what a keyboard should reach before the prose. */}
+      {/* The tabs of the sections that are NOT flush: deeper in tone, tucked
+          behind, and the way back. `Sheet` hides the one whose section is
+          painting, because that section is carrying its own flap. */}
       <div className="pv-tabs">
         {project.sections.map((section, k) => (
           <Tab key={k} index={k} title={section.title} hue={section.hue} onSelect={onSelect} />
@@ -53,8 +60,8 @@ export function Notebook({ project, bookRef, onSelect }: NotebookProps) {
       {/* The page area. It CLIPS on the right, at the page's own edge, so a
           section waiting its turn is off-stage rather than peeking beside the
           one you are reading — the notebook is one page surface, not a row. The
-          clip is open to the left so the top section's shadow still falls
-          across the tab column. */}
+          clip is open to the left by the width of the tab column, so the flaps
+          and the top section's shadow are not cut off. */}
       <div className="pv-pages">
         {project.sections.map((section, k) => (
           <article
@@ -62,17 +69,23 @@ export function Notebook({ project, bookRef, onSelect }: NotebookProps) {
             className="pv-section"
             data-k={k}
             data-hue={section.hue}
-            style={{ '--pv-hue': section.hue } as CSSProperties}
+            style={{ '--pv-hue': section.hue, '--pv-k': k } as CSSProperties}
           >
-            <div className="pv-section__inner">
-              <div className="pv-section__column">
-                {toRuns(section.blocks).map((run, r) => (
-                  <div key={r} className="pv-run" data-reveal="">
-                    {run.map((block, b) => (
-                      <BlockView key={b} block={block} index={b} />
-                    ))}
-                  </div>
-                ))}
+            <div className="pv-section__glass" />
+            <div className="pv-flap" aria-hidden="true">
+              <span className="pv-tab__label">{section.title}</span>
+            </div>
+            <div className="pv-section__scroll">
+              <div className="pv-section__inner">
+                <div className="pv-section__column">
+                  {toRuns(section.blocks).map((run, r) => (
+                    <div key={r} className="pv-run" data-reveal="">
+                      {run.map((block, b) => (
+                        <BlockView key={b} block={block} index={b} />
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </article>

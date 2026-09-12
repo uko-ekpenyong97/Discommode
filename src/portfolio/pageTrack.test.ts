@@ -3,6 +3,8 @@ import {
   bottomOf,
   buildTrack,
   fitTabHeight,
+  glassClipPath,
+  tabTopFor,
   layout,
   maxPosition,
   positionAt,
@@ -72,7 +74,8 @@ describe('layout', () => {
     expect(l.scrollTop).toEqual([600, 0, 0, 0, 0]);
     // Section 0 at rest; section 1 waiting off to the right; the rest parked.
     expect(l.translateX).toEqual([0, 100, 100, 100, 100]);
-    expect(l.visible).toEqual([true, true, false, false, false]);
+    // Only the section being read paints — nothing is waiting in view.
+    expect(l.visible).toEqual([true, false, false, false, false]);
   });
 
   it('turns the next section in 1:1 with the scroll, over a stack that holds', () => {
@@ -115,7 +118,27 @@ describe('layout', () => {
     expect(l.activeIndex).toBe(3);
     expect(l.translateX).toEqual([0, 0, 0, 0, 100]);
     expect(l.scrollTop).toEqual([900, 2700, 1800, 100, 0]);
-    expect(l.visible).toEqual([true, true, true, true, true]);
+    // The three underneath are COVERED, and a covered section must not paint:
+    // the glass above it would blur it in and its title would ghost through.
+    expect(l.visible).toEqual([false, false, false, true, false]);
+  });
+
+  it('paints the pair a turn involves, and only that pair', () => {
+    const mid = layout(track, track.start[1] + track.pageScroll[1] + TURN * 0.4);
+    expect(mid.turning).toBe(true);
+    // Turning 1 → 2: section 1 is still under section 2, so both paint. Section
+    // 0 is covered by section 1 and must not.
+    expect(mid.visible).toEqual([false, true, true, false, false]);
+  });
+
+  it('un-covers a section the instant the one above it starts to leave', () => {
+    const atRest = layout(track, track.start[2]);
+    expect(atRest.visible).toEqual([false, false, true, false, false]);
+    // A hair back into the turn that brought section 2 in, and section 1 is
+    // painting again — which is what makes a rewind un-cover the stack in order.
+    const rewinding = layout(track, track.start[2] - 1);
+    expect(rewinding.turning).toBe(true);
+    expect(rewinding.visible).toEqual([false, true, true, false, false]);
   });
 
   it('orders sections by index, so a later one always covers an earlier one', () => {
@@ -130,6 +153,7 @@ describe('layout', () => {
     expect(back.activeIndex).toBe(0);
     expect(back.translateX).toEqual([0, 100, 100, 100, 100]);
     expect(back.scrollTop).toEqual([200, 0, 0, 0, 0]);
+    expect(back.visible).toEqual([true, false, false, false, false]);
   });
 
   it('has no turn at all for a single-section project', () => {
@@ -259,5 +283,45 @@ describe('fitTabHeight', () => {
 
   it('never returns a height a tab could not be drawn at', () => {
     expect(fitTabHeight(132, 400, 900, 0, 6)).toBeGreaterThan(0);
+  });
+});
+
+describe('glassClipPath', () => {
+  const opts = { tabWidth: 64, pageWidth: 720, viewportHeight: 900, flapTop: 138, flapHeight: 132 };
+
+  it('traces the page and the flap as ONE subpath — one sheet of glass', () => {
+    const d = glassClipPath(opts);
+    // A single `M`: two subpaths would be two shapes, and `backdrop-filter`
+    // would seam between them.
+    expect(d.match(/M /g)).toHaveLength(1);
+    expect(d).toContain('M 64 0'); // the page's top-left, at the tab column's width
+    expect(d).toContain('H 784'); // …out to the page's right edge
+    expect(d).toContain('V 900'); // …down to the viewport's bottom
+  });
+
+  it('puts the flap exactly where the tab column puts it', () => {
+    const d = glassClipPath(opts);
+    expect(d).toContain('V 270 H 10'); // the flap's bottom edge, 138 + 132
+    expect(d).toContain('V 148'); // …up to its top plus the corner radius
+  });
+
+  it('rounds only the two outer corners, leaving the junction square', () => {
+    const d = glassClipPath(opts);
+    expect(d.match(/A 10 10 0 0 1/g)).toHaveLength(2);
+    // The path returns to the junction (x = tabWidth) and closes there, so the
+    // page-to-flap edge is a straight line with nothing drawn on it.
+    expect(d.endsWith("H 64 Z')")).toBe(true);
+  });
+
+  it('falls back to the page alone when there is no flap to include', () => {
+    const d = glassClipPath({ ...opts, flapHeight: 0 });
+    expect(d).toBe("path('M 64 0 H 784 V 900 H 64 Z')");
+    expect(d.match(/A /g)).toBeNull();
+  });
+
+  it('lays tabs out from the top, gap by gap', () => {
+    expect(tabTopFor(0, 0, 132, 6)).toBe(0);
+    expect(tabTopFor(1, 0, 132, 6)).toBe(138);
+    expect(tabTopFor(3, 40, 100, 8)).toBe(40 + 3 * 108);
   });
 });

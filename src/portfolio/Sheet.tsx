@@ -2,7 +2,17 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import Lenis from 'lenis';
 import { Notebook } from './Notebook';
 import { look, subscribeLook } from './portfolioMotion';
-import { bottomOf, buildTrack, fitTabHeight, layout, positionAt, positionOf, resolve } from './pageTrack';
+import {
+  bottomOf,
+  buildTrack,
+  fitTabHeight,
+  glassClipPath,
+  layout,
+  positionAt,
+  positionOf,
+  resolve,
+  tabTopFor,
+} from './pageTrack';
 import type { Track, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
 import { useDismissOnGlass } from './useDismissOnGlass';
@@ -61,18 +71,30 @@ const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
  * pixels INSIDE the page edge, at each tab's own height, what is on top?
  */
 function assertTabsBehind(book: HTMLElement): void {
-  const seam = book.querySelector<HTMLElement>('.pv-pages')?.getBoundingClientRect();
-  if (!seam) return;
+  const pages = book.querySelector<HTMLElement>('.pv-pages');
+  if (!pages) return;
+  const seam = pages.getBoundingClientRect();
+
   for (const tab of book.querySelectorAll<HTMLElement>('.pv-tab')) {
     const r = tab.getBoundingClientRect();
+    if (r.height === 0) continue; // hidden: this section is carrying its flap
     const y = Math.min(Math.max(r.top + r.height / 2, 1), window.innerHeight - 1);
-    const hit = document.elementFromPoint(seam.left + 2, y);
-    if (hit?.closest('.pv-tab')) {
-      console.error(
-        `[pv:tabs] tab ${tab.dataset.k} is painting OVER the page at the tuck seam`,
-      );
+    if (document.elementFromPoint(seam.left + 2, y)?.closest('.pv-tab')) {
+      console.error(`[pv:tabs] tab ${tab.dataset.k} is painting OVER the page at the tuck seam`);
       return;
     }
+  }
+
+  // And the junction the flap makes with its page: both sides of the page's
+  // left edge have to be the SAME section, or they are two surfaces pretending.
+  const flap = book.querySelector<HTMLElement>('.pv-section[data-top] .pv-flap');
+  if (!flap) return;
+  const f = flap.getBoundingClientRect();
+  const y = Math.min(Math.max(f.top + f.height / 2, 1), window.innerHeight - 1);
+  const left = document.elementFromPoint(seam.left - 2, y)?.closest('.pv-section');
+  const right = document.elementFromPoint(seam.left + 2, y)?.closest('.pv-section');
+  if (!left || left !== right) {
+    console.error('[pv:tabs] the flap and its page are not the same section at the junction');
   }
 }
 
@@ -94,6 +116,9 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
 
   const trackRef = useRef<Track | null>(null);
   const sectionsRef = useRef<HTMLElement[]>([]);
+  /** Per section, the parts the scroll loop writes to. Collected once rather
+   *  than queried per frame. */
+  const partsRef = useRef<{ scroll: HTMLElement; inner: HTMLElement; glass: HTMLElement }[]>([]);
   const tabsRef = useRef<HTMLElement[]>([]);
   const lenisRef = useRef<Lenis | null>(null);
   const activeRef = useRef(initialSection);
@@ -141,20 +166,43 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
     if (!track || sections.length === 0) return;
 
     const l = layout(track, position);
+    const parts = partsRef.current;
     for (let j = 0; j < sections.length; j++) {
       const el = sections[j];
-      if (el.scrollTop !== l.scrollTop[j]) el.scrollTop = l.scrollTop[j];
+      const scroll = parts[j]?.scroll;
+      if (scroll && scroll.scrollTop !== l.scrollTop[j]) scroll.scrollTop = l.scrollTop[j];
       el.style.transform = `translate3d(${l.translateX[j].toFixed(3)}%, 0, 0)`;
       // `j + 1`, so every section clears the tabs, which sit at 0. That is the
       // hard rule the whole tuck depends on: a tab is never above a page.
       el.style.zIndex = String(j + 1);
-      el.style.visibility = l.visible[j] ? '' : 'hidden';
       el.toggleAttribute('data-top', j === l.topIndex);
       el.toggleAttribute('data-active', j === l.activeIndex);
-      el.toggleAttribute('data-buried', j < l.topIndex);
-    }
-    for (const tab of tabsRef.current) {
-      tab.toggleAttribute('data-active', Number(tab.dataset.k) === l.activeIndex);
+
+      // A covered section must not paint at all. Its glass would otherwise be
+      // blurred into the page above it — see `TrackLayout.visible`.
+      const hidden = !l.visible[j];
+      if (hidden !== (el.style.visibility === 'hidden')) {
+        el.style.visibility = hidden ? 'hidden' : '';
+        // Says out loud that a covered section is out of the picture entirely,
+        // which the CSS uses to take its `backdrop-filter` off. Chrome turns
+        // out to skip a hidden element's backdrop-filter already (measured:
+        // identical frames either way), but that is not a thing to rely on —
+        // the filter is an operation on the backdrop rather than on the
+        // element, and an engine that applied it would have the page sampling
+        // a grid blurred once per section you had read.
+        el.toggleAttribute('data-hidden', hidden);
+        // `visibility` is not something IntersectionObserver notices, so a clip
+        // that was playing when its section went under would keep decoding
+        // behind a page nobody can see through.
+        if (hidden) for (const video of el.querySelectorAll('video')) video.pause();
+        else el.dispatchEvent(new CustomEvent('pv:shown', { bubbles: false }));
+      }
+
+      // The flush tab is the section's own flap, so the tab column's copy of it
+      // stands down — in the SAME frame, which is what makes the swap at the
+      // end of a turn neither flicker nor double.
+      const tab = tabsRef.current[j];
+      if (tab) tab.style.visibility = l.visible[j] ? 'hidden' : '';
     }
 
     if (l.activeIndex !== activeRef.current) {
@@ -202,11 +250,22 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
     );
     book.style.setProperty('--pv-tab-h', `${tabHeight}px`);
 
+    // One sheet of glass per section, clipped to the union of the page and that
+    // section's own tab slot. Re-cut here rather than per frame: it only moves
+    // when the geometry does.
+    const pageWidth = sections[0].getBoundingClientRect().width;
+    partsRef.current.forEach(({ glass }, j) => {
+      glass.style.clipPath = glassClipPath({
+        tabWidth: look.tabWidthPx,
+        pageWidth,
+        viewportHeight: sc.clientHeight,
+        flapTop: tabTopFor(j, look.tabTopPx, tabHeight, look.tabGapPx),
+        flapHeight: tabHeight,
+      });
+    });
+
     const track = buildTrack({
-      heights: sections.map((section) => {
-        const inner = section.firstElementChild as HTMLElement | null;
-        return inner ? inner.getBoundingClientRect().height : 0;
-      }),
+      heights: partsRef.current.map(({ inner }) => inner.getBoundingClientRect().height),
       viewportHeight: sc.clientHeight,
       turnDistance: look.turnDistancePx,
     });
@@ -275,7 +334,11 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
     measure();
     lenisRef.current?.start();
     if (import.meta.env.DEV) {
-      if (bookRef.current) assertTabsBehind(bookRef.current);
+      // After the entrance, not during it: the sheet is still most of a screen
+      // to the right at this point, and `elementFromPoint` would be asking
+      // about the scrim.
+      const book = bookRef.current;
+      if (book) window.setTimeout(() => assertTabsBehind(book), 1000);
       const heights = trackRef.current?.pageScroll.map((v) =>
         Math.round(v + (trackRef.current?.viewportHeight ?? 0)),
       );
@@ -292,6 +355,11 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
     if (!book) return;
     const sections = Array.from(book.querySelectorAll<HTMLElement>('.pv-section'));
     sectionsRef.current = sections;
+    partsRef.current = sections.map((section) => ({
+      scroll: section.querySelector<HTMLElement>('.pv-section__scroll')!,
+      inner: section.querySelector<HTMLElement>('.pv-section__inner')!,
+      glass: section.querySelector<HTMLElement>('.pv-section__glass')!,
+    }));
     tabsRef.current = Array.from(book.querySelectorAll<HTMLElement>('.pv-tab'));
     trackRef.current = null; // a different project: nothing to carry across
     activeRef.current = initialRef.current;
@@ -310,7 +378,7 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
       if (readyRef.current.armed) return;
       if (import.meta.env.DEV) console.warn('[pv:track] first layout timed out — arming anyway');
       readyRef.current.fonts = true;
-      readyRef.current.measured = new Set(sections.map((s) => s.firstElementChild!));
+      readyRef.current.measured = new Set(partsRef.current.map((p) => p.inner));
       arm();
     }, 1000);
 
@@ -319,16 +387,14 @@ export function Sheet({ project, initialSection, onSectionChange, onDismiss }: S
       measure();
       arm();
     });
-    for (const section of sections) {
-      const inner = section.firstElementChild;
-      if (inner) ro.observe(inner);
-    }
+    for (const { inner } of partsRef.current) ro.observe(inner);
     window.addEventListener('resize', measure);
     return () => {
       window.clearTimeout(fallback);
       ro.disconnect();
       window.removeEventListener('resize', measure);
       sectionsRef.current = [];
+      partsRef.current = [];
       tabsRef.current = [];
     };
   }, [project.id, measure, arm]);

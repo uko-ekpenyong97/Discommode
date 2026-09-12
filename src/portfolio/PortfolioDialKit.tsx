@@ -158,6 +158,8 @@ export default function PortfolioDialKit() {
     tabGapPx: [LOOK.tabGapPx, 0, 40, 1],
     tabTopPx: [LOOK.tabTopPx, 0, 400, 1],
     tabTuckPx: [LOOK.tabTuckPx, 0, 60, 1],
+    tabInactiveSat: [LOOK.tabInactiveSat, 0, 100, 1],
+    tabInactiveLight: [LOOK.tabInactiveLight, 0, 60, 1],
     tabInactiveBrightness: [LOOK.tabInactiveBrightness, 0.2, 1.2, 0.01],
   });
 
@@ -218,6 +220,8 @@ export default function PortfolioDialKit() {
     tabGapPx: tabs.tabGapPx,
     tabTopPx: tabs.tabTopPx,
     tabTuckPx: tabs.tabTuckPx,
+    tabInactiveSat: tabs.tabInactiveSat,
+    tabInactiveLight: tabs.tabInactiveLight,
     tabInactiveBrightness: tabs.tabInactiveBrightness,
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,

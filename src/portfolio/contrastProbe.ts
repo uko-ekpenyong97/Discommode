@@ -180,7 +180,10 @@ function applyGlass(
  * its alpha replaced, which is what a `pageAlpha` sweep is.
  */
 function pageTint(section: HTMLElement, alphaOverride?: number): string {
-  const [r, g, b, a] = parseColor(getComputedStyle(section).backgroundColor);
+  // The section itself paints nothing: its glass child is the surface, and the
+  // tint that matters is the one the text is actually behind.
+  const glass = section.querySelector<HTMLElement>('.pv-section__glass') ?? section;
+  const [r, g, b, a] = parseColor(getComputedStyle(glass).backgroundColor);
   return `rgba(${r}, ${g}, ${b}, ${alphaOverride ?? a})`;
 }
 

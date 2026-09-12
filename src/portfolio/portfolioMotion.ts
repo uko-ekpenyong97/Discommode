@@ -99,7 +99,11 @@ export interface PortfolioLook {
   tabGapPx: number;
   tabTopPx: number;
   tabTuckPx: number;
-  /** How far back an inactive tab sits — a straight brightness multiplier. */
+  /** How a tab that is NOT the flush one is shaded: deeper and more saturated
+   *  than the page, then dimmed. The contrast between "page-coloured and flush"
+   *  and "deeper and tucked" is what tells you where you are in the project. */
+  tabInactiveSat: number;
+  tabInactiveLight: number;
   tabInactiveBrightness: number;
   /** Scroll spent turning one section in (px). Its own dial, not the page
    *  width: how far the wheel travels to turn a page is a feel, not a length. */
@@ -156,7 +160,9 @@ export const LOOK: PortfolioLook = {
   tabGapPx: 6,
   tabTopPx: 0,
   tabTuckPx: 18,
-  tabInactiveBrightness: 0.7,
+  tabInactiveSat: 46,
+  tabInactiveLight: 26,
+  tabInactiveBrightness: 0.85,
   turnDistancePx: 720,
   sectionShadowAlpha: 0.45,
   lenisLerp: 0.1,
@@ -314,6 +320,8 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-tab-gap', `${look.tabGapPx}px`);
   s.setProperty('--pv-tab-top', `${look.tabTopPx}px`);
   s.setProperty('--pv-tab-tuck', `${look.tabTuckPx}px`);
+  s.setProperty('--pv-tab-sat', `${look.tabInactiveSat}%`);
+  s.setProperty('--pv-tab-light', `${look.tabInactiveLight}%`);
   s.setProperty('--pv-tab-dim', String(look.tabInactiveBrightness));
   s.setProperty('--pv-section-shadow', String(look.sectionShadowAlpha));
   s.setProperty('--pv-page-alpha', String(look.pageAlpha));
@@ -354,6 +362,8 @@ const VARS = [
   '--pv-tab-gap',
   '--pv-tab-top',
   '--pv-tab-tuck',
+  '--pv-tab-sat',
+  '--pv-tab-light',
   '--pv-tab-dim',
   '--pv-section-shadow',
   '--pv-page-alpha',

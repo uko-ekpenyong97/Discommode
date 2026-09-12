@@ -72,8 +72,21 @@ export interface TrackLayout {
   /** Stacking order. Sections run in index order, so a later section always
    *  covers an earlier one and the incoming one covers them all. */
   zIndex: number[];
-  /** False for sections that have not been reached: parked off to the right,
-   *  and taken out of painting entirely so a long project costs nothing. */
+  /**
+   * Which sections PAINT. At most two ever do: the one you are reading, and —
+   * mid-turn — the one coming over it.
+   *
+   * A section is COVERED once a later one has completed its turn and is sitting
+   * at `translateX(0)`, and a covered section must not paint at all. On an
+   * opaque page that would be an optimisation; on glass it is correctness. The
+   * page's `backdrop-filter` samples whatever is behind it, so a covered
+   * section left in the paint order is blurred INTO the page above it and its
+   * title ghosts through. The glass has to be looking at the grid and nothing
+   * else.
+   *
+   * It comes back the instant the section above starts moving off it (p < 1),
+   * which is what makes a rewind un-cover the stack in order.
+   */
   visible: boolean[];
   /** The section DRAWN ON TOP — what you are looking at. Flips the instant a
    *  turn begins, because from that instant the incoming section is what is in
@@ -181,10 +194,10 @@ export function layout(track: Track, position: number): TrackLayout {
   );
 
   // Everything up to and including the section being covered sits at rest; the
-  // incoming one is mid-turn; everything beyond is parked off to the right and
-  // not painted at all.
+  // incoming one is mid-turn; everything beyond is parked off to the right.
   const translateX = start.map((_, j) => (j <= k ? 0 : j === k + 1 ? (1 - progress) * 100 : 100));
-  const visible = start.map((_, j) => j <= k + 1);
+  // …but only the section being read, and the one turning over it, PAINT.
+  const visible = start.map((_, j) => j === k || (turning && j === k + 1));
   const zIndex = start.map((_, j) => j);
 
   return { scrollTop, translateX, zIndex, visible, topIndex, activeIndex, turning, progress };
@@ -250,4 +263,59 @@ export function fitTabHeight(
   const n = Math.max(1, count);
   const available = viewportHeight - tabTop - (n - 1) * tabGap;
   return Math.max(1, Math.min(preferred, available / n));
+}
+
+/**
+ * The clip that makes a section's page and its flap ONE sheet of glass.
+ *
+ * `backdrop-filter` is per element, and two elements filtering adjacent regions
+ * do not join: each blurs its own backdrop with its own edge clamping, so the
+ * junction shows as a seam however carefully the two tints are matched. The
+ * only way to get one surface is one element — so the glass box spans the tab
+ * column AND the page, and this clips it to the union of the two rects.
+ *
+ * That union is a single connected region (they share the edge at
+ * x = tabWidth), so it is one subpath: the page rectangle, then out along the
+ * flap and back, with the flap's two outer corners rounded.
+ *
+ * Coordinates are local to the glass box, whose origin is the top-left of the
+ * TAB column — `path()` takes no percentages, which is why this is computed
+ * rather than written in CSS.
+ */
+export function glassClipPath({
+  tabWidth: t,
+  pageWidth: w,
+  viewportHeight: h,
+  flapTop: y,
+  flapHeight: fh,
+  radius: r = 10,
+}: {
+  tabWidth: number;
+  pageWidth: number;
+  viewportHeight: number;
+  flapTop: number;
+  flapHeight: number;
+  radius?: number;
+}): string {
+  const round = (v: number): number => Math.round(v * 100) / 100;
+  const top = round(Math.max(0, y));
+  const bottom = round(Math.max(0, y) + Math.max(0, fh));
+  // Degenerate flap (no section is flush here): the page rectangle alone.
+  if (bottom - top < 2 * r || t <= 0) {
+    return `path('M ${t} 0 H ${round(t + w)} V ${round(h)} H ${t} Z')`;
+  }
+  return (
+    `path('M ${t} 0 ` +
+    `H ${round(t + w)} V ${round(h)} H ${t} ` + // the page
+    `V ${bottom} H ${r} ` + // out along the flap's bottom edge
+    `A ${r} ${r} 0 0 1 0 ${round(bottom - r)} ` +
+    `V ${round(top + r)} ` +
+    `A ${r} ${r} 0 0 1 ${r} ${top} ` +
+    `H ${t} Z')`
+  );
+}
+
+/** Where section `k`'s flap (and its tab) sits down the left edge. */
+export function tabTopFor(k: number, tabTop: number, tabHeight: number, tabGap: number): number {
+  return tabTop + k * (tabHeight + tabGap);
 }
