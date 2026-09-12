@@ -14,9 +14,8 @@
  * ───────────────────────────────────────────────────────────────────────────
  *
  * The order of this list IS the shared sequence: the grid row (cell → item via
- * `contentIndex`), the detail view's Prev/Next (wrapping at the ends), the
- * mini-map squares, and — filtered to portfolio kinds — the portfolio view's
- * neighbour strip. Nothing keeps a second ordering.
+ * `contentIndex`), the detail view's Prev/Next (wrapping at the ends), and the
+ * mini-map squares. Nothing keeps a second ordering.
  *
  * The world is an unbounded lattice of integer (col, row) cells; this list is
  * what those cells display, tiled by `contentIndex` using the live wrap stride.
@@ -105,9 +104,10 @@ export const CONTENT: PosterItem[] = [
 export const CONTENT_COUNT = CONTENT.length;
 
 /**
- * The portfolio cards, in manifest order — the sequence the portfolio view's
- * neighbour strip cycles (02 ↔ 03 ↔ 04, wrapping). The magazine card is not in
- * it: you return to the detail view to reach the issue.
+ * The portfolio cards, in manifest order. One project view exists per entry
+ * (`src/portfolio/projects/`), and the project view shows exactly one of them:
+ * the pages beside the one you are reading are that project's own, never the
+ * other projects. You leave the sheet and use the grid to reach those.
  */
 export const PORTFOLIO: PosterItem[] = CONTENT.filter((item) => item.kind === 'portfolio');
 

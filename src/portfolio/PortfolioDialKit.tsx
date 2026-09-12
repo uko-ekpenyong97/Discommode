@@ -50,8 +50,9 @@ const CLIPS = {
  * The dev-only AUTHORING dock, mounted over the real view via `#view-NN?intro`.
  * It writes the same `--pv-*` variables production does, so scrubbing any point
  * shows a true intermediate state — the glass arriving, the sheet mid-slide,
- * the pill still out at its corner — and the LOOK dials retune geometry, the
- * article crossfade and the whole reveal system live, on real content.
+ * the pill still out at its corner — and the LOOK dials retune the page
+ * geometry, the scroller's feel and the whole reveal system live, on real
+ * content.
  *
  * The OPEN is the scrubbable Timeline. The CLOSE is NOT on it: it is a separate
  * storyboard (the sheet leading, the scrim trailing), so "Replay Close" plays
@@ -112,15 +113,25 @@ export default function PortfolioDialKit() {
   );
 
   const geometry = useDialKit('PV GEOMETRY', {
-    articleVw: [LOOK.articleVw, 24, 80, 1],
-    articleGapPx: [LOOK.articleGapPx, 0, 120, 1],
+    pageVw: [LOOK.pageVw, 24, 80, 1],
+    sliverVw: [LOOK.sliverVw, 2, 30, 0.5],
     columnPx: [LOOK.columnPx, 320, 900, 1],
-    neighbourOpacity: [LOOK.neighbourOpacity, 0, 1, 0.01],
-    crossfadeMs: [LOOK.crossfadeMs, 100, 1500, 10],
+    previewOpacity: [LOOK.previewOpacity, 0, 1, 0.01],
+    previewFadeMs: [LOOK.previewFadeMs, 0, 1000, 10],
+    zFadeMs: [LOOK.zFadeMs, 0, 1500, 10],
     scrimBlurPx: [LOOK.scrimBlurPx, 0, 48, 1],
     scrimAlpha: [LOOK.scrimAlpha, 0, 0.9, 0.01],
     pillOffsetPx: [LOOK.pillOffsetPx, 0, 160, 1],
     pillBlurPx: [LOOK.pillBlurPx, 0, 32, 1],
+  });
+
+  // The scroller's own feel. `lenisLerp` and `wheelMultiplier` are the two
+  // values CSS cannot carry, so changing either rebuilds the Lenis instance
+  // (see `Sheet`); the rest are custom properties like everything else.
+  const track = useDialKit('PV TRACK', {
+    lenisLerp: [LOOK.lenisLerp, 0.02, 1, 0.01],
+    wheelMultiplier: [LOOK.wheelMultiplier, 0.2, 3, 0.05],
+    sliverClickMs: [LOOK.sliverClickMs, 100, 2000, 10],
   });
 
   const reveal = useDialKit('PV REVEAL', {
@@ -141,11 +152,15 @@ export default function PortfolioDialKit() {
   const look: PortfolioLook = {
     scrimBlurPx: geometry.scrimBlurPx,
     scrimAlpha: geometry.scrimAlpha,
-    articleVw: geometry.articleVw,
-    articleGapPx: geometry.articleGapPx,
+    pageVw: geometry.pageVw,
+    sliverVw: geometry.sliverVw,
     columnPx: geometry.columnPx,
-    neighbourOpacity: geometry.neighbourOpacity,
-    crossfadeMs: geometry.crossfadeMs,
+    previewOpacity: geometry.previewOpacity,
+    previewFadeMs: geometry.previewFadeMs,
+    zFadeMs: geometry.zFadeMs,
+    lenisLerp: track.lenisLerp,
+    wheelMultiplier: track.wheelMultiplier,
+    sliverClickMs: track.sliverClickMs,
     pillOffsetPx: geometry.pillOffsetPx,
     pillBlurPx: geometry.pillBlurPx,
     revealMs: reveal.revealMs,

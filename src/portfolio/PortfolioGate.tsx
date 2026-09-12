@@ -11,6 +11,8 @@ const FADE_OUT_MS = 200;
 
 interface PortfolioTarget {
   project: string;
+  /** 0-based page index, parsed from the 1-based `#view-NN/<page>`. */
+  page: number;
   /** Dev `#view-NN?intro`: the DialKit authoring dock. */
   intro: boolean;
 }
@@ -50,13 +52,19 @@ function getHash(): string {
   return window.location.hash;
 }
 
-/** `#view-02?intro` → the view's mount props. */
+/** `#view-02/3?intro` → the view's mount props. The page in the hash is 1-based
+ *  (see `portfolioNav.ts`); anything unparseable reads as the first page. */
 function parseTarget(hash: string): PortfolioTarget | null {
   if (!hash.startsWith(PREFIX)) return null;
   const [path, query = ''] = hash.slice(PREFIX.length).split('?');
-  const project = path.split('/')[0];
+  const [project, rawPage] = path.split('/');
   if (!project) return null;
-  return { project, intro: query.split('&').includes('intro') };
+  const page = Number.parseInt(rawPage ?? '', 10);
+  return {
+    project,
+    page: Number.isFinite(page) && page > 1 ? page - 1 : 0,
+    intro: query.split('&').includes('intro'),
+  };
 }
 
 export default function PortfolioGate() {
@@ -103,7 +111,7 @@ export default function PortfolioGate() {
       <ReaderGate suspended={target !== null || shown !== null} />
       {shown && (
         <div className="portfolio-layer" data-exiting={exiting || undefined}>
-          <PortfolioView project={shown.project} intro={shown.intro} />
+          <PortfolioView project={shown.project} page={shown.page} intro={shown.intro} />
         </div>
       )}
     </>

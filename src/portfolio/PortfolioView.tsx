@@ -1,13 +1,11 @@
-import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect } from 'react';
 import { CONTENT, indexForProject } from '../content';
-import { mod } from '../grid';
-import { StripNav } from './StripNav';
 import { ClosePill } from './ClosePill';
 import { Scrim } from './Scrim';
 import { Sheet } from './Sheet';
 import { applyPortfolioLook, applyPortfolioRest } from './portfolioMotion';
 import { closePortfolio, replacePortfolio } from './portfolioNav';
-import { PROJECTS, projectIndex } from './projects';
+import { PROJECTS, projectById } from './projects';
 import { usePortfolioMotion } from './usePortfolioMotion';
 import './portfolio.css';
 import './reveal.css';
@@ -19,28 +17,30 @@ const PortfolioDialKit = import.meta.env.DEV ? lazy(() => import('./PortfolioDia
 interface PortfolioViewProps {
   /** Project id from the `#view-NN` hash. */
   project: string;
+  /** 0-based page from `#view-NN/<page>` (the hash itself is 1-based). */
+  page: number;
   /** Dev `#view-NN?intro`: mount the DialKit dock and hand it the channels. */
   intro?: boolean;
 }
 
 /**
- * The project view: three layers over the app — the blurred `Scrim`, the
- * sliding `Sheet` with its article strip, and the `ClosePill`.
+ * The project view: the blurred `Scrim`, the sliding `Sheet` with its page
+ * track, and the `ClosePill`.
  *
- * Position in the ring is ONE continuous index, unbounded, exactly like the
- * detail view's carousel: stepping adds ±1, and `mod` resolves it to a project.
- * That is what makes the strip slide in the direction you asked for even across
- * the wrap from 04 back to 02. The hash follows with `replaceState`, so walking
- * the neighbours never piles history entries between the opener and the close.
+ * One project, its pages, and the way out — nothing else. The other projects
+ * are never reachable from in here: you close the sheet and use the grid. (The
+ * pages beside the one you are reading are this project's own, which is the
+ * thing the reference is doing.)
  *
  * The channels are driven by one of two drivers writing the same `--pv-*`
  * variables: `usePortfolioMotion` (production open + close) or
  * `PortfolioDialKit` (dev authoring). Same arrangement as the reader's doorway.
  */
-export default function PortfolioView({ project, intro = false }: PortfolioViewProps) {
+export default function PortfolioView({ project, page, intro = false }: PortfolioViewProps) {
   const authoring = import.meta.env.DEV && intro && PortfolioDialKit !== null;
-
-  const [center, setCenter] = useState(() => Math.max(0, projectIndex(project)));
+  // An unknown id in the hash falls back to the first project rather than an
+  // empty sheet; the gate has already matched it against the manifest.
+  const current = projectById(project) ?? PROJECTS[0];
 
   // The dock is lazy — publish the look and pin REST synchronously so the layer
   // never paints a fully-open sheet for a frame before the dock takes over.
@@ -58,56 +58,38 @@ export default function PortfolioView({ project, intro = false }: PortfolioViewP
     requestExit(() => closePortfolio(item ? item.slug : 'item-01'));
   }, [project, requestExit]);
 
-  const step = useCallback((direction: -1 | 1) => {
-    setCenter((c) => {
-      const next = c + direction;
-      replacePortfolio(PROJECTS[mod(next, PROJECTS.length)].id);
-      return next;
-    });
-  }, []);
+  // The page you are reading goes into the hash with replaceState, so a reload
+  // keeps your place and Escape is still one step back — scrolling a project
+  // must not pile a history entry per page.
+  const onPageChange = useCallback(
+    (index: number) => replacePortfolio(current.id, index + 1),
+    [current.id],
+  );
 
-  // Follow the hash when it is edited by hand or walked with Back: move to the
-  // NEAREST continuous index holding that project, so the strip still slides
-  // the short way round. Adjusted during render rather than in an effect —
-  // there is no external system to sync with, just state derived from a prop.
-  const [seenProject, setSeenProject] = useState(project);
-  if (project !== seenProject) {
-    setSeenProject(project);
-    const count = PROJECTS.length;
-    const target = projectIndex(project);
-    if (target >= 0 && mod(center, count) !== target) {
-      let delta = target - mod(center, count);
-      if (delta > count / 2) delta -= count;
-      else if (delta < -count / 2) delta += count;
-      setCenter(center + delta);
-    }
-  }
-
-  // Escape closes; the arrows walk the neighbour ring. The app beneath is
-  // suspended, so these keys are unambiguously ours.
+  // Escape closes. The app beneath is suspended, so the key is unambiguously
+  // ours; the wheel belongs to the sheet's own scroller and nothing else.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (!authoring) close();
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        step(1);
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        step(-1);
-      }
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      if (!authoring) close();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [authoring, close, step]);
+  }, [authoring, close]);
 
   return (
     <div className="pv">
       <Scrim onDismiss={close} />
-      <Sheet center={center} onStep={step} />
+      <Sheet
+        // A different project is a different track: remount rather than try to
+        // carry a scroll position between two unrelated page lists.
+        key={current.id}
+        project={current}
+        initialPage={page}
+        onPageChange={onPageChange}
+      />
       <ClosePill onClose={close} />
-      <StripNav project={PROJECTS[mod(center, PROJECTS.length)].id} onStep={step} />
       {authoring && PortfolioDialKit && (
         <Suspense fallback={null}>
           <PortfolioDialKit />

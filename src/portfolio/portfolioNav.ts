@@ -29,12 +29,15 @@ export function openPortfolio(project: string): void {
 }
 
 /**
- * Switch projects INSIDE the view: replaceState, so the neighbour strip doesn't
- * pile history entries up between the opener and the close (Escape is still one
- * step back, whichever project you ended on).
+ * Record the page being read INSIDE the view: replaceState, so scrolling a
+ * project doesn't pile a history entry per page (Escape is still one step back,
+ * whichever page you ended on) while a reload still keeps your place.
+ *
+ * The page in the hash is 1-BASED — `#view-02/3` is the third page — because it
+ * is a thing a person reads and types, not an index.
  */
-export function replacePortfolio(project: string): void {
-  const next = `#${VIEW_PREFIX}${project}`;
+export function replacePortfolio(project: string, page: number): void {
+  const next = page > 1 ? `#${VIEW_PREFIX}${project}/${page}` : `#${VIEW_PREFIX}${project}`;
   if (window.location.hash !== next) window.history.replaceState(null, '', next);
 }
 

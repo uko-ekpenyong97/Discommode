@@ -63,9 +63,9 @@ function ExternalIcon() {
 
 /**
  * A muted, looping clip that plays only while it is on screen. Pausing out of
- * view is not a nicety: three articles are mounted at once and the sheet can be
- * closed at any scroll position, and a decoding video costs frames wherever it
- * is.
+ * view is not a nicety: every page of a project is mounted at once and the
+ * sheet can be closed at any scroll position, and a decoding video costs frames
+ * wherever it is.
  */
 function VideoMedia({ src, poster, className }: { src: string; poster: string; className?: string }) {
   const scroller = useScroller();
@@ -125,6 +125,13 @@ function isRiv(buffer: ArrayBuffer): boolean {
  * Rive instance runs its own rAF loop, so one left alive behind the scrim would
  * cost frames on the grid for as long as the tab is open.
  *
+ * Its observer is rooted on the PAGE, not the sheet scroller — the one place in
+ * the view that differs. A page clips its own content, and an ancestor clip is
+ * applied before the root margin is, so a margin measured against the scroller
+ * would be thrown away at the page's edge and the artboard would only ever
+ * mount as it came into view. Rooted on the page the margin means what it says:
+ * one viewport of warning in either direction.
+ *
  * The `.riv` is fetched first and the runtime imported only if those bytes
  * exist: a project that has no artboard yet costs one 404, not a megabyte of
  * WASM. Until then the block renders its own animated stand-in, which mounts
@@ -153,8 +160,8 @@ function RiveBlock({
     const el = hostRef.current;
     if (!el) return;
     const io = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), {
-      root: scroller,
-      rootMargin: '100% 100%',
+      root: el.closest('.pv-page') ?? scroller,
+      rootMargin: '100% 0px',
     });
     io.observe(el);
     return () => io.disconnect();

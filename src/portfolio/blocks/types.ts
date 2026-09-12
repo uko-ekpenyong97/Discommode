@@ -54,5 +54,16 @@ export type Block = BlockBody & {
 export interface Project {
   /** Project id — the `NN` in `#view-NN`. */
   id: string;
-  blocks: Block[];
+  /** Shown in the sheet's chrome; not a block. */
+  title: string;
+  /**
+   * The project's PAGES, in order. Each entry is one page's blocks.
+   *
+   * Where a page break falls is a content decision, never a computed split of a
+   * long list: a page is a held frame, and only the person writing the project
+   * knows where one ends. The count is unbounded — one page is a perfectly good
+   * project, and the sheet's mechanics derive everything from the list's
+   * length (see `pageTrack.ts`).
+   */
+  pages: Block[][];
 }

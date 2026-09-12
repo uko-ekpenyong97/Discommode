@@ -1,18 +1,21 @@
-/* The project view's anatomy: glass, sheet, scroller, strip, chrome.
+/* The project view's anatomy: glass, sheet, scroller, page row, close pill.
 
    Every number that is worth tuning is a `--pv-*` custom property written by
    portfolioMotion.ts (defaults duplicated here as fallbacks, so the stylesheet
    still reads correctly on its own and a missed write degrades to the shipped
    look rather than to zero). The three ANIMATED channels — `--pv-scrim`,
    `--pv-sheet`, `--pv-pill` — are written per frame by the driver; nothing in
-   this file has a transition on them, because the driver IS the curve. */
+   this file has a transition on them, because the driver IS the curve.
+
+   The page row's horizontal arrangement is NOT in here at all: every page's
+   `transform` and `scrollTop` come out of `pageTrack.ts` and are written by
+   `Sheet`, per scroll tick. What this file owns is the frame each page is, and
+   the two states (`data-active`, `data-stacked`) the track puts it in. */
 
 .pv {
   position: absolute;
   inset: 0;
   overflow: hidden; /* the sheet parks offscreen right before it slides in */
-  /* Centre-to-centre spacing of adjacent articles. */
-  --pv-step: calc(var(--pv-article-w, 44vw) + var(--pv-article-gap, 24px));
   /* The app's only type token is `--mono`, which the labels and captions still
      use. A project is prose, so it needs a reading face as well. */
   --pv-sans: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
@@ -45,11 +48,12 @@
   will-change: transform;
 }
 
-/* Exactly one viewport, scrolled but never scrolling anything: the position is
-   read off it and applied as a translate to the centred article's column.
-   `overscroll-behavior: contain` stops a scroll past either end from reaching
-   the document (and the grid) underneath. The scrollbar is hidden — the
-   article is the only thing that should read as moving. */
+/* Exactly one viewport, and the only thing in the view that scrolls. Its
+   position is the TRACK position: one gesture carries you down a page, across
+   to the next, and down that one. `overscroll-behavior: contain` stops a scroll
+   past either end from reaching the document (and the grid) underneath. The
+   scrollbar is hidden — the page is the only thing that should read as moving,
+   and its extent is the project's, not one page's. */
 .pv-scroller {
   width: 100vw;
   height: 100vh;
@@ -63,78 +67,105 @@
   display: none;
 }
 
-/* Pinned for the whole scroll range, so the strip stays put while the spacer
+/* Lenis's content element: the scroller's single child, so its height is the
+   track's full length and the smoothing measures the same extent the spacer
+   creates. */
+.pv-content {
+  position: relative;
+}
+
+/* Pinned for the whole scroll range, so the row stays put while the spacer
    behind it supplies the range. Sticky rather than a floating sibling: it has
-   to stay INSIDE the scroller for the wheel, the reveal observer's root and
-   every block's visibility test to resolve against the same box. */
+   to stay INSIDE the scroller for every block's visibility test to resolve
+   against the same box. */
 .pv-stage {
   position: sticky;
   top: 0;
   height: 100vh;
 }
 
-/* Invisible, and the only reason the scroller has anywhere to go: its height is
-   the current article's content height minus the viewport already on screen. */
+/* Invisible, and the only reason the scroller has anywhere to go: the track's
+   length minus the one viewport the stage already occupies. */
 .pv-spacer {
   opacity: 0;
   pointer-events: none;
 }
 
-/* ── the article strip ─────────────────────────────────────────────────── */
-
-.pv-strip {
-  position: absolute;
-  inset: 0;
-  transition: transform var(--pv-crossfade, 600ms) cubic-bezier(0.4, 0, 0.1, 1);
-  will-change: transform;
-}
-
-/* Each article is its own window onto a project: one viewport tall, clipped,
-   and with a perspective so a frame inside it can turn in depth. */
-.pv-article {
+/* A zero-height box the width of the PREFERRED sliver, so `Sheet` can read that
+   vw resolved to px instead of re-deriving it. */
+.pv-probe {
   position: absolute;
   top: 0;
-  width: var(--pv-article-w, 44vw);
+  left: 0;
+  height: 0;
+  width: var(--pv-sliver-pref, 14vw);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ── the page row ──────────────────────────────────────────────────────── */
+
+/* Origin = the left gutter, so a page translated by `-k * pageWidth` lands
+   exactly centred and a page at rest lands on `k * sliver`. `--pv-gutter` is
+   written by `Sheet` from the same number the track computes with. */
+.pv-row {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pv-gutter, 0px);
+  width: 0;
+}
+
+/* Each page is a 100vh window onto its own content AND its own scroll
+   container: `Sheet` writes `scrollTop` straight to it. That is what lets a
+   finished page hold at its bottom while the row slides on past it. */
+.pv-page {
+  position: absolute;
+  top: 0;
+  width: var(--pv-page-w, 44vw);
   height: 100vh;
   overflow: hidden;
+  background: #000;
   perspective: 1000px;
-  transform: translateX(-50%);
-  opacity: var(--pv-neighbour-op, 0.2);
-  transition: opacity var(--pv-crossfade, 600ms) ease;
+  opacity: var(--pv-preview-op, 0.2);
+  transition:
+    opacity var(--pv-preview-fade, 200ms) ease,
+    z-index var(--pv-z-fade, 400ms);
 }
-.pv-article[data-active] {
+
+/* The page you are reading, and the ones you have finished, are both fully
+   there. Only a page you have not reached yet previews. */
+.pv-page[data-active],
+.pv-page[data-stacked] {
   opacity: 1;
 }
 
-.pv-article__inner {
+/* A stacked page is a target: click its sliver and the track scrolls back to
+   it. Only the sliver is reachable — the pages above it are opaque and sit
+   higher — and its own content is inert so a link in the visible strip can't
+   take the click instead. */
+.pv-page[data-stacked] {
+  cursor: pointer;
+}
+.pv-page[data-stacked] .pv-page__inner {
+  pointer-events: none;
+}
+
+.pv-page[data-moving-horizontal] {
   will-change: transform;
 }
 
-.pv-article__column {
+.pv-page__column {
   width: min(var(--pv-column, 656px), calc(100% - 48px));
   margin: 0 auto;
-  /* Clear the nav bar at the foot of the sheet. */
   padding-bottom: 96px;
-}
-
-/* A peeking neighbour is a target, not a document. */
-.pv-article__hit {
-  position: absolute;
-  inset: 0;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-}
-.pv-article__hit:focus-visible {
-  outline: 1px solid #fff;
-  outline-offset: -4px;
 }
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
 
 /* Circular, left edge, vertically centred; enters from up-and-out toward the
-   corner as `--pv-pill` runs 0 → 1. */
+   corner as `--pv-pill` runs 0 → 1. It sits in the gutter the sliver stack
+   also lives in, above it. */
 .pv-close {
   position: absolute;
   left: 24px;
@@ -169,58 +200,22 @@
   outline-offset: 2px;
 }
 
-/* Prev / next, arriving with the pill. */
-.pv-nav {
-  position: absolute;
-  left: 50%;
-  bottom: 24px;
-  z-index: 2;
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  transform: translateX(-50%);
-  opacity: var(--pv-pill, 0);
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.pv-nav__btn {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-.pv-nav__btn:hover {
-  background: rgba(0, 0, 0, 0.7);
-}
-.pv-nav__btn:focus-visible {
-  outline: 1px solid #fff;
-  outline-offset: 2px;
-}
-
 /* Reduced motion: no slide, no blur ramp — the view is simply there. The
-   reveals are neutralised in reveal.css. */
+   reveals are neutralised in reveal.css, and Lenis drops its smoothing to 1:1
+   on its own. The track itself is unaffected: it is a mapping, not an
+   animation, and the page still follows the wheel exactly. */
 @media (prefers-reduced-motion: reduce) {
   .pv-sheet {
     transform: none;
   }
   .pv-scrim,
-  .pv-close,
-  .pv-nav {
+  .pv-close {
     opacity: 1;
   }
   .pv-close {
     transform: translateY(-50%);
   }
-  .pv-strip,
-  .pv-article {
+  .pv-page {
     transition: none;
   }
 }

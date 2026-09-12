@@ -1,21 +1,15 @@
-import { PORTFOLIO } from '../../content';
 import type { Project } from '../blocks/types';
-import { placeholderBlocks } from './placeholder';
+import { project02 } from './project-02';
+import { project03 } from './project-03';
+import { project04 } from './project-04';
 
 /**
- * Project id → its blocks. Derived from the manifest so the two can't drift:
- * every portfolio card in `CONTENT` has a project here, and adding a card
- * without giving it content is a visible placeholder rather than a blank sheet.
- *
- * All three currently share `placeholderBlocks`, differing only in title — the
- * real content lands one project at a time.
+ * The registry: project id (the `NN` in `#view-NN`) → its pages. One entry per
+ * portfolio card in the manifest; `content.test.ts` holds the two in step.
  */
-export const PROJECTS: Project[] = PORTFOLIO.map((item) => ({
-  id: item.project!,
-  blocks: placeholderBlocks(`Project ${item.project}`),
-}));
+export const PROJECTS: Project[] = [project02, project03, project04];
 
-/** Position of a project id within the neighbour-strip ring, or -1. */
-export function projectIndex(id: string): number {
-  return PROJECTS.findIndex((p) => p.id === id);
+/** The project a `#view-NN` hash names, or null if there is no such project. */
+export function projectById(id: string): Project | null {
+  return PROJECTS.find((p) => p.id === id) ?? null;
 }

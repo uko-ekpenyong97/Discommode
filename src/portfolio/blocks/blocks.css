@@ -10,10 +10,11 @@
   margin-bottom: 0;
 }
 
-/* Edge to edge of the ARTICLE, escaping the centred content column. */
+/* Edge to edge of the PAGE, escaping the centred content column. The page, not
+   the viewport — the page is the frame. */
 .pv-block--bleed {
-  width: var(--pv-article-w, 44vw);
-  margin-left: calc((100% - var(--pv-article-w, 44vw)) / 2);
+  width: var(--pv-page-w, 44vw);
+  margin-left: calc((100% - var(--pv-page-w, 44vw)) / 2);
 }
 
 /* ── type ──────────────────────────────────────────────────────────────── */
@@ -166,8 +167,8 @@
 
 /* ── rive ──────────────────────────────────────────────────────────────── */
 
-/* Reserved height so the lazy mount never reflows the article (and never
-   invalidates the scroll range the spacer was measured against). */
+/* Reserved height so the lazy mount never reflows the page (and never
+   invalidates the track the spacer was measured against). */
 .pv-rive {
   position: relative;
   aspect-ratio: 3 / 2;

@@ -23,8 +23,12 @@
  * The three animated channels are published as CSS variables on `:root`
  * (`--pv-scrim`, `--pv-sheet`, `--pv-pill`), so per-frame work is three custom
  * property writes and no React state changes at all. The LOOK values below are
- * published the same way, which is what lets the dock retune geometry, the
- * article crossfade and the whole reveal system live.
+ * published the same way — plus a mutable `look` singleton for the handful of
+ * them that CSS can't consume (the scroller's smoothing) — which is what lets
+ * the dock retune geometry, the page track and the reveal system live.
+ *
+ * The page track itself is NOT here: where each page sits at a given scroll
+ * position is geometry, not a storyboard, and lives in `pageTrack.ts`.
  */
 
 /** The three channels the open/close is expressed in. All 0 at REST. */
@@ -67,8 +71,8 @@ export const EASE = {
 };
 
 /**
- * Everything that is a size, a colour or a duration rather than a channel:
- * geometry, the article crossfade, and the whole scroll-reveal system. Written
+ * Everything that is a size, a colour or a duration rather than a channel: the
+ * page geometry, the scroller's feel, and the whole scroll-reveal system. Written
  * to `:root` by {@link applyPortfolioLook} and read from there by the CSS, so
  * the dock can retune any of it live without a re-render.
  */
@@ -76,15 +80,24 @@ export interface PortfolioLook {
   /** Scrim blur radius (px) and black alpha. */
   scrimBlurPx: number;
   scrimAlpha: number;
-  /** Article column width, in vw, and the gap between adjacent articles (px). */
-  articleVw: number;
-  articleGapPx: number;
-  /** The centred content column inside an article (px). */
+  /** The centred page's width, in vw. */
+  pageVw: number;
+  /** PREFERRED sliver width, in vw. The stack narrows below it when a project
+   *  has more pages than the left gutter can hold (see `pageTrack.ts`). */
+  sliverVw: number;
+  /** The centred content column inside a page (px). */
   columnPx: number;
-  /** Resting opacity of the peeking prev/next articles. */
-  neighbourOpacity: number;
-  /** Article slide + opacity crossfade when the strip steps one column (ms). */
-  crossfadeMs: number;
+  /** Opacity of a page that has not been reached yet — the one previewing on
+   *  the right — and how long it takes to come up to 1 once it is active. */
+  previewOpacity: number;
+  previewFadeMs: number;
+  /** How long the z-order takes to hand over as the stack re-orders (ms). */
+  zFadeMs: number;
+  /** Lenis: smoothing factor on the sheet scroller, and the wheel gain. */
+  lenisLerp: number;
+  wheelMultiplier: number;
+  /** How long clicking a sliver takes to scroll the track back (ms). */
+  sliverClickMs: number;
   /** Close pill: corner offset it enters from (px) and its own backdrop blur. */
   pillOffsetPx: number;
   pillBlurPx: number;
@@ -107,11 +120,15 @@ export interface PortfolioLook {
 export const LOOK: PortfolioLook = {
   scrimBlurPx: 16,
   scrimAlpha: 0.4,
-  articleVw: 44,
-  articleGapPx: 24,
+  pageVw: 44,
+  sliverVw: 14,
   columnPx: 656,
-  neighbourOpacity: 0.2,
-  crossfadeMs: 600,
+  previewOpacity: 0.2,
+  previewFadeMs: 200,
+  zFadeMs: 400,
+  lenisLerp: 0.1,
+  wheelMultiplier: 1,
+  sliverClickMs: 800,
   pillOffsetPx: 73,
   pillBlurPx: 8,
   revealMs: 800,
@@ -214,17 +231,38 @@ export function applyPortfolioRest(): void {
   applyPortfolioValues({ scrim: 0, sheet: 0, pill: 0 });
 }
 
-/** Publish the LOOK as CSS variables. Called once on mount and again on every
- *  dock change, so geometry and the reveal system retune live. */
-export function applyPortfolioLook(look: PortfolioLook = LOOK): void {
+/**
+ * The LIVE look. Mutated in place so imperative readers (the scroller's Lenis
+ * options, the sliver-click duration) always see the current value, exactly as
+ * `config` does for the grid. Everything CSS can consume is a variable instead.
+ */
+export const look: PortfolioLook = { ...LOOK };
+
+type LookListener = (look: PortfolioLook) => void;
+const lookListeners = new Set<LookListener>();
+
+/** Subscribe to look changes — for the values that are NOT CSS variables and so
+ *  need something torn down and rebuilt when they move. Returns an unsubscribe. */
+export function subscribeLook(fn: LookListener): () => void {
+  lookListeners.add(fn);
+  return () => {
+    lookListeners.delete(fn);
+  };
+}
+
+/** Publish the look: CSS variables for everything CSS can use, the `look`
+ *  singleton for the rest. Called once on mount and again on every dock change,
+ *  so geometry, the track and the reveal system all retune live. */
+export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
+  Object.assign(look, next);
   const s = document.documentElement.style;
   s.setProperty('--pv-scrim-blur', `${look.scrimBlurPx}px`);
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
-  s.setProperty('--pv-article-w', `${look.articleVw}vw`);
-  s.setProperty('--pv-article-gap', `${look.articleGapPx}px`);
+  s.setProperty('--pv-page-w', `${look.pageVw}vw`);
   s.setProperty('--pv-column', `${look.columnPx}px`);
-  s.setProperty('--pv-neighbour-op', String(look.neighbourOpacity));
-  s.setProperty('--pv-crossfade', `${look.crossfadeMs}ms`);
+  s.setProperty('--pv-preview-op', String(look.previewOpacity));
+  s.setProperty('--pv-preview-fade', `${look.previewFadeMs}ms`);
+  s.setProperty('--pv-z-fade', `${look.zFadeMs}ms`);
   s.setProperty('--pv-pill-offset', `${look.pillOffsetPx}px`);
   s.setProperty('--pv-pill-blur', `${look.pillBlurPx}px`);
   s.setProperty('--pv-reveal-ms', `${look.revealMs}ms`);
@@ -236,6 +274,8 @@ export function applyPortfolioLook(look: PortfolioLook = LOOK): void {
   s.setProperty('--pv-flip-angle', `${look.flipAngleDeg}deg`);
   s.setProperty('--pv-flip-ms', `${look.flipMs}ms`);
   s.setProperty('--pv-flip-delay', `${look.flipDelayMs}ms`);
+  s.setProperty('--pv-sliver-pref', `${look.sliverVw}vw`);
+  lookListeners.forEach((fn) => fn(look));
 }
 
 const VARS = [
@@ -244,11 +284,12 @@ const VARS = [
   '--pv-pill',
   '--pv-scrim-blur',
   '--pv-scrim-alpha',
-  '--pv-article-w',
-  '--pv-article-gap',
+  '--pv-page-w',
+  '--pv-sliver-pref',
   '--pv-column',
-  '--pv-neighbour-op',
-  '--pv-crossfade',
+  '--pv-preview-op',
+  '--pv-preview-fade',
+  '--pv-z-fade',
   '--pv-pill-offset',
   '--pv-pill-blur',
   '--pv-reveal-ms',
@@ -267,6 +308,7 @@ const VARS = [
 export function resetPortfolioValues(): void {
   const s = document.documentElement.style;
   for (const v of VARS) s.removeProperty(v);
+  Object.assign(look, LOOK); // a dev tuning session must not outlive the view
   portfolio.scrim = 0;
   portfolio.sheet = 0;
   portfolio.pill = 0;

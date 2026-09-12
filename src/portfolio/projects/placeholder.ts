@@ -1,81 +1,180 @@
 import type { Block } from '../blocks/types';
 
 /**
- * The placeholder project — every block type exactly once, in a deliberate
- * order, so the sheet can be eye-tested and tuned before any real project
- * exists. Cards 02, 03 and 04 all point at it; only the title differs, so
- * switching between them is visible.
+ * The placeholder PAGE SHAPES — three lengths, between them using every block
+ * type once, so the sheet's mechanics can be eye-tested before any real project
+ * exists.
  *
- * Replacing this with real content is a data change and nothing else: write a
- * `Block[]` and register it in `projects/index.ts`.
+ * The lengths are the point: a page's height is what decides how long you
+ * scroll before the track hands over to the horizontal slide, so the
+ * placeholders deliberately cover a short page, a long one and a middling one.
+ * Targets are in viewports at 1440x900 with the default 44vw page — see the
+ * comment on each.
+ *
+ * Replacing any of this with a real project is a data change and nothing else:
+ * write the pages and register them in `projects/index.ts`.
  */
-const MEDIA = '/projects/placeholder';
+const M = '/projects/placeholder';
 
-export function placeholderBlocks(title: string): Block[] {
+/** Two columns of image + paragraph, the frames turning in from depth. */
+const twoUp = (): Block => ({
+  type: 'twoUp',
+  flip: true,
+  columns: [
+    {
+      media: { kind: 'image', src: `${M}/two-up-a.webp`, alt: '' },
+      text: 'Two columns, each a frame and a paragraph. The frames flip in from depth; the paragraphs follow on the standard reveal.',
+    },
+    {
+      media: { kind: 'image', src: `${M}/two-up-b.webp`, alt: '' },
+      text: 'The gap is 52px between the columns and 24px between a frame and its text — the two rhythms the reference uses.',
+    },
+  ],
+});
+
+const stats = (): Block => ({
+  type: 'statGrid',
+  stats: [
+    { src: `${M}/stat-1.webp`, label: 'FIRST' },
+    { src: `${M}/stat-2.webp`, label: 'SECOND' },
+    { src: `${M}/stat-3.webp`, label: 'THIRD' },
+    { src: `${M}/stat-4.webp`, label: 'FOURTH' },
+  ],
+});
+
+const opener = (title: string, caption: string): Block[] => [
+  // Every page opens on its own title: once a page is stacked, its title is all
+  // that shows in the sliver, and that is what makes the stack readable.
+  { type: 'title', text: title },
+  { type: 'caption', text: caption },
+];
+
+/** ~2.5 viewports. The page a project opens on. */
+export function shortPage(title: string): Block[] {
   return [
-    { type: 'title', text: title },
-    { type: 'caption', text: 'PLACEHOLDER — 2026 — MECHANICS ONLY' },
-    {
-      type: 'twoUp',
-      flip: true,
-      columns: [
-        {
-          media: { kind: 'image', src: `${MEDIA}/two-up-a.webp`, alt: '' },
-          text: 'Two columns, each a frame and a paragraph. The frames flip in from depth; the paragraphs follow on the standard reveal.',
-        },
-        {
-          media: { kind: 'image', src: `${MEDIA}/two-up-b.webp`, alt: '' },
-          text: 'The gap is 52px between the columns and 24px between a frame and its text — the two rhythms the reference uses.',
-        },
-      ],
-    },
-    {
-      type: 'image',
-      src: `${MEDIA}/wide.webp`,
-      alt: '',
-      caption: 'Full column width.',
-    },
-    { type: 'linkPill', label: 'View the reference', href: 'https://halfof8.com/#space' },
+    ...opener(title, 'PLACEHOLDER — 2026 — MECHANICS ONLY'),
+    twoUp(),
     {
       type: 'text',
       newSection: true,
-      heading: 'A section starts here',
+      heading: 'Where a page ends',
       body: [
-        'Consecutive blocks group into one section. A block that asks for a new one gets the hairline divider above it, drawn from nothing with a scaleX as it comes into view.',
-        'Body copy sits in the 656px column, centred in the article. Everything in this project is a stand-in — the point is the feel of the scroll, the stagger, and the switch between neighbours.',
+        'Scroll to the bottom of this page and keep going: the scroll carries on into a horizontal slide that brings the next page in, one page-width, one to one with the wheel.',
+        'Nothing about that is a separate animation — it is the same track position, read through a different segment.',
       ],
     },
+    { type: 'image', src: `${M}/wide.webp`, alt: '', caption: 'Full column width.' },
     {
-      type: 'statGrid',
-      stats: [
-        { src: `${MEDIA}/stat-1.webp`, label: 'FIRST' },
-        { src: `${MEDIA}/stat-2.webp`, label: 'SECOND' },
-        { src: `${MEDIA}/stat-3.webp`, label: 'THIRD' },
-        { src: `${MEDIA}/stat-4.webp`, label: 'FOURTH' },
+      type: 'text',
+      heading: 'One scroll, no modes',
+      body: [
+        'There is no gesture to learn and no control to find: the wheel does the whole project. Where the vertical run of a page ends, the horizontal one begins, and the position is the same number throughout.',
+      ],
+    },
+    { type: 'image', src: `${M}/bleed.webp`, alt: '', bleed: true },
+    { type: 'linkPill', label: 'View the reference', href: 'https://halfof8.com/#space' },
+  ];
+}
+
+/** ~5 viewports. Carries the Video and the Rive artboard. */
+export function longPage(title: string): Block[] {
+  return [
+    ...opener(title, 'THE LONG ONE — FIVE VIEWPORTS'),
+    {
+      type: 'text',
+      heading: 'A page can be any length',
+      body: [
+        'The track derives its extent from the measured height of each page, so a long page simply scrolls for longer before the slide. Nothing is fixed to a viewport count.',
+      ],
+    },
+    twoUp(),
+    {
+      type: 'text',
+      newSection: true,
+      heading: 'Media settles in',
+      body: [
+        'Images crossfade from their placeholder tint as they decode. The video plays only while it is on screen and pauses the moment it leaves, so a page you have scrolled past costs nothing.',
       ],
     },
     {
       type: 'video',
-      newSection: true,
-      src: `${MEDIA}/loop.mp4`,
-      poster: `${MEDIA}/video-poster.webp`,
+      src: `${M}/loop.mp4`,
+      poster: `${M}/video-poster.webp`,
       caption: 'Muted, looping, and paused the moment it leaves the scroller.',
+    },
+    { type: 'image', src: `${M}/wide.webp`, alt: '' },
+    {
+      type: 'text',
+      newSection: true,
+      heading: 'And nothing runs behind the glass',
+      body: [
+        'The artboard below mounts only once it is within one viewport of the scroll position and is torn down again on the way out — watch it start and stop as you pass it.',
+        'Closing the sheet unmounts every page, so a project can never leave a render loop running under the grid.',
+      ],
     },
     {
       type: 'rive',
-      src: `${MEDIA}/loop.riv`,
+      src: `${M}/loop.riv`,
       artboard: 'Main',
       stateMachine: 'State Machine 1',
       label: 'RIVE',
     },
-    { type: 'image', src: `${MEDIA}/bleed.webp`, alt: '', bleed: true },
+    stats(),
+    { type: 'image', src: `${M}/bleed.webp`, alt: '', bleed: true, newSection: true },
+    {
+      type: 'text',
+      heading: 'Edge to edge',
+      body: [
+        'A bleed image escapes the 656px column and runs the full width of the page — the page, not the viewport, because the page is the frame.',
+      ],
+    },
+    stats(),
     {
       type: 'text',
       newSection: true,
-      heading: 'And it ends',
+      heading: 'The stack on the left',
       body: [
-        'The scroller is exactly one viewport tall; an invisible spacer behind it gives it the range of this article, so the wheel scrolls the project while the grid underneath never moves.',
+        'The page before this one did not leave: it clamped at its resting slot and stacked as a sliver. Click one and the track scrolls back to where you stopped reading it — the row un-stacks through exactly the same mapping, in reverse.',
+        'With more pages than the gutter can hold at the preferred width, the slivers narrow to fit. The gutter never widens.',
       ],
     },
+    twoUp(),
+    { type: 'image', src: `${M}/wide.webp`, alt: '', caption: 'Still page two.' },
+  ];
+}
+
+/** ~3 viewports. The page a project ends on. */
+export function mediumPage(title: string): Block[] {
+  return [
+    ...opener(title, 'AND IT ENDS HERE'),
+    { type: 'image', src: `${M}/wide.webp`, alt: '' },
+    {
+      type: 'text',
+      newSection: true,
+      heading: 'The last page',
+      body: [
+        'A project ends where its pages do: the scroll simply stops, with nothing waiting on the right.',
+        'A project with one page is the same thing with the middle taken out — no stack, no slide, just a page you scroll to the end of.',
+      ],
+    },
+    twoUp(),
+    {
+      type: 'text',
+      newSection: true,
+      heading: 'Then you close it',
+      body: [
+        'There is no way from here to another project, and there should not be: the pages either side of this one are this project\u2019s. Escape, or the pill on the left, takes you back to the card you came from with the grid exactly as you left it.',
+      ],
+    },
+    { type: 'image', src: `${M}/wide.webp`, alt: '' },
+    stats(),
+    {
+      type: 'text',
+      heading: 'Nothing left running',
+      body: [
+        'Every page unmounts on the way out, videos included, so the grid behind the glass gets its frames back the moment the sheet goes.',
+      ],
+    },
+    { type: 'linkPill', label: 'View the reference', href: 'https://halfof8.com/#space' },
   ];
 }
