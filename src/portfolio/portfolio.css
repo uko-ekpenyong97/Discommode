@@ -39,10 +39,17 @@
 
 /* ── the sheet + its scroller ──────────────────────────────────────────── */
 
-/* Parked one full width to the right at rest; `--pv-sheet` drives it home. */
+/* The sheet starts at the right of a GLASS COLUMN and runs to the edge. That
+   column is the only part of the view where the grid is just the grid: no
+   folder ever reaches it, and the only thing in it is the way out.
+
+   Parked one full width to the right at rest; `--pv-sheet` drives it home. */
 .pv-sheet {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--pv-glass-col, 25vw);
   transform: translateX(calc(100% * (1 - var(--pv-sheet, 0))));
   will-change: transform;
 }
@@ -54,8 +61,8 @@
    scrollbar is hidden — the page is the only thing that should read as moving,
    and its extent is the project's, not one page's. */
 .pv-scroller {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   /* The glass closes the view when you click it, but it is not an affordance —
      the pill and the slivers are. No pointer, no hover state. */
   cursor: default;
@@ -84,14 +91,14 @@
   position: relative;
 }
 
-/* Pinned for the whole scroll range, so the row stays put while the spacer
+/* Pinned for the whole scroll range, so the pile stays put while the spacer
    behind it supplies the range. Sticky rather than a floating sibling: it has
    to stay INSIDE the scroller for every block's visibility test to resolve
    against the same box. */
 .pv-stage {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100%;
 }
 
 /* Invisible, and the only reason the scroller has anywhere to go: the track's
@@ -101,220 +108,165 @@
   pointer-events: none;
 }
 
-/* ── the notebook ─────────────────────────────────────────────────────── */
+/* ── the folder stack ───────────────────────────────────────────────────── */
 
-/* The book: the tab column and the page surface side by side, centred. Its
-   width is the only geometry the rest of the notebook needs — tabs take the
-   left `--pv-tab-w`, sections the right `--pv-page-w`. */
-.pv-book {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  height: 100vh;
-  width: calc(var(--pv-tab-w, 64px) + var(--pv-page-w, 720px));
-  transform: translateX(-50%);
-}
-
-/* THE Z RULE, in two declarations rather than N: the tab column is a stacking
-   context at 0 and the page area is one at 1, so every tab is under every
-   section at every scroll position and every window size, whatever the
-   sections' own z-indices are doing among themselves. The tuck needs no
-   managing — it is simply behind the page, the way a real divider's tab is. */
-.pv-tabs {
+/* The box the pile lives in: the whole sheet, with every folder absolutely
+   positioned inside it. `Sheet` writes each one's top, height and z-index every
+   frame; nothing here moves on its own. */
+.pv-stack {
   position: absolute;
   inset: 0;
-  z-index: 0;
 }
 
-/* The page area — the right `--pv-page-w` of the book. It CLIPS at its own
-   right edge, so a section waiting its turn is off-stage rather than peeking
-   beside the one being read: the notebook is ONE page surface. The clip is left
-   open to the left (a negative inset) so the top section's shadow still falls
-   across the tab column, which is what makes the page read as sitting on it. */
-.pv-pages {
-  position: absolute;
-  top: 0;
-  left: var(--pv-tab-w, 64px);
-  width: var(--pv-page-w, 720px);
-  height: 100%;
-  z-index: 1;
-  clip-path: inset(0 0 0 calc(-1 * var(--pv-tab-w, 64px) - 200px));
-}
-
-/* A tab for a section that is NOT the one you are reading. Same shape and the
-   same glass, but deeper in tone and set back — and that contrast is the whole
-   navigation: page-coloured and flush means "you are here", deeper and tucked
-   means "over there". Laid out from the top of the page and running under the
-   page's left edge by `--pv-tab-tuck`, so it reads as a divider going into the
-   book rather than a button parked beside it.
-
-   The tab of the flush section is not one of these at all — it is that
-   section's own flap (below). `Sheet` hides this one in the same frame the flap
-   appears, so there is never a double tab and never a gap. */
-.pv-tab {
+/* A FOLDER. The element is its SLOT — the share of the screen it currently has,
+   from its own top down to whatever is below it — and it clips to that. Which
+   is the entire painting rule: piled, you get your tab; docked, your tab and
+   the sliver of body edge that makes a stack read as a stack; open, everything
+   down to the next row. No folder ever paints over another, which on glass is
+   not an optimisation but the difference between a stack and a smear. */
+.pv-folder {
   position: absolute;
   left: 0;
-  z-index: 0;
-  width: calc(var(--pv-tab-w, 64px) + var(--pv-tab-tuck, 18px));
-  height: var(--pv-tab-h, 132px);
-  padding: 0;
-  border: 0;
-  border-radius: 10px 0 0 10px;
-  background: hsl(
-    var(--pv-hue, 0) var(--pv-tab-sat, 46%) var(--pv-tab-light, 26%) /
-      var(--pv-page-alpha, 0.68)
-  );
-  backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
-  -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
-  color: rgba(255, 255, 255, 0.82);
-  cursor: pointer;
-  filter: brightness(var(--pv-tab-dim, 0.85));
-  box-shadow: -6px 0 14px rgba(0, 0, 0, 0.35);
-  transition:
-    transform 250ms ease,
-    filter 250ms ease;
-}
-
-.pv-tab:hover,
-.pv-tab:focus-visible {
-  transform: translateX(-6px);
-  filter: brightness(1.15);
-  outline: none;
-}
-
-/* Vertical, reading bottom-to-top, in the `--pv-tab-w` that is not tucked.
-   Shared with the flap, so the flush tab's label is set identically to the
-   others — only its surface differs. */
-.pv-tab__label {
-  display: block;
-  width: var(--pv-tab-w, 64px);
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  margin: 0 auto 0 0;
-  padding: 12px 0;
+  right: 0;
+  top: 0;
+  height: 0;
   overflow: hidden;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
-/* A section: the page surface, its flap, and its content. It does NOT clip —
-   the flap hangs out past its left edge — and it has no surface of its own; the
-   glass below does all the painting. */
-.pv-section {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-}
-
-/* THE SURFACE. One element for the page and the flap together, spanning the tab
-   column as well as the page and clipped to the union of the two (the
-   `clip-path` is written by `Sheet` from `glassClipPath`). One element because
-   two adjacent ones do not join: `backdrop-filter` is per element, so each
-   would blur its own backdrop with its own edge clamping and the junction would
-   seam however exactly the tints matched.
+/* THE SURFACE. One glass element for the whole outline — tab, 45° chamfer, then
+   full width — because two adjacent ones do not join: `backdrop-filter` is per
+   element, so each would blur its own backdrop with its own edge clamping and
+   the junction would seam however exactly the tints matched. The outline itself
+   is a `clip-path` written by `Sheet` from `folderClipPath`.
 
    `--pv-page-alpha` is the contrast lever, and the only thing between the text
    and whatever the grid happens to be showing; `contrastProbe.ts` measures it
    on every hue. */
-.pv-section__glass {
+.pv-folder__shape {
   position: absolute;
   top: 0;
-  left: calc(-1 * var(--pv-tab-w, 64px));
-  width: calc(var(--pv-tab-w, 64px) + 100%);
-  height: 100%;
-  background: hsl(var(--pv-hue, 0) 34% 8% / var(--pv-page-alpha, 0.68));
+  left: 0;
+  width: 100%;
+  height: var(--pv-slot-h, 100%);
+  background: hsl(var(--pv-hue, 0) 34% 12% / var(--pv-page-alpha, 0.68));
   backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
   -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
 }
 
-/* A covered section is out of the picture entirely, filter included. Chrome
-   already skips a hidden element's `backdrop-filter` — measured, the frames are
-   identical either way — but the filter is an operation on the BACKDROP rather
-   than on the element, so that is engine behaviour rather than a guarantee, and
-   an engine that applied it would have the page sampling a grid blurred once
-   per section you had read. */
-.pv-section[data-hidden] .pv-section__glass {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-/* Only the section on top casts, and it casts from the CLIPPED shape — so the
-   shadow follows the page and the flap as one outline and never falls across
-   the flap itself. A `box-shadow` on the section would: it is a rectangle of
-   the page, and the flap sits right in the darkest part of it, which is exactly
-   the "darker strip at the junction" the flap exists to avoid. */
-.pv-section[data-top] .pv-section__glass {
-  filter: drop-shadow(-16px 0 26px rgba(0, 0, 0, var(--pv-section-shadow, 0.45)));
-}
-
-/* The flush tab. No surface of its own — the glass under it IS the surface,
-   which is the whole point: page and tab are one sheet with nothing drawn
-   between them. Not a control, either; it is where you already are. */
-.pv-flap {
+/* The lighter wash across the tab. Inside the shape, so the chamfer clips it
+   for free — and it is the only reason the folder's outline reads at all
+   against the folder's own body below it. */
+.pv-folder__band {
   position: absolute;
-  left: calc(-1 * var(--pv-tab-w, 64px));
-  top: calc(
-    var(--pv-tab-top, 0px) + var(--pv-k) * (var(--pv-tab-h, 132px) + var(--pv-tab-gap, 6px))
-  );
-  width: var(--pv-tab-w, 64px);
-  height: var(--pv-tab-h, 132px);
-  color: rgba(255, 255, 255, 0.9);
-  pointer-events: none;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: var(--pv-tab-h, 64px);
+  background: hsl(var(--pv-hue, 0) 40% 18% / var(--pv-band-alpha, 0.5));
 }
 
-/* The content, and the scroll container — `Sheet` writes `scrollTop` here. The
-   clip lives on this rather than on the section so the flap survives it. */
-.pv-section__scroll {
+/* Only the folder you are reading casts, and back over the pile it came from. */
+.pv-folder[data-open] .pv-folder__shape {
+  filter: drop-shadow(0 -14px 26px rgba(0, 0, 0, var(--pv-section-shadow, 0.45)));
+}
+
+/* THE TAB — a number and a title, and the way back. Every tab in either pile is
+   a link to its folder: clicking one in the unread pile runs the track forward
+   through everything between, clicking one in the read pile runs it back. */
+.pv-folder__tab {
   position: absolute;
-  inset: 0;
+  top: 0;
+  width: var(--pv-tab-w, 48%);
+  height: var(--pv-tab-h, 64px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 28px;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.92);
+  text-align: left;
+  cursor: pointer;
+}
+.pv-folder[data-side='left'] .pv-folder__tab {
+  left: 0;
+}
+.pv-folder[data-side='right'] .pv-folder__tab {
+  right: 0;
+}
+
+.pv-folder__no {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.pv-folder__title {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: 1px solid underline transparent;
+  text-underline-offset: 4px;
+  transition: text-decoration-color 200ms ease;
+}
+.pv-folder__tab:hover .pv-folder__title,
+.pv-folder__tab:focus-visible .pv-folder__title {
+  text-decoration-color: currentColor;
+}
+.pv-folder__tab:focus-visible {
+  outline: none;
+}
+
+/* The content, and the scroll container — `Sheet` writes `scrollTop` here. Its
+   height is the SAME for every folder, because the read pile gains a row
+   exactly as the unread pile loses one; that is what lets a folder's content
+   height be a property of the folder rather than of where it is in the pile. */
+.pv-folder__body {
+  position: absolute;
+  top: var(--pv-tab-h, 64px);
+  left: 0;
+  right: 0;
+  height: var(--pv-body-h, 100%);
   overflow-x: hidden;
   overflow-y: hidden;
   perspective: 1000px;
+  /* The query container a bleed block measures itself against, so "edge to edge
+     of the folder" needs no variable kept in step with the layout. */
+  container-type: inline-size;
+}
+
+.pv-folder__column {
+  width: min(var(--pv-column, 656px), calc(100% - 48px));
+  margin: 0 auto;
+  padding-bottom: 96px;
 }
 
 /* SOLID: flat, no backdrop at all. `backdrop-filter: none` rather than a no-op
    filter — a no-op still creates a backdrop root and still costs. Chosen by the
    dock's `pageSurface` dial, and forced below for anyone who has asked for less
    transparency or more contrast. */
-:root[data-pv-surface='solid'] .pv-section__glass {
-  background: hsl(var(--pv-hue, 0) 34% 8%);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-:root[data-pv-surface='solid'] .pv-tab {
-  background: hsl(var(--pv-hue, 0) var(--pv-tab-sat, 46%) var(--pv-tab-light, 26%));
+:root[data-pv-surface='solid'] .pv-folder__shape {
+  background: hsl(var(--pv-hue, 0) 34% 12%);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .pv-section__glass {
-    background: hsl(var(--pv-hue, 0) 34% 8%);
+  .pv-folder__shape {
+    background: hsl(var(--pv-hue, 0) 34% 12%);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  .pv-tab {
-    background: hsl(var(--pv-hue, 0) var(--pv-tab-sat, 46%) var(--pv-tab-light, 26%));
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
-
-.pv-section__column {
-  width: min(var(--pv-column, 656px), calc(100% - 48px));
-  margin: 0 auto;
-  padding-bottom: 96px;
 }
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
 
-/* Bottom-left of the viewport. The notebook has taken the left band for its
-   tabs, so the pill no longer competes with anything for it — and a corner is
-   where a way out belongs when the middle of the screen is a document.
+/* Bottom-left of the viewport, which is inside the glass column — the one band
+   the sheet never covers, so the pill competes with nothing for it and a corner
+   is where a way out belongs when the rest of the screen is a document.
 
    The OUTER button is the entrance only: `--pv-pill` is written per frame by
    the motion driver, so nothing here may have a transition on `transform`. */

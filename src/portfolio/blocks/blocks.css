@@ -37,8 +37,8 @@
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35), transparent 70%);
 }
 
-.pv-section :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill),
-.pv-section .pv-figcaption {
+.pv-folder :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill),
+.pv-folder .pv-figcaption {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
@@ -48,7 +48,7 @@
 :root[data-pv-surface='solid'] .pv-block {
   background: none;
 }
-:root[data-pv-surface='solid'] .pv-section :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+:root[data-pv-surface='solid'] .pv-folder :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
   text-shadow: none;
 }
 
@@ -56,7 +56,7 @@
   .pv-block {
     background: none;
   }
-  .pv-section :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+  .pv-folder :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
     text-shadow: none;
   }
 }
@@ -66,9 +66,12 @@
 
 /* Edge to edge of the PAGE, escaping the centred content column. The page, not
    the viewport — the page is the frame. */
+/* Edge to edge of the FOLDER, escaping the centred column. `cqw` rather than a
+   variable: the folder's body is the query container, so this stays right
+   through a resize and a dial change with nothing to keep in step. */
 .pv-block--bleed {
-  width: var(--pv-page-w, 720px);
-  margin-left: calc((100% - var(--pv-page-w, 720px)) / 2);
+  width: 100cqw;
+  margin-left: calc((100% - 100cqw) / 2);
 }
 
 /* ── type ──────────────────────────────────────────────────────────────── */

@@ -5,50 +5,41 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
  *  grid's own dead zone (`dragDeadZonePx`), so the two feel the same. */
 const DEAD_ZONE = 4;
 
-/** True when the point is outside the book — tabs and page both. */
-function isOnGlass(e: ReactPointerEvent): boolean {
-  const sheet = e.currentTarget as HTMLElement;
-  const book = sheet.querySelector<HTMLElement>('.pv-book');
-  if (!book) return true;
-  const r = book.getBoundingClientRect();
-  return !(e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom);
-}
-
 /**
  * Click the glass to leave.
  *
- * "The glass" is everything in the sheet outside the BOOK — the bands either
- * side of it, and above and below. The book is the document: its page is what
- * you are reading, its tabs are how you move around it, and neither dismisses.
+ * "The glass" is the band down the left that the sheet does not cover, where
+ * the grid is just the grid. Everything else — every folder, every tab, every
+ * link inside one — is the document, and none of it dismisses.
  *
- * The test is GEOMETRIC, against the book's CURRENT rect, rather than a fixed
- * region or an event target. Asking "is this point in the book" answers for the
- * page, the tabs, a link, a video and anything a project adds later all at
- * once, with nothing to remember to opt out of — and it keeps working when the
- * book is re-laid-out by a dial or a resize.
+ * Which is why this goes on the SCRIM rather than on the sheet, and why there
+ * is no hit-testing here at all. The scrim is the full viewport with the sheet
+ * over most of it, so the only pointer events it ever receives are the ones
+ * that landed on glass. Asking the DOM is both simpler and more honest than
+ * asking geometry: it stays right through a resize, a dial change, the sheet
+ * sliding in, and anything a project puts on the page later.
  *
- * Both ends of the press have to be on glass: pressing on the book and
- * releasing beside it is a slip, not a dismissal, and a drag is a drag.
+ * A drag is still a drag, though — a press that travels is someone selecting
+ * text or changing their mind, not someone leaving.
  */
 export function useDismissOnGlass(onDismiss: () => void): {
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;
 } {
-  const downRef = useRef<{ x: number; y: number; onGlass: boolean } | null>(null);
+  const downRef = useRef<{ x: number; y: number } | null>(null);
 
   const onPointerDown = useCallback((e: ReactPointerEvent) => {
-    downRef.current = { x: e.clientX, y: e.clientY, onGlass: isOnGlass(e) };
+    downRef.current = { x: e.clientX, y: e.clientY };
   }, []);
 
   const onPointerUp = useCallback(
     (e: ReactPointerEvent) => {
       const down = downRef.current;
       downRef.current = null;
-      if (!down || !down.onGlass) return;
+      if (!down) return; // the press began somewhere else — on a folder, say
       if (Math.abs(e.clientX - down.x) > DEAD_ZONE || Math.abs(e.clientY - down.y) > DEAD_ZONE) {
-        return; // a drag, not a click
+        return;
       }
-      if (!isOnGlass(e)) return; // released over a page
       onDismiss();
     },
     [onDismiss],

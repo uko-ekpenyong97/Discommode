@@ -40,12 +40,15 @@ describe('project registry', () => {
     }
   });
 
-  it('covers the one-section case (03) and the overflowing-tab-column one (04)', () => {
+  it('covers the one-folder case (03) and the odd-count one (04)', () => {
+    // One folder: no pile above, none below, and no turn anywhere.
     expect(projectById('03')!.sections).toHaveLength(1);
-    expect(projectById('02')!.sections).toHaveLength(5);
-    // Eight tabs is more than a 900px-tall viewport holds at the preferred
-    // height, which is the case `fitTabHeight` exists for.
-    expect(projectById('04')!.sections).toHaveLength(8);
+    // Six: three full rows, so a read pile, an open folder and an unread pile
+    // are all on screen at once.
+    expect(projectById('02')!.sections).toHaveLength(6);
+    // Seven: an odd count, so the last row holds a left folder on its own and
+    // rises alone.
+    expect(projectById('04')!.sections).toHaveLength(7);
   });
 
   it('puts the video and the Rive artboard somewhere in every project', () => {

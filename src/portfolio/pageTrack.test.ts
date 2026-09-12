@@ -2,202 +2,311 @@ import { describe, expect, it } from 'vitest';
 import {
   bottomOf,
   buildTrack,
-  fitTabHeight,
-  glassClipPath,
-  tabTopFor,
+  folderClipPath,
   layout,
   maxPosition,
+  minPosition,
   positionAt,
   positionOf,
   resolve,
+  rowCount,
+  rowOf,
 } from './pageTrack';
 import type { TrackMetrics } from './pageTrack';
 
-/** A five-section project at a common laptop viewport. */
+/** A six-folder project — three full rows — at a common laptop viewport. */
 const metrics = (over: Partial<TrackMetrics> = {}): TrackMetrics => ({
-  heights: [1800, 3600, 2700, 4500, 1350],
+  heights: [1800, 3600, 2700, 4500, 1350, 2250],
   viewportHeight: 900,
+  rowPitch: 72,
+  tabHeight: 64,
   turnDistance: 720,
   ...over,
 });
 
 const TURN = 720;
+/** 900 − (3 − 1) × 72 − 64 */
+const BODY = 692;
 
-describe('buildTrack', () => {
-  it('gives each section a vertical run of its overflow, then one turn', () => {
-    const t = buildTrack(metrics());
-    expect(t.pageScroll).toEqual([900, 2700, 1800, 3600, 450]);
-    expect(t.start).toEqual([
-      0,
-      900 + TURN,
-      900 + TURN + 2700 + TURN,
-      900 + TURN + 2700 + TURN + 1800 + TURN,
-      900 + TURN + 2700 + TURN + 1800 + TURN + 3600 + TURN,
-    ]);
+/** Every folder's painted band, as [top, bottom) pairs, for overlap checks. */
+const bands = (l: ReturnType<typeof layout>): [number, number][] =>
+  l.folders.map((f) => [f.top, f.top + f.clipHeight]);
+
+describe('rows', () => {
+  it('puts two folders in a row, even on the left', () => {
+    expect([0, 1, 2, 3, 4, 5].map(rowOf)).toEqual([0, 0, 1, 1, 2, 2]);
   });
 
-  it('a section shorter than the viewport still has a segment, just no scroll', () => {
+  it('gives an odd count a half-empty last row', () => {
+    expect(rowCount(7)).toBe(4);
+    expect(rowCount(6)).toBe(3);
+    expect(rowCount(1)).toBe(1);
+  });
+});
+
+describe('buildTrack', () => {
+  it('gives every folder the same open body, whatever row it is in', () => {
+    // The read pile gains a row exactly as the unread pile loses one, so the
+    // space between them never changes.
+    const t = buildTrack(metrics());
+    expect(t.openBodyHeight).toBe(BODY);
+    expect(t.rows).toBe(3);
+  });
+
+  it('scrolls each folder by its overflow past that body, then turns', () => {
+    const t = buildTrack(metrics());
+    expect(t.pageScroll).toEqual([1108, 2908, 2008, 3808, 658, 1558]);
+    expect(t.start[1]).toBe(1108 + TURN);
+    expect(t.start[2]).toBe(1108 + TURN + 2908 + TURN);
+  });
+
+  it('a folder shorter than the open body still has a segment, just no scroll', () => {
     const t = buildTrack(metrics({ heights: [400, 2000] }));
     expect(t.pageScroll[0]).toBe(0);
     expect(t.start[1]).toBe(TURN); // straight into the turn
   });
 
-  it('ends one viewport past the last section, so it reaches its bottom', () => {
+  it('ends one viewport past the last folder', () => {
     const t = buildTrack(metrics());
-    expect(t.length).toBe(t.start[4] + 450 + 900);
-    expect(maxPosition(t)).toBe(t.start[4] + 450);
+    expect(maxPosition(t)).toBe(t.start[5] + t.pageScroll[5]);
   });
 
-  it('a single-section project is just that section, with no turn', () => {
+  it('reaches one turn BEFORE the start, which is the entrance', () => {
+    expect(minPosition(buildTrack(metrics()))).toBe(-TURN);
+  });
+
+  it('a single-folder project is just that folder, with no turn', () => {
     const t = buildTrack(metrics({ heights: [2700] }));
+    expect(t.rows).toBe(1);
+    // One row, so no read pile and no unread pile: the body is everything but
+    // the tab.
+    expect(t.openBodyHeight).toBe(900 - 64);
     expect(t.start).toEqual([0]);
-    expect(t.length).toBe(1800 + 900);
-    expect(maxPosition(t)).toBe(1800);
-  });
-
-  it('spends the same scroll on a turn whatever the page is wide', () => {
-    // The turn is its own dial now: it is a page sliding over a page, and how
-    // far the wheel has to travel to do it is not the page's width.
-    const narrow = buildTrack(metrics({ turnDistance: 400 }));
-    expect(narrow.start[1]).toBe(900 + 400);
+    expect(maxPosition(t)).toBe(2700 - 836);
   });
 });
 
-describe('layout', () => {
+describe('layout — the piles', () => {
   const track = buildTrack(metrics());
 
-  it('scrolls a section in place with nothing turning', () => {
-    const l = layout(track, 600);
-    expect(l.topIndex).toBe(0);
+  it('docks the read rows at the top and piles the rest at the bottom', () => {
+    const l = layout(track, 400);
     expect(l.activeIndex).toBe(0);
     expect(l.turning).toBe(false);
-    expect(l.scrollTop).toEqual([600, 0, 0, 0, 0]);
-    // Section 0 at rest; section 1 waiting off to the right; the rest parked.
-    expect(l.translateX).toEqual([0, 100, 100, 100, 100]);
-    // Only the section being read paints — nothing is waiting in view.
-    expect(l.visible).toEqual([true, false, false, false, false]);
+    // Row 0 docked at the top; rows 1 and 2 anchored to the bottom, last lowest.
+    expect(l.folders.map((f) => f.top)).toEqual([0, 0, 900 - 144, 900 - 144, 828, 828]);
+    // The open folder runs down to the pile; its partner shows only its tab.
+    expect(l.folders[0].clipHeight).toBe(900 - 144);
+    expect(l.folders[1].clipHeight).toBe(64);
+    expect(l.folders[0].bodyVisible).toBe(true);
+    expect(l.folders[1].bodyVisible).toBe(false);
   });
 
-  it('turns the next section in 1:1 with the scroll, over a stack that holds', () => {
-    const quarter = layout(track, track.pageScroll[0] + TURN * 0.25);
-    expect(quarter.turning).toBe(true);
-    expect(quarter.progress).toBeCloseTo(0.25, 6);
-    expect(quarter.translateX[1]).toBeCloseTo(75, 6);
-    expect(quarter.translateX[0]).toBe(0); // the covered section does not move
-    // The section being covered is frozen at its bottom; the incoming one is
-    // at its top.
-    expect(quarter.scrollTop).toEqual([900, 0, 0, 0, 0]);
+  it('gives the open folder exactly the body the track was built on', () => {
+    for (const k of [0, 2, 4]) {
+      const l = layout(track, positionOf(track, k));
+      expect(l.folders[k].clipHeight - track.tabHeight).toBe(BODY);
+    }
   });
 
-  it('puts the incoming section on top the instant the turn starts', () => {
-    const early = layout(track, track.pageScroll[0] + 1);
-    expect(early.topIndex).toBe(1);
-    // …but you are still IN section 0 until the half-way point.
-    expect(early.activeIndex).toBe(0);
-    expect(early.zIndex[1]).toBeGreaterThan(early.zIndex[0]);
+  it('keeps a read row one pitch tall — its tabs, and the stack edge', () => {
+    const l = layout(track, positionOf(track, 4));
+    // The row's band is a pitch; within it the last folder you opened owns the
+    // strip below the tabs and its partner shows only its tab.
+    expect(l.folders[1].clipHeight).toBe(72);
+    expect(l.folders[0].clipHeight).toBe(64);
+    expect(l.folders[0].bodyVisible).toBe(false);
+    expect(l.folders[1].bodyVisible).toBe(false);
+    expect(l.folders[4].bodyVisible).toBe(true);
   });
 
-  it('hands the section over at the half-way point', () => {
+  it('shrinks the unread pile by a whole row as each row rises', () => {
+    const pileTop = (y: number): number =>
+      Math.min(...layout(track, y).folders.map((f) => f.top).filter((t) => t > 200));
+    expect(pileTop(positionOf(track, 0))).toBe(900 - 144); // two rows waiting
+    expect(pileTop(positionOf(track, 2))).toBe(900 - 72); // one
+    // …and on the last row there is nothing below at all.
+    expect(layout(track, positionOf(track, 4)).folders[4].top).toBe(144);
+  });
+});
+
+describe('layout — the turns', () => {
+  const track = buildTrack(metrics());
+
+  it('unfolds a docked partner down from its tab, 1:1 with the scroll', () => {
+    const at = (p: number) => layout(track, track.pageScroll[0] + TURN * p);
+    expect(at(0.25).turning).toBe(true);
+    expect(at(0.25).rising).toBe(false);
+    const full = 900 - 144;
+    expect(at(0.25).folders[1].clipHeight).toBeCloseTo(64 + 0.25 * (full - 64), 6);
+    expect(at(0.75).folders[1].clipHeight).toBeCloseTo(64 + 0.75 * (full - 64), 6);
+    // The folder underneath keeps its body and is simply covered.
+    expect(at(0.75).folders[0].clipHeight).toBe(full);
+    // Neither moves: an unfold happens in place.
+    expect(at(0.75).folders[0].top).toBe(0);
+    expect(at(0.75).folders[1].top).toBe(0);
+  });
+
+  it('rises the next row out of the pile, docking it as a pair', () => {
+    const from = track.start[1] + track.pageScroll[1];
+    const at = (p: number) => layout(track, from + TURN * p);
+    expect(at(0.5).rising).toBe(true);
+    const pile = 900 - 144;
+    expect(at(0).folders[2].top).toBeCloseTo(pile, 6);
+    expect(at(0.5).folders[2].top).toBeCloseTo(pile + (72 - pile) * 0.5, 6);
+    expect(at(1).folders[2].top).toBeCloseTo(72, 6);
+    // The right partner rises with it, and docks closed.
+    expect(at(0.5).folders[3].top).toBe(at(0.5).folders[2].top);
+    expect(at(0.5).folders[3].clipHeight).toBe(64);
+    // The left one opens on the way up.
+    expect(at(0.5).folders[2].bodyVisible).toBe(true);
+  });
+
+  it('grows the body it uncovers to follow the rising row exactly', () => {
+    const from = track.start[1] + track.pageScroll[1];
+    for (const p of [0, 0.3, 0.6, 1]) {
+      const l = layout(track, from + TURN * p);
+      // Rule 2: a folder paints down to the next row's top, wherever it is.
+      expect(l.folders[1].top + l.folders[1].clipHeight).toBeCloseTo(l.folders[2].top, 6);
+    }
+  });
+
+  it('eases only the position, never the scroll', () => {
+    const eased = buildTrack(metrics({ easeRise: 'easeOut' }));
+    const from = eased.start[1] + eased.pageScroll[1];
+    const linear = layout(track, track.start[1] + track.pageScroll[1] + TURN * 0.5);
+    const curved = layout(eased, from + TURN * 0.5);
+    // Same point in the scroll, further along the rise.
+    expect(curved.progress).toBeCloseTo(linear.progress, 6);
+    expect(curved.folders[2].top).toBeLessThan(linear.folders[2].top);
+  });
+
+  it('hands the folder over at the half-way point, the top of it at once', () => {
     const before = layout(track, track.pageScroll[0] + TURN * 0.49);
     const after = layout(track, track.pageScroll[0] + TURN * 0.51);
     expect(before.activeIndex).toBe(0);
+    expect(before.topIndex).toBe(1);
     expect(after.activeIndex).toBe(1);
   });
 
-  it('hands the turn over to the next vertical segment with no jump', () => {
+  it('hands a turn over to the next vertical segment with no jump', () => {
     const before = layout(track, track.start[1] - 0.001);
     const after = layout(track, track.start[1]);
-    expect(before.translateX[1]).toBeCloseTo(0, 2);
-    expect(after.translateX[1]).toBe(0);
+    expect(before.folders[1].clipHeight).toBeCloseTo(after.folders[1].clipHeight, 1);
     expect(after.turning).toBe(false);
     expect(after.activeIndex).toBe(1);
   });
 
-  it('keeps every finished section stacked at rest, frozen at its bottom', () => {
-    const l = layout(track, track.start[3] + 100);
-    expect(l.activeIndex).toBe(3);
-    expect(l.translateX).toEqual([0, 0, 0, 0, 100]);
-    expect(l.scrollTop).toEqual([900, 2700, 1800, 100, 0]);
-    // The three underneath are COVERED, and a covered section must not paint:
-    // the glass above it would blur it in and its title would ghost through.
-    expect(l.visible).toEqual([false, false, false, true, false]);
-  });
-
-  it('paints the pair a turn involves, and only that pair', () => {
-    const mid = layout(track, track.start[1] + track.pageScroll[1] + TURN * 0.4);
-    expect(mid.turning).toBe(true);
-    // Turning 1 → 2: section 1 is still under section 2, so both paint. Section
-    // 0 is covered by section 1 and must not.
-    expect(mid.visible).toEqual([false, true, true, false, false]);
-  });
-
-  it('un-covers a section the instant the one above it starts to leave', () => {
-    const atRest = layout(track, track.start[2]);
-    expect(atRest.visible).toEqual([false, false, true, false, false]);
-    // A hair back into the turn that brought section 2 in, and section 1 is
-    // painting again — which is what makes a rewind un-cover the stack in order.
-    const rewinding = layout(track, track.start[2] - 1);
-    expect(rewinding.turning).toBe(true);
-    expect(rewinding.visible).toEqual([false, true, true, false, false]);
-  });
-
-  it('orders sections by index, so a later one always covers an earlier one', () => {
-    const l = layout(track, track.start[2] + 50);
-    for (let j = 1; j < l.zIndex.length; j++) {
-      expect(l.zIndex[j]).toBeGreaterThan(l.zIndex[j - 1]);
-    }
-  });
-
-  it('un-turns through the same mapping when the position goes back', () => {
-    const back = layout(track, 200);
-    expect(back.activeIndex).toBe(0);
-    expect(back.translateX).toEqual([0, 100, 100, 100, 100]);
-    expect(back.scrollTop).toEqual([200, 0, 0, 0, 0]);
-    expect(back.visible).toEqual([true, false, false, false, false]);
-  });
-
-  it('has no turn at all for a single-section project', () => {
+  it('has no turn at all for a single-folder project', () => {
     const one = buildTrack(metrics({ heights: [2700] }));
     for (const y of [0, 900, maxPosition(one)]) {
       const l = layout(one, y);
       expect(l.turning).toBe(false);
-      expect(l.topIndex).toBe(0);
-      expect(l.translateX).toEqual([0]);
-      expect(l.visible).toEqual([true]);
+      expect(l.folders[0].top).toBe(0);
+      expect(l.folders[0].clipHeight).toBe(900);
+    }
+  });
+});
+
+describe('layout — the entrance', () => {
+  const track = buildTrack(metrics());
+
+  it('treats the run-up as row 0 rising into an empty screen', () => {
+    const l = layout(track, -TURN);
+    expect(l.turning).toBe(true);
+    expect(l.rising).toBe(true);
+    expect(l.progress).toBe(0);
+    // Every row still in the pile, row 0 at its top.
+    expect(l.folders[0].top).toBe(900 - 216);
+    expect(l.folders[4].top).toBe(828);
+    expect(l.activeIndex).toBe(0);
+  });
+
+  it('lands exactly on the resting first folder', () => {
+    const arriving = layout(track, -0.001);
+    const arrived = layout(track, 0);
+    expect(arriving.folders[0].top).toBeCloseTo(0, 1);
+    expect(arrived.folders[0].top).toBe(0);
+    expect(arrived.turning).toBe(false);
+  });
+});
+
+describe('the painting invariant', () => {
+  const track = buildTrack(metrics());
+
+  /** Rows tile the screen: no row's band may overlap another's. */
+  const rowsDoNotOverlap = (y: number): void => {
+    const l = layout(track, y);
+    const byRow = new Map<number, [number, number]>();
+    l.folders.forEach((f, k) => {
+      const r = rowOf(k);
+      const b = byRow.get(r);
+      byRow.set(r, b ? [Math.min(b[0], f.top), Math.max(b[1], f.top + f.clipHeight)] : [f.top, f.top + f.clipHeight]);
+    });
+    const ordered = [...byRow.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
+    for (let i = 1; i < ordered.length; i++) {
+      expect(ordered[i][0]).toBeGreaterThanOrEqual(ordered[i - 1][1] - 1e-6);
+    }
+  };
+
+  it('never lets one row paint over another, at any position', () => {
+    const end = maxPosition(track);
+    for (let i = 0; i <= 40; i++) rowsDoNotOverlap(minPosition(track) + ((end + TURN) * i) / 40);
+  });
+
+  it('never lets the two folders of a row both paint a body, except mid-unfold', () => {
+    const end = maxPosition(track);
+    for (let i = 0; i <= 40; i++) {
+      const y = (end * i) / 40;
+      const l = layout(track, y);
+      for (let r = 0; r < track.rows; r++) {
+        const both = l.folders[2 * r]?.bodyVisible && l.folders[2 * r + 1]?.bodyVisible;
+        if (both) {
+          // Only ever the one case the spec asks for: a partner coming down
+          // over the folder it is covering.
+          expect(l.turning && !l.rising && rowOf(l.topIndex) === r).toBe(true);
+        }
+      }
     }
   });
 
-  it('clamps out-of-range positions rather than reporting a phantom section', () => {
-    expect(layout(track, -500).activeIndex).toBe(0);
-    expect(layout(track, 1e9).activeIndex).toBe(4);
-    expect(layout(track, 1e9).scrollTop[4]).toBe(450);
+  it('paints at most two bodies at once', () => {
+    const end = maxPosition(track);
+    for (let i = 0; i <= 40; i++) {
+      const open = layout(track, (end * i) / 40).folders.filter((f) => f.bodyVisible);
+      expect(open.length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('leaves no gap between rows either — the bands meet exactly', () => {
+    const l = layout(track, positionOf(track, 2));
+    const b = bands(l);
+    // A row's band is the union of its two folders'; the owner is the taller.
+    expect(Math.max(b[0][1], b[1][1])).toBe(b[2][0]); // row 0's bottom is row 1's top
+    expect(Math.max(b[2][1], b[3][1])).toBe(b[4][0]); // row 1's bottom is the pile's top
   });
 });
 
 describe('positionOf / bottomOf', () => {
   const track = buildTrack(metrics());
 
-  it('lands a deep link (and a tab click) at a section’s top', () => {
-    expect(positionOf(track, 0)).toBe(0);
-    expect(positionOf(track, 3)).toBe(track.start[3]);
+  it('lands a deep link (and a tab click) at a folder’s top', () => {
     const l = layout(track, positionOf(track, 3));
     expect(l.activeIndex).toBe(3);
     expect(l.turning).toBe(false);
-    expect(l.scrollTop[3]).toBe(0);
-    expect(l.translateX).toEqual([0, 0, 0, 0, 100]);
+    expect(l.folders[3].scrollTop).toBe(0);
+    expect(l.folders[3].bodyVisible).toBe(true);
   });
 
-  it('lands the `bottom` dial where the section was left', () => {
+  it('lands the `bottom` dial where the folder was left', () => {
     const y = bottomOf(track, 1);
-    expect(y).toBe(track.start[1] + track.pageScroll[1]);
     const l = layout(track, y);
     expect(l.activeIndex).toBe(1);
     expect(l.turning).toBe(false);
-    expect(l.scrollTop[1]).toBe(track.pageScroll[1]);
+    expect(l.folders[1].scrollTop).toBe(track.pageScroll[1]);
   });
 
-  it('holds the section at a sub-pixel wobble around its bottom', () => {
-    // Lenis settles on a float; a hair past the boundary must not read as a turn.
+  it('holds the folder at a sub-pixel wobble around its bottom', () => {
     const y = bottomOf(track, 1);
     for (const eps of [-0.4, -0.05, 0, 0.05, 0.4]) {
       expect(layout(track, y + eps).turning).toBe(false);
@@ -205,9 +314,9 @@ describe('positionOf / bottomOf', () => {
     }
   });
 
-  it('clamps a section index outside the project', () => {
+  it('clamps an index outside the project', () => {
     expect(positionOf(track, -3)).toBe(0);
-    expect(positionOf(track, 99)).toBe(track.start[4]);
+    expect(positionOf(track, 99)).toBe(track.start[5]);
   });
 });
 
@@ -215,113 +324,91 @@ describe('positionAt / resolve', () => {
   const track = buildTrack(metrics());
 
   it('round-trips every kind of position', () => {
-    for (const y of [0, 450, 900, 900 + 360, track.start[2] + 10, maxPosition(track)]) {
+    for (const y of [0, 450, 1108, 1108 + 360, track.start[2] + 10, maxPosition(track)]) {
       expect(resolve(track, positionAt(track, y))).toBeCloseTo(y, 6);
     }
   });
 
-  it('keeps the reader in place when a section grows under them', () => {
+  it('round-trips the entrance too', () => {
+    for (const y of [-TURN, -TURN / 2, -1]) {
+      expect(resolve(track, positionAt(track, y))).toBeCloseTo(y, 6);
+    }
+  });
+
+  it('keeps the reader in place when a folder grows under them', () => {
     const y = track.start[2] + 700;
     const at = positionAt(track, y);
-    // Section 1 gains 1200px: every start behind it moves, so the same pixel
-    // position is a different place — but the semantic one is not.
-    const grown = buildTrack(metrics({ heights: [1800, 4800, 2700, 4500, 1350] }));
+    const grown = buildTrack(metrics({ heights: [1800, 4800, 2700, 4500, 1350, 2250] }));
     const y2 = resolve(grown, at);
     expect(layout(grown, y2).activeIndex).toBe(2);
-    expect(layout(grown, y2).scrollTop[2]).toBe(700);
+    expect(layout(grown, y2).folders[2].scrollTop).toBe(700);
     expect(y2).toBe(y + 1200);
-    // Whereas keeping the pixel position would have put them back in section 1.
+    // Whereas keeping the pixel position would have put them back in folder 1.
     expect(layout(grown, y).activeIndex).toBe(1);
   });
 
-  it('keeps the reader in place when the section they are on shrinks', () => {
-    const at = positionAt(track, track.start[1] + 2600);
-    const shrunk = buildTrack(metrics({ heights: [1800, 1200, 2700, 4500, 1350] }));
+  it('keeps the reader in place when the folder they are on shrinks', () => {
+    const at = positionAt(track, track.start[1] + 2800);
+    const shrunk = buildTrack(metrics({ heights: [1800, 1200, 2700, 4500, 1350, 2250] }));
     const y = resolve(shrunk, at);
     expect(layout(shrunk, y).activeIndex).toBe(1);
-    // Past the new bottom, so it holds there rather than spilling into the turn.
-    expect(layout(shrunk, y).scrollTop[1]).toBe(shrunk.pageScroll[1]);
+    expect(layout(shrunk, y).folders[1].scrollTop).toBe(shrunk.pageScroll[1]);
     expect(layout(shrunk, y).turning).toBe(false);
   });
 
   it('keeps a mid-turn position mid-turn', () => {
     const at = positionAt(track, track.pageScroll[0] + TURN * 0.4);
-    expect(at).toEqual({ section: 0, offset: 900, turn: 0.4 });
-    const grown = buildTrack(metrics({ heights: [3000, 3600, 2700, 4500, 1350] }));
+    expect(at).toEqual({ section: 0, offset: track.pageScroll[0], turn: 0.4 });
+    const grown = buildTrack(metrics({ heights: [3000, 3600, 2700, 4500, 1350, 2250] }));
     const l = layout(grown, resolve(grown, at));
     expect(l.turning).toBe(true);
     expect(l.progress).toBeCloseTo(0.4, 6);
   });
 
   it('drops a turn that no longer exists rather than overshooting', () => {
-    const at = positionAt(track, track.start[3] + track.pageScroll[3] + TURN * 0.5);
+    const at = positionAt(track, track.start[4] + track.pageScroll[4] + TURN * 0.5);
     expect(at.turn).toBeCloseTo(0.5, 6);
-    // The project loses its last section: there is nothing left to turn in.
-    const shorter = buildTrack(metrics({ heights: [1800, 3600, 2700, 4500] }));
+    const shorter = buildTrack(metrics({ heights: [1800, 3600, 2700, 4500, 1350] }));
     const y = resolve(shorter, at);
     expect(y).toBe(maxPosition(shorter));
     expect(layout(shorter, y).turning).toBe(false);
   });
 });
 
-describe('fitTabHeight', () => {
-  it('keeps the preferred height when the column has room', () => {
-    expect(fitTabHeight(132, 5, 900, 0, 6)).toBe(132);
+describe('folderClipPath', () => {
+  const opts = { sheetWidth: 1080, tabWidth: 518.4, tabHeight: 64, height: 756 };
+
+  it('cuts a left folder as tab, chamfer, then full width', () => {
+    const d = folderClipPath({ ...opts, side: 'left' });
+    expect(d).toBe('polygon(0 0, 518.4px 0, 582.4px 64px, 1080px 64px, 1080px 756px, 0 756px)');
   });
 
-  it('shrinks the tabs rather than scrolling the column', () => {
-    // Eight tabs at 132 + 6 gap needs 1098px; a 900px viewport has not got it.
-    const h = fitTabHeight(132, 8, 900, 0, 6);
-    expect(h).toBeLessThan(132);
-    expect(8 * h + 7 * 6).toBeCloseTo(900, 6);
+  it('notches the right folder along its partner’s chamfer where they cross', () => {
+    // 48% / 52% leaves a 4% gap, and a 45° chamfer eats it in 2% of the width —
+    // so without the notch the two tabs would overlap in a wedge of doubled
+    // glass. 540 is the middle of the gap; 21.6 is where the chamfers meet.
+    const d = folderClipPath({ ...opts, side: 'right' });
+    expect(d).toContain('561.6px 0'); // its tab starts at 52%
+    expect(d).toContain('582.4px 64px'); // …and it follows the partner's chamfer
+    expect(d).toContain('540px 21.6px'); // up to the crossing
   });
 
-  it('accounts for the offset the first tab starts at', () => {
-    const h = fitTabHeight(132, 8, 900, 40, 6);
-    expect(40 + 8 * h + 7 * 6).toBeCloseTo(900, 6);
+  it('tiles the tab band — the two outlines meet, and never overlap', () => {
+    const { sheetWidth: W, tabWidth: tw, tabHeight: T } = opts;
+    const rightStart = W - tw;
+    const leftEdge = (y: number): number => tw + y; // the left folder's chamfer
+    const rightEdge = (y: number): number => Math.max(rightStart - y, tw + y);
+    for (let y = 0; y <= T; y += 4) {
+      expect(rightEdge(y)).toBeGreaterThanOrEqual(leftEdge(y) - 1e-9);
+    }
+    // They meet exactly at the crossing and stay together from there down.
+    expect(rightEdge(T)).toBeCloseTo(leftEdge(T), 6);
   });
 
-  it('never returns a height a tab could not be drawn at', () => {
-    expect(fitTabHeight(132, 400, 900, 0, 6)).toBeGreaterThan(0);
-  });
-});
-
-describe('glassClipPath', () => {
-  const opts = { tabWidth: 64, pageWidth: 720, viewportHeight: 900, flapTop: 138, flapHeight: 132 };
-
-  it('traces the page and the flap as ONE subpath — one sheet of glass', () => {
-    const d = glassClipPath(opts);
-    // A single `M`: two subpaths would be two shapes, and `backdrop-filter`
-    // would seam between them.
-    expect(d.match(/M /g)).toHaveLength(1);
-    expect(d).toContain('M 64 0'); // the page's top-left, at the tab column's width
-    expect(d).toContain('H 784'); // …out to the page's right edge
-    expect(d).toContain('V 900'); // …down to the viewport's bottom
-  });
-
-  it('puts the flap exactly where the tab column puts it', () => {
-    const d = glassClipPath(opts);
-    expect(d).toContain('V 270 H 10'); // the flap's bottom edge, 138 + 132
-    expect(d).toContain('V 148'); // …up to its top plus the corner radius
-  });
-
-  it('rounds only the two outer corners, leaving the junction square', () => {
-    const d = glassClipPath(opts);
-    expect(d.match(/A 10 10 0 0 1/g)).toHaveLength(2);
-    // The path returns to the junction (x = tabWidth) and closes there, so the
-    // page-to-flap edge is a straight line with nothing drawn on it.
-    expect(d.endsWith("H 64 Z')")).toBe(true);
-  });
-
-  it('falls back to the page alone when there is no flap to include', () => {
-    const d = glassClipPath({ ...opts, flapHeight: 0 });
-    expect(d).toBe("path('M 64 0 H 784 V 900 H 64 Z')");
-    expect(d.match(/A /g)).toBeNull();
-  });
-
-  it('lays tabs out from the top, gap by gap', () => {
-    expect(tabTopFor(0, 0, 132, 6)).toBe(0);
-    expect(tabTopFor(1, 0, 132, 6)).toBe(138);
-    expect(tabTopFor(3, 40, 100, 8)).toBe(40 + 3 * 108);
+  it('leaves the mirror alone when the gap is wide enough to clear', () => {
+    const d = folderClipPath({ ...opts, tabWidth: 300, side: 'right' });
+    expect(d).toContain('780px 0');
+    expect(d).toContain('716px 64px'); // a plain 45° mirror, no notch
+    expect(d).not.toContain('540px');
   });
 });

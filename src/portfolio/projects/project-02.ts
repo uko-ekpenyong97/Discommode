@@ -1,8 +1,8 @@
 import type { Project } from '../blocks/types';
 import { placeholderSections } from './placeholder';
 
-/** Five sections — the shape a project is expected to take most often, and the
- *  one the notebook was designed against: a full tab column, five hues. */
+/** Six folders — three full rows, which is the shape the stack was designed
+ *  against: a read pile, an open folder and an unread pile all on screen. */
 export const project02: Project = {
   id: '02',
   title: 'Project 02',
@@ -12,5 +12,6 @@ export const project02: Project = {
     { title: 'Motion', hue: 200, viewports: 3 },
     { title: 'Build', hue: 150, viewports: 5 },
     { title: 'Outcome', hue: 280, viewports: 1.5 },
+    { title: 'Appendix', hue: 330, viewports: 2.5 },
   ]),
 };

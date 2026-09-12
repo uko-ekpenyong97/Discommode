@@ -141,26 +141,28 @@ export default function PortfolioDialKit() {
     [tl, replayClose, stopClose],
   );
 
-  const geometry = useDialKit('PV BOOK', {
-    pageWidthPx: [LOOK.pageWidthPx, 360, 1200, 4],
+  const geometry = useDialKit('PV STACK', {
+    glassColumnVw: [LOOK.glassColumnVw, 0, 50, 1],
     columnPx: [LOOK.columnPx, 320, 900, 1],
+    // `rowPitch` is the trade the whole layout turns on: what is left between
+    // the two piles is the open folder's body, so a taller step shows you more
+    // of the project and less of any one part of it.
+    rowPitchPx: [LOOK.rowPitchPx, 40, 200, 1],
     turnDistancePx: [LOOK.turnDistancePx, 200, 2000, 10],
     sectionShadowAlpha: [LOOK.sectionShadowAlpha, 0, 1, 0.01],
     scrimBlurPx: [LOOK.scrimBlurPx, 0, 48, 1],
     scrimAlpha: [LOOK.scrimAlpha, 0, 0.9, 0.01],
   });
 
-  // The tab column. `tabHeightPx` is a PREFERENCE: with more sections than the
-  // viewport holds, `fitTabHeight` shrinks them rather than scrolling the column.
-  const tabs = useDialKit('PV TABS', {
-    tabWidthPx: [LOOK.tabWidthPx, 24, 160, 1],
-    tabHeightPx: [LOOK.tabHeightPx, 40, 320, 1],
-    tabGapPx: [LOOK.tabGapPx, 0, 40, 1],
-    tabTopPx: [LOOK.tabTopPx, 0, 400, 1],
-    tabTuckPx: [LOOK.tabTuckPx, 0, 60, 1],
-    tabInactiveSat: [LOOK.tabInactiveSat, 0, 100, 1],
-    tabInactiveLight: [LOOK.tabInactiveLight, 0, 60, 1],
-    tabInactiveBrightness: [LOOK.tabInactiveBrightness, 0.2, 1.2, 0.01],
+  // The folder's outline, and the entrance that brings the first row up.
+  const tabs = useDialKit('PV FOLDERS', {
+    tabHeightPx: [LOOK.tabHeightPx, 32, 160, 1],
+    tabWidthPct: [LOOK.tabWidthPct, 20, 50, 1],
+    chamferPx: [LOOK.chamferPx, 0, 160, 1],
+    tabBandAlpha: [LOOK.tabBandAlpha, 0, 1, 0.01],
+    easeRise: { type: 'select', options: ['linear', 'easeOut'], default: LOOK.easeRise },
+    riseDelayMs: [LOOK.riseDelayMs, 0, 2000, 10],
+    riseMs: [LOOK.riseMs, 100, 3000, 10],
   });
 
   // The page glass. `pageAlpha` is the contrast lever: it is what stands
@@ -211,18 +213,18 @@ export default function PortfolioDialKit() {
   const look: PortfolioLook = {
     scrimBlurPx: geometry.scrimBlurPx,
     scrimAlpha: geometry.scrimAlpha,
-    pageWidthPx: geometry.pageWidthPx,
+    glassColumnVw: geometry.glassColumnVw,
     columnPx: geometry.columnPx,
+    rowPitchPx: geometry.rowPitchPx,
     turnDistancePx: geometry.turnDistancePx,
     sectionShadowAlpha: geometry.sectionShadowAlpha,
-    tabWidthPx: tabs.tabWidthPx,
     tabHeightPx: tabs.tabHeightPx,
-    tabGapPx: tabs.tabGapPx,
-    tabTopPx: tabs.tabTopPx,
-    tabTuckPx: tabs.tabTuckPx,
-    tabInactiveSat: tabs.tabInactiveSat,
-    tabInactiveLight: tabs.tabInactiveLight,
-    tabInactiveBrightness: tabs.tabInactiveBrightness,
+    tabWidthPct: tabs.tabWidthPct,
+    chamferPx: tabs.chamferPx,
+    tabBandAlpha: tabs.tabBandAlpha,
+    easeRise: tabs.easeRise as PortfolioLook['easeRise'],
+    riseDelayMs: tabs.riseDelayMs,
+    riseMs: tabs.riseMs,
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,
     sliverClickMs: track.sliverClickMs,

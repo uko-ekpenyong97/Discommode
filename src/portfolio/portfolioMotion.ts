@@ -76,7 +76,9 @@ export const EASE = {
  * to `:root` by {@link applyPortfolioLook} and read from there by the CSS, so
  * the dock can retune any of it live without a re-render.
  */
-/** Where a sliver click lands: the page's title, or the line you left off at. */
+import type { RiseEase } from './pageTrack';
+
+/** Where a sliver click lands: the folder's title, or the line you left off at. */
 export type SliverReturn = 'top' | 'bottom';
 
 /** How a page is painted: live glass over the app, or flat black. */
@@ -86,29 +88,33 @@ export interface PortfolioLook {
   /** Scrim blur radius (px) and black alpha. */
   scrimBlurPx: number;
   scrimAlpha: number;
-  /** The page surface's width (px) — the right-hand part of the book. */
-  pageWidthPx: number;
-  /** The centred content column inside the page (px). */
+  /** The band down the left of the viewport the sheet does not cover, in vw.
+   *  The grid shows through it; only the close pill sits there. */
+  glassColumnVw: number;
+  /** The centred content column inside a folder's body (px). */
   columnPx: number;
-  /** The tab column: each tab's width and PREFERRED height, the gap between
-   *  them, the offset of the first from the top of the page, and how far a tab
-   *  runs under the page's left edge. With more sections than the viewport
-   *  holds, the height shrinks to fit — see `fitTabHeight`. */
-  tabWidthPx: number;
+  /** A folder's tab: how tall, how wide as a fraction of the sheet, and how far
+   *  its 45° chamfer runs from the tab's inner corner down to the body. */
   tabHeightPx: number;
-  tabGapPx: number;
-  tabTopPx: number;
-  tabTuckPx: number;
-  /** How a tab that is NOT the flush one is shaded: deeper and more saturated
-   *  than the page, then dimmed. The contrast between "page-coloured and flush"
-   *  and "deeper and tucked" is what tells you where you are in the project. */
-  tabInactiveSat: number;
-  tabInactiveLight: number;
-  tabInactiveBrightness: number;
-  /** Scroll spent turning one section in (px). Its own dial, not the page
-   *  width: how far the wheel travels to turn a page is a feel, not a length. */
+  tabWidthPct: number;
+  chamferPx: number;
+  /** Vertical step between docked rows. What is left between the two piles is
+   *  the open folder's body, so this trades how much of a project you can see
+   *  at once against how much of any one of it you can read. */
+  rowPitchPx: number;
+  /** Alpha of the lighter band across a tab — what makes a folder's outline
+   *  read at all against its own body. */
+  tabBandAlpha: number;
+  /** Scroll spent on one turn (px). Its own dial, not a width: how far the
+   *  wheel travels to turn a folder is a feel, not a length. */
   turnDistancePx: number;
-  /** Alpha of the shadow the top section casts back over the stack. */
+  /** Curve for a rising row's POSITION; the scroll stays 1:1 either way. */
+  easeRise: RiseEase;
+  /** The entrance: how long after the sheet starts sliding the first row leaves
+   *  the pile, and how long it takes to dock. */
+  riseDelayMs: number;
+  riseMs: number;
+  /** Alpha of the shadow the open folder casts back over the read pile. */
   sectionShadowAlpha: number;
   /** Lenis: smoothing factor on the sheet scroller, and the wheel gain. */
   lenisLerp: number;
@@ -153,17 +159,23 @@ export interface PortfolioLook {
 export const LOOK: PortfolioLook = {
   scrimBlurPx: 16,
   scrimAlpha: 0.4,
-  pageWidthPx: 720,
+  glassColumnVw: 25,
   columnPx: 656,
-  tabWidthPx: 64,
-  tabHeightPx: 132,
-  tabGapPx: 6,
-  tabTopPx: 0,
-  tabTuckPx: 18,
-  tabInactiveSat: 46,
-  tabInactiveLight: 26,
-  tabInactiveBrightness: 0.85,
+  tabHeightPx: 64,
+  // 44, not the 48 the mockup measures at. A 45° chamfer of the tab's own
+  // height needs twice that height of gap between the two tabs to descend in;
+  // 48/52 leaves 4% of the sheet, about 43px at a laptop width, and the two
+  // chamfers cross. `folderClipPath` copes — it notches one outline into the
+  // other so they still tile — but what you see then is a chevron between the
+  // tabs rather than two folders. 44/56 gives the chamfers room to land.
+  tabWidthPct: 44,
+  chamferPx: 64,
+  rowPitchPx: 72,
+  tabBandAlpha: 0.5,
   turnDistancePx: 720,
+  easeRise: 'easeOut',
+  riseDelayMs: 500,
+  riseMs: 900,
   sectionShadowAlpha: 0.45,
   lenisLerp: 0.1,
   wheelMultiplier: 1,
@@ -172,11 +184,14 @@ export const LOOK: PortfolioLook = {
   sliverClickMs: 1100,
   sliverReturn: 'top',
   pageSurface: 'frosted',
-  // Measured, not chosen: 0.68 is where the 10px stat label clears 7:1 on the
-  // hardest backdrop the view has — a cold `#view-NN`, where the page is over
-  // the GRID and its four full-size covers rather than the detail view's darker
-  // composition. See `contrastProbe.ts`.
-  pageAlpha: 0.68,
+  // Measured, not chosen. 0.76 is where the 11px figure caption clears 7:1 on
+  // the hardest backdrop the view has — a cold `#view-NN`, where the folders
+  // are over the GRID and its four full-size covers rather than the detail
+  // view's darker composition. It went up from the notebook's 0.68 because a
+  // folder's tint is lighter than a page's was (34% 12% against 34% 8%), which
+  // is what lets the hues tell the folders apart. Swept, not guessed:
+  // 0.68 → 6.81:1, 0.74 → 7.19, 0.80 → 7.63. See `contrastProbe.ts`.
+  pageAlpha: 0.76,
   pageBlurPx: 24,
   pageSaturate: 1.2,
   pillDiameterPx: 96,
@@ -313,16 +328,12 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   const s = document.documentElement.style;
   s.setProperty('--pv-scrim-blur', `${look.scrimBlurPx}px`);
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
-  s.setProperty('--pv-page-w', `${look.pageWidthPx}px`);
+  s.setProperty('--pv-glass-col', `${look.glassColumnVw}vw`);
+  s.setProperty('--pv-tab-h', `${look.tabHeightPx}px`);
+  s.setProperty('--pv-tab-w', `${look.tabWidthPct}%`);
+  s.setProperty('--pv-row-pitch', `${look.rowPitchPx}px`);
+  s.setProperty('--pv-band-alpha', String(look.tabBandAlpha));
   s.setProperty('--pv-column', `${look.columnPx}px`);
-  s.setProperty('--pv-tab-w', `${look.tabWidthPx}px`);
-  s.setProperty('--pv-tab-h-pref', `${look.tabHeightPx}px`);
-  s.setProperty('--pv-tab-gap', `${look.tabGapPx}px`);
-  s.setProperty('--pv-tab-top', `${look.tabTopPx}px`);
-  s.setProperty('--pv-tab-tuck', `${look.tabTuckPx}px`);
-  s.setProperty('--pv-tab-sat', `${look.tabInactiveSat}%`);
-  s.setProperty('--pv-tab-light', `${look.tabInactiveLight}%`);
-  s.setProperty('--pv-tab-dim', String(look.tabInactiveBrightness));
   s.setProperty('--pv-section-shadow', String(look.sectionShadowAlpha));
   s.setProperty('--pv-page-alpha', String(look.pageAlpha));
   s.setProperty('--pv-page-blur', `${look.pageBlurPx}px`);
@@ -355,16 +366,14 @@ const VARS = [
   '--pv-pill',
   '--pv-scrim-blur',
   '--pv-scrim-alpha',
-  '--pv-page-w',
+  '--pv-glass-col',
+  '--pv-slot-h',
+  '--pv-body-h',
   '--pv-column',
+  '--pv-tab-h',
   '--pv-tab-w',
-  '--pv-tab-h-pref',
-  '--pv-tab-gap',
-  '--pv-tab-top',
-  '--pv-tab-tuck',
-  '--pv-tab-sat',
-  '--pv-tab-light',
-  '--pv-tab-dim',
+  '--pv-row-pitch',
+  '--pv-band-alpha',
   '--pv-section-shadow',
   '--pv-page-alpha',
   '--pv-page-blur',

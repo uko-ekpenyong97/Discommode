@@ -182,7 +182,7 @@ function applyGlass(
 function pageTint(section: HTMLElement, alphaOverride?: number): string {
   // The section itself paints nothing: its glass child is the surface, and the
   // tint that matters is the one the text is actually behind.
-  const glass = section.querySelector<HTMLElement>('.pv-section__glass') ?? section;
+  const glass = section.querySelector<HTMLElement>('.pv-folder__shape') ?? section;
   const [r, g, b, a] = parseColor(getComputedStyle(glass).backgroundColor);
   return `rgba(${r}, ${g}, ${b}, ${alphaOverride ?? a})`;
 }
@@ -198,7 +198,7 @@ export function probeContrast(over: GlassOverride = {}): ContrastReport | null {
   const glass = { ...look, ...over };
   if (glass.pageSurface !== 'frosted') return null;
   // The section DRAWN ON TOP — the one whose glass the text is actually behind.
-  const page = document.querySelector<HTMLElement>('.pv-section[data-top]');
+  const page = document.querySelector<HTMLElement>('.pv-folder[data-top]');
   if (!page) return null;
   const hue = Number(page.dataset.hue ?? 0);
 

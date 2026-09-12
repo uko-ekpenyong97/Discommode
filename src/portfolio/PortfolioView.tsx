@@ -107,7 +107,6 @@ export default function PortfolioView({ project, section, intro = false }: Portf
         project={current}
         initialSection={section}
         onSectionChange={onSectionChange}
-        onDismiss={close}
       />
       {authoring && PortfolioDialKit && (
         <Suspense fallback={null}>
