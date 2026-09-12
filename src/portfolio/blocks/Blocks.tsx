@@ -48,7 +48,7 @@ const HAVE_CURRENT_DATA = 2;
 /** ↗ — the LinkPill's "this leaves the site" mark. */
 function ExternalIcon() {
   return (
-    <svg className="pv-pill__icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+    <svg className="pv-linkpill__icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
       <path
         d="M6 3h7v7M13 3 4 12"
         fill="none"
@@ -374,7 +374,7 @@ function BlockBodyView({ block }: { block: Block }) {
       );
     case 'linkPill':
       return (
-        <a className="pv-pill" href={block.href} target="_blank" rel="noreferrer noopener">
+        <a className="pv-linkpill" href={block.href} target="_blank" rel="noreferrer noopener">
           <span>{block.label}</span>
           <ExternalIcon />
         </a>

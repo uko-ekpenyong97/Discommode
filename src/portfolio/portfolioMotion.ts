@@ -76,6 +76,12 @@ export const EASE = {
  * to `:root` by {@link applyPortfolioLook} and read from there by the CSS, so
  * the dock can retune any of it live without a re-render.
  */
+/** Where a sliver click lands: the page's title, or the line you left off at. */
+export type SliverReturn = 'top' | 'bottom';
+
+/** How a page is painted: live glass over the app, or flat black. */
+export type PageSurface = 'frosted' | 'solid';
+
 export interface PortfolioLook {
   /** Scrim blur radius (px) and black alpha. */
   scrimBlurPx: number;
@@ -98,9 +104,25 @@ export interface PortfolioLook {
   wheelMultiplier: number;
   /** How long clicking a sliver takes to scroll the track back (ms). */
   sliverClickMs: number;
-  /** Close pill: corner offset it enters from (px) and its own backdrop blur. */
+  /** Where a sliver click lands — see {@link SliverReturn}. */
+  sliverReturn: SliverReturn;
+  /** How a page is painted — see {@link PageSurface}. */
+  pageSurface: PageSurface;
+  /** The page glass: its black tint, its backdrop blur, and how much it lifts
+   *  the colour coming through. Only used by `pageSurface: 'frosted'`. */
+  pageAlpha: number;
+  pageBlurPx: number;
+  pageSaturate: number;
+  /** Close pill: diameter, where it sits across the gutter (0…1), the offset it
+   *  enters from, its own backdrop blur, and the ink alpha at rest vs hover
+   *  (the ring and the X share one colour). */
+  pillDiameterPx: number;
+  pillGutterX: number;
   pillOffsetPx: number;
   pillBlurPx: number;
+  pillInkRest: number;
+  pillInkHover: number;
+  pillHoverScale: number;
   /** `.reveal`: duration, starting blur, starting offset, per-sibling stagger. */
   revealMs: number;
   revealBlurPx: number;
@@ -128,9 +150,21 @@ export const LOOK: PortfolioLook = {
   zFadeMs: 400,
   lenisLerp: 0.1,
   wheelMultiplier: 1,
-  sliverClickMs: 800,
+  // Longer than the 800ms of #10b: the click now rewinds the whole page, not
+  // just the last frame of it, so the travel is a page's worth further.
+  sliverClickMs: 1100,
+  sliverReturn: 'top',
+  pageSurface: 'frosted',
+  pageAlpha: 0.55,
+  pageBlurPx: 24,
+  pageSaturate: 1.2,
+  pillDiameterPx: 146,
+  pillGutterX: 0.5,
   pillOffsetPx: 73,
   pillBlurPx: 8,
+  pillInkRest: 0.2,
+  pillInkHover: 1,
+  pillHoverScale: 0.92,
   revealMs: 800,
   revealBlurPx: 10,
   revealOffsetPx: 10,
@@ -263,8 +297,19 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-preview-op', String(look.previewOpacity));
   s.setProperty('--pv-preview-fade', `${look.previewFadeMs}ms`);
   s.setProperty('--pv-z-fade', `${look.zFadeMs}ms`);
+  s.setProperty('--pv-page-alpha', String(look.pageAlpha));
+  s.setProperty('--pv-page-blur', `${look.pageBlurPx}px`);
+  s.setProperty('--pv-page-saturate', String(look.pageSaturate));
+  s.setProperty('--pv-pill-d', `${look.pillDiameterPx}px`);
+  s.setProperty('--pv-pill-x', String(look.pillGutterX));
   s.setProperty('--pv-pill-offset', `${look.pillOffsetPx}px`);
   s.setProperty('--pv-pill-blur', `${look.pillBlurPx}px`);
+  s.setProperty('--pv-pill-ink', String(look.pillInkRest));
+  s.setProperty('--pv-pill-ink-hover', String(look.pillInkHover));
+  s.setProperty('--pv-pill-hover-scale', String(look.pillHoverScale));
+  // A mode, not a number: 'solid' has to take `backdrop-filter` off the page
+  // entirely rather than set it to a no-op, which still costs a backdrop root.
+  document.documentElement.dataset.pvSurface = look.pageSurface;
   s.setProperty('--pv-reveal-ms', `${look.revealMs}ms`);
   s.setProperty('--pv-reveal-blur', `${look.revealBlurPx}px`);
   s.setProperty('--pv-reveal-offset', `${look.revealOffsetPx}px`);
@@ -286,7 +331,16 @@ const VARS = [
   '--pv-scrim-alpha',
   '--pv-page-w',
   '--pv-sliver-pref',
+  '--pv-gutter',
   '--pv-column',
+  '--pv-page-alpha',
+  '--pv-page-blur',
+  '--pv-page-saturate',
+  '--pv-pill-d',
+  '--pv-pill-x',
+  '--pv-pill-ink',
+  '--pv-pill-ink-hover',
+  '--pv-pill-hover-scale',
   '--pv-preview-op',
   '--pv-preview-fade',
   '--pv-z-fade',
@@ -308,6 +362,7 @@ const VARS = [
 export function resetPortfolioValues(): void {
   const s = document.documentElement.style;
   for (const v of VARS) s.removeProperty(v);
+  delete document.documentElement.dataset.pvSurface;
   Object.assign(look, LOOK); // a dev tuning session must not outlive the view
   portfolio.scrim = 0;
   portfolio.sheet = 0;

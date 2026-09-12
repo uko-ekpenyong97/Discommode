@@ -11,6 +11,55 @@
   margin: 0 0 28px;
   contain: layout;
 }
+
+/* TEXT OVER GLASS. The page glass is doing most of the work, but what is behind
+   it is a live grid and it is not always dark — so every block that is only
+   type gets two things the media blocks do not need:
+
+     a hairline shadow, which buys contrast at the glyph edge where it matters
+     and nowhere else, and
+
+     a very soft dark pool behind the block, wide and feathered, so a bright
+     cover passing underneath is damped locally rather than by raising the
+     page's tint for the whole project.
+
+   Deliberately weak: this is a safety net under `pageAlpha`, not a card. If a
+   block needs more than this the alpha is wrong, and `contrastProbe.ts` is what
+   says so. */
+.pv-block:is(
+    [data-block='title'],
+    [data-block='caption'],
+    [data-block='text'],
+    [data-block='linkPill']
+  ) {
+  padding: 24px;
+  margin: -24px -24px 4px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35), transparent 70%);
+}
+
+.pv-page :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill),
+.pv-page .pv-figcaption {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Solid pages need neither — and the same goes for anyone who has asked for
+   less transparency or more contrast, who gets solid pages whatever the dial
+   says (see portfolio.css) and should not then be reading through a shadow. */
+:root[data-pv-surface='solid'] .pv-block {
+  background: none;
+}
+:root[data-pv-surface='solid'] .pv-page :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+  text-shadow: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .pv-block {
+    background: none;
+  }
+  .pv-page :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+    text-shadow: none;
+  }
+}
 .pv-block:last-child {
   margin-bottom: 0;
 }
@@ -33,12 +82,18 @@
   color: #fff;
 }
 
+/* The small mono labels are all at 0.62 rather than the 0.42–0.5 that reads as
+   "secondary" on flat black. Over the page glass their contrast is set by their
+   OWN alpha, not by how dark the glass is — measured: darkening the glass from
+   0.5 to 0.7 moved a 12px caption from 5.29:1 to 5.31:1, because the ink blends
+   with the same backdrop it is being compared to. 0.62 is where 12px clears
+   7:1 on the covers behind it, and it is still clearly below body text. */
 .pv-caption {
   margin: 12px 0 0;
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.16em;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .pv-heading {
@@ -99,7 +154,7 @@
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.68);
 }
 
 /* ── two-up ────────────────────────────────────────────────────────────── */
@@ -121,7 +176,7 @@
   margin: 0;
   font-size: 14px;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(255, 255, 255, 0.68);
 }
 
 /* ── stat grid ─────────────────────────────────────────────────────────── */
@@ -142,12 +197,12 @@
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 /* ── link pill ─────────────────────────────────────────────────────────── */
 
-.pv-pill {
+.pv-linkpill {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -164,11 +219,11 @@
     border-color 180ms ease,
     background 180ms ease;
 }
-.pv-pill:hover {
+.pv-linkpill:hover {
   border-color: rgba(255, 255, 255, 0.6);
   background: rgba(255, 255, 255, 0.06);
 }
-.pv-pill__icon {
+.pv-linkpill__icon {
   width: 13px;
   height: 13px;
 }

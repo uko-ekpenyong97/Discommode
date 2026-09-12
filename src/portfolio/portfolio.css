@@ -35,7 +35,6 @@
   -webkit-backdrop-filter: blur(var(--pv-scrim-blur, 16px));
   opacity: var(--pv-scrim, 0);
   will-change: opacity;
-  cursor: zoom-out;
 }
 
 /* ── the sheet + its scroller ──────────────────────────────────────────── */
@@ -57,6 +56,9 @@
 .pv-scroller {
   width: 100vw;
   height: 100vh;
+  /* The glass closes the view when you click it, but it is not an affordance —
+     the pill and the slivers are. No pointer, no hover state. */
+  cursor: default;
   overflow-x: hidden;
   overflow-y: scroll;
   overscroll-behavior: contain;
@@ -126,19 +128,50 @@
 
 /* Each page is a 100vh window onto its own content AND its own scroll
    container: `Sheet` writes `scrollTop` straight to it. That is what lets a
-   finished page hold at its bottom while the row slides on past it. */
+   finished page hold at its bottom while the row slides on past it.
+
+   FROSTED (the default): the page is its own sheet of glass over the app, so
+   the covers and the sky keep moving behind the text rather than being replaced
+   by a black rectangle. It stacks on the scrim's glass — behind a page the
+   backdrop goes through two blurs and two tints, behind the gutter through one,
+   which is what gives the pages their edge without a border.
+
+   `--pv-page-alpha` is the contrast lever, and the only thing between the text
+   and whatever the grid happens to be showing; `contrastProbe.ts` measures it.
+   The stacked slivers and the previewing page use the same glass, so the stack
+   reads as a stack of pages and not as a wall. */
 .pv-page {
   position: absolute;
   top: 0;
   width: var(--pv-page-w, 44vw);
   height: 100vh;
   overflow: hidden;
-  background: #000;
+  background: rgba(0, 0, 0, var(--pv-page-alpha, 0.55));
+  backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
+  -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
   perspective: 1000px;
   opacity: var(--pv-preview-op, 0.2);
   transition:
     opacity var(--pv-preview-fade, 200ms) ease,
     z-index var(--pv-z-fade, 400ms);
+}
+
+/* SOLID: flat black, no backdrop at all. `backdrop-filter: none` rather than a
+   no-op filter — a no-op still creates a backdrop root and still costs. Chosen
+   by the dock's `pageSurface` dial, and forced below for anyone who has asked
+   for less transparency or more contrast. */
+:root[data-pv-surface='solid'] .pv-page {
+  background: #000;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .pv-page {
+    background: #000;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* The page you are reading, and the ones you have finished, are both fully
@@ -171,41 +204,90 @@
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
 
-/* Circular, left edge, vertically centred; enters from up-and-out toward the
-   corner as `--pv-pill` runs 0 → 1. It sits in the gutter the sliver stack
-   also lives in, above it. */
+/* Centred across the left gutter and down the viewport, so it sits in the band
+   the sliver stack occupies rather than beside it — and above it, because the
+   way out should never be something you have to hunt for behind a page edge.
+   `--pv-gutter` is published by `Sheet` from the same number the track lays the
+   stack out with.
+
+   The OUTER button is the entrance only: `--pv-pill` is written per frame by
+   the motion driver, so nothing here may have a transition on `transform`. */
 .pv-close {
   position: absolute;
-  left: 24px;
+  left: calc(var(--pv-gutter, 0px) * var(--pv-pill-x, 0.5));
   top: 50%;
-  z-index: 2;
-  width: 56px;
-  height: 56px;
+  z-index: 3;
+  width: var(--pv-pill-d, 146px);
+  height: var(--pv-pill-d, 146px);
   padding: 0;
   border: 0;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(var(--pv-pill-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--pv-pill-blur, 8px));
-  color: rgba(255, 255, 255, 0.85);
+  background: none;
   cursor: pointer;
   opacity: var(--pv-pill, 0);
   transform: translate(
-    calc(var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1)),
+    calc(-50% + var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1)),
     calc(-50% + var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1))
   );
   will-change: transform, opacity;
 }
-.pv-close svg {
-  width: 18px;
-  height: 18px;
+
+/* The INNER disc is the ring, the glass and the hover — its own transform, so
+   the 0.25s hover transition never fights the driver's per-frame writes. Ring
+   and glyph share `currentColor`, so they brighten together. */
+.pv-close__disc {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: 0.5px solid currentColor;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(var(--pv-pill-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--pv-pill-blur, 8px));
+  color: rgba(255, 255, 255, var(--pv-pill-ink, 0.2));
+  transition:
+    color 250ms ease,
+    background 250ms ease,
+    transform 250ms ease;
 }
-.pv-close:hover {
+
+.pv-close:hover .pv-close__disc,
+.pv-close:focus-visible .pv-close__disc {
+  color: rgba(255, 255, 255, var(--pv-pill-ink-hover, 1));
   background: rgba(0, 0, 0, 0.75);
+  transform: scale(var(--pv-pill-hover-scale, 0.92));
 }
+
 .pv-close:focus-visible {
-  outline: 1px solid #fff;
-  outline-offset: 2px;
+  outline: none; /* the ring IS the focus state (see the rule above) */
+}
+
+.pv-close__x {
+  display: block;
+}
+
+/* Dev only: the contrast probe's verdict, pinned under the dock. */
+.pv-contrast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.8);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
+.pv-contrast[data-fail] {
+  color: #ff6b6b;
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
 /* Reduced motion: no slide, no blur ramp — the view is simply there. The
@@ -221,7 +303,10 @@
     opacity: 1;
   }
   .pv-close {
-    transform: translateY(-50%);
+    transform: translate(-50%, -50%);
+  }
+  .pv-close__disc {
+    transition: color 250ms ease, background 250ms ease;
   }
   .pv-page {
     transition: none;

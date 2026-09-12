@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DialRoot, DialTimeline, useDialKit, useDialTimeline } from 'dialkit';
 import type { TimelineConfig } from 'dialkit';
 import 'dialkit/styles.css';
@@ -14,6 +14,35 @@ import {
   samplePortfolioExit,
 } from './portfolioMotion';
 import type { PortfolioLook } from './portfolioMotion';
+import { logContrastProbe, subscribeContrast } from './contrastProbe';
+import type { ContrastReport } from './contrastProbe';
+
+/**
+ * The contrast probe's verdict, beside the dials that change it. Red and
+ * specific when something is below its target, because "the glass looks fine"
+ * is exactly the judgement this exists to replace.
+ */
+function ContrastReadout() {
+  const [report, setReport] = useState<ContrastReport | null>(null);
+  useEffect(() => subscribeContrast(setReport), []);
+  if (!report) return null;
+  const failures = report.samples.filter((s) => !s.pass);
+  return (
+    <div className="pv-contrast" data-fail={failures.length > 0 || undefined}>
+      <strong>
+        {report.worst === null
+          ? 'contrast — no text on screen (scrub the timeline in)'
+          : `contrast ${report.worst}:1 worst of ${report.samples.length}`}
+        {report.skyEstimated ? ' (sky estimated)' : ''}
+      </strong>
+      {failures.map((s, i) => (
+        <span key={i}>
+          {s.kind} {s.fontPx}px — {s.ratio}:1, needs {s.required}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
 const s = (ms: number): number => ms / 1000;
@@ -121,8 +150,26 @@ export default function PortfolioDialKit() {
     zFadeMs: [LOOK.zFadeMs, 0, 1500, 10],
     scrimBlurPx: [LOOK.scrimBlurPx, 0, 48, 1],
     scrimAlpha: [LOOK.scrimAlpha, 0, 0.9, 0.01],
+  });
+
+  // The page glass. `pageAlpha` is the contrast lever: it is what stands
+  // between the text and whatever the grid happens to be showing through.
+  const glass = useDialKit('PV GLASS', {
+    pageSurface: { type: 'select', options: ['frosted', 'solid'], default: LOOK.pageSurface },
+    pageAlpha: [LOOK.pageAlpha, 0, 1, 0.01],
+    pageBlurPx: [LOOK.pageBlurPx, 0, 60, 1],
+    pageSaturate: [LOOK.pageSaturate, 0.5, 2, 0.05],
+    probe: { type: 'action', label: 'Re-run contrast probe' },
+  }, { id: 'pv-glass', onAction: (a) => a === 'probe' && logContrastProbe() });
+
+  const pill = useDialKit('PV PILL', {
+    pillDiameterPx: [LOOK.pillDiameterPx, 40, 240, 1],
+    pillGutterX: [LOOK.pillGutterX, 0, 1, 0.01],
     pillOffsetPx: [LOOK.pillOffsetPx, 0, 160, 1],
     pillBlurPx: [LOOK.pillBlurPx, 0, 32, 1],
+    pillInkRest: [LOOK.pillInkRest, 0, 1, 0.01],
+    pillInkHover: [LOOK.pillInkHover, 0, 1, 0.01],
+    pillHoverScale: [LOOK.pillHoverScale, 0.7, 1.2, 0.01],
   });
 
   // The scroller's own feel. `lenisLerp` and `wheelMultiplier` are the two
@@ -131,7 +178,8 @@ export default function PortfolioDialKit() {
   const track = useDialKit('PV TRACK', {
     lenisLerp: [LOOK.lenisLerp, 0.02, 1, 0.01],
     wheelMultiplier: [LOOK.wheelMultiplier, 0.2, 3, 0.05],
-    sliverClickMs: [LOOK.sliverClickMs, 100, 2000, 10],
+    sliverClickMs: [LOOK.sliverClickMs, 100, 2500, 10],
+    sliverReturn: { type: 'select', options: ['top', 'bottom'], default: LOOK.sliverReturn },
   });
 
   const reveal = useDialKit('PV REVEAL', {
@@ -161,8 +209,18 @@ export default function PortfolioDialKit() {
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,
     sliverClickMs: track.sliverClickMs,
-    pillOffsetPx: geometry.pillOffsetPx,
-    pillBlurPx: geometry.pillBlurPx,
+    sliverReturn: track.sliverReturn as PortfolioLook['sliverReturn'],
+    pageSurface: glass.pageSurface as PortfolioLook['pageSurface'],
+    pageAlpha: glass.pageAlpha,
+    pageBlurPx: glass.pageBlurPx,
+    pageSaturate: glass.pageSaturate,
+    pillDiameterPx: pill.pillDiameterPx,
+    pillGutterX: pill.pillGutterX,
+    pillOffsetPx: pill.pillOffsetPx,
+    pillBlurPx: pill.pillBlurPx,
+    pillInkRest: pill.pillInkRest,
+    pillInkHover: pill.pillInkHover,
+    pillHoverScale: pill.pillHoverScale,
     revealMs: reveal.revealMs,
     revealBlurPx: reveal.revealBlurPx,
     revealOffsetPx: reveal.revealOffsetPx,
@@ -250,6 +308,7 @@ export default function PortfolioDialKit() {
     <>
       <DialRoot position="top-right" />
       <DialTimeline />
+      <ContrastReadout />
     </>
   );
 }

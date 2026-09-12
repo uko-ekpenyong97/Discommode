@@ -2,9 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import Lenis from 'lenis';
 import { PageRow } from './PageRow';
 import { look, subscribeLook } from './portfolioMotion';
-import { bottomOf, buildTrack, layout, positionAt, resolve } from './pageTrack';
+import { bottomOf, buildTrack, layout, positionAt, positionOf, resolve } from './pageTrack';
 import type { Track, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
+import { useDismissOnGlass } from './useDismissOnGlass';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
 
@@ -46,15 +47,20 @@ import type { Project } from './blocks/types';
  * from intrinsic sizes, so a page's height is the same before and after its
  * assets load. They are here because "should" is not a guarantee.
  */
+/** The sliver-click tween's curve — decelerating, so a long rewind settles. */
+const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
+
 interface SheetProps {
   project: Project;
   /** 0-based page to open on (from `#view-NN/<page>`). */
   initialPage: number;
   /** The page being read changed — the hash follows it. */
   onPageChange: (index: number) => void;
+  /** A click landed on glass rather than on a page: leave the view. */
+  onDismiss: () => void;
 }
 
-export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
+export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -102,6 +108,7 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
   });
 
   useReveal(scroller, project.id);
+  const dismiss = useDismissOnGlass(onDismiss);
 
   /** One frame: the track position in, the row's whole arrangement out. */
   const apply = useCallback((position: number) => {
@@ -175,8 +182,10 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
     // length minus the one viewport the sticky stage already occupies.
     spacer.style.height = `${Math.max(0, track.length - track.viewportHeight)}px`;
     // The row's origin is the left gutter. Published from here rather than
-    // recomputed in CSS so the two can't disagree by a rounding step.
-    row.style.setProperty('--pv-gutter', `${track.gutter}px`);
+    // recomputed in CSS so the two can't disagree by a rounding step — and on
+    // the root, because the close pill sits in that gutter too and is not a
+    // descendant of the row.
+    document.documentElement.style.setProperty('--pv-gutter', `${track.gutter}px`);
 
     // Back into pixels against the NEW track, synchronously — there must be no
     // frame that paints the new starts against the old position.
@@ -324,20 +333,31 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
     };
   }, [apply, smoothing]);
 
-  /** A stacked sliver was clicked: scroll the track back to that page's BOTTOM —
-   *  the line you stopped reading, which is what the sliver is showing you. The
-   *  row un-stacks through the same `layout()` mapping on the way; there is no
-   *  separate animation, only a different position. */
+  /**
+   * A stacked sliver was clicked: scroll the track back to that page's TOP, so
+   * the page visibly rewinds from the bottom the sliver is showing you to its
+   * title while the row un-stacks around it. Which is the point — the return is
+   * the outward journey run backwards, not a cut.
+   *
+   * `sliverReturn: 'bottom'` lands on the line you stopped at instead, which is
+   * shorter and less of a performance; the dial is there to A/B them.
+   *
+   * Either way the un-stacking is not an animation of its own: it is the same
+   * `layout()` mapping, read at a smaller position.
+   */
   const scrollToPage = useCallback((index: number) => {
     const track = trackRef.current;
     const lenis = lenisRef.current;
     const sc = scrollerRef.current;
     if (!track) return;
-    const target = bottomOf(track, index);
+    const target =
+      look.sliverReturn === 'bottom' ? bottomOf(track, index) : positionOf(track, index);
     if (lenis) {
       lenis.scrollTo(target, {
         duration: look.sliverClickMs / 1000,
-        easing: (t: number) => 1 - Math.pow(1 - t, 3),
+        // The dial's curve, not Lenis's default: a long rewind wants to arrive
+        // slowly, and this is the one tween in the view a person watches.
+        easing: easeOutCubic,
       });
     } else if (sc) {
       sc.scrollTo({ top: target, behavior: 'smooth' });
@@ -345,7 +365,7 @@ export function Sheet({ project, initialPage, onPageChange }: SheetProps) {
   }, []);
 
   return (
-    <div className="pv-sheet">
+    <div className="pv-sheet" {...dismiss}>
       <div className="pv-scroller" ref={attachScroller} data-locked={armed ? undefined : ''}>
         <ScrollerContext.Provider value={scroller}>
           <div className="pv-content" ref={contentRef}>

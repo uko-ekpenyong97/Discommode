@@ -3,7 +3,8 @@ import { CONTENT, indexForProject } from '../content';
 import { ClosePill } from './ClosePill';
 import { Scrim } from './Scrim';
 import { Sheet } from './Sheet';
-import { applyPortfolioLook, applyPortfolioRest } from './portfolioMotion';
+import { logContrastProbe } from './contrastProbe';
+import { applyPortfolioLook, applyPortfolioRest, subscribeLook } from './portfolioMotion';
 import { closePortfolio, replacePortfolio } from './portfolioNav';
 import { PROJECTS, projectById } from './projects';
 import { usePortfolioMotion } from './usePortfolioMotion';
@@ -66,6 +67,19 @@ export default function PortfolioView({ project, page, intro = false }: Portfoli
     [current.id],
   );
 
+  // DEV: measure the text against whatever the grid is actually showing through
+  // the page glass, once the sheet has settled and again whenever a glass dial
+  // moves. `pageAlpha` is the lever; this is what says whether it is far enough.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const first = window.setTimeout(logContrastProbe, 900);
+    const off = subscribeLook(() => logContrastProbe());
+    return () => {
+      window.clearTimeout(first);
+      off();
+    };
+  }, []);
+
   // Escape closes. The app beneath is suspended, so the key is unambiguously
   // ours; the wheel belongs to the sheet's own scroller and nothing else.
   useEffect(() => {
@@ -81,6 +95,11 @@ export default function PortfolioView({ project, page, intro = false }: Portfoli
   return (
     <div className="pv">
       <Scrim onDismiss={close} />
+      {/* Before the sheet in the DOM, not after: this is a modal, and the way
+          out should be the first thing Tab reaches rather than something you
+          arrive at after every link in the project. It paints above the sheet
+          regardless (z-index). */}
+      <ClosePill onClose={close} />
       <Sheet
         // A different project is a different track: remount rather than try to
         // carry a scroll position between two unrelated page lists.
@@ -88,8 +107,8 @@ export default function PortfolioView({ project, page, intro = false }: Portfoli
         project={current}
         initialPage={page}
         onPageChange={onPageChange}
+        onDismiss={close}
       />
-      <ClosePill onClose={close} />
       {authoring && PortfolioDialKit && (
         <Suspense fallback={null}>
           <PortfolioDialKit />
