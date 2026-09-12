@@ -57,12 +57,30 @@ export interface Stat extends Sized {
 }
 
 export type Block = BlockBody & {
-  /** Start a new `<section>` at this block (hairline divider above it). */
-  newSection?: boolean;
+  /** Start a new RUN at this block — one `<div class="pv-run">` with a hairline
+   *  divider above it. A run is a paragraph-level grouping inside a section,
+   *  not a section: sections are the notebook's tabbed units. */
+  newRun?: boolean;
   /** Give this block the 3D flip-in rather than the standard reveal — for the
    *  one or two frames a project leads with. */
   flip?: boolean;
 };
+
+/**
+ * One tabbed section of a project — a divider in the notebook.
+ *
+ * Where a section break falls is a content decision, never a computed split of
+ * a long list: a section is what a tab names, and only the person writing the
+ * project knows where one ends.
+ */
+export interface Section {
+  /** The tab's label, running down the left edge. */
+  title: string;
+  /** HSL hue for this section's glass and its tab. Sections are told apart by
+   *  colour as much as by label, so it belongs to the content, not to a theme. */
+  hue: number;
+  blocks: Block[];
+}
 
 export interface Project {
   /** Project id — the `NN` in `#view-NN`. */
@@ -70,13 +88,9 @@ export interface Project {
   /** Shown in the sheet's chrome; not a block. */
   title: string;
   /**
-   * The project's PAGES, in order. Each entry is one page's blocks.
-   *
-   * Where a page break falls is a content decision, never a computed split of a
-   * long list: a page is a held frame, and only the person writing the project
-   * knows where one ends. The count is unbounded — one page is a perfectly good
-   * project, and the sheet's mechanics derive everything from the list's
-   * length (see `pageTrack.ts`).
+   * The project's SECTIONS, in order. The count is unbounded — one section is a
+   * perfectly good project, and the notebook derives everything from the list's
+   * length, down to how tall the tabs have to be to fit (see `pageTrack.ts`).
    */
-  pages: Block[][];
+  sections: Section[];
 }

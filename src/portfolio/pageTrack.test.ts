@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bottomOf,
   buildTrack,
+  fitTabHeight,
   layout,
   maxPosition,
   positionAt,
@@ -10,253 +11,253 @@ import {
 } from './pageTrack';
 import type { TrackMetrics } from './pageTrack';
 
-/** The reference measurements from halfof8.com at 2560x1352. */
-const REFERENCE: TrackMetrics = {
-  heights: [3000, 6000, 4000],
-  viewportWidth: 2560,
-  viewportHeight: 1352,
-  pageWidth: 1129,
-  sliverWidth: 358,
-};
-
-/** A three-page project at a common laptop viewport. */
+/** A five-section project at a common laptop viewport. */
 const metrics = (over: Partial<TrackMetrics> = {}): TrackMetrics => ({
-  heights: [2250, 4500, 2700],
-  viewportWidth: 1440,
+  heights: [1800, 3600, 2700, 4500, 1350],
   viewportHeight: 900,
-  pageWidth: 0.44 * 1440,
-  sliverWidth: 0.14 * 1440,
+  turnDistance: 720,
   ...over,
 });
 
+const TURN = 720;
+
 describe('buildTrack', () => {
-  it('gives each page a vertical run of its overflow, then one page of slide', () => {
+  it('gives each section a vertical run of its overflow, then one turn', () => {
     const t = buildTrack(metrics());
-    expect(t.pageScroll).toEqual([1350, 3600, 1800]);
-    expect(t.start).toEqual([0, 1350 + 633.6, 1350 + 633.6 + 3600 + 633.6]);
+    expect(t.pageScroll).toEqual([900, 2700, 1800, 3600, 450]);
+    expect(t.start).toEqual([
+      0,
+      900 + TURN,
+      900 + TURN + 2700 + TURN,
+      900 + TURN + 2700 + TURN + 1800 + TURN,
+      900 + TURN + 2700 + TURN + 1800 + TURN + 3600 + TURN,
+    ]);
   });
 
-  it('a page shorter than the viewport still has a segment, just no scroll', () => {
+  it('a section shorter than the viewport still has a segment, just no scroll', () => {
     const t = buildTrack(metrics({ heights: [400, 2000] }));
     expect(t.pageScroll[0]).toBe(0);
-    expect(t.start[1]).toBe(633.6); // straight into the slide
+    expect(t.start[1]).toBe(TURN); // straight into the turn
   });
 
-  it('ends one viewport past the last page, so the last page reaches its bottom', () => {
+  it('ends one viewport past the last section, so it reaches its bottom', () => {
     const t = buildTrack(metrics());
-    expect(t.length).toBe(t.start[2] + 1800 + 900);
-    expect(maxPosition(t)).toBe(t.start[2] + 1800);
+    expect(t.length).toBe(t.start[4] + 450 + 900);
+    expect(maxPosition(t)).toBe(t.start[4] + 450);
   });
 
-  it('a single-page project is just that page, with no slide', () => {
+  it('a single-section project is just that section, with no turn', () => {
     const t = buildTrack(metrics({ heights: [2700] }));
     expect(t.start).toEqual([0]);
     expect(t.length).toBe(1800 + 900);
     expect(maxPosition(t)).toBe(1800);
   });
 
-  it('rests the stack at the reference offsets (2560 wide, W 1129, S 358)', () => {
-    const t = buildTrack(REFERENCE);
-    // Spec: page 0 at -716, page 1 at -1487 (both quoted rounded).
-    expect(t.rest[0]).toBeCloseTo(-715.5, 1);
-    expect(t.rest[1]).toBeCloseTo(-1486.75, 1);
-  });
-
-  it('lands a resting page with its left edge at exactly j * sliver', () => {
-    const t = buildTrack(REFERENCE);
-    for (let j = 0; j < 3; j++) {
-      // A page's untranslated left edge is `gutter + j * pageWidth`.
-      const left = t.gutter + j * t.pageWidth + t.rest[j];
-      expect(left).toBeCloseTo(j * t.sliver, 6);
-    }
-  });
-
-  it('shrinks the sliver so the stack fits the gutter, never widening it', () => {
-    const six = buildTrack(metrics({ heights: [1000, 1000, 1000, 1000, 1000, 1000] }));
-    const gutter = (1440 - 633.6) / 2; // 403.2
-    expect(six.gutter).toBeCloseTo(gutter, 6);
-    expect(six.sliver).toBeCloseTo(gutter / 5, 6); // 80.64
-    expect(six.sliver).toBeLessThan(0.14 * 1440); // below the preferred 14vw
-    // The last page to stack (index 5) lands exactly on the gutter's edge.
-    expect(5 * six.sliver).toBeCloseTo(gutter, 6);
-  });
-
-  it('keeps the preferred sliver when the gutter is roomy enough', () => {
-    const two = buildTrack(metrics({ heights: [1000, 1000] }));
-    expect(two.sliver).toBeCloseTo(0.14 * 1440, 6);
+  it('spends the same scroll on a turn whatever the page is wide', () => {
+    // The turn is its own dial now: it is a page sliding over a page, and how
+    // far the wheel has to travel to do it is not the page's width.
+    const narrow = buildTrack(metrics({ turnDistance: 400 }));
+    expect(narrow.start[1]).toBe(900 + 400);
   });
 });
 
 describe('layout', () => {
   const track = buildTrack(metrics());
-  const W = 633.6;
 
-  it('scrolls page 0 in place while the row stays home', () => {
+  it('scrolls a section in place with nothing turning', () => {
     const l = layout(track, 600);
+    expect(l.topIndex).toBe(0);
     expect(l.activeIndex).toBe(0);
-    expect(l.movingHorizontal).toBe(false);
-    expect(l.scrollTop).toEqual([600, 0, 0]);
-    expect(l.translateX[0]).toBe(0);
-    expect(l.translateX[1]).toBe(0);
+    expect(l.turning).toBe(false);
+    expect(l.scrollTop).toEqual([600, 0, 0, 0, 0]);
+    // Section 0 at rest; section 1 waiting off to the right; the rest parked.
+    expect(l.translateX).toEqual([0, 100, 100, 100, 100]);
+    expect(l.visible).toEqual([true, true, false, false, false]);
   });
 
-  it('moves the row 1:1 with the scroll through the slide', () => {
-    const mid = track.pageScroll[0] + W / 2;
-    const l = layout(track, mid);
-    expect(l.movingHorizontal).toBe(true);
-    expect(l.activeIndex).toBe(1);
-    // Future pages follow the row exactly.
-    expect(l.translateX[2]).toBeCloseTo(-W / 2, 6);
-    // The page being left is frozen at its bottom; the incoming one is at its top.
-    expect(l.scrollTop).toEqual([1350, 0, 0]);
+  it('turns the next section in 1:1 with the scroll, over a stack that holds', () => {
+    const quarter = layout(track, track.pageScroll[0] + TURN * 0.25);
+    expect(quarter.turning).toBe(true);
+    expect(quarter.progress).toBeCloseTo(0.25, 6);
+    expect(quarter.translateX[1]).toBeCloseTo(75, 6);
+    expect(quarter.translateX[0]).toBe(0); // the covered section does not move
+    // The section being covered is frozen at its bottom; the incoming one is
+    // at its top.
+    expect(quarter.scrollTop).toEqual([900, 0, 0, 0, 0]);
   });
 
-  it('hands the slide over to the next vertical segment with no jump', () => {
+  it('puts the incoming section on top the instant the turn starts', () => {
+    const early = layout(track, track.pageScroll[0] + 1);
+    expect(early.topIndex).toBe(1);
+    // …but you are still IN section 0 until the half-way point.
+    expect(early.activeIndex).toBe(0);
+    expect(early.zIndex[1]).toBeGreaterThan(early.zIndex[0]);
+  });
+
+  it('hands the section over at the half-way point', () => {
+    const before = layout(track, track.pageScroll[0] + TURN * 0.49);
+    const after = layout(track, track.pageScroll[0] + TURN * 0.51);
+    expect(before.activeIndex).toBe(0);
+    expect(after.activeIndex).toBe(1);
+  });
+
+  it('hands the turn over to the next vertical segment with no jump', () => {
     const before = layout(track, track.start[1] - 0.001);
     const after = layout(track, track.start[1]);
-    expect(after.translateX[2]).toBeCloseTo(before.translateX[2], 2);
-    expect(after.translateX[2]).toBeCloseTo(-W, 6);
+    expect(before.translateX[1]).toBeCloseTo(0, 2);
+    expect(after.translateX[1]).toBe(0);
+    expect(after.turning).toBe(false);
     expect(after.activeIndex).toBe(1);
-    expect(after.movingHorizontal).toBe(false);
   });
 
-  it('clamps a finished page at its resting slot instead of carrying it off', () => {
-    const onPage2 = layout(track, track.start[2] + 100);
-    expect(onPage2.activeIndex).toBe(2);
-    expect(onPage2.translateX[0]).toBeCloseTo(track.rest[0], 6);
-    expect(onPage2.translateX[1]).toBeCloseTo(track.rest[1], 6);
-    expect(onPage2.translateX[2]).toBeCloseTo(-2 * W, 6);
-    // Stacked pages hold their bottom; the active one scrolls.
-    expect(onPage2.scrollTop).toEqual([1350, 3600, 100]);
+  it('keeps every finished section stacked at rest, frozen at its bottom', () => {
+    const l = layout(track, track.start[3] + 100);
+    expect(l.activeIndex).toBe(3);
+    expect(l.translateX).toEqual([0, 0, 0, 0, 100]);
+    expect(l.scrollTop).toEqual([900, 2700, 1800, 100, 0]);
+    expect(l.visible).toEqual([true, true, true, true, true]);
   });
 
-  it('never pushes a page past its rest — the stack only ever tightens', () => {
-    const end = layout(track, maxPosition(track));
-    expect(end.translateX[0]).toBeCloseTo(track.rest[0], 6);
-    expect(end.translateX[1]).toBeCloseTo(track.rest[1], 6);
+  it('orders sections by index, so a later one always covers an earlier one', () => {
+    const l = layout(track, track.start[2] + 50);
+    for (let j = 1; j < l.zIndex.length; j++) {
+      expect(l.zIndex[j]).toBeGreaterThan(l.zIndex[j - 1]);
+    }
   });
 
-  it('un-stacks through the same mapping when the position goes back', () => {
-    const back = layout(track, positionOf(track, 0) + 200);
+  it('un-turns through the same mapping when the position goes back', () => {
+    const back = layout(track, 200);
     expect(back.activeIndex).toBe(0);
-    expect(back.translateX).toEqual([0, 0, 0]);
-    expect(back.scrollTop).toEqual([200, 0, 0]);
+    expect(back.translateX).toEqual([0, 100, 100, 100, 100]);
+    expect(back.scrollTop).toEqual([200, 0, 0, 0, 0]);
   });
 
-  it('has no horizontal segment at all for a single-page project', () => {
+  it('has no turn at all for a single-section project', () => {
     const one = buildTrack(metrics({ heights: [2700] }));
     for (const y of [0, 900, maxPosition(one)]) {
       const l = layout(one, y);
-      expect(l.movingHorizontal).toBe(false);
-      expect(l.activeIndex).toBe(0);
+      expect(l.turning).toBe(false);
+      expect(l.topIndex).toBe(0);
       expect(l.translateX).toEqual([0]);
+      expect(l.visible).toEqual([true]);
     }
   });
 
-  it('clamps out-of-range positions rather than reporting a phantom page', () => {
+  it('clamps out-of-range positions rather than reporting a phantom section', () => {
     expect(layout(track, -500).activeIndex).toBe(0);
-    expect(layout(track, 1e9).activeIndex).toBe(2);
-    expect(layout(track, 1e9).scrollTop[2]).toBe(1800);
+    expect(layout(track, 1e9).activeIndex).toBe(4);
+    expect(layout(track, 1e9).scrollTop[4]).toBe(450);
   });
 });
 
-describe('positionOf', () => {
+describe('positionOf / bottomOf', () => {
   const track = buildTrack(metrics());
 
-  it('is the start of a page, so a deep link lands at its top', () => {
+  it('lands a deep link (and a tab click) at a section’s top', () => {
     expect(positionOf(track, 0)).toBe(0);
-    expect(positionOf(track, 2)).toBe(track.start[2]);
-    expect(layout(track, positionOf(track, 2)).activeIndex).toBe(2);
-    expect(layout(track, positionOf(track, 2)).scrollTop[2]).toBe(0);
+    expect(positionOf(track, 3)).toBe(track.start[3]);
+    const l = layout(track, positionOf(track, 3));
+    expect(l.activeIndex).toBe(3);
+    expect(l.turning).toBe(false);
+    expect(l.scrollTop[3]).toBe(0);
+    expect(l.translateX).toEqual([0, 0, 0, 0, 100]);
   });
 
-  it('clamps a page index outside the project', () => {
+  it('lands the `bottom` dial where the section was left', () => {
+    const y = bottomOf(track, 1);
+    expect(y).toBe(track.start[1] + track.pageScroll[1]);
+    const l = layout(track, y);
+    expect(l.activeIndex).toBe(1);
+    expect(l.turning).toBe(false);
+    expect(l.scrollTop[1]).toBe(track.pageScroll[1]);
+  });
+
+  it('holds the section at a sub-pixel wobble around its bottom', () => {
+    // Lenis settles on a float; a hair past the boundary must not read as a turn.
+    const y = bottomOf(track, 1);
+    for (const eps of [-0.4, -0.05, 0, 0.05, 0.4]) {
+      expect(layout(track, y + eps).turning).toBe(false);
+      expect(layout(track, y + eps).activeIndex).toBe(1);
+    }
+  });
+
+  it('clamps a section index outside the project', () => {
     expect(positionOf(track, -3)).toBe(0);
-    expect(positionOf(track, 99)).toBe(track.start[2]);
+    expect(positionOf(track, 99)).toBe(track.start[4]);
   });
 });
 
-describe('bottomOf', () => {
+describe('positionAt / resolve', () => {
   const track = buildTrack(metrics());
 
-  it('is the end of a page, so a sliver click lands where you left it', () => {
-    const y = bottomOf(track, 0);
-    expect(y).toBe(track.pageScroll[0]);
-    const l = layout(track, y);
-    // Back to reading page 0, at its bottom, with nothing stacked any more.
-    expect(l.activeIndex).toBe(0);
-    expect(l.movingHorizontal).toBe(false);
-    expect(l.scrollTop[0]).toBe(track.pageScroll[0]);
-    expect(l.translateX).toEqual([0, 0, 0]);
-  });
-
-  it('is exactly the position the next page\u2019s slide starts from', () => {
-    for (let k = 0; k + 1 < track.start.length; k++) {
-      expect(bottomOf(track, k)).toBeLessThan(track.start[k + 1]);
-      expect(layout(track, bottomOf(track, k) + 4).movingHorizontal).toBe(true);
-    }
-  });
-
-  it('holds the page at a sub-pixel wobble around its bottom', () => {
-    // A smoothed scroll settles a hair either side of the boundary; the active
-    // page must not flicker between two there.
-    for (const nudge of [-0.2, 0, 0.2, 0.4]) {
-      const l = layout(track, bottomOf(track, 1) + nudge);
-      expect(l.activeIndex).toBe(1);
-      expect(l.movingHorizontal).toBe(false);
-    }
-  });
-});
-
-describe('positionAt / resolve (carrying the reader across a rebuild)', () => {
-  it('keeps the page and the offset when the heights change under you', () => {
-    const before = buildTrack(metrics());
-    const y = before.start[1] + 800; // 800px down page 2
-    const at = positionAt(before, y);
-    expect(at).toEqual({ page: 1, offset: 800, slide: null });
-
-    // Page 1 grows by 900 and page 2 by 400 — every start behind them moves.
-    const after = buildTrack(metrics({ heights: [2250 + 900, 4500 + 400, 2700] }));
-    const y2 = resolve(after, at);
-
-    expect(y2).not.toBe(y); // the PIXEL position genuinely moved
-    expect(positionAt(after, y2)).toEqual(at); // the SEMANTIC one did not
-    expect(layout(after, y2).activeIndex).toBe(layout(before, y).activeIndex);
-    expect(layout(after, y2).scrollTop[1]).toBe(800);
-  });
-
-  it('keeps slide progress across a rebuild', () => {
-    const before = buildTrack(metrics());
-    const y = before.start[0] + before.pageScroll[0] + 0.25 * before.pageWidth;
-    const at = positionAt(before, y);
-    expect(at.page).toBe(0);
-    expect(at.slide).toBeCloseTo(0.25, 6);
-
-    const after = buildTrack(metrics({ heights: [3400, 4500, 2700] }));
-    const y2 = resolve(after, at);
-    const l = layout(after, y2);
-    expect(l.movingHorizontal).toBe(true);
-    expect(l.activeIndex).toBe(1);
-    expect(l.translateX[2]).toBeCloseTo(-0.25 * after.pageWidth, 4);
-  });
-
-  it('lands at the bottom of a page that shrank past where you were', () => {
-    const before = buildTrack(metrics());
-    const at = positionAt(before, before.start[1] + 3000);
-    const after = buildTrack(metrics({ heights: [2250, 1400, 2700] })); // page 2 now barely scrolls
-    const y2 = resolve(after, at);
-    expect(positionAt(after, y2)).toEqual({ page: 1, offset: after.pageScroll[1], slide: null });
-  });
-
-  it('round-trips every position on an unchanged track', () => {
-    const track = buildTrack(metrics());
-    for (let y = 0; y <= maxPosition(track); y += 137) {
+  it('round-trips every kind of position', () => {
+    for (const y of [0, 450, 900, 900 + 360, track.start[2] + 10, maxPosition(track)]) {
       expect(resolve(track, positionAt(track, y))).toBeCloseTo(y, 6);
     }
   });
 
-  it('drops a slide that has no page left to slide to', () => {
-    const track = buildTrack(metrics({ heights: [2250] }));
-    expect(resolve(track, { page: 0, offset: 1350, slide: 0.5 })).toBe(maxPosition(track));
+  it('keeps the reader in place when a section grows under them', () => {
+    const y = track.start[2] + 700;
+    const at = positionAt(track, y);
+    // Section 1 gains 1200px: every start behind it moves, so the same pixel
+    // position is a different place — but the semantic one is not.
+    const grown = buildTrack(metrics({ heights: [1800, 4800, 2700, 4500, 1350] }));
+    const y2 = resolve(grown, at);
+    expect(layout(grown, y2).activeIndex).toBe(2);
+    expect(layout(grown, y2).scrollTop[2]).toBe(700);
+    expect(y2).toBe(y + 1200);
+    // Whereas keeping the pixel position would have put them back in section 1.
+    expect(layout(grown, y).activeIndex).toBe(1);
+  });
+
+  it('keeps the reader in place when the section they are on shrinks', () => {
+    const at = positionAt(track, track.start[1] + 2600);
+    const shrunk = buildTrack(metrics({ heights: [1800, 1200, 2700, 4500, 1350] }));
+    const y = resolve(shrunk, at);
+    expect(layout(shrunk, y).activeIndex).toBe(1);
+    // Past the new bottom, so it holds there rather than spilling into the turn.
+    expect(layout(shrunk, y).scrollTop[1]).toBe(shrunk.pageScroll[1]);
+    expect(layout(shrunk, y).turning).toBe(false);
+  });
+
+  it('keeps a mid-turn position mid-turn', () => {
+    const at = positionAt(track, track.pageScroll[0] + TURN * 0.4);
+    expect(at).toEqual({ section: 0, offset: 900, turn: 0.4 });
+    const grown = buildTrack(metrics({ heights: [3000, 3600, 2700, 4500, 1350] }));
+    const l = layout(grown, resolve(grown, at));
+    expect(l.turning).toBe(true);
+    expect(l.progress).toBeCloseTo(0.4, 6);
+  });
+
+  it('drops a turn that no longer exists rather than overshooting', () => {
+    const at = positionAt(track, track.start[3] + track.pageScroll[3] + TURN * 0.5);
+    expect(at.turn).toBeCloseTo(0.5, 6);
+    // The project loses its last section: there is nothing left to turn in.
+    const shorter = buildTrack(metrics({ heights: [1800, 3600, 2700, 4500] }));
+    const y = resolve(shorter, at);
+    expect(y).toBe(maxPosition(shorter));
+    expect(layout(shorter, y).turning).toBe(false);
+  });
+});
+
+describe('fitTabHeight', () => {
+  it('keeps the preferred height when the column has room', () => {
+    expect(fitTabHeight(132, 5, 900, 0, 6)).toBe(132);
+  });
+
+  it('shrinks the tabs rather than scrolling the column', () => {
+    // Eight tabs at 132 + 6 gap needs 1098px; a 900px viewport has not got it.
+    const h = fitTabHeight(132, 8, 900, 0, 6);
+    expect(h).toBeLessThan(132);
+    expect(8 * h + 7 * 6).toBeCloseTo(900, 6);
+  });
+
+  it('accounts for the offset the first tab starts at', () => {
+    const h = fitTabHeight(132, 8, 900, 40, 6);
+    expect(40 + 8 * h + 7 * 6).toBeCloseTo(900, 6);
+  });
+
+  it('never returns a height a tab could not be drawn at', () => {
+    expect(fitTabHeight(132, 400, 900, 0, 6)).toBeGreaterThan(0);
   });
 });

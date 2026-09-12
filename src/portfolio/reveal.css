@@ -79,16 +79,16 @@
   }
 }
 
-/* ── section hairline ──────────────────────────────────────────────────── */
+/* ── run hairline ──────────────────────────────────────────────────── */
 
-/* Drawn from nothing as the section arrives. The section is its own reveal
-   target — the rule is a pseudo-element, so it needs no node of its own. */
-.pv-section {
+/* Drawn from nothing as the run arrives. The run is its own reveal target —
+   the rule is a pseudo-element, so it needs no node of its own. */
+.pv-run {
   position: relative;
   padding: 92px 0 48px;
 }
 
-.pv-section:not(:first-child)::before {
+.pv-run:not(:first-child)::before {
   content: '';
   position: absolute;
   top: 0;
@@ -101,7 +101,7 @@
   transition: transform 600ms ease-out 300ms;
 }
 
-.pv-section:not(:first-child).is-in::before {
+.pv-run:not(:first-child).is-in::before {
   transform: scaleX(1);
 }
 
@@ -120,7 +120,7 @@
     transform: none;
     transition: none;
   }
-  .pv-section:not(:first-child)::before {
+  .pv-run:not(:first-child)::before {
     transform: scaleX(1);
     transition: none;
   }

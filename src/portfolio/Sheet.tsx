@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Lenis from 'lenis';
-import { PageRow } from './PageRow';
+import { Notebook } from './Notebook';
 import { look, subscribeLook } from './portfolioMotion';
-import { bottomOf, buildTrack, layout, positionAt, positionOf, resolve } from './pageTrack';
+import { bottomOf, buildTrack, fitTabHeight, layout, positionAt, positionOf, resolve } from './pageTrack';
 import type { Track, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
 import { useDismissOnGlass } from './useDismissOnGlass';
@@ -17,86 +17,110 @@ import type { Project } from './blocks/types';
  * grid must not move while a project is open — so the sheet brings its own: a
  * 100vh box with a hidden scrollbar and a spacer sized to the track's length.
  * That scroller's position IS the track position. Every tick it goes through
- * `pageTrack`'s `layout()` and comes back out as a `scrollTop` and a
- * `translateX` per page, which is how one wheel gesture carries you down a
- * page, across to the next, and down that one, with no mode and no state
- * machine in between.
+ * `pageTrack`'s `layout()` and comes back out as a `scrollTop`, a `translateX`
+ * and a z-index per section, which is how one wheel gesture carries you down a
+ * section, turns the next one in over it, and carries on down that, with no
+ * mode and no state machine in between.
  *
  * Everything here is imperative on purpose: scrolling writes transforms and
  * scroll offsets straight to the DOM. The only React state is the scroller
- * ELEMENT (the observers need it as a root) and the active page index, which
- * changes once per page, not once per frame.
+ * ELEMENT (the observers need it as a root) and the armed flag.
  *
  * Smoothing is Lenis, scoped to this scroller via its `wrapper`/`content`
  * options — the grid keeps its own feel entirely. Lenis honours
  * `prefers-reduced-motion` itself by dropping to 1:1.
  *
  * TWO RULES keep the track honest, and both exist because the track is derived
- * from MEASURED page heights:
+ * from MEASURED section heights:
  *
  *  1. The scroller stays LOCKED until the first layout is real — fonts ready
- *     and every page measured at least once. Before that the heights are a
+ *     and every section measured at least once. Before that the heights are a
  *     guess, and a guess you can scroll is a guess that throws you onto the
- *     wrong page.
- *  2. A rebuild preserves the SEMANTIC position (page, offset, slide progress),
- *     never the pixel one. A page growing moves every start behind it, so the
- *     same `y` is a different place; `positionAt` → `resolve` carries the
- *     reader across instead, in the same frame as the height change.
+ *     wrong section.
+ *  2. A rebuild preserves the SEMANTIC position (section, offset, turn
+ *     progress), never the pixel one. A section growing moves every start
+ *     behind it, so the same `y` is a different place; `positionAt` → `resolve`
+ *     carries the reader across instead, in the same frame as the change.
  *
  * Neither should ever have to do any work: the blocks reserve their media boxes
- * from intrinsic sizes, so a page's height is the same before and after its
+ * from intrinsic sizes, so a section's height is the same before and after its
  * assets load. They are here because "should" is not a guarantee.
  */
-/** The sliver-click tween's curve — decelerating, so a long rewind settles. */
+
+/** The tab-click tween's curve — decelerating, so a long rewind settles. */
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
+
+/**
+ * DEV: the tuck seam, checked rather than assumed.
+ *
+ * Every tab must be BELOW every section, always — that is what lets a tab run
+ * under the page's edge and read as a divider going into the book instead of a
+ * button sitting on it. The rule is two `z-index` declarations (`.pv-tabs` at 0,
+ * `.pv-pages` at 1), which is easy to keep true and easy to break from a
+ * distance with a stray stacking context. So this asks the browser: a couple of
+ * pixels INSIDE the page edge, at each tab's own height, what is on top?
+ */
+function assertTabsBehind(book: HTMLElement): void {
+  const seam = book.querySelector<HTMLElement>('.pv-pages')?.getBoundingClientRect();
+  if (!seam) return;
+  for (const tab of book.querySelectorAll<HTMLElement>('.pv-tab')) {
+    const r = tab.getBoundingClientRect();
+    const y = Math.min(Math.max(r.top + r.height / 2, 1), window.innerHeight - 1);
+    const hit = document.elementFromPoint(seam.left + 2, y);
+    if (hit?.closest('.pv-tab')) {
+      console.error(
+        `[pv:tabs] tab ${tab.dataset.k} is painting OVER the page at the tuck seam`,
+      );
+      return;
+    }
+  }
+}
 
 interface SheetProps {
   project: Project;
-  /** 0-based page to open on (from `#view-NN/<page>`). */
-  initialPage: number;
-  /** The page being read changed — the hash follows it. */
-  onPageChange: (index: number) => void;
-  /** A click landed on glass rather than on a page: leave the view. */
+  /** 0-based section to open on (from `#view-NN/<section>`). */
+  initialSection: number;
+  /** The section being read changed — the hash follows it. */
+  onSectionChange: (index: number) => void;
+  /** A click landed on glass rather than on the book: leave the view. */
   onDismiss: () => void;
 }
 
-export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetProps) {
+export function Sheet({ project, initialSection, onSectionChange, onDismiss }: SheetProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const rowRef = useRef<HTMLDivElement>(null);
+  const bookRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
-  // A zero-height box sized to the PREFERRED sliver width, so the vw the dock
-  // dials is resolved to px by the browser rather than re-derived in JS.
-  const probeRef = useRef<HTMLDivElement>(null);
 
   const trackRef = useRef<Track | null>(null);
-  const pagesRef = useRef<HTMLElement[]>([]);
+  const sectionsRef = useRef<HTMLElement[]>([]);
+  const tabsRef = useRef<HTMLElement[]>([]);
   const lenisRef = useRef<Lenis | null>(null);
-  const activeRef = useRef(initialPage);
+  const activeRef = useRef(initialSection);
   /** The first-layout gate (rule 1 above). `armed` unlocks the scroller. */
   const readyRef = useRef({ fonts: false, measured: new Set<Element>(), armed: false, at: 0 });
   // Only read on the FIRST measure of a project; after that the position is
   // carried across from the previous track (see `measure`).
-  const initialPageRef = useRef(initialPage);
+  const initialRef = useRef(initialSection);
 
-  // The scroller as a render input: the reveal observer and every block's
-  // "am I on screen?" test need it as their root, and it only exists after the
-  // first commit.
   // False until the first layout is real. Rendered as `data-locked`, which
   // takes the scroller out of overflow entirely: stopping Lenis is not enough
   // on its own, because Lenis is created in a passive effect and the scroller
   // scrolls NATIVELY in the frames before that.
   const [armed, setArmed] = useState(false);
+  // The scroller as a render input: the reveal observer and every block's
+  // "am I on screen?" test need it as their root, and it only exists after the
+  // first commit.
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const attachScroller = useCallback((el: HTMLDivElement | null) => {
     scrollerRef.current = el;
     setScroller(el);
   }, []);
 
-  const pageChangeRef = useRef(onPageChange);
+  const changeRef = useRef(onSectionChange);
   useEffect(() => {
-    pageChangeRef.current = onPageChange;
-    initialPageRef.current = initialPage;
+    changeRef.current = onSectionChange;
+    initialRef.current = initialSection;
   });
 
   // The two look values CSS cannot carry. A change to either means rebuilding
@@ -110,53 +134,53 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
   useReveal(scroller, project.id);
   const dismiss = useDismissOnGlass(onDismiss);
 
-  /** One frame: the track position in, the row's whole arrangement out. */
+  /** One frame: the track position in, the notebook's whole arrangement out. */
   const apply = useCallback((position: number) => {
     const track = trackRef.current;
-    const pages = pagesRef.current;
-    if (!track || pages.length === 0) return;
+    const sections = sectionsRef.current;
+    if (!track || sections.length === 0) return;
 
     const l = layout(track, position);
-    const top = pages.length + 1;
-    for (let j = 0; j < pages.length; j++) {
-      const el = pages[j];
+    for (let j = 0; j < sections.length; j++) {
+      const el = sections[j];
       if (el.scrollTop !== l.scrollTop[j]) el.scrollTop = l.scrollTop[j];
-      el.style.transform = `translate3d(${l.translateX[j].toFixed(2)}px, 0, 0)`;
-      // Active > stacked > not yet reached. A later stacked page sits over an
-      // earlier one (z = its own index), and the active page over all of them.
-      el.style.zIndex = String(j === l.activeIndex ? top : j);
+      el.style.transform = `translate3d(${l.translateX[j].toFixed(3)}%, 0, 0)`;
+      // `j + 1`, so every section clears the tabs, which sit at 0. That is the
+      // hard rule the whole tuck depends on: a tab is never above a page.
+      el.style.zIndex = String(j + 1);
+      el.style.visibility = l.visible[j] ? '' : 'hidden';
+      el.toggleAttribute('data-top', j === l.topIndex);
       el.toggleAttribute('data-active', j === l.activeIndex);
-      el.toggleAttribute('data-stacked', j < l.activeIndex);
-      el.toggleAttribute('data-moving-horizontal', l.movingHorizontal);
+      el.toggleAttribute('data-buried', j < l.topIndex);
+    }
+    for (const tab of tabsRef.current) {
+      tab.toggleAttribute('data-active', Number(tab.dataset.k) === l.activeIndex);
     }
 
     if (l.activeIndex !== activeRef.current) {
       activeRef.current = l.activeIndex;
-      pageChangeRef.current(l.activeIndex);
+      changeRef.current(l.activeIndex);
     }
   }, []);
 
   /**
-   * Re-derive the track: page heights, the viewport, the page width and the
-   * preferred sliver, all measured rather than assumed (the dock can retune any
-   * of them live). Runs on a resize AND whenever a page's content settles — a
-   * late image extending page 1 has to extend the track with it.
+   * Re-derive the track: section heights, the viewport and the turn distance,
+   * all measured or dialled rather than assumed. Runs on a resize AND whenever
+   * a section's content settles — a late image extending one has to extend the
+   * track with it.
    *
-   * The position is carried across SEMANTICALLY — the page, how far down it,
-   * and how far through a slide — never as a pixel offset. A page that grew
-   * moves every start behind it, so the same `y` is a different place; see
-   * `positionAt` / `resolve`. It should never have to do anything (the blocks
-   * reserve their media boxes), but a rebuild that moves the reader is the one
-   * failure this whole path exists to prevent, so the dev log below shouts
-   * about it.
+   * The position is carried across SEMANTICALLY — the section, how far down it,
+   * and how far through a turn — never as a pixel offset. See `positionAt` /
+   * `resolve`. It should never have to do anything (the blocks reserve their
+   * media boxes), but a rebuild that moves the reader is the one failure this
+   * whole path exists to prevent, so the dev log below shouts about it.
    */
   const measure = useCallback(() => {
     const sc = scrollerRef.current;
-    const row = rowRef.current;
-    const probe = probeRef.current;
+    const book = bookRef.current;
     const spacer = spacerRef.current;
-    const pages = pagesRef.current;
-    if (!sc || !row || !probe || !spacer || pages.length === 0) return;
+    const sections = sectionsRef.current;
+    if (!sc || !book || !spacer || sections.length === 0) return;
 
     const previous = trackRef.current;
     const wasY = sc.scrollTop;
@@ -164,28 +188,33 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
     // rebuild is about to redefine.
     const held: TrackPosition = previous
       ? positionAt(previous, wasY)
-      : { page: initialPageRef.current, offset: 0, slide: null };
+      : { section: initialRef.current, offset: 0, turn: null };
+
+    // The tab column has to fit the viewport without scrolling a second thing,
+    // so with more sections than it holds the tabs get shorter. Published as a
+    // variable because both the tab's height and its `top` are laid out from it.
+    const tabHeight = fitTabHeight(
+      look.tabHeightPx,
+      sections.length,
+      sc.clientHeight,
+      look.tabTopPx,
+      look.tabGapPx,
+    );
+    book.style.setProperty('--pv-tab-h', `${tabHeight}px`);
 
     const track = buildTrack({
-      heights: pages.map((page) => {
-        const inner = page.firstElementChild as HTMLElement | null;
+      heights: sections.map((section) => {
+        const inner = section.firstElementChild as HTMLElement | null;
         return inner ? inner.getBoundingClientRect().height : 0;
       }),
-      viewportWidth: sc.clientWidth,
       viewportHeight: sc.clientHeight,
-      pageWidth: pages[0].getBoundingClientRect().width,
-      sliverWidth: probe.getBoundingClientRect().width,
+      turnDistance: look.turnDistancePx,
     });
     trackRef.current = track;
 
     // The spacer is the only reason the scroller has anywhere to go: the track's
     // length minus the one viewport the sticky stage already occupies.
     spacer.style.height = `${Math.max(0, track.length - track.viewportHeight)}px`;
-    // The row's origin is the left gutter. Published from here rather than
-    // recomputed in CSS so the two can't disagree by a rounding step — and on
-    // the root, because the close pill sits in that gutter too and is not a
-    // descendant of the row.
-    document.documentElement.style.setProperty('--pv-gutter', `${track.gutter}px`);
 
     // Back into pixels against the NEW track, synchronously — there must be no
     // frame that paints the new starts against the old position.
@@ -206,18 +235,18 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
       const heights = track.pageScroll.map((v) => Math.round(v + track.viewportHeight));
       const was = previous.pageScroll.map((v) => Math.round(v + previous.viewportHeight));
       if (String(heights) !== String(was) || before !== after) {
-        const line = `[pv:track] heights ${was} → ${heights}  page ${before} → ${after}`;
-        // A rebuild that changes which page you are on is THE bug this is here
-        // to catch: it means the reader was moved by something loading.
-        if (before !== after) console.warn(`${line}  ← ACTIVE PAGE MOVED`);
+        const line = `[pv:track] heights ${was} → ${heights}  section ${before} → ${after}`;
+        // A rebuild that changes which section you are on is THE bug this is
+        // here to catch: it means the reader was moved by something loading.
+        if (before !== after) console.warn(`${line}  ← ACTIVE SECTION MOVED`);
         else console.log(line);
       }
     }
   }, [apply]);
 
   // Retuning the look in the dev dock changes the geometry the track was built
-  // from — the page width, the preferred sliver — so it has to re-derive. The
-  // two values CSS cannot carry rebuild the Lenis instance as well.
+  // from — the turn distance, the tab column — so it has to re-derive. The two
+  // values CSS cannot carry rebuild the Lenis instance as well.
   useEffect(
     () =>
       subscribeLook((next) => {
@@ -235,17 +264,18 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
    * Open the gate: the first layout is real, so build the track from it and let
    * the scroller move. Everything before this point was a guess with the
    * scroller locked — a guess you can scroll is a guess that throws you onto
-   * the wrong page halfway through reading the first one.
+   * the wrong section halfway through reading the first one.
    */
   const arm = useCallback(() => {
     const ready = readyRef.current;
-    if (ready.armed || !ready.fonts || ready.measured.size < pagesRef.current.length) return;
-    if (pagesRef.current.length === 0) return;
+    if (ready.armed || !ready.fonts || ready.measured.size < sectionsRef.current.length) return;
+    if (sectionsRef.current.length === 0) return;
     ready.armed = true;
     setArmed(true);
     measure();
     lenisRef.current?.start();
     if (import.meta.env.DEV) {
+      if (bookRef.current) assertTabsBehind(bookRef.current);
       const heights = trackRef.current?.pageScroll.map((v) =>
         Math.round(v + (trackRef.current?.viewportHeight ?? 0)),
       );
@@ -255,32 +285,32 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
     }
   }, [measure]);
 
-  // Collect the page elements and keep them measured. Re-runs when the project
-  // changes, which is the only time the page count can change.
+  // Collect the section and tab elements and keep them measured. Re-runs when
+  // the project changes, the only time the section count can change.
   useLayoutEffect(() => {
-    const row = rowRef.current;
-    if (!row) return;
-    const pages = Array.from(row.querySelectorAll<HTMLElement>('.pv-page'));
-    pagesRef.current = pages;
+    const book = bookRef.current;
+    if (!book) return;
+    const sections = Array.from(book.querySelectorAll<HTMLElement>('.pv-section'));
+    sectionsRef.current = sections;
+    tabsRef.current = Array.from(book.querySelectorAll<HTMLElement>('.pv-tab'));
     trackRef.current = null; // a different project: nothing to carry across
-    activeRef.current = initialPageRef.current;
+    activeRef.current = initialRef.current;
     readyRef.current = { fonts: false, measured: new Set(), armed: false, at: performance.now() };
-    measure(); // provisional: positions the row, but the scroller stays locked
+    measure(); // provisional: arranges the book, but the scroller stays locked
 
-    // The gate: fonts resolved AND every page through at least one layout pass.
-    // With the blocks reserving their media boxes this is a frame or two, but a
-    // gate that can never open is worse than a slightly stale track, so it also
-    // gives up after a second and arms anyway.
-    let fallback = 0;
+    // The gate: fonts resolved AND every section through at least one layout
+    // pass. With the blocks reserving their media boxes this is a frame or two,
+    // but a gate that can never open is worse than a slightly stale track, so
+    // it also gives up after a second and arms anyway.
     void document.fonts.ready.then(() => {
       readyRef.current.fonts = true;
       arm();
     });
-    fallback = window.setTimeout(() => {
+    const fallback = window.setTimeout(() => {
       if (readyRef.current.armed) return;
       if (import.meta.env.DEV) console.warn('[pv:track] first layout timed out — arming anyway');
       readyRef.current.fonts = true;
-      readyRef.current.measured = new Set(pages.map((p) => p.firstElementChild!));
+      readyRef.current.measured = new Set(sections.map((s) => s.firstElementChild!));
       arm();
     }, 1000);
 
@@ -289,8 +319,8 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
       measure();
       arm();
     });
-    for (const page of pages) {
-      const inner = page.firstElementChild;
+    for (const section of sections) {
+      const inner = section.firstElementChild;
       if (inner) ro.observe(inner);
     }
     window.addEventListener('resize', measure);
@@ -298,7 +328,8 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
       window.clearTimeout(fallback);
       ro.disconnect();
       window.removeEventListener('resize', measure);
-      pagesRef.current = [];
+      sectionsRef.current = [];
+      tabsRef.current = [];
     };
   }, [project.id, measure, arm]);
 
@@ -334,18 +365,16 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
   }, [apply, smoothing]);
 
   /**
-   * A stacked sliver was clicked: scroll the track back to that page's TOP, so
-   * the page visibly rewinds from the bottom the sliver is showing you to its
-   * title while the row un-stacks around it. Which is the point — the return is
-   * the outward journey run backwards, not a cut.
+   * A tab was clicked: scroll the track back to that section's TOP, so the
+   * sections above it turn back out to the right in order and the one you
+   * asked for arrives at its title. The return is the outward scroll run
+   * backwards, not a cut to it — which is why it is a position and not an
+   * animation: the same `layout()` mapping, read at a smaller number.
    *
-   * `sliverReturn: 'bottom'` lands on the line you stopped at instead, which is
-   * shorter and less of a performance; the dial is there to A/B them.
-   *
-   * Either way the un-stacking is not an animation of its own: it is the same
-   * `layout()` mapping, read at a smaller position.
+   * `sliverReturn: 'bottom'` lands on the line you left instead. Shorter, less
+   * of a performance; the dial is there to A/B them.
    */
-  const scrollToPage = useCallback((index: number) => {
+  const scrollToSection = useCallback((index: number) => {
     const track = trackRef.current;
     const lenis = lenisRef.current;
     const sc = scrollerRef.current;
@@ -370,8 +399,7 @@ export function Sheet({ project, initialPage, onPageChange, onDismiss }: SheetPr
         <ScrollerContext.Provider value={scroller}>
           <div className="pv-content" ref={contentRef}>
             <div className="pv-stage">
-              <div className="pv-probe" ref={probeRef} aria-hidden="true" />
-              <PageRow project={project} rowRef={rowRef} onSliverClick={scrollToPage} />
+              <Notebook project={project} bookRef={bookRef} onSelect={scrollToSection} />
             </div>
             <div className="pv-spacer" ref={spacerRef} aria-hidden="true" />
           </div>

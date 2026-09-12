@@ -50,6 +50,9 @@ const TEXT_SELECTORS = [
 export interface ContrastSample {
   /** The element's class, e.g. `pv-body`. */
   kind: string;
+  /** The hue of the section it was measured on — each one tints its own glass,
+   *  so a ratio is only true for the hue it was taken against. */
+  hue: number;
   /** A few words of the text, so a failure can be found on screen. */
   text: string;
   fontPx: number;
@@ -148,13 +151,14 @@ function drawAppImages(ctx: CanvasRenderingContext2D): void {
   ctx.globalAlpha = 1;
 }
 
-/** Blur + tint, the way one layer of glass does it. */
+/** Blur + tint, the way one layer of glass does it. The tint is a full colour,
+ *  not just an alpha: a section's glass is tinted by its own hue. */
 function applyGlass(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
   blurPx: number,
-  alpha: number,
+  tint: string,
   saturate = 1,
 ): void {
   const filters = [`blur(${(blurPx * SCALE).toFixed(2)}px)`];
@@ -167,8 +171,17 @@ function applyGlass(
   ctx.drawImage(ctx.canvas, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.filter = 'none';
-  ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+  ctx.fillStyle = tint;
   ctx.fillRect(0, 0, w, h);
+}
+
+/**
+ * The section's own glass colour, as the browser resolved it — optionally with
+ * its alpha replaced, which is what a `pageAlpha` sweep is.
+ */
+function pageTint(section: HTMLElement, alphaOverride?: number): string {
+  const [r, g, b, a] = parseColor(getComputedStyle(section).backgroundColor);
+  return `rgba(${r}, ${g}, ${b}, ${alphaOverride ?? a})`;
 }
 
 /* ── the probe ───────────────────────────────────────────────────────────── */
@@ -181,8 +194,10 @@ function applyGlass(
 export function probeContrast(over: GlassOverride = {}): ContrastReport | null {
   const glass = { ...look, ...over };
   if (glass.pageSurface !== 'frosted') return null;
-  const page = document.querySelector<HTMLElement>('.pv-page[data-active]');
+  // The section DRAWN ON TOP — the one whose glass the text is actually behind.
+  const page = document.querySelector<HTMLElement>('.pv-section[data-top]');
   if (!page) return null;
+  const hue = Number(page.dataset.hue ?? 0);
 
   const w = Math.max(1, Math.round(window.innerWidth * SCALE));
   const h = Math.max(1, Math.round(window.innerHeight * SCALE));
@@ -194,10 +209,19 @@ export function probeContrast(over: GlassOverride = {}): ContrastReport | null {
 
   const skyEstimated = drawSky(ctx, w, h);
   drawAppImages(ctx);
-  // The scrim, then the page's own glass on top of it — the same order, and the
-  // same two tints, the compositor applies.
-  applyGlass(ctx, w, h, glass.scrimBlurPx, glass.scrimAlpha);
-  applyGlass(ctx, w, h, glass.pageBlurPx, glass.pageAlpha, glass.pageSaturate);
+  // The scrim, then the section's own glass on top of it — the same order, and
+  // the same two tints, the compositor applies. The section's tint is READ off
+  // the element rather than recomputed here, so the hue formula lives in exactly
+  // one place (the stylesheet) and the probe cannot drift from it.
+  applyGlass(ctx, w, h, glass.scrimBlurPx, `rgba(0, 0, 0, ${glass.scrimAlpha})`);
+  applyGlass(
+    ctx,
+    w,
+    h,
+    glass.pageBlurPx,
+    pageTint(page, over.pageAlpha),
+    glass.pageSaturate,
+  );
 
   const pageRect = page.getBoundingClientRect();
   const field = ctx.getImageData(0, 0, w, h).data;
@@ -241,6 +265,7 @@ export function probeContrast(over: GlassOverride = {}): ContrastReport | null {
     const required = fontPx < LARGE_TEXT_PX ? 7 : 4.5;
     samples.push({
       kind: el.className.split(' ')[0],
+      hue,
       text: (el.textContent ?? '').trim().slice(0, 40),
       fontPx: Math.round(fontPx),
       required,
@@ -306,6 +331,7 @@ export function logContrastProbe(over: GlassOverride = {}): ContrastReport | nul
   console.table(
     rows.map((s) => ({
       kind: s.kind,
+      hue: s.hue,
       px: s.fontPx,
       ratio: s.ratio,
       needs: s.required,

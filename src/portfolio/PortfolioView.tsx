@@ -18,8 +18,8 @@ const PortfolioDialKit = import.meta.env.DEV ? lazy(() => import('./PortfolioDia
 interface PortfolioViewProps {
   /** Project id from the `#view-NN` hash. */
   project: string;
-  /** 0-based page from `#view-NN/<page>` (the hash itself is 1-based). */
-  page: number;
+  /** 0-based section from `#view-NN/<section>` (the hash itself is 1-based). */
+  section: number;
   /** Dev `#view-NN?intro`: mount the DialKit dock and hand it the channels. */
   intro?: boolean;
 }
@@ -37,7 +37,7 @@ interface PortfolioViewProps {
  * variables: `usePortfolioMotion` (production open + close) or
  * `PortfolioDialKit` (dev authoring). Same arrangement as the reader's doorway.
  */
-export default function PortfolioView({ project, page, intro = false }: PortfolioViewProps) {
+export default function PortfolioView({ project, section, intro = false }: PortfolioViewProps) {
   const authoring = import.meta.env.DEV && intro && PortfolioDialKit !== null;
   // An unknown id in the hash falls back to the first project rather than an
   // empty sheet; the gate has already matched it against the manifest.
@@ -62,7 +62,7 @@ export default function PortfolioView({ project, page, intro = false }: Portfoli
   // The page you are reading goes into the hash with replaceState, so a reload
   // keeps your place and Escape is still one step back — scrolling a project
   // must not pile a history entry per page.
-  const onPageChange = useCallback(
+  const onSectionChange = useCallback(
     (index: number) => replacePortfolio(current.id, index + 1),
     [current.id],
   );
@@ -105,8 +105,8 @@ export default function PortfolioView({ project, page, intro = false }: Portfoli
         // carry a scroll position between two unrelated page lists.
         key={current.id}
         project={current}
-        initialPage={page}
-        onPageChange={onPageChange}
+        initialSection={section}
+        onSectionChange={onSectionChange}
         onDismiss={close}
       />
       {authoring && PortfolioDialKit && (

@@ -11,8 +11,8 @@ const FADE_OUT_MS = 200;
 
 interface PortfolioTarget {
   project: string;
-  /** 0-based page index, parsed from the 1-based `#view-NN/<page>`. */
-  page: number;
+  /** 0-based section index, parsed from the 1-based `#view-NN/<section>`. */
+  section: number;
   /** Dev `#view-NN?intro`: the DialKit authoring dock. */
   intro: boolean;
 }
@@ -57,12 +57,12 @@ function getHash(): string {
 function parseTarget(hash: string): PortfolioTarget | null {
   if (!hash.startsWith(PREFIX)) return null;
   const [path, query = ''] = hash.slice(PREFIX.length).split('?');
-  const [project, rawPage] = path.split('/');
+  const [project, rawSection] = path.split('/');
   if (!project) return null;
-  const page = Number.parseInt(rawPage ?? '', 10);
+  const section = Number.parseInt(rawSection ?? '', 10);
   return {
     project,
-    page: Number.isFinite(page) && page > 1 ? page - 1 : 0,
+    section: Number.isFinite(section) && section > 1 ? section - 1 : 0,
     intro: query.split('&').includes('intro'),
   };
 }
@@ -111,7 +111,7 @@ export default function PortfolioGate() {
       <ReaderGate suspended={target !== null || shown !== null} />
       {shown && (
         <div className="portfolio-layer" data-exiting={exiting || undefined}>
-          <PortfolioView project={shown.project} page={shown.page} intro={shown.intro} />
+          <PortfolioView project={shown.project} section={shown.section} intro={shown.intro} />
         </div>
       )}
     </>

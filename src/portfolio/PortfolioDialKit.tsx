@@ -141,15 +141,24 @@ export default function PortfolioDialKit() {
     [tl, replayClose, stopClose],
   );
 
-  const geometry = useDialKit('PV GEOMETRY', {
-    pageVw: [LOOK.pageVw, 24, 80, 1],
-    sliverVw: [LOOK.sliverVw, 2, 30, 0.5],
+  const geometry = useDialKit('PV BOOK', {
+    pageWidthPx: [LOOK.pageWidthPx, 360, 1200, 4],
     columnPx: [LOOK.columnPx, 320, 900, 1],
-    previewOpacity: [LOOK.previewOpacity, 0, 1, 0.01],
-    previewFadeMs: [LOOK.previewFadeMs, 0, 1000, 10],
-    zFadeMs: [LOOK.zFadeMs, 0, 1500, 10],
+    turnDistancePx: [LOOK.turnDistancePx, 200, 2000, 10],
+    sectionShadowAlpha: [LOOK.sectionShadowAlpha, 0, 1, 0.01],
     scrimBlurPx: [LOOK.scrimBlurPx, 0, 48, 1],
     scrimAlpha: [LOOK.scrimAlpha, 0, 0.9, 0.01],
+  });
+
+  // The tab column. `tabHeightPx` is a PREFERENCE: with more sections than the
+  // viewport holds, `fitTabHeight` shrinks them rather than scrolling the column.
+  const tabs = useDialKit('PV TABS', {
+    tabWidthPx: [LOOK.tabWidthPx, 24, 160, 1],
+    tabHeightPx: [LOOK.tabHeightPx, 40, 320, 1],
+    tabGapPx: [LOOK.tabGapPx, 0, 40, 1],
+    tabTopPx: [LOOK.tabTopPx, 0, 400, 1],
+    tabTuckPx: [LOOK.tabTuckPx, 0, 60, 1],
+    tabInactiveBrightness: [LOOK.tabInactiveBrightness, 0.2, 1.2, 0.01],
   });
 
   // The page glass. `pageAlpha` is the contrast lever: it is what stands
@@ -164,7 +173,7 @@ export default function PortfolioDialKit() {
 
   const pill = useDialKit('PV PILL', {
     pillDiameterPx: [LOOK.pillDiameterPx, 40, 240, 1],
-    pillGutterX: [LOOK.pillGutterX, 0, 1, 0.01],
+    pillInsetPx: [LOOK.pillInsetPx, 0, 160, 1],
     pillOffsetPx: [LOOK.pillOffsetPx, 0, 160, 1],
     pillBlurPx: [LOOK.pillBlurPx, 0, 32, 1],
     pillInkRest: [LOOK.pillInkRest, 0, 1, 0.01],
@@ -200,12 +209,16 @@ export default function PortfolioDialKit() {
   const look: PortfolioLook = {
     scrimBlurPx: geometry.scrimBlurPx,
     scrimAlpha: geometry.scrimAlpha,
-    pageVw: geometry.pageVw,
-    sliverVw: geometry.sliverVw,
+    pageWidthPx: geometry.pageWidthPx,
     columnPx: geometry.columnPx,
-    previewOpacity: geometry.previewOpacity,
-    previewFadeMs: geometry.previewFadeMs,
-    zFadeMs: geometry.zFadeMs,
+    turnDistancePx: geometry.turnDistancePx,
+    sectionShadowAlpha: geometry.sectionShadowAlpha,
+    tabWidthPx: tabs.tabWidthPx,
+    tabHeightPx: tabs.tabHeightPx,
+    tabGapPx: tabs.tabGapPx,
+    tabTopPx: tabs.tabTopPx,
+    tabTuckPx: tabs.tabTuckPx,
+    tabInactiveBrightness: tabs.tabInactiveBrightness,
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,
     sliverClickMs: track.sliverClickMs,
@@ -215,7 +228,7 @@ export default function PortfolioDialKit() {
     pageBlurPx: glass.pageBlurPx,
     pageSaturate: glass.pageSaturate,
     pillDiameterPx: pill.pillDiameterPx,
-    pillGutterX: pill.pillGutterX,
+    pillInsetPx: pill.pillInsetPx,
     pillOffsetPx: pill.pillOffsetPx,
     pillBlurPx: pill.pillBlurPx,
     pillInkRest: pill.pillInkRest,

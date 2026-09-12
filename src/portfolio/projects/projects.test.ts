@@ -13,21 +13,46 @@ describe('project registry', () => {
     expect(projectById('99')).toBeNull();
   });
 
-  it('gives every project at least one page, each with at least one block', () => {
+  it('gives every section a title, a hue and at least one block', () => {
     for (const project of PROJECTS) {
-      expect(project.pages.length).toBeGreaterThan(0);
-      for (const page of project.pages) expect(page.length).toBeGreaterThan(0);
+      expect(project.sections.length).toBeGreaterThan(0);
+      for (const section of project.sections) {
+        expect(section.title).toBeTruthy();
+        expect(section.hue).toBeGreaterThanOrEqual(0);
+        expect(section.hue).toBeLessThan(360);
+        expect(section.blocks.length).toBeGreaterThan(0);
+      }
     }
   });
 
-  it('opens every page on a title, so a stacked sliver says what it is', () => {
+  it('opens every section on its own title, so the page says what the tab says', () => {
     for (const project of PROJECTS) {
-      for (const page of project.pages) expect(page[0].type).toBe('title');
+      for (const section of project.sections) {
+        expect(section.blocks[0]).toMatchObject({ type: 'title', text: section.title });
+      }
     }
   });
 
-  it('keeps the single-page case covered (03), alongside multi-page ones', () => {
-    expect(projectById('03')!.pages).toHaveLength(1);
-    expect(projectById('02')!.pages.length).toBeGreaterThan(1);
+  it('gives the sections of a project distinct hues, so the tabs read apart', () => {
+    for (const project of PROJECTS) {
+      const hues = project.sections.map((s) => s.hue);
+      expect(new Set(hues).size).toBe(hues.length);
+    }
+  });
+
+  it('covers the one-section case (03) and the overflowing-tab-column one (04)', () => {
+    expect(projectById('03')!.sections).toHaveLength(1);
+    expect(projectById('02')!.sections).toHaveLength(5);
+    // Eight tabs is more than a 900px-tall viewport holds at the preferred
+    // height, which is the case `fitTabHeight` exists for.
+    expect(projectById('04')!.sections).toHaveLength(8);
+  });
+
+  it('puts the video and the Rive artboard somewhere in every project', () => {
+    for (const project of PROJECTS) {
+      const types = project.sections.flatMap((s) => s.blocks.map((b) => b.type));
+      expect(types).toContain('video');
+      expect(types).toContain('rive');
+    }
   });
 });

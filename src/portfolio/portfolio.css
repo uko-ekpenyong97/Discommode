@@ -101,102 +101,189 @@
   pointer-events: none;
 }
 
-/* A zero-height box the width of the PREFERRED sliver, so `Sheet` can read that
-   vw resolved to px instead of re-deriving it. */
-.pv-probe {
+/* ── the notebook ─────────────────────────────────────────────────────── */
+
+/* The book: the tab column and the page surface side by side, centred. Its
+   width is the only geometry the rest of the notebook needs — tabs take the
+   left `--pv-tab-w`, sections the right `--pv-page-w`. */
+.pv-book {
   position: absolute;
   top: 0;
+  left: 50%;
+  height: 100vh;
+  width: calc(var(--pv-tab-w, 64px) + var(--pv-page-w, 720px));
+  transform: translateX(-50%);
+}
+
+/* THE Z RULE, in two declarations rather than N: the tab column is a stacking
+   context at 0 and the page area is one at 1, so every tab is under every
+   section at every scroll position and every window size, whatever the
+   sections' own z-indices are doing among themselves. The tuck needs no
+   managing — it is simply behind the page, the way a real divider's tab is. */
+.pv-tabs {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* The page area — the right `--pv-page-w` of the book. It CLIPS at its own
+   right edge, so a section waiting its turn is off-stage rather than peeking
+   beside the one being read: the notebook is ONE page surface. The clip is left
+   open to the left (a negative inset) so the top section's shadow still falls
+   across the tab column, which is what makes the page read as sitting on it. */
+.pv-pages {
+  position: absolute;
+  top: 0;
+  left: var(--pv-tab-w, 64px);
+  width: var(--pv-page-w, 720px);
+  height: 100%;
+  z-index: 1;
+  clip-path: inset(0 0 0 -200px);
+}
+
+/* A tab. Laid out from the top of the page, running under the page's left edge
+   by `--pv-tab-tuck` so it reads as a divider going into the book rather than a
+   button parked beside it.
+
+   THE Z RULE: `z-index: 0` here against `j + 1` on every section (written by
+   `Sheet`). A tab is never above a page, at any scroll position or window size.
+   The flush tab reads continuous with its page because it is the same glass at
+   the same tint with nothing drawn between them — not because it is in front. */
+.pv-tab {
+  position: absolute;
   left: 0;
-  height: 0;
-  width: var(--pv-sliver-pref, 14vw);
-  visibility: hidden;
-  pointer-events: none;
+  z-index: 0;
+  width: calc(var(--pv-tab-w, 64px) + var(--pv-tab-tuck, 18px));
+  height: var(--pv-tab-h, 132px);
+  padding: 0;
+  border: 0;
+  border-radius: 10px 0 0 10px;
+  background: hsl(var(--pv-hue, 0) 44% 17% / var(--pv-page-alpha, 0.68));
+  backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
+  -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  /* Set back: dimmer, and with a shadow on its left so it reads as behind.
+     Identically so whether its section is before or after the one you are in —
+     a notebook does not distinguish dividers you have passed from ones you
+     have not. */
+  filter: brightness(var(--pv-tab-dim, 0.7));
+  box-shadow: -6px 0 14px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 250ms ease,
+    filter 250ms ease;
 }
 
-/* ── the page row ──────────────────────────────────────────────────────── */
-
-/* Origin = the left gutter, so a page translated by `-k * pageWidth` lands
-   exactly centred and a page at rest lands on `k * sliver`. `--pv-gutter` is
-   written by `Sheet` from the same number the track computes with. */
-.pv-row {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--pv-gutter, 0px);
-  width: 0;
+/* The flush one: the page's own material and tint, no shadow, no edge. */
+.pv-tab[data-active] {
+  background: hsl(var(--pv-hue, 0) 40% 12% / var(--pv-page-alpha, 0.68));
+  filter: none;
+  box-shadow: none;
 }
 
-/* Each page is a 100vh window onto its own content AND its own scroll
-   container: `Sheet` writes `scrollTop` straight to it. That is what lets a
-   finished page hold at its bottom while the row slides on past it.
+.pv-tab:hover,
+.pv-tab:focus-visible {
+  transform: translateX(-6px);
+  filter: brightness(1.15);
+  outline: none;
+}
 
-   FROSTED (the default): the page is its own sheet of glass over the app, so
+/* Vertical, reading bottom-to-top, in the `--pv-tab-w` that is not tucked. */
+.pv-tab__label {
+  display: block;
+  width: var(--pv-tab-w, 64px);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  margin: 0 auto 0 0;
+  padding: 12px 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A section: the page surface itself, and its own scroll container — `Sheet`
+   writes `scrollTop` straight to it, which is what lets a buried section hold
+   at the line you left it at while the one above turns over the top.
+
+   FROSTED (the default): the page is a sheet of tinted glass over the app, so
    the covers and the sky keep moving behind the text rather than being replaced
-   by a black rectangle. It stacks on the scrim's glass — behind a page the
-   backdrop goes through two blurs and two tints, behind the gutter through one,
-   which is what gives the pages their edge without a border.
+   by a rectangle. It stacks on the scrim's glass — behind the page the backdrop
+   goes through two blurs and two tints, beside it through one.
 
    `--pv-page-alpha` is the contrast lever, and the only thing between the text
-   and whatever the grid happens to be showing; `contrastProbe.ts` measures it.
-   The stacked slivers and the previewing page use the same glass, so the stack
-   reads as a stack of pages and not as a wall. */
-.pv-page {
+   and whatever the grid happens to be showing; `contrastProbe.ts` measures it
+   on every hue. */
+.pv-section {
   position: absolute;
-  top: 0;
-  width: var(--pv-page-w, 44vw);
-  height: 100vh;
-  overflow: hidden;
-  background: rgba(0, 0, 0, var(--pv-page-alpha, 0.55));
+  inset: 0;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  background: hsl(var(--pv-hue, 0) 34% 8% / var(--pv-page-alpha, 0.68));
   backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
   -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
   perspective: 1000px;
-  opacity: var(--pv-preview-op, 0.2);
-  transition:
-    opacity var(--pv-preview-fade, 200ms) ease,
-    z-index var(--pv-z-fade, 400ms);
+  /* No border-left: a line there would cut across the flush tab's tuck and
+     give away that the two are separate elements. The shadow does the edge. */
 }
 
-/* SOLID: flat black, no backdrop at all. `backdrop-filter: none` rather than a
-   no-op filter — a no-op still creates a backdrop root and still costs. Chosen
-   by the dock's `pageSurface` dial, and forced below for anyone who has asked
-   for less transparency or more contrast. */
-:root[data-pv-surface='solid'] .pv-page {
-  background: #000;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+/* Only the section on top casts: the ones underneath are covered, and stacking
+   their shadows would darken the page by a shade per section you had read. */
+.pv-section[data-top] {
+  box-shadow: -24px 0 48px rgba(0, 0, 0, var(--pv-section-shadow, 0.45));
 }
 
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .pv-page {
-    background: #000;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
-
-/* The page you are reading, and the ones you have finished, are both fully
-   there. Only a page you have not reached yet previews. */
-.pv-page[data-active],
-.pv-page[data-stacked] {
-  opacity: 1;
-}
-
-/* A stacked page is a target: click its sliver and the track scrolls back to
-   it. Only the sliver is reachable — the pages above it are opaque and sit
-   higher — and its own content is inert so a link in the visible strip can't
-   take the click instead. */
-.pv-page[data-stacked] {
-  cursor: pointer;
-}
-.pv-page[data-stacked] .pv-page__inner {
-  pointer-events: none;
-}
-
-.pv-page[data-moving-horizontal] {
+/* Mid-turn the transform is the only thing changing; the rest of the time it
+   must not be promoted for nothing. */
+.pv-section[data-top]:not([data-buried]) {
   will-change: transform;
 }
 
-.pv-page__column {
+/* SOLID: flat, no backdrop at all. `backdrop-filter: none` rather than a no-op
+   filter — a no-op still creates a backdrop root and still costs. Chosen by the
+   dock's `pageSurface` dial, and forced below for anyone who has asked for less
+   transparency or more contrast. */
+:root[data-pv-surface='solid'] .pv-section {
+  background: hsl(var(--pv-hue, 0) 34% 8%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-pv-surface='solid'] .pv-tab {
+  background: hsl(var(--pv-hue, 0) 44% 17%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-pv-surface='solid'] .pv-tab[data-active] {
+  background: hsl(var(--pv-hue, 0) 40% 12%);
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .pv-section {
+    background: hsl(var(--pv-hue, 0) 34% 8%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .pv-tab {
+    background: hsl(var(--pv-hue, 0) 44% 17%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .pv-tab[data-active] {
+    background: hsl(var(--pv-hue, 0) 40% 12%);
+  }
+}
+
+/* A buried section is not a target: the sections above it are opaque enough to
+   take the click anyway, but its links must not be tabbable from under them.
+   The tab is the way back. */
+.pv-section[data-buried] .pv-section__inner {
+  pointer-events: none;
+}
+
+.pv-section__column {
   width: min(var(--pv-column, 656px), calc(100% - 48px));
   margin: 0 auto;
   padding-bottom: 96px;
@@ -204,18 +291,16 @@
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
 
-/* Centred across the left gutter and down the viewport, so it sits in the band
-   the sliver stack occupies rather than beside it — and above it, because the
-   way out should never be something you have to hunt for behind a page edge.
-   `--pv-gutter` is published by `Sheet` from the same number the track lays the
-   stack out with.
+/* Bottom-left of the viewport. The notebook has taken the left band for its
+   tabs, so the pill no longer competes with anything for it — and a corner is
+   where a way out belongs when the middle of the screen is a document.
 
    The OUTER button is the entrance only: `--pv-pill` is written per frame by
    the motion driver, so nothing here may have a transition on `transform`. */
 .pv-close {
   position: absolute;
-  left: calc(var(--pv-gutter, 0px) * var(--pv-pill-x, 0.5));
-  top: 50%;
+  left: var(--pv-pill-inset, 40px);
+  bottom: var(--pv-pill-inset, 40px);
   z-index: 3;
   width: var(--pv-pill-d, 146px);
   height: var(--pv-pill-d, 146px);
@@ -225,8 +310,8 @@
   cursor: pointer;
   opacity: var(--pv-pill, 0);
   transform: translate(
-    calc(-50% + var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1)),
-    calc(-50% + var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1))
+    calc(var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1)),
+    calc(var(--pv-pill-offset, 73px) * (1 - var(--pv-pill, 0)))
   );
   will-change: transform, opacity;
 }
@@ -303,12 +388,12 @@
     opacity: 1;
   }
   .pv-close {
-    transform: translate(-50%, -50%);
+    transform: none;
   }
   .pv-close__disc {
     transition: color 250ms ease, background 250ms ease;
   }
-  .pv-page {
+  .pv-tab {
     transition: none;
   }
 }

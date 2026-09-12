@@ -5,40 +5,30 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
  *  grid's own dead zone (`dragDeadZonePx`), so the two feel the same. */
 const DEAD_ZONE = 4;
 
-/** True when the point is over none of the sheet's pages. */
+/** True when the point is outside the book — tabs and page both. */
 function isOnGlass(e: ReactPointerEvent): boolean {
   const sheet = e.currentTarget as HTMLElement;
-  for (const page of sheet.querySelectorAll<HTMLElement>('.pv-page')) {
-    const r = page.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
-      return false;
-    }
-  }
-  return true;
+  const book = sheet.querySelector<HTMLElement>('.pv-book');
+  if (!book) return true;
+  const r = book.getBoundingClientRect();
+  return !(e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom);
 }
 
 /**
  * Click the glass to leave.
  *
- * "The glass" is everything in the sheet that is not a page: the left gutter
- * the sliver stack lives in, the band to the right of the last page, and the
- * gaps between pages mid-slide. The pages themselves are the document, and the
- * close pill and the slivers are the deliberate affordances — none of them
- * dismiss.
+ * "The glass" is everything in the sheet outside the BOOK — the bands either
+ * side of it, and above and below. The book is the document: its page is what
+ * you are reading, its tabs are how you move around it, and neither dismisses.
  *
- * The test is GEOMETRIC, against each page's current rect, rather than a fixed
- * region or an event target:
+ * The test is GEOMETRIC, against the book's CURRENT rect, rather than a fixed
+ * region or an event target. Asking "is this point in the book" answers for the
+ * page, the tabs, a link, a video and anything a project adds later all at
+ * once, with nothing to remember to opt out of — and it keeps working when the
+ * book is re-laid-out by a dial or a resize.
  *
- *  - the row moves. During the horizontal segment a page is somewhere between
- *    two columns, and a static "gutter" region would either swallow clicks on a
- *    page that had slid over it or dismiss on one that had slid away.
- *  - a page is `overflow: hidden` and full of its own content; asking "is this
- *    point inside a page" answers for the page, its links, its video and
- *    anything a project adds later at once, with nothing to remember to opt
- *    out of.
- *
- * Both ends of the press have to be on glass: pressing on a page and releasing
- * on the gutter is a slip, not a dismissal, and a drag is a drag.
+ * Both ends of the press have to be on glass: pressing on the book and
+ * releasing beside it is a slip, not a dismissal, and a drag is a drag.
  */
 export function useDismissOnGlass(onDismiss: () => void): {
   onPointerDown: (e: ReactPointerEvent) => void;

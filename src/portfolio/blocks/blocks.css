@@ -37,8 +37,8 @@
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35), transparent 70%);
 }
 
-.pv-page :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill),
-.pv-page .pv-figcaption {
+.pv-section :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill),
+.pv-section .pv-figcaption {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
@@ -48,7 +48,7 @@
 :root[data-pv-surface='solid'] .pv-block {
   background: none;
 }
-:root[data-pv-surface='solid'] .pv-page :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+:root[data-pv-surface='solid'] .pv-section :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
   text-shadow: none;
 }
 
@@ -56,7 +56,7 @@
   .pv-block {
     background: none;
   }
-  .pv-page :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+  .pv-section :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
     text-shadow: none;
   }
 }
@@ -67,8 +67,8 @@
 /* Edge to edge of the PAGE, escaping the centred content column. The page, not
    the viewport — the page is the frame. */
 .pv-block--bleed {
-  width: var(--pv-page-w, 44vw);
-  margin-left: calc((100% - var(--pv-page-w, 44vw)) / 2);
+  width: var(--pv-page-w, 720px);
+  margin-left: calc((100% - var(--pv-page-w, 720px)) / 2);
 }
 
 /* ── type ──────────────────────────────────────────────────────────────── */
@@ -82,18 +82,20 @@
   color: #fff;
 }
 
-/* The small mono labels are all at 0.62 rather than the 0.42–0.5 that reads as
-   "secondary" on flat black. Over the page glass their contrast is set by their
-   OWN alpha, not by how dark the glass is — measured: darkening the glass from
-   0.5 to 0.7 moved a 12px caption from 5.29:1 to 5.31:1, because the ink blends
-   with the same backdrop it is being compared to. 0.62 is where 12px clears
-   7:1 on the covers behind it, and it is still clearly below body text. */
+/* INK ALPHA IS A CONTRAST CEILING, not a shade.
+   Translucent white text blends with the very backdrop it is compared against,
+   so its ratio converges on a fixed maximum as the backdrop darkens: 0.5 white
+   can never beat 5.3:1, 0.62 never beats 7.9:1. Darkening the glass moves a
+   12px caption by hundredths. The only way to give small type headroom over a
+   LIVE backdrop is to raise its own alpha — so the small mono labels sit at
+   0.74 (ceiling 11.4:1) and body at 0.82. They still read as secondary; they
+   are just no longer relying on the backdrop staying dark. */
 .pv-caption {
   margin: 12px 0 0;
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0.16em;
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(255, 255, 255, 0.74);
 }
 
 .pv-heading {
@@ -109,7 +111,7 @@
   margin: 0 0 16px;
   font-size: 16px;
   line-height: 1.62;
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(255, 255, 255, 0.82);
 }
 .pv-body:last-child {
   margin-bottom: 0;
@@ -154,7 +156,7 @@
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.68);
+  color: rgba(255, 255, 255, 0.74);
 }
 
 /* ── two-up ────────────────────────────────────────────────────────────── */
@@ -176,7 +178,7 @@
   margin: 0;
   font-size: 14px;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.68);
+  color: rgba(255, 255, 255, 0.74);
 }
 
 /* ── stat grid ─────────────────────────────────────────────────────────── */
@@ -197,7 +199,7 @@
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(255, 255, 255, 0.74);
 }
 
 /* ── link pill ─────────────────────────────────────────────────────────── */

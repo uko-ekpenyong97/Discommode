@@ -86,19 +86,26 @@ export interface PortfolioLook {
   /** Scrim blur radius (px) and black alpha. */
   scrimBlurPx: number;
   scrimAlpha: number;
-  /** The centred page's width, in vw. */
-  pageVw: number;
-  /** PREFERRED sliver width, in vw. The stack narrows below it when a project
-   *  has more pages than the left gutter can hold (see `pageTrack.ts`). */
-  sliverVw: number;
-  /** The centred content column inside a page (px). */
+  /** The page surface's width (px) — the right-hand part of the book. */
+  pageWidthPx: number;
+  /** The centred content column inside the page (px). */
   columnPx: number;
-  /** Opacity of a page that has not been reached yet — the one previewing on
-   *  the right — and how long it takes to come up to 1 once it is active. */
-  previewOpacity: number;
-  previewFadeMs: number;
-  /** How long the z-order takes to hand over as the stack re-orders (ms). */
-  zFadeMs: number;
+  /** The tab column: each tab's width and PREFERRED height, the gap between
+   *  them, the offset of the first from the top of the page, and how far a tab
+   *  runs under the page's left edge. With more sections than the viewport
+   *  holds, the height shrinks to fit — see `fitTabHeight`. */
+  tabWidthPx: number;
+  tabHeightPx: number;
+  tabGapPx: number;
+  tabTopPx: number;
+  tabTuckPx: number;
+  /** How far back an inactive tab sits — a straight brightness multiplier. */
+  tabInactiveBrightness: number;
+  /** Scroll spent turning one section in (px). Its own dial, not the page
+   *  width: how far the wheel travels to turn a page is a feel, not a length. */
+  turnDistancePx: number;
+  /** Alpha of the shadow the top section casts back over the stack. */
+  sectionShadowAlpha: number;
   /** Lenis: smoothing factor on the sheet scroller, and the wheel gain. */
   lenisLerp: number;
   wheelMultiplier: number;
@@ -113,11 +120,11 @@ export interface PortfolioLook {
   pageAlpha: number;
   pageBlurPx: number;
   pageSaturate: number;
-  /** Close pill: diameter, where it sits across the gutter (0…1), the offset it
+  /** Close pill: diameter, its inset from the bottom-left corner, the offset it
    *  enters from, its own backdrop blur, and the ink alpha at rest vs hover
    *  (the ring and the X share one colour). */
   pillDiameterPx: number;
-  pillGutterX: number;
+  pillInsetPx: number;
   pillOffsetPx: number;
   pillBlurPx: number;
   pillInkRest: number;
@@ -142,12 +149,16 @@ export interface PortfolioLook {
 export const LOOK: PortfolioLook = {
   scrimBlurPx: 16,
   scrimAlpha: 0.4,
-  pageVw: 44,
-  sliverVw: 14,
+  pageWidthPx: 720,
   columnPx: 656,
-  previewOpacity: 0.2,
-  previewFadeMs: 200,
-  zFadeMs: 400,
+  tabWidthPx: 64,
+  tabHeightPx: 132,
+  tabGapPx: 6,
+  tabTopPx: 0,
+  tabTuckPx: 18,
+  tabInactiveBrightness: 0.7,
+  turnDistancePx: 720,
+  sectionShadowAlpha: 0.45,
   lenisLerp: 0.1,
   wheelMultiplier: 1,
   // Longer than the 800ms of #10b: the click now rewinds the whole page, not
@@ -155,11 +166,15 @@ export const LOOK: PortfolioLook = {
   sliverClickMs: 1100,
   sliverReturn: 'top',
   pageSurface: 'frosted',
-  pageAlpha: 0.55,
+  // Measured, not chosen: 0.68 is where the 10px stat label clears 7:1 on the
+  // hardest backdrop the view has — a cold `#view-NN`, where the page is over
+  // the GRID and its four full-size covers rather than the detail view's darker
+  // composition. See `contrastProbe.ts`.
+  pageAlpha: 0.68,
   pageBlurPx: 24,
   pageSaturate: 1.2,
-  pillDiameterPx: 146,
-  pillGutterX: 0.5,
+  pillDiameterPx: 96,
+  pillInsetPx: 40,
   pillOffsetPx: 73,
   pillBlurPx: 8,
   pillInkRest: 0.2,
@@ -292,16 +307,20 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   const s = document.documentElement.style;
   s.setProperty('--pv-scrim-blur', `${look.scrimBlurPx}px`);
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
-  s.setProperty('--pv-page-w', `${look.pageVw}vw`);
+  s.setProperty('--pv-page-w', `${look.pageWidthPx}px`);
   s.setProperty('--pv-column', `${look.columnPx}px`);
-  s.setProperty('--pv-preview-op', String(look.previewOpacity));
-  s.setProperty('--pv-preview-fade', `${look.previewFadeMs}ms`);
-  s.setProperty('--pv-z-fade', `${look.zFadeMs}ms`);
+  s.setProperty('--pv-tab-w', `${look.tabWidthPx}px`);
+  s.setProperty('--pv-tab-h-pref', `${look.tabHeightPx}px`);
+  s.setProperty('--pv-tab-gap', `${look.tabGapPx}px`);
+  s.setProperty('--pv-tab-top', `${look.tabTopPx}px`);
+  s.setProperty('--pv-tab-tuck', `${look.tabTuckPx}px`);
+  s.setProperty('--pv-tab-dim', String(look.tabInactiveBrightness));
+  s.setProperty('--pv-section-shadow', String(look.sectionShadowAlpha));
   s.setProperty('--pv-page-alpha', String(look.pageAlpha));
   s.setProperty('--pv-page-blur', `${look.pageBlurPx}px`);
   s.setProperty('--pv-page-saturate', String(look.pageSaturate));
   s.setProperty('--pv-pill-d', `${look.pillDiameterPx}px`);
-  s.setProperty('--pv-pill-x', String(look.pillGutterX));
+  s.setProperty('--pv-pill-inset', `${look.pillInsetPx}px`);
   s.setProperty('--pv-pill-offset', `${look.pillOffsetPx}px`);
   s.setProperty('--pv-pill-blur', `${look.pillBlurPx}px`);
   s.setProperty('--pv-pill-ink', String(look.pillInkRest));
@@ -319,7 +338,6 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-flip-angle', `${look.flipAngleDeg}deg`);
   s.setProperty('--pv-flip-ms', `${look.flipMs}ms`);
   s.setProperty('--pv-flip-delay', `${look.flipDelayMs}ms`);
-  s.setProperty('--pv-sliver-pref', `${look.sliverVw}vw`);
   lookListeners.forEach((fn) => fn(look));
 }
 
@@ -330,20 +348,22 @@ const VARS = [
   '--pv-scrim-blur',
   '--pv-scrim-alpha',
   '--pv-page-w',
-  '--pv-sliver-pref',
-  '--pv-gutter',
   '--pv-column',
+  '--pv-tab-w',
+  '--pv-tab-h-pref',
+  '--pv-tab-gap',
+  '--pv-tab-top',
+  '--pv-tab-tuck',
+  '--pv-tab-dim',
+  '--pv-section-shadow',
   '--pv-page-alpha',
   '--pv-page-blur',
   '--pv-page-saturate',
   '--pv-pill-d',
-  '--pv-pill-x',
+  '--pv-pill-inset',
   '--pv-pill-ink',
   '--pv-pill-ink-hover',
   '--pv-pill-hover-scale',
-  '--pv-preview-op',
-  '--pv-preview-fade',
-  '--pv-z-fade',
   '--pv-pill-offset',
   '--pv-pill-blur',
   '--pv-reveal-ms',
