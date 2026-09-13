@@ -93,18 +93,38 @@ export interface PortfolioLook {
   glassColumnVw: number;
   /** The centred content column inside a folder's body (px). */
   columnPx: number;
-  /** A folder's tab: how tall, how wide as a fraction of the sheet, and how far
-   *  its 45° chamfer runs from the tab's inner corner down to the body. */
-  tabHeightPx: number;
-  tabWidthPct: number;
+  /**
+   * The width the folder geometry below is measured AT. Everything from here to
+   * `headerTitlePx` is a proportion of the sheet rather than a fixed size,
+   * scaled by `sheetWidth / referenceSheetPx`, so the cabinet keeps its shape
+   * at any viewport instead of becoming a different layout on a laptop.
+   */
+  referenceSheetPx: number;
+  /** A folder: the height of its body, of the tab on top of it, the tab's width
+   *  and the 45° chamfer at the tab's far end. */
+  bodyHPx: number;
+  tabHPx: number;
+  tabWPx: number;
   chamferPx: number;
-  /** Vertical step between docked rows. What is left between the two piles is
-   *  the open folder's body, so this trades how much of a project you can see
-   *  at once against how much of any one of it you can read. */
+  /** Vertical step between rows, in the cabinet and the pile alike. LESS than a
+   *  folder is tall, which is what makes rows overlap and a pile read as a
+   *  pile; what is left between the two piles is the open page. */
   rowPitchPx: number;
-  /** Alpha of the lighter band across a tab — what makes a folder's outline
-   *  read at all against its own body. */
-  tabBandAlpha: number;
+  /** Where the columns divide, as a percentage of the sheet. Even rows use the
+   *  first, odd rows the second, so the cabinet never reads as a table. */
+  splitA: number;
+  splitB: number;
+  /** The title on a folder's own body, and the much larger one its open page
+   *  opens with. */
+  titleSizePx: number;
+  headerTitlePx: number;
+  /** The fraction of a turn, at its end, over which the risen folder's page
+   *  unfolds out from under it. The rest of the turn is the rise. */
+  unfoldShare: number;
+  /** Hover: how far the folder under the pointer lifts, and how far every other
+   *  folder fades while it is up. */
+  hoverLiftPx: number;
+  dimOpacity: number;
   /** Scroll spent on one turn (px). Its own dial, not a width: how far the
    *  wheel travels to turn a folder is a feel, not a length. */
   turnDistancePx: number;
@@ -161,17 +181,26 @@ export const LOOK: PortfolioLook = {
   scrimAlpha: 0.4,
   glassColumnVw: 25,
   columnPx: 656,
-  tabHeightPx: 64,
-  // 44, not the 48 the mockup measures at. A 45° chamfer of the tab's own
-  // height needs twice that height of gap between the two tabs to descend in;
-  // 48/52 leaves 4% of the sheet, about 43px at a laptop width, and the two
-  // chamfers cross. `folderClipPath` copes — it notches one outline into the
-  // other so they still tile — but what you see then is a chevron between the
-  // tabs rather than two folders. 44/56 gives the chamfers room to land.
-  tabWidthPct: 44,
-  chamferPx: 64,
-  rowPitchPx: 72,
-  tabBandAlpha: 0.5,
+  // The folder geometry below is measured off the reference, and the reference
+  // is a whole page at 2560 where this is a sheet beside a glass column. Taken
+  // literally — scaling against the 1920 a 2560 viewport leaves for the sheet —
+  // a laptop gets 73px rows and a 36px title in a 50px gap, which is the
+  // reference's proportions and none of its legibility. 1600 is the width the
+  // proportions are treated as being for, which at a 1080 sheet gives an 88px
+  // row and a title that fits the face of the folder with room to spare.
+  referenceSheetPx: 1600,
+  bodyHPx: 148,
+  tabHPx: 40,
+  tabWPx: 608,
+  chamferPx: 40,
+  rowPitchPx: 130,
+  splitA: 50,
+  splitB: 38,
+  titleSizePx: 64,
+  headerTitlePx: 160,
+  unfoldShare: 0.3,
+  hoverLiftPx: 12,
+  dimOpacity: 0.1,
   turnDistancePx: 720,
   easeRise: 'easeOut',
   riseDelayMs: 500,
@@ -329,10 +358,8 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-scrim-blur', `${look.scrimBlurPx}px`);
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
   s.setProperty('--pv-glass-col', `${look.glassColumnVw}vw`);
-  s.setProperty('--pv-tab-h', `${look.tabHeightPx}px`);
-  s.setProperty('--pv-tab-w', `${look.tabWidthPct}%`);
-  s.setProperty('--pv-row-pitch', `${look.rowPitchPx}px`);
-  s.setProperty('--pv-band-alpha', String(look.tabBandAlpha));
+  s.setProperty('--pv-hover-lift', `${look.hoverLiftPx}px`);
+  s.setProperty('--pv-dim', String(look.dimOpacity));
   s.setProperty('--pv-column', `${look.columnPx}px`);
   s.setProperty('--pv-section-shadow', String(look.sectionShadowAlpha));
   s.setProperty('--pv-page-alpha', String(look.pageAlpha));
@@ -371,9 +398,12 @@ const VARS = [
   '--pv-body-h',
   '--pv-column',
   '--pv-tab-h',
-  '--pv-tab-w',
   '--pv-row-pitch',
-  '--pv-band-alpha',
+  '--pv-strip-h',
+  '--pv-title',
+  '--pv-header-title',
+  '--pv-hover-lift',
+  '--pv-dim',
   '--pv-section-shadow',
   '--pv-page-alpha',
   '--pv-page-blur',

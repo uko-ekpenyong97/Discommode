@@ -45,6 +45,11 @@ const TEXT_SELECTORS = [
   '.pv-stat__label',
   '.pv-linkpill',
   '.pv-figcaption',
+  // The folder's own face and the page's header: they carry the project's
+  // navigation, so they are as much a readability question as the prose.
+  '.pv-folder__title',
+  '.pv-folder__heading',
+  '.pv-folder__no',
 ] as const;
 
 export interface ContrastSample {

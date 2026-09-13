@@ -108,9 +108,9 @@
   pointer-events: none;
 }
 
-/* ── the folder stack ───────────────────────────────────────────────────── */
+/* ── the cabinet ────────────────────────────────────────────────────────── */
 
-/* The box the pile lives in: the whole sheet, with every folder absolutely
+/* The box the folders live in: the whole sheet, with every folder absolutely
    positioned inside it. `Sheet` writes each one's top, height and z-index every
    frame; nothing here moves on its own. */
 .pv-stack {
@@ -119,10 +119,11 @@
 }
 
 /* A FOLDER. The element is its SLOT — the share of the screen it currently has,
-   from its own top down to whatever is below it — and it clips to that. Which
-   is the entire painting rule: piled, you get your tab; docked, your tab and
-   the sliver of body edge that makes a stack read as a stack; open, everything
-   down to the next row. No folder ever paints over another, which on glass is
+   from the top of its tab down to whatever is below it — and it clips to that.
+   Which is the entire painting rule: filed, you get one row pitch, which is
+   less than the folder is tall, so the row in front covers the rest and the
+   overlap makes a stack of paper look like a stack of paper; open, you get that
+   pitch plus your page. No folder ever paints over another, which on glass is
    not an optimisation but the difference between a stack and a smear. */
 .pv-folder {
   position: absolute;
@@ -131,111 +132,159 @@
   top: 0;
   height: 0;
   overflow: hidden;
+  /* The element spans the whole sheet whatever column the folder is drawn in —
+     the open page needs that width — so it must not be a pointer target, or a
+     folder in the right column would swallow every click over its neighbour in
+     the left. Its FACE and its PAGE take pointers; the rest of it is paint. */
+  pointer-events: none;
+  transition:
+    opacity 250ms ease,
+    transform 250ms ease;
 }
 
-/* THE SURFACE. One glass element for the whole outline — tab, 45° chamfer, then
-   full width — because two adjacent ones do not join: `backdrop-filter` is per
-   element, so each would blur its own backdrop with its own edge clamping and
-   the junction would seam however exactly the tints matched. The outline itself
-   is a `clip-path` written by `Sheet` from `folderClipPath`.
+/* THE SURFACE. One glass element for the whole outline — tab, chamfer, body and
+   (when open) the full-width page — because two adjacent ones do not join:
+   `backdrop-filter` is per element, so each would blur its own backdrop with
+   its own edge clamping and the junction would seam however exactly the tints
+   matched. The outline is a `clip-path` written by `Sheet` from
+   `folderClipPath`, and swapped when the folder opens or files.
 
    `--pv-page-alpha` is the contrast lever, and the only thing between the text
    and whatever the grid happens to be showing; `contrastProbe.ts` measures it
    on every hue. */
 .pv-folder__shape {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: var(--pv-slot-h, 100%);
-  background: hsl(var(--pv-hue, 0) 34% 12% / var(--pv-page-alpha, 0.68));
+  inset: 0;
+  background: hsl(var(--pv-hue, 0) 34% 12% / var(--pv-page-alpha, 0.76));
   backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
   -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
 }
 
-/* The lighter wash across the tab. Inside the shape, so the chamfer clips it
-   for free — and it is the only reason the folder's outline reads at all
-   against the folder's own body below it. */
-.pv-folder__band {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: var(--pv-tab-h, 64px);
-  background: hsl(var(--pv-hue, 0) 40% 18% / var(--pv-band-alpha, 0.5));
-}
-
-/* Only the folder you are reading casts, and back over the pile it came from. */
+/* Only the folder you are reading casts, and back over the cabinet above it. */
 .pv-folder[data-open] .pv-folder__shape {
   filter: drop-shadow(0 -14px 26px rgba(0, 0, 0, var(--pv-section-shadow, 0.45)));
 }
 
-/* THE TAB — a number and a title, and the way back. Every tab in either pile is
-   a link to its folder: clicking one in the unread pile runs the track forward
-   through everything between, clicking one in the read pile runs it back. */
-.pv-folder__tab {
+/* THE FOLDER'S FACE: its number and its title, sitting in its own body, and the
+   way back — every folder in either pile is a link to itself. `Sheet` puts it
+   in its column; the text sits at the bottom of the body, under the tab. */
+.pv-folder__strip {
   position: absolute;
   top: 0;
-  width: var(--pv-tab-w, 48%);
-  height: var(--pv-tab-h, 64px);
+  pointer-events: auto;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 28px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 4px;
+  /* Under the tab, not at the foot of the body: the row in front covers the
+     bottom of every filed folder, so anything down there is unreadable. */
+  padding: calc(var(--pv-tab-h, 22px) + 10px) 32px 0;
   border: 0;
   background: none;
   color: rgba(255, 255, 255, 0.92);
   text-align: left;
   cursor: pointer;
 }
-.pv-folder[data-side='left'] .pv-folder__tab {
-  left: 0;
+.pv-folder[data-open] .pv-folder__strip {
+  cursor: default;
 }
-.pv-folder[data-side='right'] .pv-folder__tab {
-  right: 0;
+.pv-folder__strip:focus-visible {
+  outline: none;
 }
 
+/* 0.68, like the other small mono labels, and for the measured reason: over
+   glass a translucent white's contrast is set by its OWN alpha, not by how dark
+   the glass is, and at 0.5 an 11px number comes out at 4.71:1. */
 .pv-folder__no {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.68);
 }
 
 .pv-folder__title {
-  font-size: 22px;
-  letter-spacing: -0.01em;
+  font-size: var(--pv-title, 36px);
+  line-height: 1;
+  letter-spacing: -0.02em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
   text-decoration: 1px solid underline transparent;
-  text-underline-offset: 4px;
+  text-underline-offset: 6px;
   transition: text-decoration-color 200ms ease;
 }
-.pv-folder__tab:hover .pv-folder__title,
-.pv-folder__tab:focus-visible .pv-folder__title {
+.pv-folder__strip:hover .pv-folder__title,
+.pv-folder__strip:focus-visible .pv-folder__title {
   text-decoration-color: currentColor;
 }
-.pv-folder__tab:focus-visible {
-  outline: none;
+
+/* HOVER. The folder under the pointer lifts; everything else in both piles
+   fades back, so the one you are about to open is the only thing on the board.
+   The open folder is exempt — it is what you are reading, not somewhere to go. */
+.pv-stack[data-hovering] .pv-folder:not([data-hover]):not([data-open]) {
+  opacity: var(--pv-dim, 0.1);
+}
+.pv-folder[data-hover] {
+  transform: translateY(calc(-1 * var(--pv-hover-lift, 12px)));
 }
 
-/* The content, and the scroll container — `Sheet` writes `scrollTop` here. Its
-   height is the SAME for every folder, because the read pile gains a row
-   exactly as the unread pile loses one; that is what lets a folder's content
-   height be a property of the folder rather than of where it is in the pile. */
-.pv-folder__body {
+/* The thumbnails that pop above the tab. The slot is here so the geometry
+   around it is settled; it stays hidden until a project has images for it. */
+.pv-folder__thumbs {
+  display: none;
   position: absolute;
-  top: var(--pv-tab-h, 64px);
+  left: 32px;
+  bottom: calc(100% - var(--pv-tab-h, 22px));
+  pointer-events: none;
+}
+.pv-folder__thumbs span {
+  display: inline-block;
+  width: 200px;
+  aspect-ratio: 4 / 3;
+}
+.pv-folder__thumbs span:nth-child(1) {
+  transform: rotate(-5deg);
+}
+.pv-folder__thumbs span:nth-child(2) {
+  transform: rotate(6deg);
+}
+.pv-folder__thumbs span:nth-child(3) {
+  transform: rotate(-15deg);
+}
+
+/* THE PAGE, and the scroll container — `Sheet` writes `scrollTop` here, and its
+   top and height, because both come out of the track. It spans the whole sheet
+   rather than the folder's column: a folder is a tab in a cabinet, but what you
+   read is a page. */
+.pv-folder__content {
+  position: absolute;
   left: 0;
   right: 0;
-  height: var(--pv-body-h, 100%);
+  pointer-events: auto;
   overflow-x: hidden;
   overflow-y: hidden;
   perspective: 1000px;
   /* The query container a bleed block measures itself against, so "edge to edge
-     of the folder" needs no variable kept in step with the layout. */
+     of the page" needs no variable kept in step with the layout. */
   container-type: inline-size;
+}
+
+/* The page opens with the folder's number and title again, large — the same two
+   things the folder showed you in the cabinet, said properly. */
+.pv-folder__header {
+  width: min(var(--pv-column, 656px), calc(100% - 48px));
+  margin: 0 auto;
+  padding: 56px 0 8px;
+}
+.pv-folder__heading {
+  margin: 8px 0 0;
+  font-size: var(--pv-header-title, 90px);
+  line-height: 0.96;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  color: #fff;
 }
 
 .pv-folder__column {
@@ -259,6 +308,12 @@
     background: hsl(var(--pv-hue, 0) 34% 12%);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-folder {
+    transition: none;
   }
 }
 

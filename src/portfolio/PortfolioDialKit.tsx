@@ -154,12 +154,24 @@ export default function PortfolioDialKit() {
     scrimAlpha: [LOOK.scrimAlpha, 0, 0.9, 0.01],
   });
 
-  // The folder's outline, and the entrance that brings the first row up.
+  // The folder itself. Every length here is measured at `referenceSheetPx` and
+  // scaled by the sheet's real width, so a dial means the same proportion
+  // whatever the viewport.
   const tabs = useDialKit('PV FOLDERS', {
-    tabHeightPx: [LOOK.tabHeightPx, 32, 160, 1],
-    tabWidthPct: [LOOK.tabWidthPct, 20, 50, 1],
+    bodyHPx: [LOOK.bodyHPx, 60, 400, 1],
+    tabHPx: [LOOK.tabHPx, 16, 120, 1],
+    tabWPx: [LOOK.tabWPx, 120, 1200, 4],
     chamferPx: [LOOK.chamferPx, 0, 160, 1],
-    tabBandAlpha: [LOOK.tabBandAlpha, 0, 1, 0.01],
+    splitA: [LOOK.splitA, 20, 80, 1],
+    splitB: [LOOK.splitB, 20, 80, 1],
+    titleSizePx: [LOOK.titleSizePx, 16, 160, 1],
+    headerTitlePx: [LOOK.headerTitlePx, 40, 400, 2],
+    hoverLiftPx: [LOOK.hoverLiftPx, 0, 60, 1],
+    dimOpacity: [LOOK.dimOpacity, 0, 1, 0.01],
+  });
+
+  const motion = useDialKit('PV MOTION', {
+    unfoldShare: [LOOK.unfoldShare, 0.05, 1, 0.01],
     easeRise: { type: 'select', options: ['linear', 'easeOut'], default: LOOK.easeRise },
     riseDelayMs: [LOOK.riseDelayMs, 0, 2000, 10],
     riseMs: [LOOK.riseMs, 100, 3000, 10],
@@ -218,13 +230,21 @@ export default function PortfolioDialKit() {
     rowPitchPx: geometry.rowPitchPx,
     turnDistancePx: geometry.turnDistancePx,
     sectionShadowAlpha: geometry.sectionShadowAlpha,
-    tabHeightPx: tabs.tabHeightPx,
-    tabWidthPct: tabs.tabWidthPct,
+    referenceSheetPx: LOOK.referenceSheetPx,
+    bodyHPx: tabs.bodyHPx,
+    tabHPx: tabs.tabHPx,
+    tabWPx: tabs.tabWPx,
     chamferPx: tabs.chamferPx,
-    tabBandAlpha: tabs.tabBandAlpha,
-    easeRise: tabs.easeRise as PortfolioLook['easeRise'],
-    riseDelayMs: tabs.riseDelayMs,
-    riseMs: tabs.riseMs,
+    splitA: tabs.splitA,
+    splitB: tabs.splitB,
+    titleSizePx: tabs.titleSizePx,
+    headerTitlePx: tabs.headerTitlePx,
+    hoverLiftPx: tabs.hoverLiftPx,
+    dimOpacity: tabs.dimOpacity,
+    unfoldShare: motion.unfoldShare,
+    easeRise: motion.easeRise as PortfolioLook['easeRise'],
+    riseDelayMs: motion.riseDelayMs,
+    riseMs: motion.riseMs,
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,
     sliverClickMs: track.sliverClickMs,

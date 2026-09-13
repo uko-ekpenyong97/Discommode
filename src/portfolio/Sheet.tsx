@@ -13,6 +13,7 @@ import {
   positionAt,
   positionOf,
   resolve,
+  rowOf,
 } from './pageTrack';
 import type { Track, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
@@ -63,6 +64,15 @@ import type { Project } from './blocks/types';
  * assets load. They are here because "should" is not a guarantee.
  */
 
+/**
+ * What the face of a folder spends on things other than the title: the 10px of
+ * air under the tab, the 11px mono number's line box, and the gap between the
+ * number and the title. Fixed rather than scaled — scaled, the number would be
+ * 6px on a laptop — which is why the title has to be fitted to what is left
+ * rather than simply scaled with everything else.
+ */
+const FACE_CHROME = 10 + 16 + 4;
+
 /** The tab-click tween's curve — decelerating, so a long rewind settles. */
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 
@@ -76,10 +86,12 @@ const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
  * to the screen intact.
  */
 function assertSlotsTile(stack: HTMLElement): void {
+  // `offsetTop`/`offsetHeight`, not the client rect: a hovered folder is lifted
+  // by a transform, and a lift is not an overlap.
   const rects = Array.from(stack.querySelectorAll<HTMLElement>('.pv-folder')).map((el) => ({
     k: el.dataset.k,
     side: el.dataset.side,
-    r: el.getBoundingClientRect(),
+    r: { top: el.offsetTop, bottom: el.offsetTop + el.offsetHeight },
   }));
   for (let i = 0; i < rects.length; i++) {
     for (let j = i + 1; j < rects.length; j++) {
@@ -113,9 +125,19 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
 
   const trackRef = useRef<Track | null>(null);
   const foldersRef = useRef<HTMLElement[]>([]);
-  /** Per folder, the parts the scroll loop writes to. Collected once rather
-   *  than queried per frame. */
-  const partsRef = useRef<{ body: HTMLElement; inner: HTMLElement; shape: HTMLElement }[]>([]);
+  /** Per folder, the parts the scroll loop writes to, and the two outlines it
+   *  swaps between. Collected once rather than queried per frame; the outlines
+   *  are re-cut on a measure, never on a frame. */
+  const partsRef = useRef<
+    {
+      body: HTMLElement;
+      inner: HTMLElement;
+      shape: HTMLElement;
+      strip: HTMLElement;
+      closed: string;
+      open: string;
+    }[]
+  >([]);
   const lenisRef = useRef<Lenis | null>(null);
   const activeRef = useRef(initialSection);
   /** The track position, which is NOT always the scroller's: the entrance runs
@@ -170,17 +192,26 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     for (let k = 0; k < folders.length; k++) {
       const el = folders[k];
       const f = l.folders[k];
+      const part = parts[k];
       el.style.top = `${f.top.toFixed(2)}px`;
       el.style.height = `${f.clipHeight.toFixed(2)}px`;
       el.style.zIndex = String(f.zIndex);
       el.toggleAttribute('data-top', k === l.topIndex);
       el.toggleAttribute('data-active', k === l.activeIndex);
-      el.toggleAttribute('data-open', f.bodyVisible);
 
-      const body = parts[k]?.body;
+      // The outline gains the full-width page when the folder opens and loses
+      // it again when it files. Swapped here rather than re-cut per frame: the
+      // page's HEIGHT is the wrapper's business, and only the shape changes.
+      const opening = f.bodyVisible;
+      if (part && opening !== el.hasAttribute('data-open')) {
+        el.toggleAttribute('data-open', opening);
+        part.shape.style.clipPath = opening ? part.open : part.closed;
+      }
+
+      const body = part?.body;
       if (!body) continue;
       if (body.scrollTop !== f.scrollTop) body.scrollTop = f.scrollTop;
-      // A folder showing only its tab is clipped to it anyway, but `overflow`
+      // A folder that is filed is clipped to its strip anyway, but `overflow`
       // is not something IntersectionObserver notices — a video in a folder
       // that had gone back into the pile would keep decoding behind it.
       const shown = f.bodyVisible;
@@ -224,36 +255,79 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       ? positionAt(previous, wasY)
       : { section: initialRef.current, offset: 0, turn: null };
 
+    // The reference is measured at one width; everything about a folder — how
+    // tall its body is, how wide its tab, how far the rows step — is a
+    // proportion of the sheet rather than a fixed number of pixels, so the
+    // cabinet keeps its shape at any size.
+    const sheetWidth = stack.getBoundingClientRect().width;
+    const scale = sheetWidth / look.referenceSheetPx;
+    const g = {
+      bodyH: look.bodyHPx * scale,
+      tabH: look.tabHPx * scale,
+      tabW: look.tabWPx * scale,
+      chamfer: look.chamferPx * scale,
+      rowPitch: look.rowPitchPx * scale,
+    };
+    const stripHeight = g.tabH - 1 + g.bodyH;
+
     const track = buildTrack({
       heights: partsRef.current.map(({ inner }) => inner.getBoundingClientRect().height),
       viewportHeight: sc.clientHeight,
-      rowPitch: look.rowPitchPx,
-      tabHeight: look.tabHeightPx,
+      rowPitch: g.rowPitch,
+      stripHeight,
       turnDistance: look.turnDistancePx,
+      unfoldShare: look.unfoldShare,
       easeRise: look.easeRise,
     });
     trackRef.current = track;
 
-    // The two heights every folder is laid out against. Published rather than
-    // recomputed in CSS so the DOM and the track cannot disagree by a rounding
-    // step — `openBodyHeight` in particular IS what `pageScroll` was built on.
-    stack.style.setProperty('--pv-body-h', `${track.openBodyHeight}px`);
-    stack.style.setProperty('--pv-slot-h', `${track.openBodyHeight + track.tabHeight}px`);
+    // Published rather than recomputed in CSS, so the DOM and the track cannot
+    // disagree by a rounding step.
+    stack.style.setProperty('--pv-row-pitch', `${g.rowPitch}px`);
+    stack.style.setProperty('--pv-tab-h', `${g.tabH}px`);
+    stack.style.setProperty('--pv-strip-h', `${stripHeight}px`);
+    // The title has to fit the FACE of the folder — the part of its body the row
+    // in front does not cover — under the number, whatever the dial says. A
+    // title that overflows is one sliced in half by the folder above.
+    const face = g.rowPitch - g.tabH;
+    const titleSize = Math.max(12, Math.min(look.titleSizePx * scale, face - FACE_CHROME));
+    stack.style.setProperty('--pv-title', `${titleSize}px`);
+    stack.style.setProperty('--pv-header-title', `${look.headerTitlePx * scale}px`);
 
-    // The folder outline, re-cut here rather than per frame: it only moves when
-    // the geometry does.
-    const sheetWidth = stack.getBoundingClientRect().width;
-    const tabWidth = (look.tabWidthPct / 100) * sheetWidth;
-    partsRef.current.forEach(({ shape }, k) => {
-      shape.style.clipPath = folderClipPath({
-        side: k % 2 === 0 ? 'left' : 'right',
+    // The columns alternate row by row — an even row splits evenly, an odd one
+    // does not — so the cabinet never reads as a table.
+    partsRef.current.forEach((part, k) => {
+      const r = rowOf(k);
+      const split = ((r % 2 === 0 ? look.splitA : look.splitB) / 100) * sheetWidth;
+      const left = k % 2 === 0 ? 0 : split;
+      const right = k % 2 === 0 ? split : sheetWidth;
+      const shape = {
+        left,
+        right,
         sheetWidth,
-        tabWidth,
-        tabHeight: look.chamferPx,
-        height: track.openBodyHeight + track.tabHeight,
-      });
-    });
+        tabWidth: g.tabW,
+        tabHeight: g.tabH,
+        chamfer: g.chamfer,
+        stripHeight,
+        bodyTop: g.rowPitch,
+        height: g.rowPitch + track.openBody[k],
+      };
+      // Both outlines up front: `apply` swaps between them when a folder opens
+      // or files, which happens once a turn rather than once a frame.
+      part.closed = folderClipPath(shape, false);
+      part.open = folderClipPath(shape, true);
+      part.shape.style.clipPath = folders[k].hasAttribute('data-open')
+        ? part.open
+        : part.closed;
 
+      part.strip.style.left = `${left}px`;
+      part.strip.style.width = `${right - left}px`;
+      // As tall as the folder SHOWS, not as tall as it is: the row in front
+      // covers the rest, and a hit area you cannot see is a trap.
+      part.strip.style.height = `${g.rowPitch}px`;
+      part.body.style.top = `${g.rowPitch}px`;
+      part.body.style.height = `${track.openBody[k]}px`;
+    });
     // The spacer is the only reason the scroller has anywhere to go: the track's
     // length minus the one viewport the sticky stage already occupies.
     spacer.style.height = `${Math.max(0, track.length - track.viewportHeight)}px`;
@@ -276,8 +350,8 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     if (import.meta.env.DEV && previous) {
       const before = layout(previous, wasY).activeIndex;
       const after = layout(track, position).activeIndex;
-      const heights = track.pageScroll.map((v) => Math.round(v + track.openBodyHeight));
-      const was = previous.pageScroll.map((v) => Math.round(v + previous.openBodyHeight));
+      const heights = track.pageScroll.map((v, i) => Math.round(v + track.openBody[i]));
+      const was = previous.pageScroll.map((v, i) => Math.round(v + previous.openBody[i]));
       if (String(heights) !== String(was) || before !== after) {
         const line = `[pv:track] heights ${was} → ${heights}  folder ${before} → ${after}`;
         // A rebuild that changes which folder you are on is THE bug this is
@@ -334,8 +408,8 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     measure();
 
     if (import.meta.env.DEV) {
-      const heights = trackRef.current?.pageScroll.map((v) =>
-        Math.round(v + (trackRef.current?.openBodyHeight ?? 0)),
+      const heights = trackRef.current?.pageScroll.map((v, i) =>
+        Math.round(v + (trackRef.current?.openBody[i] ?? 0)),
       );
       console.log(
         `[pv:track] armed in ${Math.round(performance.now() - ready.at)}ms  heights ${heights}`,
@@ -367,9 +441,12 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     const folders = Array.from(stack.querySelectorAll<HTMLElement>('.pv-folder'));
     foldersRef.current = folders;
     partsRef.current = folders.map((folder) => ({
-      body: folder.querySelector<HTMLElement>('.pv-folder__body')!,
+      body: folder.querySelector<HTMLElement>('.pv-folder__content')!,
       inner: folder.querySelector<HTMLElement>('.pv-folder__inner')!,
       shape: folder.querySelector<HTMLElement>('.pv-folder__shape')!,
+      strip: folder.querySelector<HTMLElement>('.pv-folder__strip')!,
+      closed: '',
+      open: '',
     }));
     trackRef.current = null; // a different project: nothing to carry across
     activeRef.current = initialRef.current;

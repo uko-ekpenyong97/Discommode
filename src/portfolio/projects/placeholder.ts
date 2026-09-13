@@ -171,8 +171,10 @@ const BEATS_PER_VIEWPORT = 2.1;
 
 export function placeholderSection({ title, hue, viewports }: SectionSpec): Section {
   const count = Math.max(1, Math.round((viewports - 0.25) * BEATS_PER_VIEWPORT));
+  // No title block: the page opens with the folder's own number and title, at
+  // the size the reference gives it, and a project should not say its name
+  // twice running.
   const blocks: Block[] = [
-    { type: 'title', text: title },
     { type: 'caption', text: `PLACEHOLDER — ${viewports} VIEWPORTS` },
   ];
   for (let i = 0; i < count; i++) {

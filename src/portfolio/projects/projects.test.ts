@@ -25,10 +25,10 @@ describe('project registry', () => {
     }
   });
 
-  it('opens every section on its own title, so the page says what the tab says', () => {
+  it('does not repeat the title in the blocks — the page header carries it', () => {
     for (const project of PROJECTS) {
       for (const section of project.sections) {
-        expect(section.blocks[0]).toMatchObject({ type: 'title', text: section.title });
+        expect(section.blocks.some((b) => b.type === 'title')).toBe(false);
       }
     }
   });

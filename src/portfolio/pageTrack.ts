@@ -1,41 +1,35 @@
 /**
- * The page track — the pure geometry behind the project's folder stack.
+ * The page track — the pure geometry behind the project's folder cabinet.
  *
- * A project is a PILE OF FOLDERS. Each section is a folder: a tab on its top
- * edge, a 45° chamfer down to the body, the body holding the content. Folders
- * alternate sides — even index on the left, odd on the right — and the two with
- * the same `row` sit at the same height, so the pile reads as two columns.
+ * A project is a set of FOLDERS, and the screen is a filing cabinet. Each
+ * folder is a tab on top of a body; folders alternate columns, left and right,
+ * two to a row, and rows overlap so a row in front covers the bottom of the one
+ * behind. There are three regions:
  *
- * Three regions, top to bottom:
- *
- *   ┌ read pile ─────────────┐  rows you have been through, docked as tabs
- *   │ ▤ Overview  ▤ Research │  row 0
- *   │ ▤ Motion    ▤ Build    │  row 1
- *   ├ the open folder ───────┤
- *   │                        │  the one you are reading
- *   │                        │
- *   ├ unread pile ───────────┤  rows still to come, stacked at the bottom
- *   │ ▤ Outcome   ▤ Appendix │
- *   └────────────────────────┘
+ *   ┌ the cabinet ──────────────┐  folders you have read, docked from the top
+ *   │ ▭ Overview   ▭ Research   │  row 0
+ *   │ ▭ Motion     ▭ Build      │  row 1
+ *   ├ the open folder ──────────┤
+ *   │                           │  full sheet width, starting one row down
+ *   │                           │
+ *   ├ the pile ─────────────────┤  still to come, stacked at the bottom
+ *   │ ▭ Outcome    ▭ Appendix   │
+ *   └───────────────────────────┘
  *
  * ONE POSITION drives all of it. You scroll the open folder; at its end the
- * scroll carries into a TURN, and what the turn does depends on which side you
- * are on:
- *
- *   even → odd   the partner's tab is already docked beside you, so its body
- *                UNFOLDS down from it over yours.
- *   odd → even   the next row RISES out of the unread pile and docks, its left
- *                folder opening as it arrives and its right partner docking
- *                closed beside it.
- *
- * So the track is the same alternating shape it has always been —
+ * scroll carries into a TURN, and a turn is always the same thing: the NEXT
+ * FOLDER, alone, rises out of the pile to its slot in the cabinet, and over the
+ * last stretch of the rise its content unfolds out from under it to become the
+ * new open body. One folder per turn, so a row fills in two turns — left, then
+ * right — and a half-filled row is a perfectly ordinary state.
  *
  *   folder 0 vertical │ turn │ folder 1 vertical │ turn │ folder 2 vertical
  *   ├─────────────────>├─────>├─────────────────>├─────>├────────────────>
  *   0           scroll_0   +turnDistance                 trackLength - VH
  *
- * — and everything on screen is a function of where you are in it. There is no
- * per-folder state, which is why scrolling back un-stacks the pile for free.
+ * Everything on screen is a function of where you are in that. There is no
+ * per-folder state, which is why scrolling back drops the folders into the pile
+ * one at a time, in reverse, for free.
  *
  * Kept free of React and of the DOM so the mapping can be unit-tested: it is
  * the one place where "where is everything at position y" is decided, and every
@@ -45,43 +39,50 @@
 export type RiseEase = 'linear' | 'easeOut';
 
 export interface TrackMetrics {
-  /** Content height of each folder, in px. Its length is the folder count. */
+  /** Content height of each folder's open body, in px. Its length is the count. */
   heights: number[];
   /** The sheet's height — the space the three regions share. */
   viewportHeight: number;
-  /** Vertical step between docked rows. */
+  /** Vertical step between rows, in both the cabinet and the pile. Less than
+   *  `stripHeight`, which is what makes the rows overlap. */
   rowPitch: number;
-  /** Height of a folder's tab. */
-  tabHeight: number;
-  /** Scroll spent on one turn, whichever kind it is. */
+  /** A folder's own height: its tab plus its body, less the 1px the tab sits
+   *  into the body by. */
+  stripHeight: number;
+  /** Scroll spent on one turn. */
   turnDistance: number;
-  /** Curve for a rising row's POSITION. The scroll stays 1:1 either way — this
-   *  only bends where the row is at a given point through the turn. */
+  /** The fraction of a turn, at its end, over which the risen folder's content
+   *  unfolds. The rest of the turn is the rise. */
+  unfoldShare: number;
+  /** Curve for a rising folder's POSITION. The scroll stays 1:1 either way —
+   *  this only bends where the folder is at a given point through the turn. */
   easeRise?: RiseEase;
 }
 
 export interface Track {
-  /** How far each folder scrolls internally: `max(0, height - openBodyHeight)`. */
+  /** How far each folder scrolls internally: `max(0, height - openBody)`. */
   pageScroll: number[];
   /** Track position at which each folder's vertical segment begins. */
   start: number[];
   /** Total scrollable extent, including the last folder's viewport. */
   length: number;
+  /**
+   * The content height each folder has WHEN IT IS THE OPEN ONE.
+   *
+   * Per folder, not one number: the open body runs from one row below the
+   * folder's own row down to the top of the pile, and a left folder leaves its
+   * partner in the pile while a right folder does not — so the two alternate,
+   * a row pitch apart. This is what `pageScroll` is measured against, so it has
+   * to be derived before the track is.
+   */
+  openBody: number[];
   turnDistance: number;
   viewportHeight: number;
   rowPitch: number;
-  tabHeight: number;
+  stripHeight: number;
   /** Number of rows: two folders to a row, the last possibly half empty. */
   rows: number;
-  /**
-   * The body height a folder has while it is the open one.
-   *
-   * The SAME for every folder, and not by luck: moving to the next row adds one
-   * `rowPitch` to the read pile and takes exactly one away from the unread one,
-   * so the space between them never changes. Which is what lets `pageScroll`
-   * be a property of the folder rather than of where you are.
-   */
-  openBodyHeight: number;
+  unfoldShare: number;
   easeRise: RiseEase;
 }
 
@@ -96,7 +97,7 @@ export interface Track {
  */
 export interface TrackPosition {
   /** The folder whose SEGMENT the position falls in; `-1` during the entrance,
-   *  which is row 0 rising out of the pile before there is anything to read. */
+   *  which is folder 0 rising out of the pile before there is anything to read. */
   section: number;
   /** How far down that folder, in px. */
   offset: number;
@@ -105,21 +106,15 @@ export interface TrackPosition {
 }
 
 export interface FolderLayout {
-  /** Top of the folder's slot, in px from the sheet's top. */
+  /** Top of the folder's slot, in px from the sheet's top — the top of its tab. */
   top: number;
-  /** How much of it paints, measured down from `top`. `tabHeight` means the tab
-   *  and nothing else. */
+  /** How much of it paints, measured down from `top`. One `rowPitch` is the
+   *  folder alone, with the row in front covering the rest of its body. */
   clipHeight: number;
-  /** What to write to its body's `scrollTop`. */
+  /** What to write to its content body's `scrollTop`. */
   scrollTop: number;
   zIndex: number;
-  /**
-   * True when the folder is showing CONTENT rather than just its tab and the
-   * sliver of body edge that makes the pile read as a stack. A docked row is
-   * exactly one `rowPitch` tall, so the few pixels below its tab are the edge
-   * of its own body — the look of a folder behind a folder — and not a body
-   * anyone can read. Anything taller than that is.
-   */
+  /** True when the folder is showing its open body and not just its own strip. */
   bodyVisible: boolean;
 }
 
@@ -127,18 +122,14 @@ export interface TrackLayout {
   folders: FolderLayout[];
   /** The folder you are IN. Flips at the turn's halfway point — the point where
    *  the new one is more of what you see than the old. Drives the hash and
-   *  which tab reads as current: the things that should commit once, not twice. */
+   *  which folder reads as current: the things that should commit once. */
   activeIndex: number;
-  /** The folder drawn on top. Flips the instant a turn starts, because from
-   *  that instant it is the thing arriving in front of you. */
+  /** The folder drawn on top: the one rising, the moment a turn starts. */
   topIndex: number;
   /** True while the scroll is driving a turn rather than a folder's own scroll. */
   turning: boolean;
   /** 0…1 through the turn; 0 when not turning. */
   progress: number;
-  /** True when the turn is a whole row rising from the pile, false when it is a
-   *  docked partner unfolding in place. */
-  rising: boolean;
 }
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
@@ -147,8 +138,7 @@ const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > 
  * Sub-pixel dead zone at the end of a folder's vertical run. Landing EXACTLY on
  * a folder's bottom is a routine position — it is where a tab click goes, and
  * where a smoothed scroll settles — and a float epsilon either side of the
- * boundary must not flip which folder is the active one. Half a pixel into a
- * 700-odd pixel turn is invisible.
+ * boundary must not flip which folder is the active one.
  */
 const SEGMENT_EPSILON = 0.5;
 
@@ -165,12 +155,27 @@ export function rowCount(n: number): number {
   return Math.max(1, Math.ceil(n / 2));
 }
 
+/** Where row `r` docks in the cabinet, measured to the top of its tab. */
+export function cabinetTop(rowPitch: number, r: number): number {
+  return r * rowPitch;
+}
+
+/**
+ * Where row `r` sits in the pile: counted from the BOTTOM, last row lowest, so
+ * a row's place does not depend on how many are left and the rows that stay put
+ * when one rises genuinely do not move.
+ */
+export function pileTop(viewportHeight: number, rowPitch: number, rows: number, r: number): number {
+  return viewportHeight - (rows - r) * rowPitch;
+}
+
 export function buildTrack({
   heights,
   viewportHeight,
   rowPitch,
-  tabHeight,
+  stripHeight,
   turnDistance,
+  unfoldShare,
   easeRise = 'linear',
 }: TrackMetrics): Track {
   // A project always has at least one folder; an empty list would make every
@@ -179,11 +184,16 @@ export function buildTrack({
   const n = h.length;
   const rows = rowCount(n);
 
-  // The read pile at its deepest, plus one tab, is what the open body has to
-  // clear — and since the piles trade row for row, that is the whole story.
-  const openBodyHeight = Math.max(0, viewportHeight - (rows - 1) * rowPitch - tabHeight);
+  // The open body runs from one row below the folder's own row down to the top
+  // of the pile — and what is at the top of the pile is whatever is NOT read
+  // yet, which for a left folder includes its own partner.
+  const openBody = h.map((_, k) => {
+    const next = k + 1;
+    const top = next < n ? pileTop(viewportHeight, rowPitch, rows, rowOf(next)) : viewportHeight;
+    return Math.max(0, top - (rowOf(k) + 1) * rowPitch);
+  });
 
-  const pageScroll = h.map((height) => Math.max(0, height - openBodyHeight));
+  const pageScroll = h.map((height, k) => Math.max(0, height - openBody[k]));
 
   const start = [0];
   for (let k = 0; k + 1 < n; k++) start.push(start[k] + pageScroll[k] + turnDistance);
@@ -194,12 +204,13 @@ export function buildTrack({
     pageScroll,
     start,
     length,
+    openBody,
     turnDistance,
     viewportHeight,
     rowPitch,
-    tabHeight,
+    stripHeight,
     rows,
-    openBodyHeight,
+    unfoldShare,
     easeRise,
   };
 }
@@ -210,14 +221,8 @@ export function positionOf(track: Track, k: number): number {
   return track.start[folderIndex(track, k)];
 }
 
-/**
- * The track position at which folder `k` ENDS.
- *
- * Kept for the `sliverReturn: 'bottom'` dial: a folder is frozen at its bottom
- * while it is buried, so returning to its bottom is the shortest way back to
- * the line you stopped reading. The default returns to the top instead, which
- * makes a tab click the outward scroll run backwards.
- */
+/** The track position at which folder `k` ENDS — kept for the `sliverReturn`
+ *  dial, which lands a click on the line you left rather than on the title. */
 export function bottomOf(track: Track, k: number): number {
   const index = folderIndex(track, k);
   return track.start[index] + track.pageScroll[index];
@@ -232,9 +237,9 @@ export function maxPosition(track: Track): number {
   return Math.max(0, track.length - track.viewportHeight);
 }
 
-/** The minimum: one turn BEFORE the start, which is the entrance — row 0 still
- *  in the pile, on its way up. The scroller cannot go there; the intro tween
- *  drives it and hands over at 0. */
+/** The minimum: one turn BEFORE the start, which is the entrance — folder 0
+ *  still in the pile, on its way up. The scroller cannot go there; the intro
+ *  tween drives it and hands over at 0. */
 export function minPosition(track: Track): number {
   return -track.turnDistance;
 }
@@ -244,64 +249,49 @@ const easeOutCubic = (x: number): number => 1 - Math.pow(1 - x, 3);
 /**
  * Where everything is at track position `y`.
  *
- * Two rules do all the work:
+ * Three states and one moving part. Folders you have read are docked in the
+ * cabinet; folders you have not are in the pile; and during a turn exactly ONE
+ * folder is between the two, travelling from its pile slot to its cabinet slot
+ * and unfolding its content over the last stretch of the journey.
  *
- *  1. A row's y is its docked slot if you have passed it, its slot in the
- *     unread pile if you have not, and somewhere between the two while it is
- *     rising.
- *  2. A folder paints from its own top down to the NEXT ROW'S top, whatever
- *     state that row is in.
- *
- * Rule 2 is what makes the regions tile with no arithmetic: a docked row is one
- * `rowPitch` tall because the row below it is one pitch down; the open folder
- * runs all the way to the unread pile because that is where the next row is;
- * and while a row rises, the body it is uncovering grows to follow it exactly.
- * No glass ever overlaps glass, which on a translucent page is not an
- * optimisation but the difference between a stack and a smear.
+ * A folder paints one row pitch of itself, which is less than it is tall — the
+ * row in front covers the rest, and that overlap is what makes a stack of paper
+ * look like a stack of paper. The exception is the folder you are reading,
+ * which paints its strip AND the open body below it, out to the top of the
+ * pile.
  */
 export function layout(track: Track, position: number): TrackLayout {
-  const { start, pageScroll, rowPitch, tabHeight: T, viewportHeight: VH, rows: R } = track;
+  const { start, pageScroll, rowPitch, openBody, viewportHeight: VH, rows: R } = track;
   const n = start.length;
   const at = positionAt(track, position);
   const a = at.section;
   const p = at.turn ?? 0;
   const turning = at.turn !== null;
-  const ra = a < 0 ? -1 : rowOf(a);
-  // Even → odd is an unfold inside the row you are already in. Odd → even (and
-  // the entrance, which is "→ folder 0") brings a whole new row up.
-  const rising = turning && (a < 0 || a % 2 === 1);
-  const riseRow = ra + 1;
+  const riser = Math.min(a + 1, n - 1);
   const ease = track.easeRise === 'easeOut' ? easeOutCubic : (x: number): number => x;
-
-  const dockY = (r: number): number => r * rowPitch;
-  // The unread pile is anchored to the BOTTOM, last row lowest — so a row's
-  // place in it does not depend on how many are left, and the rows that stay
-  // put when one rises genuinely do not move.
-  const pileY = (r: number): number => VH - (R - r) * rowPitch;
-  const rowY = (r: number): number => {
-    if (r <= ra) return dockY(r);
-    if (rising && r === riseRow) return pileY(r) + (dockY(r) - pileY(r)) * ease(p);
-    return pileY(r);
-  };
-  const rowBottom = (r: number): number => (r + 1 < R ? rowY(r + 1) : VH);
-
-  /** Which folder of a row owns the strip below the tabs: the last one in it
-   *  you have opened, or — in a row you have not reached — the left one, which
-   *  is the one that will open when the row arrives. */
-  const ownerOf = (r: number): number => {
-    const right = 2 * r + 1;
-    return right < n && right <= a ? right : 2 * r;
-  };
+  // The rise takes all of the turn but the last stretch; the content unfolds
+  // over that stretch, from under the strip that has just landed.
+  const unfold = clamp((p - (1 - track.unfoldShare)) / track.unfoldShare, 0, 1);
 
   const folders: FolderLayout[] = [];
   for (let k = 0; k < n; k++) {
     const r = rowOf(k);
-    const top = rowY(r);
-    let clipHeight = ownerOf(r) === k ? rowBottom(r) - top : T;
-    // The unfold: the partner's body comes down from its already-docked tab,
-    // 1:1 with the scroll, over the body of the folder it is covering — which
-    // keeps its own full height underneath and is simply hidden as it goes.
-    if (turning && !rising && k === a + 1) clipHeight = T + p * (rowBottom(r) - top - T);
+    let top: number;
+    let clipHeight: number;
+
+    if (k <= a) {
+      // Docked. The one you are reading keeps its open body; the rest are a row
+      // pitch of themselves, the remainder covered by the row in front.
+      top = cabinetTop(rowPitch, r);
+      clipHeight = rowPitch + (k === a ? openBody[k] : 0);
+    } else if (turning && k === riser) {
+      const from = pileTop(VH, rowPitch, R, r);
+      top = from + (cabinetTop(rowPitch, r) - from) * ease(p);
+      clipHeight = rowPitch + openBody[k] * unfold;
+    } else {
+      top = pileTop(VH, rowPitch, R, r);
+      clipHeight = rowPitch;
+    }
 
     folders.push({
       top,
@@ -312,14 +302,12 @@ export function layout(track: Track, position: number): TrackLayout {
     });
   }
 
-  const next = Math.min(Math.max(a, 0) + (a < 0 ? 0 : 1), n - 1);
   return {
     folders,
-    activeIndex: turning && p >= HANDOVER ? next : Math.max(a, 0),
-    topIndex: turning ? next : Math.max(a, 0),
+    activeIndex: turning && p >= HANDOVER ? riser : Math.max(a, 0),
+    topIndex: turning ? riser : Math.max(a, 0),
     turning,
     progress: p,
-    rising,
   };
 }
 
@@ -333,12 +321,16 @@ export function positionAt(track: Track, position: number): TrackPosition {
   const n = start.length;
   const y = clamp(position, minPosition(track), maxPosition(track));
 
-  // Before the beginning: the entrance, which is row 0 rising into an empty
-  // screen. Expressed as a turn "into folder 0" so it needs no separate state.
+  // Before the beginning: the entrance, which is folder 0 rising into an empty
+  // cabinet. Expressed as a turn "into folder 0" so it needs no separate state.
   if (y < 0) return { section: -1, offset: 0, turn: clamp(1 + y / turnDistance, 0, 1) };
 
+  // The same half-pixel guard at the END of a turn as at the end of a vertical
+  // run, and for the same reason: a scroller quantises to device pixels, so a
+  // programmatic scroll to a boundary — a deep link, a tab click — lands a
+  // fraction short of it and the turn reads as 99.98% done rather than done.
   let k = 0;
-  while (k + 1 < n && y >= start[k + 1]) k++;
+  while (k + 1 < n && y >= start[k + 1] - SEGMENT_EPSILON) k++;
 
   const verticalEnd = start[k] + pageScroll[k];
   if (y > verticalEnd + SEGMENT_EPSILON) {
@@ -359,7 +351,7 @@ export function positionAt(track: Track, position: number): TrackPosition {
 export function resolve(track: Track, at: TrackPosition): number {
   if (at.section < 0) return -(1 - clamp(at.turn ?? 1, 0, 1)) * track.turnDistance;
   const index = folderIndex(track, at.section);
-  // A turn only exists where there is a folder after this one to turn to.
+  // A turn only exists where there is a folder after this one to bring up.
   const turning = at.turn !== null && index + 1 < track.start.length;
   // A turn always begins at the BOTTOM of the folder it follows, so that is the
   // base however tall that folder has become — carrying the old offset across
@@ -369,43 +361,64 @@ export function resolve(track: Track, at: TrackPosition): number {
   return clamp(track.start[index] + offset + turn, 0, maxPosition(track));
 }
 
-/**
- * The folder's outline: a tab on one half of the top edge, a 45° chamfer down
- * to the body, and the full width below it.
- *
- * The two folders of a row have to TILE the tab band rather than overlap in it,
- * or the pair is two sheets of glass on top of each other and the corner where
- * they meet goes dark and double-blurred. Left to themselves the chamfers do
- * cross — at the default 48% / 52% split the gap between the tabs is 4% of the
- * sheet, and a 45° chamfer eats that in the first 2% of its descent — so the
- * right-hand folder's outline is notched to follow its partner's chamfer from
- * the crossing point down. Above the crossing the two are separated by the gap;
- * below it they abut exactly, with nothing between and nothing doubled.
- */
-export function folderClipPath({
-  side,
-  sheetWidth: W,
-  tabWidth,
-  tabHeight: T,
-  height: H,
-}: {
-  side: 'left' | 'right';
+/* ── the folder's outline ────────────────────────────────────────────────── */
+
+export interface FolderShape {
+  /** Left and right edges of the folder's COLUMN, in px from the sheet's left. */
+  left: number;
+  right: number;
+  /** Sheet width, for the open body, which is not in a column at all. */
   sheetWidth: number;
   tabWidth: number;
   tabHeight: number;
+  chamfer: number;
+  /** Tab plus body, less the 1px overlap between them. */
+  stripHeight: number;
+  /** Where the open body starts, measured from the folder's own top. */
+  bodyTop: number;
+  /** How far down the shape runs when the body is fully out. */
   height: number;
-}): string {
-  const r = (v: number): string => `${Math.round(v * 100) / 100}px`;
-  if (side === 'left') {
-    return `polygon(0 0, ${r(tabWidth)} 0, ${r(tabWidth + T)} ${r(T)}, ${r(W)} ${r(T)}, ${r(W)} ${r(H)}, 0 ${r(H)})`;
+  radius?: number;
+}
+
+/**
+ * The folder's outline, as one `clip-path`.
+ *
+ * ONE path, not two elements, for the reason e4047d4 established: two adjacent
+ * `backdrop-filter` elements do not join, because each blurs its own backdrop
+ * with its own edge clamping and the junction seams however exactly the tints
+ * match. So the tab, the body and — when the folder is open — the full-width
+ * page below it are all cut from a single sheet of glass.
+ *
+ * The tab is a plain strip at the column's left edge with a 45° chamfer at its
+ * far end, and it sits one pixel INTO the body, so there is no seam between
+ * them to hide. Two corners are rounded: the tab's outer one and the body's.
+ */
+export function folderClipPath(shape: FolderShape, open: boolean): string {
+  const { left: L, right: R, sheetWidth: W, tabWidth: tw, tabHeight: T, chamfer: C } = shape;
+  const r = shape.radius ?? 6;
+  // SVG path data, which is UNITLESS — `path()` takes a `<string>` of path
+  // commands, not CSS lengths, and a stray `px` makes the whole declaration
+  // invalid and the clip silently disappear.
+  const px = (v: number): string => String(Math.round(v * 100) / 100);
+  // The tab's bottom edge is also the body's top edge, one pixel up.
+  const lip = Math.max(0, T - 1);
+  const bottom = open ? shape.height : shape.stripHeight;
+
+  // Tab: rounded outer corner, along the top, then the chamfer down to the body.
+  const head =
+    `M ${px(L + r)} 0 ` +
+    `H ${px(L + tw)} ` +
+    `L ${px(L + tw + C)} ${px(lip)} ` +
+    `H ${px(R - r)} ` +
+    `A ${px(r)} ${px(r)} 0 0 1 ${px(R)} ${px(lip + r)} `;
+
+  const tail = `H ${px(L)} V ${px(r)} A ${px(r)} ${px(r)} 0 0 1 ${px(L + r)} 0 Z`;
+
+  if (!open) {
+    return `path('${head}V ${px(bottom)} ${tail}')`;
   }
-  const rightStart = W - tabWidth;
-  const tail = `${r(W)} 0, ${r(W)} ${r(H)}, 0 ${r(H)}, 0 ${r(T)}`;
-  if (rightStart - tabWidth >= 2 * T) {
-    // A gap wide enough that the chamfers never meet: the plain mirror image.
-    return `polygon(${r(rightStart)} 0, ${tail}, ${r(rightStart - T)} ${r(T)})`;
-  }
-  const yc = (rightStart - tabWidth) / 2;
-  const xc = (rightStart + tabWidth) / 2;
-  return `polygon(${r(rightStart)} 0, ${tail}, ${r(tabWidth + T)} ${r(T)}, ${r(xc)} ${r(yc)})`;
+  // Open: the column's strip down to where the page begins, then the page — the
+  // full width of the sheet — and back up the other side.
+  return `path('${head}V ${px(shape.bodyTop)} H ${px(W)} V ${px(bottom)} H 0 V ${px(shape.bodyTop)} ${tail}')`;
 }
