@@ -3,12 +3,13 @@ import {
   bottomOf,
   buildTrack,
   cabinetTop,
+  columnOf,
   folderClipPath,
   layout,
   maxPosition,
   minPosition,
+  pageFoot,
   pageTop,
-  pileHead,
   pileTop,
   positionAt,
   positionOf,
@@ -25,6 +26,8 @@ const metrics = (over: Partial<TrackMetrics> = {}): TrackMetrics => ({
   rowPitch: 130,
   tabHeight: 40,
   strip: 90,
+  sheetWidth: 1000,
+  splits: [0.5, 0.4],
   turnDistance: 720,
   ...over,
 });
@@ -33,6 +36,10 @@ const TURN = 720;
 const PITCH = 130;
 const TAB = 40;
 const STRIP = 90;
+const W = 1000;
+/** Where the columns divide: half way in an even row, 40% in an odd one. */
+const SPLIT_EVEN = 500;
+const SPLIT_ODD = 400;
 /** A filed folder's slot: its own pitch, plus the tab of the row in front. */
 const FILED = PITCH + TAB;
 /** Where each column's page begins: a left folder's at its tab's lip, a right
@@ -68,44 +75,114 @@ describe('rows and columns', () => {
     expect(pageTop(TAB, 10, 1)).toBe(TAB - 1 + 6);
   });
 
-  it('reads the top of the pile from the first FULL row of it', () => {
-    // A left folder leaves its partner behind, so the row below it in the pile
-    // is half read — and a page that stopped at the half-row would leave a
-    // row-deep band of backdrop beside the folder still in it. Both columns
-    // therefore stop at the same line, `rowOf(k + 2)`, and the half-row's
-    // folder paints over the page.
-    expect(pileHead(900, PITCH, 3, 6, 0)).toBe(640);
-    expect(pileHead(900, PITCH, 3, 6, 1)).toBe(640);
-    expect(pileHead(900, PITCH, 3, 6, 2)).toBe(770);
-    expect(pileHead(900, PITCH, 3, 6, 3)).toBe(770);
-    // With one folder left there is no full row under it: the page runs to the
-    // foot of the sheet and the last folder sits on top of it.
-    expect(pileHead(900, PITCH, 3, 6, 4)).toBe(900);
-    expect(pileHead(900, PITCH, 3, 6, 5)).toBe(900);
+  it('alternates the column divide row by row', () => {
+    expect(columnOf(0, 6, W, [0.5, 0.4])).toEqual({ left: 0, right: SPLIT_EVEN });
+    expect(columnOf(1, 6, W, [0.5, 0.4])).toEqual({ left: SPLIT_EVEN, right: W });
+    expect(columnOf(2, 6, W, [0.5, 0.4])).toEqual({ left: 0, right: SPLIT_ODD });
+    expect(columnOf(3, 6, W, [0.5, 0.4])).toEqual({ left: SPLIT_ODD, right: W });
+  });
+
+  it('gives the whole row to a folder with no partner', () => {
+    // Seven folders: the last one is alone in its row, and half a row of
+    // nothing at the foot of the pile is both ugly and a hole.
+    expect(columnOf(6, 7, W, [0.5, 0.4])).toEqual({ left: 0, right: W });
+    expect(columnOf(6, 8, W, [0.5, 0.4])).toEqual({ left: 0, right: SPLIT_ODD });
+  });
+});
+
+describe('pageFoot — where a page stops, per column', () => {
+  const foot = (k: number) => buildTrack(metrics()).foot[k];
+
+  it('stops at the tab of the first folder still piled in that column', () => {
+    // Reading folder 0, its own partner is still piled in the right column one
+    // row higher than anything left in the left one — so the page steps.
+    expect(foot(0)).toEqual([
+      { x: SPLIT_EVEN, y: 640 },
+      { x: W, y: 510 },
+    ]);
+  });
+
+  it('is flat when both columns start their pile in the same row', () => {
+    expect(foot(1)).toEqual([{ x: W, y: 640 }]);
+    expect(foot(3)).toEqual([{ x: W, y: 770 }]);
+  });
+
+  it('steps at the divide of the PILED row, not the reader’s own', () => {
+    // Folder 2 is in an odd row (40%), but what is left in its left column is
+    // folder 4, in an even one (50%) — and the step lands where folder 3's
+    // column begins, because folder 3 is what fills the rest.
+    expect(foot(2)).toEqual([
+      { x: SPLIT_ODD, y: 770 },
+      { x: W, y: 640 },
+    ]);
+  });
+
+  it('runs to the foot of the sheet where a column has nothing left', () => {
+    expect(foot(4)).toEqual([
+      { x: SPLIT_EVEN, y: 900 },
+      { x: W, y: 770 },
+    ]);
+    expect(foot(5)).toEqual([{ x: W, y: 900 }]);
+  });
+
+  it('leaves no corner under a partnerless last folder', () => {
+    // Seven folders: the last row holds one, across the whole width — so both
+    // folders of the row above stop a tab into it and nothing is left over.
+    const seven = buildTrack(metrics({ heights: Array(7).fill(900) }));
+    const l = layout(seven, positionOf(seven, 0));
+    const P = (r: number) => pileTop(900, PITCH, 4, r);
+    expect(l.folders[5].top).toBe(P(2));
+    // Folder 6 spans the whole of row 3, so BOTH of row 2's folders stop a tab
+    // into it and folder 6 itself takes the rest of the sheet.
+    expect(l.folders[4].top + l.folders[4].clipHeight).toBe(P(3) + TAB);
+    expect(l.folders[5].top + l.folders[5].clipHeight).toBe(P(3) + TAB);
+    expect(l.folders[6].top + l.folders[6].clipHeight).toBe(900);
+  });
+
+  it('steps around a partnerless folder spanning its whole row', () => {
+    // Seven folders: the last row holds one, across the full width. Reading
+    // folder 4 leaves 5 (row 2, right half) and 6 (row 3, all of it) piled, so
+    // the page stops at row 3 on the left and at row 2 on the right.
+    const seven = buildTrack(metrics({ heights: Array(7).fill(900) }));
+    expect(seven.foot[4]).toEqual([
+      { x: SPLIT_EVEN, y: pileTop(900, PITCH, 4, 3) },
+      { x: W, y: pileTop(900, PITCH, 4, 2) },
+    ]);
+  });
+
+  it('is the pile MINUS the folder in the air, which is the next one’s foot', () => {
+    // The identity the whole turn rests on: while `k + 1` is rising, what is
+    // left in the pile under `k` is exactly what will be left under `k + 1`.
+    const t = buildTrack(metrics());
+    for (let k = 0; k + 1 < 6; k++) {
+      expect(pageFoot(t, t.rows, 6, [...Array(5 - k)].map((_, i) => k + 2 + i))).toEqual(
+        t.foot[k + 1],
+      );
+    }
   });
 });
 
 describe('buildTrack', () => {
-  it('runs the open body from the page top to the first full row of the pile', () => {
+  it('measures the open body against the SHALLOWEST column, not the deepest', () => {
     const t = buildTrack(metrics());
-    // Both folders of a row stop at the same line; what alternates is where
-    // they START — a left folder's page at its own tab's lip, a right one's
-    // under the strip its partner is docked in.
-    expect(t.openBody[0]).toBe(640 - TAB - LEFT_PAGE);
+    // The content is a rectangle and the column of type straddles the divide,
+    // so it can only fill the part of the page that is full width. The glass
+    // goes deeper on one side; the words do not.
+    expect(t.openBody[0]).toBe(510 - TAB - LEFT_PAGE);
     expect(t.openBody[1]).toBe(640 - TAB - STRIP);
-    expect(t.openBody[2]).toBe(770 - (TAB + PITCH) - LEFT_PAGE);
+    expect(t.openBody[2]).toBe(640 - (TAB + PITCH) - LEFT_PAGE);
     expect(t.openBody[3]).toBe(770 - (TAB + PITCH) - STRIP);
-    // Nothing full left under them: the page runs to the foot of the sheet.
-    expect(t.openBody[4]).toBe(900 - (TAB + 2 * PITCH) - LEFT_PAGE);
+    expect(t.openBody[4]).toBe(770 - (TAB + 2 * PITCH) - LEFT_PAGE);
     expect(t.openBody[5]).toBe(900 - (TAB + 2 * PITCH) - STRIP);
+    expect(t.openBody).toEqual(t.footMin.map((y, k) => y - cabinetTop(TAB, PITCH, rowOf(k)) - pageTop(TAB, STRIP, k)));
   });
 
   it('scrolls each folder by its overflow past its OWN body, then turns', () => {
     const t = buildTrack(metrics());
-    expect(t.pageScroll[0]).toBe(1800 - 561);
+    expect(t.pageScroll[0]).toBe(1800 - 431);
     expect(t.pageScroll[1]).toBe(3600 - 510);
-    expect(t.start[1]).toBe(1239 + TURN);
-    expect(t.start[2]).toBe(1239 + TURN + 3090 + TURN);
+    expect(t.start[1]).toBe(1369 + TURN);
+    expect(t.start[2]).toBe(1369 + TURN + 3090 + TURN);
   });
 
   it('a folder shorter than its body still has a segment, just no scroll', () => {
@@ -117,6 +194,7 @@ describe('buildTrack', () => {
   it('a single-folder project is just that folder, with no turn', () => {
     const t = buildTrack(metrics({ heights: [2700] }));
     expect(t.rows).toBe(1);
+    expect(t.foot[0]).toEqual([{ x: W, y: 900 }]);
     expect(t.openBody[0]).toBe(900 - TAB - LEFT_PAGE);
     expect(t.start).toEqual([0]);
     expect(maxPosition(t)).toBe(2700 - (900 - TAB - LEFT_PAGE));
@@ -137,13 +215,16 @@ describe('layout — the cabinet and the pile', () => {
     // Folder 0 docked at the top; its own partner and everything after it are
     // still in the pile, in their own rows.
     expect(l.folders.map((f) => f.top)).toEqual([TAB, 510, 640, 640, 770, 770]);
-    // The open one paints its strip AND its page; every filed one paints down
-    // to the body of the row in front, and the pile's bottom row to the sheet.
-    expect(l.folders[0].clipHeight).toBe(LEFT_PAGE + track.openBody[0]);
+    // The open one paints its strip AND its page, down to the DEEPER of its two
+    // columns; every filed one paints down to the body of the row in front, and
+    // the pile's bottom row to the sheet.
+    expect(l.folders[0].clipHeight).toBe(track.footMax[0] - TAB);
     expect(l.folders.slice(1).map((f) => f.clipHeight)).toEqual([
       FILED,
       FILED,
       FILED,
+      // The last row of the pile has nothing in front of it: it stops at the
+      // foot of the sheet, exactly.
       PITCH,
       PITCH,
     ]);
@@ -166,20 +247,23 @@ describe('layout — the cabinet and the pile', () => {
     }
   });
 
-  it('closes the seam between the open page and the pile', () => {
-    for (const k of [0, 1, 2, 3, 4]) {
+  it('meets the pile exactly, column by column', () => {
+    // The seam test, and the whole point of a stepped foot: over every x, the
+    // page's bottom is the tab top of the first folder still piled there — no
+    // band of backdrop under it, and no page running on under a folder.
+    for (const k of [0, 1, 2, 3, 4, 5]) {
       const l = layout(track, positionOf(track, k));
-      const page = l.folders[k].top + l.folders[k].clipHeight;
-      expect(page).toBe(pileHead(900, PITCH, 3, 6, k));
-      // In each column the topmost piled folder starts AT that line or above
-      // it, sitting over the page — never below it, which would be a band of
-      // backdrop between the two.
-      for (const side of [0, 1]) {
-        const tops = l.folders
+      for (const x of [1, 200, 399, 401, 499, 501, 700, 999]) {
+        const piled = track.foot[k].find((run) => x < run.x)!;
+        const under = l.folders
           .map((f, j) => ({ j, f }))
-          .filter(({ j }) => j > k && j % 2 === side)
+          .filter(({ j }) => j > k)
+          .filter(({ j }) => {
+            const c = columnOf(j, 6, W, [0.5, 0.4]);
+            return x > c.left && x < c.right;
+          })
           .map(({ f }) => f.top);
-        if (tops.length > 0) expect(Math.min(...tops)).toBeLessThanOrEqual(page + 1e-6);
+        expect(piled.y).toBe(under.length > 0 ? Math.min(...under) : 900);
       }
     }
   });
@@ -191,16 +275,16 @@ describe('layout — the cabinet and the pile', () => {
     const l = layout(track, positionOf(track, 3));
     expect(l.folders[2].top).toBe(l.folders[3].top);
     expect(l.folders[2].clipHeight).toBe(STRIP);
-    expect(l.folders[3].clipHeight).toBe(STRIP + track.openBody[3]);
+    expect(l.folders[3].clipHeight).toBe(track.footMax[3] - (TAB + PITCH));
     expect(l.folders[2].top + l.folders[2].clipHeight).toBe(l.folders[3].top + STRIP);
   });
 
   it('gives a LEFT folder’s page the whole row, its partner still in the pile', () => {
     const l = layout(track, positionOf(track, 2));
-    expect(l.folders[2].clipHeight).toBe(LEFT_PAGE + track.openBody[2]);
     // Nothing else is docked in row 1, so the page covers both columns from the
-    // tab's lip down — and it runs UNDER folder 3, which has not moved and
-    // which paints over it.
+    // tab's lip down — and it reaches PAST folder 3, which has not moved and
+    // which paints over the far column.
+    expect(l.folders[2].clipHeight).toBe(track.footMax[2] - (TAB + PITCH));
     expect(l.folders[3].top).toBe(pileTop(900, PITCH, 3, 1));
     expect(l.folders[3].top).toBeLessThan(l.folders[2].top + l.folders[2].clipHeight);
     expect(l.folders[3].zIndex).toBeGreaterThan(l.folders[2].zIndex);
@@ -255,11 +339,27 @@ describe('layout — the turn', () => {
   it('keeps the folder you are leaving open until the new one has landed', () => {
     // It is being COVERED, not hidden: the riser paints over it from the top
     // down as it climbs, and only at p = 1 does it become a filed folder.
-    for (const p of [0, 0.3, 0.6, 0.9]) {
-      expect(at(0, p).folders[0].clipHeight).toBe(LEFT_PAGE + track.openBody[0]);
+    for (const p of [0.02, 0.3, 0.6, 0.9]) {
       expect(at(0, p).folders[0].bodyVisible).toBe(true);
+      expect(at(0, p).folders[0].clipHeight).toBe(track.footMax[1] - TAB);
     }
     expect(layout(track, track.start[1]).folders[0].clipHeight).toBe(STRIP);
+  });
+
+  it('hands the vacated column to the page underneath, from the first frame', () => {
+    // Folder 1 is the only thing piled in the right column, so the moment it
+    // leaves, folder 0's page has to reach down to whatever is under it — or
+    // there is a row of backdrop where folder 1 used to be for the whole turn.
+    expect(track.foot[0]).not.toEqual(track.foot[1]);
+    const rest = layout(track, track.start[0]).folders[0].clipHeight;
+    const gone = at(0, 0.02).folders[0].clipHeight;
+    expect(rest).toBe(track.footMax[0] - TAB);
+    expect(gone).toBe(track.footMax[1] - TAB);
+    // …and the same for a turn that deepens the foot rather than levelling it.
+    expect(at(1, 0.02).folders[1].clipHeight).toBe(track.footMax[2] - TAB);
+    expect(at(1, 0.02).folders[1].clipHeight).toBeGreaterThan(
+      layout(track, track.start[1]).folders[1].clipHeight,
+    );
   });
 
   it('carries the page up with the folder, its foot pinned to the pile', () => {
@@ -270,11 +370,11 @@ describe('layout — the turn', () => {
       const f = at(0, p).folders[1];
       expect(f.bodyVisible).toBe(true);
       expect(f.scrollTop).toBe(0);
-      expect(f.top + f.clipHeight).toBeCloseTo(pileHead(900, PITCH, 3, 6, 1), 6);
+      expect(f.top + f.clipHeight).toBeCloseTo(track.footMax[1], 6);
       // …and there is genuinely a page under the strip, not just the strip.
       expect(f.clipHeight).toBeGreaterThan(STRIP);
     }
-    expect(at(0, 1).folders[1].clipHeight).toBeCloseTo(STRIP + track.openBody[1], 6);
+    expect(at(0, 1).folders[1].clipHeight).toBeCloseTo(track.footMax[1] - TAB, 6);
   });
 
   it('never lets a riser show less than it showed in the pile', () => {
@@ -309,12 +409,25 @@ describe('layout — the turn', () => {
     // body starts there.
     expect(sameRow.folders[0].clipHeight).toBe(pageTop(TAB, STRIP, 1));
     expect(nextRow.folders[1].clipHeight).toBe(FILED);
+    // …and the foot they were painting to is the foot the new page paints to,
+    // so the swap is a folder going out from under a page that does not move.
+    expect(track.footMax[1]).toBe(track.foot[1][0].y);
+    expect(at(0, 0.99).folders[0].clipHeight + TAB).toBe(track.footMax[1]);
   });
 
   it('hands the folder over at the half-way point, the top of it at once', () => {
     expect(at(0, 0.49).activeIndex).toBe(0);
     expect(at(0, 0.49).topIndex).toBe(1);
     expect(at(0, 0.51).activeIndex).toBe(1);
+  });
+
+  it('is LINEAR by default — the folder is where the scroll put it', () => {
+    // The rise is 1:1 with the wheel and stays that way; Lenis is the only
+    // smoothing there is, and the settle is what stops it resting mid-air.
+    const from = pileTop(900, PITCH, 3, 0);
+    for (const p of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+      expect(at(0, p).folders[1].top).toBeCloseTo(from + (TAB - from) * p, 6);
+    }
   });
 
   it('eases only the position, never the scroll', () => {
@@ -404,11 +517,13 @@ describe('the painting invariant', () => {
     }
   });
 
-  it('runs the open body from the page top to the first full row of the pile', () => {
+  it('runs the open body from the page top to its shallowest column', () => {
     for (const k of [0, 1, 2, 3, 4]) {
       const l = layout(track, positionOf(track, k));
       const bodyTop = l.folders[k].top + pageTop(TAB, STRIP, k);
-      expect(bodyTop + track.openBody[k]).toBeCloseTo(pileHead(900, PITCH, 3, 6, k), 6);
+      expect(bodyTop + track.openBody[k]).toBeCloseTo(track.footMin[k], 6);
+      // …and the SLOT to its deepest, so the step has somewhere to be painted.
+      expect(l.folders[k].top + l.folders[k].clipHeight).toBeCloseTo(track.footMax[k], 6);
     }
   });
 });
@@ -506,7 +621,8 @@ describe('positionAt / resolve', () => {
 });
 
 describe('folderClipPath', () => {
-  /** A RIGHT-hand folder's shape: its page starts under the strip. */
+  /** A RIGHT-hand folder's shape: its page starts under the strip, and its foot
+   *  steps — 700 across the left half of the sheet, 600 across the right. */
   const shape = {
     left: 0,
     right: 540,
@@ -514,14 +630,19 @@ describe('folderClipPath', () => {
     tabWidth: 342,
     tabHeight: 40,
     chamfer: 40,
-    closedHeight: 170,
+    closedHeight: 900,
     bodyTop: 130,
-    openHeight: 700,
+    foot: [
+      { x: 540, y: 700 },
+      { x: 1080, y: 600 },
+    ],
   };
+  /** …and the same folder with nothing to step over. */
+  const flat = { ...shape, foot: [{ x: 1080, y: 700 }] };
 
   it('emits UNITLESS path data — a stray `px` voids the whole declaration', () => {
-    expect(folderClipPath(shape, false)).not.toMatch(/\dpx/);
-    expect(folderClipPath(shape, true)).not.toMatch(/\dpx/);
+    expect(folderClipPath(flat, false)).not.toMatch(/\dpx/);
+    expect(folderClipPath(flat, true)).not.toMatch(/\dpx/);
   });
 
   it('cuts tab, chamfer and body from ONE path — one sheet of glass', () => {
@@ -529,7 +650,7 @@ describe('folderClipPath', () => {
     expect(d.match(/M /g)).toHaveLength(1);
     expect(d).toContain('H 342'); // along the tab
     expect(d).toContain('L 382 39'); // the 45° chamfer, down to the body's top
-    expect(d).toContain('V 170'); // …down to the body of the row in front
+    expect(d).toContain('V 900'); // …down past any slot it could be given
   });
 
   it('puts the tab one pixel INTO the body, so there is no seam to hide', () => {
@@ -542,11 +663,21 @@ describe('folderClipPath', () => {
   });
 
   it('takes the open body out to the full sheet, not the column', () => {
-    const d = folderClipPath(shape, true);
+    const d = folderClipPath(flat, true);
     expect(d).toContain('V 130 H 1080'); // out of the column at the body's top
     expect(d).toContain('V 700 H 0'); // …and back along the bottom
     // The closed outline stops at its slot and never mentions the sheet width.
-    expect(folderClipPath(shape, false)).not.toContain('1080');
+    expect(folderClipPath(flat, false)).not.toContain('1080');
+  });
+
+  it('steps the page’s foot where its two columns stop at different heights', () => {
+    // Walked right to left: down the far edge to the shallower column, left to
+    // the divide, down to the deeper one, and left to the sheet's edge.
+    const d = folderClipPath(shape, true);
+    expect(d).toContain('H 1080 V 600 H 540 V 700 H 0 V 130');
+    // Still one path, still no units, still no doubling back on itself.
+    expect(d.match(/M /g)).toHaveLength(1);
+    expect(d).not.toMatch(/\dpx/);
   });
 
   it('steps a LEFT folder straight off the chamfer to the sheet’s edge', () => {
@@ -554,7 +685,7 @@ describe('folderClipPath', () => {
     // the tab to round the corner of. Rounding it anyway would send the path
     // back UP from `lip + r` to `lip` — and a self-crossing outline is not an
     // error, it is a clip to something nobody asked for.
-    const d = folderClipPath({ ...shape, bodyTop: 39 }, true);
+    const d = folderClipPath({ ...flat, bodyTop: 39 }, true);
     expect(d).toContain('L 382 39 H 1080 V 700');
     expect(d.match(/A 6 6/g)).toHaveLength(1); // the tab's corner, and no other
     // Every vertical run goes DOWN the page, which is what "does not cross" is.

@@ -174,6 +174,12 @@ export default function PortfolioDialKit() {
   });
 
   const motion = useDialKit('PV MOTION', {
+    // The settle: what stops a folder resting in mid-air. `settleLow`/`High`
+    // are the part of a turn worth finishing; outside them, nothing happens.
+    settleLow: [LOOK.settleLow, 0, 0.5, 0.01],
+    settleHigh: [LOOK.settleHigh, 0.5, 1, 0.01],
+    settleMs: [LOOK.settleMs, 100, 1200, 10],
+    settleIdleMs: [LOOK.settleIdleMs, 0, 600, 10],
     easeRise: { type: 'select', options: ['linear', 'easeOut'], default: LOOK.easeRise },
     riseDelayMs: [LOOK.riseDelayMs, 0, 2000, 10],
     riseMs: [LOOK.riseMs, 100, 3000, 10],
@@ -244,6 +250,10 @@ export default function PortfolioDialKit() {
     hoverLiftPx: tabs.hoverLiftPx,
     dimOpacity: tabs.dimOpacity,
     easeRise: motion.easeRise as PortfolioLook['easeRise'],
+    settleLow: motion.settleLow,
+    settleHigh: motion.settleHigh,
+    settleMs: motion.settleMs,
+    settleIdleMs: motion.settleIdleMs,
     riseDelayMs: motion.riseDelayMs,
     riseMs: motion.riseMs,
     lenisLerp: track.lenisLerp,

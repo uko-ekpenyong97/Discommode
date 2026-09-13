@@ -131,8 +131,24 @@ export interface PortfolioLook {
   /** Scroll spent on one turn (px). Its own dial, not a width: how far the
    *  wheel travels to turn a folder is a feel, not a length. */
   turnDistancePx: number;
-  /** Curve for a rising row's POSITION; the scroll stays 1:1 either way. */
+  /** Curve for a rising row's POSITION. `linear` is the default and the point:
+   *  the folder is exactly where the scroll says it is, and Lenis does all the
+   *  smoothing there is. The dial stays for A/B. */
   easeRise: RiseEase;
+  /**
+   * THE SETTLE. A folder must never come to rest in mid-air, so when the scroll
+   * stops with a turn part-done the track tweens to the nearer end of it.
+   *
+   * `settleLow`/`settleHigh` bound the part of a turn worth finishing: below the
+   * first the folder has barely left, above the second it has all but landed,
+   * and in both cases moving it is a twitch rather than a resolution.
+   * `settleIdleMs` is how long the scroll must have been quiet — Lenis's own
+   * smoothing has to have run out first, or the settle fights the wheel.
+   */
+  settleLow: number;
+  settleHigh: number;
+  settleMs: number;
+  settleIdleMs: number;
   /** The entrance: how long after the sheet starts sliding the first row leaves
    *  the pile, and how long it takes to dock. */
   riseDelayMs: number;
@@ -205,7 +221,11 @@ export const LOOK: PortfolioLook = {
   hoverLiftPx: 12,
   dimOpacity: 0.1,
   turnDistancePx: 720,
-  easeRise: 'easeOut',
+  easeRise: 'linear',
+  settleLow: 0.15,
+  settleHigh: 0.85,
+  settleMs: 450,
+  settleIdleMs: 120,
   riseDelayMs: 500,
   riseMs: 900,
   sectionShadowAlpha: 0.45,

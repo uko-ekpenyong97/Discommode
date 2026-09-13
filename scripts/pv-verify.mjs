@@ -31,6 +31,9 @@ const URL = process.argv.includes('--url')
   ? process.argv[process.argv.indexOf('--url') + 1]
   : 'http://localhost:5173';
 const PROJECT = '02';
+/** Both shapes of project: an even folder count, and an odd one — whose last
+ *  row holds a single folder and leaves a column of the pile empty. */
+const PROJECTS = ['02', '04'];
 
 /** The two viewports the view is signed off at. */
 const VIEWPORTS = [
@@ -38,8 +41,9 @@ const VIEWPORTS = [
   { name: '1440×900', width: 1440, height: 900 },
 ];
 
-/** Points through a turn the rising folder is checked at. */
-const TURN_POINTS = [0.3, 0.6, 0.9];
+/** Points through a turn the rising folder is checked at: just after it leaves,
+ *  through the middle, and just before it lands. */
+const TURN_POINTS = [0.05, 0.2, 0.5, 0.8, 0.95];
 
 let failures = 0;
 const ok = (label, extra = '') => console.log(`  ✓ ${label}${extra ? `  ${extra}` : ''}`);
@@ -193,28 +197,27 @@ async function paintPass(page, slots) {
 }
 
 /**
- * The glass that is SUPPOSED to be there, as rectangles in sheet coordinates.
- *
- * Three of them, and only three:
+ * The glass that is SUPPOSED to be there, as rectangles in sheet coordinates —
+ * MASKED, not tolerated. Two kinds, and only two:
  *
  *  1. above the cabinet's top row — a folder's tab sticks up out of nothing at
  *     the top of a pile, which is what a tab is for;
  *  2. above the topmost piled tab OF EACH COLUMN, for the same reason. One
- *     notch, not one row: the open page runs under the pile's half-read top row
- *     rather than stopping at it, so a column's notch is a tab deep whichever
- *     row its pile happens to start in;
- *  3. mid-turn, the slot the rising folder has just left.
+ *     tab deep and no deeper: the page's foot is per column now, so it comes
+ *     down to meet each column's pile wherever that pile starts.
+ *
+ * There is no third. The slot a rising folder vacates used to need one; the
+ * page under it now reaches into that column from the frame it leaves.
  */
 function allowedGlass(slots, layout) {
-  const { tabH, rowPitch, sheet, folders } = slots;
+  const { tabH, sheet, folders } = slots;
   const W = sheet.width;
   const open = layout.activeIndex;
   const riser = layout.turning ? layout.topIndex : -1;
-  const rows = Math.ceil(folders.length / 2);
-  const pileTopOf = (r) => sheet.height - (rows - r) * rowPitch;
   const rects = [];
 
-  const cabinetTop = Math.min(...folders.filter((f) => f.k <= open).map((f) => f.top));
+  const docked = folders.filter((f) => f.k <= open && f.k !== riser);
+  const cabinetTop = docked.length > 0 ? Math.min(...docked.map((f) => f.top)) : 0;
   rects.push({ x0: -1, x1: W + 1, y0: -1, y1: cabinetTop + tabH + 1 });
 
   for (const side of ['left', 'right']) {
@@ -223,25 +226,14 @@ function allowedGlass(slots, layout) {
     const head = resting.reduce((a, b) => (a.top <= b.top ? a : b));
     rects.push({ x0: head.left - 1, x1: head.right + 1, y0: head.top - 1, y1: head.top + tabH + 1 });
   }
-
-  if (riser >= 0) {
-    // The hole the riser left. Its partner's column goes with it when the
-    // partner is already docked, which is exactly the odd-index case.
-    const r = Math.floor(riser / 2);
-    const y0 = pileTopOf(r) - 1;
-    const y1 = pileTopOf(r) + rowPitch + tabH + 1;
-    for (const f of folders.filter((g) => Math.floor(g.k / 2) === r)) {
-      if (f.k === riser || f.k <= open) rects.push({ x0: f.left - 1, x1: f.right + 1, y0, y1 });
-    }
-  }
   return rects;
 }
 
 /* ── one frame, measured ──────────────────────────────────────────────────── */
 
-async function frame(page, label, { seek } = {}) {
+async function frame(page, label, { seek, quiet = false } = {}) {
   if (seek !== undefined) await page.evaluate((y) => window.__pv.seek(y), seek);
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(60);
 
   const slots = await readSlots(page);
   const layout = await page.evaluate(() => window.__pv.layout());
@@ -264,18 +256,43 @@ async function frame(page, label, { seek } = {}) {
   const stray = glass.filter((p) => !inside(p));
   const smear = [...outside.values()].reduce((a, p) => a + p.length, 0);
 
-  check(stray.length === 0, `${label} — no glass between the rows`, `${stray.length} px`);
-  check(
-    smear === 0,
-    `${label} — every folder inside its slot`,
-    smear ? `${smear} px from folders ${[...outside.keys()].join(', ')}` : '0 differing',
-  );
+  const clean = stray.length === 0 && smear === 0;
+  // Every sample is checked; only the interesting ones are printed. A run that
+  // prints one line per frame is a run nobody reads.
+  if (!quiet || !clean) {
+    check(stray.length === 0, `${label} — no glass between the rows`, `${stray.length} px`);
+    check(
+      smear === 0,
+      `${label} — every folder inside its slot`,
+      smear ? `${smear} px from folders ${[...outside.keys()].join(', ')}` : '0 differing',
+    );
+  } else {
+    failures += 0;
+  }
   if (stray.length > 0) console.log(`      glass ${box(stray)}`);
   for (const [k, pts] of outside) console.log(`      folder ${k} ${box(pts)}`);
-  return { slots, layout };
+  return { slots, layout, clean };
 }
 
 /* ── the run ──────────────────────────────────────────────────────────────── */
+
+/** The parts of the track the checks steer by. */
+const readTrack = (page) =>
+  page.evaluate(() => {
+    const t = window.__pv.track();
+    return {
+      start: t.start,
+      pageScroll: t.pageScroll,
+      openBody: t.openBody,
+      footMin: t.footMin,
+      footMax: t.footMax,
+      turnDistance: t.turnDistance,
+      rowPitch: t.rowPitch,
+      tabHeight: t.tabHeight,
+      strip: t.strip,
+      viewportHeight: t.viewportHeight,
+    };
+  });
 
 async function openView(context, viewport, hash = `#view-${PROJECT}`) {
   const page = await context.newPage();
@@ -297,49 +314,81 @@ async function run() {
   for (const viewport of VIEWPORTS) {
     console.log(`\n── ${viewport.name} ──────────────────────────────────────────`);
     const page = await openView(context, viewport);
-    const track = await page.evaluate(() => {
-      const t = window.__pv.track();
-      return { start: t.start, pageScroll: t.pageScroll, openBody: t.openBody, rowPitch: t.rowPitch, tabHeight: t.tabHeight, strip: t.strip, viewportHeight: t.viewportHeight };
-    });
+    const track = await readTrack(page);
 
-    // 1 — at rest on each of the first three folders, both parities.
-    for (const k of [0, 1, 2]) {
-      await frame(page, `rest on folder ${k}`, { seek: track.start[k] });
-    }
-
-    // 2 — mid-turn, where the rising folder is carrying its page.
-    for (const k of [0, 1]) {
-      for (const p of TURN_POINTS) {
-        const y = track.start[k] + track.pageScroll[k] + 720 * p;
-        const { slots, layout } = await frame(page, `turn ${k}→${k + 1} at p=${p}`, { seek: y });
-        const riser = slots.folders[k + 1];
-        const pageShown = riser.height - riser.bodyTop;
-        check(
-          layout.folders[k + 1].bodyVisible && pageShown > slots.strip,
-          `turn ${k}→${k + 1} at p=${p} — the riser carries its page`,
-          `${round(pageShown)}px of page under the strip`,
-        );
-        check(
-          layout.folders[k].bodyVisible,
-          `turn ${k}→${k + 1} at p=${p} — the folder below is covered, not hidden`,
-        );
+    // 1 — every rest, and every point of every turn, on both projects. The
+    //     paint pass answers the same two questions each time; only the frames
+    //     that fail say anything.
+    for (const id of PROJECTS) {
+      const sheet = id === PROJECT ? page : await openView(context, viewport, `#view-${id}`);
+      const t = await readTrack(sheet);
+      let clean = 0;
+      let total = 0;
+      for (let k = 0; k < t.start.length; k++) {
+        total++;
+        if ((await frame(sheet, `card ${id} rest on folder ${k}`, { seek: t.start[k], quiet: true })).clean) clean++;
       }
-      // …and lands with the page already where it ends up.
-      const before = await page.evaluate((y) => {
-        window.__pv.seek(y);
-        const f = document.querySelector(`.pv-folder[data-k="${window.__pv.layout().topIndex}"]`);
-        return { top: f.offsetTop, height: f.offsetHeight };
-      }, track.start[k] + track.pageScroll[k] + 720 * 0.999);
-      const after = await page.evaluate((y) => {
-        window.__pv.seek(y);
-        const f = document.querySelector(`.pv-folder[data-k="${window.__pv.layout().activeIndex}"]`);
-        return { top: f.offsetTop, height: f.offsetHeight };
-      }, track.start[k + 1]);
-      check(
-        Math.abs(before.top - after.top) < 1.5 && Math.abs(before.height - after.height) < 1.5,
-        `turn ${k}→${k + 1} — no pop at the dock`,
-        `Δtop ${round(after.top - before.top)}  Δheight ${round(after.height - before.height)}`,
+      for (let k = 0; k + 1 < t.start.length; k++) {
+        const foot = t.start[k] + t.pageScroll[k];
+        for (const p of TURN_POINTS) {
+          total++;
+          const label = `card ${id} turn ${k}→${k + 1} at p=${p}`;
+          const { slots, layout, clean: ok } = await frame(sheet, label, {
+            seek: foot + t.turnDistance * p,
+            quiet: true,
+          });
+          if (ok) clean++;
+          const riser = slots.folders[k + 1];
+          const shown = riser.height - riser.bodyTop;
+          if (!(layout.folders[k + 1].bodyVisible && shown > slots.strip)) {
+            bad(`${label} — the riser carries its page`, `${round(shown)}px under the strip`);
+          }
+          if (!layout.folders[k].bodyVisible) bad(`${label} — the folder below went out`);
+        }
+        // …and it lands with the page already where it ends up.
+        const pop = await page.evaluate(
+          async ([a, b]) => {
+            const rect = () => {
+              const f = document.querySelector('.pv-folder[data-top]');
+              return { top: f.offsetTop, height: f.offsetHeight };
+            };
+            window.__pv.seek(a);
+            const before = rect();
+            window.__pv.seek(b);
+            return { before, after: rect() };
+          },
+          [foot + t.turnDistance * 0.999, t.start[k + 1]],
+        );
+        if (Math.abs(pop.before.top - pop.after.top) > 1.5 || Math.abs(pop.before.height - pop.after.height) > 1.5) {
+          bad(`card ${id} turn ${k}→${k + 1} — pop at the dock`, JSON.stringify(pop));
+        }
+      }
+      ok(
+        `card ${id}: ${total} frames — no glass outside the notches, no folder outside its slot`,
+        `${clean}/${total} clean`,
       );
+
+      // 2 — the rise is LINEAR: the folder is where the scroll put it, to
+      //     within the half device pixel the snapping is allowed to move it.
+      const rise = await sheet.evaluate(() => {
+        const t = window.__pv.track();
+        const foot = t.start[0] + t.pageScroll[0];
+        const out = [];
+        for (let p = 0.1; p < 0.95; p += 0.1) {
+          window.__pv.seek(foot + t.turnDistance * p);
+          out.push({ p, y: document.querySelector('.pv-folder[data-k="1"]').offsetTop });
+        }
+        return out;
+      });
+      // Fit the two ends and hold every point between them to the line.
+      const a = rise[0];
+      const b = rise[rise.length - 1];
+      const worst = Math.max(
+        ...rise.map(({ p, y }) => Math.abs(y - (a.y + ((b.y - a.y) * (p - a.p)) / (b.p - a.p)))),
+      );
+      check(worst <= 1, `card ${id}: the rise is linear in p`, `worst ${round(worst)}px off the line`);
+
+      if (sheet !== page) await sheet.close();
     }
 
     // 3 — compact rows, and what they leave for the page.
@@ -401,7 +450,129 @@ async function run() {
     check(!stuck.hovered && stuck.dimmed === 1, 'a folder that opens under the pointer drops the hover', JSON.stringify(stuck));
     await page.mouse.move(10, 10);
 
-    // 6 — contrast, re-measured: the titles got smaller.
+    // 6 — THE SETTLE. A folder must never come to rest in mid-air, so a turn
+    //     left part done finishes itself: on past halfway, back before it.
+    //     `park` is a real scroll, so the idle timer counts exactly as it would
+    //     after a wheel — the only honest way to check this.
+    for (const p of [0.5, 0.75, 0.25]) {
+      const settled = await page.evaluate(async (p) => {
+        const t = window.__pv.track();
+        const foot = t.start[0] + t.pageScroll[0];
+        window.__pv.park(Math.round(foot + t.turnDistance * p));
+        // A scroller quantises to device pixels, so read back where it landed
+        // rather than assuming: at exactly half a turn either end is nearer.
+        await new Promise((r) => setTimeout(r, 30));
+        const from = window.__pv.layout().progress;
+        const t0 = performance.now();
+        while (window.__pv.layout().turning && performance.now() - t0 < 3000) {
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+        return {
+          from,
+          active: window.__pv.layout().activeIndex,
+          turning: window.__pv.layout().turning,
+          ms: Math.round(performance.now() - t0),
+        };
+      }, p);
+      // The decision is made on the exact figure, not a rounded one: a
+      // scroller lands a ten-thousandth short of half a turn as often as not.
+      const nearer = settled.from >= 0.5 ? 1 : 0;
+      check(
+        !settled.turning && settled.active === nearer,
+        `settle: a turn left at p=${settled.from.toFixed(2)} runs ${nearer ? 'on' : 'back'}`,
+        `${settled.ms}ms`,
+      );
+      // 120ms of quiet, then a 450ms tween — anything much past that is a
+      // folder hanging in the air long enough for the reader to notice.
+      check(settled.ms <= 900, `settle: …and lands promptly`, `${settled.ms}ms`);
+    }
+
+    // The same thing with a real hand on the wheel, end to end: park at the
+    // foot of folder 0, wheel half a turn, stop. Nothing must settle WHILE the
+    // wheel is turning, and the folder must dock once it stops.
+    await page.evaluate(() => {
+      const t = window.__pv.track();
+      window.__pv.park(Math.round(t.start[0] + t.pageScroll[0]));
+    });
+    await page.waitForTimeout(300);
+    await page.mouse.move(1000, 500);
+    for (let i = 0; i < 3; i++) {
+      await page.mouse.wheel(0, 120); // 3 × 120 = half of a 720px turn
+      await page.waitForTimeout(40);
+    }
+    const during = await page.evaluate(() => window.__pv.layout().turning);
+    const wheeled = await page.evaluate(async () => {
+      // Where the wheel actually left it. Lenis's own smoothing runs on for
+      // most of a second after the last wheel event, and it crawls the last
+      // few pixels — so wait for Lenis to say it has stopped rather than
+      // guessing from two samples that happened to match.
+      const t1 = performance.now();
+      while (window.__pv.scrolling() && performance.now() - t1 < 3000) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      const from = window.__pv.layout().progress;
+      const t0 = performance.now();
+      while (window.__pv.layout().turning && performance.now() - t0 < 3000) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      const at = window.__pv.layout();
+      return { from, active: at.activeIndex, turning: at.turning, ms: Math.round(performance.now() - t0) };
+    });
+    check(during, 'settle: nothing fires while the wheel is still turning');
+    check(
+      !wheeled.turning && wheeled.active === (wheeled.from >= 0.5 ? 1 : 0),
+      `settle: half a turn on the wheel (p=${wheeled.from.toFixed(2)}), then stop — it lands`,
+      `${wheeled.ms}ms after the scroll came to rest`,
+    );
+
+    // …and a rewind is a turn run backwards, so it settles the same way.
+    const rewound = await page.evaluate(async () => {
+      const t = window.__pv.track();
+      window.__pv.park(t.start[2]);
+      await new Promise((r) => setTimeout(r, 200));
+      // Back up into the turn that brought folder 2 in, a third of the way.
+      const foot = t.start[1] + t.pageScroll[1];
+      window.__pv.park(foot + t.turnDistance * 0.3);
+      await new Promise((r) => setTimeout(r, 900));
+      const at = window.__pv.layout();
+      return { turning: at.turning, active: at.activeIndex };
+    });
+    check(!rewound.turning && rewound.active === 1, 'settle: a rewind left part done runs back', JSON.stringify(rewound));
+
+    // Outside the band it must do nothing at all, or a folder that has barely
+    // moved twitches under a reader who has stopped reading it.
+    const held = await page.evaluate(
+      async ([lo, hi]) => {
+        const t = window.__pv.track();
+        const foot = t.start[0] + t.pageScroll[0];
+        const out = [];
+        for (const p of [lo / 2, 1 - (1 - hi) / 2]) {
+          window.__pv.park(foot + t.turnDistance * p);
+          await new Promise((r) => setTimeout(r, 900));
+          out.push(Math.round(window.__pv.layout().progress * 100) / 100);
+        }
+        return out;
+      },
+      [0.15, 0.85],
+    );
+    check(
+      Math.abs(held[0] - 0.075) < 0.02 && Math.abs(held[1] - 0.925) < 0.02,
+      'settle: below the low dial and above the high one, nothing moves',
+      JSON.stringify(held),
+    );
+
+    // A tab click owns the scroll while it runs; the settle must not grab it.
+    const clicked = await page.evaluate(async () => {
+      window.__pv.park(0);
+      await new Promise((r) => setTimeout(r, 300));
+      document.querySelector('.pv-folder[data-k="3"] .pv-folder__strip').click();
+      await new Promise((r) => setTimeout(r, 1500));
+      const at = window.__pv.layout();
+      return { turning: at.turning, active: at.activeIndex };
+    });
+    check(!clicked.turning && clicked.active === 3, 'a tab click still lands on its folder', JSON.stringify(clicked));
+
+    // 7 — contrast, re-measured: the titles got smaller.
     await page.evaluate(() => window.__pv.seek(0));
     await page.waitForTimeout(200);
     const contrast = await page.evaluate(() => {
@@ -429,7 +600,7 @@ async function run() {
       bad('contrast — the probe returned nothing');
     }
 
-    // 7 — the frame budget, over a real wheel scroll.
+    // 8 — the frame budget, over a real wheel scroll.
     await page.evaluate(() => window.__pv.release());
     const fps = await measureFps(page);
     console.log(`  · ${fps} fps over a 2s wheel scroll`);

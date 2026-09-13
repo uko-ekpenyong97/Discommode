@@ -6,6 +6,8 @@ import { look, subscribeLook } from './portfolioMotion';
 import {
   bottomOf,
   buildTrack,
+  cabinetTop,
+  columnOf,
   folderClipPath,
   layout,
   maxPosition,
@@ -16,7 +18,7 @@ import {
   resolve,
   rowOf,
 } from './pageTrack';
-import type { Track, TrackLayout, TrackPosition } from './pageTrack';
+import type { FootRun, Track, TrackLayout, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
@@ -78,6 +80,43 @@ const MIN_TITLE_PX = 12;
 
 /** The tab-click tween's curve — decelerating, so a long rewind settles. */
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
+
+/**
+ * Which of a folder's three outlines it is wearing. The page's foot depends on
+ * what is still in the pile, and a turn takes one folder out of it, so the
+ * folder UNDER a rising one needs an outline of its own — see `measure`.
+ */
+type ShapeState = 'closed' | 'open' | 'turning';
+
+/**
+ * Round to the device's pixel grid.
+ *
+ * A folder's top is a fraction of a scaled row pitch, so it lands wherever it
+ * lands, and the strip's title and the page's first lines re-rasterise at a
+ * different subpixel offset on every frame of a rise: the type crawls. Snapping
+ * the slot's top AND bottom to real pixels costs at most half a device pixel of
+ * position and buys type that holds still.
+ *
+ * It is the TOP that is snapped, not a transform. Moving the folder by
+ * `translateY` instead was measured: the glass survives it, but the text inside
+ * a transformed box loses subpixel antialiasing and every run of type on the
+ * sheet comes back lighter. The height has to be written per frame either way,
+ * so there is no layout saved to pay for that.
+ */
+const snap = (v: number, dpr: number): number => Math.round(v * dpr) / dpr;
+
+/** A folder's current outline, as the DOM records it. */
+function shapeStateOf(el: HTMLElement): ShapeState {
+  return (el.dataset.shape as ShapeState) ?? 'closed';
+}
+
+/** The state a folder's outline should be in this frame. */
+function shapeStateFor(l: TrackLayout, k: number): ShapeState {
+  if (!l.folders[k].bodyVisible) return 'closed';
+  // The one in the air wears its own outline; the one it is rising off wears
+  // the outline that fills the slot being vacated.
+  return l.turning && k !== l.topIndex ? 'turning' : 'open';
+}
 
 /**
  * DEV: the painting invariant, checked rather than assumed.
@@ -155,6 +194,14 @@ export interface PortfolioProbe {
   /** Park the track at `y` and hold it there — the same lock the entrance uses,
    *  so neither the scroller nor Lenis moves it under the camera. */
   seek: (y: number) => void;
+  /** Put the SCROLLER at `y` and let go. Unlike `seek` this is a real scroll,
+   *  so the settle's idle timer starts counting exactly as it would after a
+   *  wheel — which is the only way to check that a folder left in mid-air
+   *  finishes its turn. */
+  park: (y: number) => void;
+  /** Whether Lenis is still moving the scroll — its own smoothing runs on well
+   *  past the last wheel event, and the settle waits for it. */
+  scrolling: () => boolean;
   /** Hand the position back to the scroller. */
   release: () => void;
 }
@@ -192,6 +239,7 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       strip: HTMLElement;
       closed: string;
       open: string;
+      turning: string;
     }[]
   >([]);
   const lenisRef = useRef<Lenis | null>(null);
@@ -245,13 +293,19 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
 
     const l = layout(track, position);
     const parts = partsRef.current;
+    const dpr = window.devicePixelRatio || 1;
     let hovering = false;
     for (let k = 0; k < folders.length; k++) {
       const el = folders[k];
       const f = l.folders[k];
       const part = parts[k];
-      el.style.top = `${f.top.toFixed(2)}px`;
-      el.style.height = `${f.clipHeight.toFixed(2)}px`;
+      // Both edges on the pixel grid, and the height derived from the snapped
+      // top rather than snapped on its own — the foot of a page is pinned to
+      // the pile, and rounding the two independently would let it drift a
+      // pixel off the tab it is supposed to meet.
+      const top = snap(f.top, dpr);
+      el.style.top = `${top}px`;
+      el.style.height = `${snap(f.top + f.clipHeight, dpr) - top}px`;
       el.style.zIndex = String(f.zIndex);
       el.toggleAttribute('data-top', k === l.topIndex);
       el.toggleAttribute('data-active', k === l.activeIndex);
@@ -267,13 +321,15 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
         else hovering = true;
       }
 
-      // The outline gains the full-width page when the folder opens and loses
-      // it again when it files. Swapped here rather than re-cut per frame: the
+      // The outline gains the full-width page when the folder opens, changes
+      // its foot when the folder above it leaves the pile, and loses the page
+      // again when it files. Swapped here rather than re-cut per frame: the
       // page's HEIGHT is the wrapper's business, and only the shape changes.
-      const opening = f.bodyVisible;
-      if (part && opening !== el.hasAttribute('data-open')) {
-        el.toggleAttribute('data-open', opening);
-        part.shape.style.clipPath = opening ? part.open : part.closed;
+      el.toggleAttribute('data-open', f.bodyVisible);
+      const state = shapeStateFor(l, k);
+      if (part && state !== shapeStateOf(el)) {
+        el.dataset.shape = state;
+        part.shape.style.clipPath = part[state];
       }
 
       const body = part?.body;
@@ -339,12 +395,18 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       rowPitch: look.rowPitchPx * scale,
     };
 
+    // The page's foot is per column now, so the track needs the column geometry
+    // that used to live only down here.
+    const splits: [number, number] = [look.splitA / 100, look.splitB / 100];
+
     const track = buildTrack({
       heights: partsRef.current.map(({ inner }) => inner.getBoundingClientRect().height),
       viewportHeight: sc.clientHeight,
       rowPitch: g.rowPitch,
       strip: g.strip,
       tabHeight: g.tabH,
+      sheetWidth,
+      splits,
       turnDistance: look.turnDistancePx,
       easeRise: look.easeRise,
     });
@@ -368,14 +430,16 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     // The columns alternate row by row — an even row splits evenly, an odd one
     // does not — so the cabinet never reads as a table.
     partsRef.current.forEach((part, k) => {
-      const r = rowOf(k);
-      const split = ((r % 2 === 0 ? look.splitA : look.splitB) / 100) * sheetWidth;
-      const left = k % 2 === 0 ? 0 : split;
-      const right = k % 2 === 0 ? split : sheetWidth;
+      const { left, right } = columnOf(k, folders.length, sheetWidth, splits);
       // Where this folder's page begins is a question of which column it is in
       // — see `pageTop` — and the answer has to be the same one the track used
       // to size the page, or the glass and the content disagree by a hair.
       const bodyTop = pageTop(g.tabH, g.strip, k);
+      const top = cabinetTop(g.tabH, g.rowPitch, rowOf(k));
+      /** The track's foot is in the SHEET's coordinates; the clip is in the
+       *  folder's, and a docked folder's own top is where the two differ. */
+      const local = (runs: FootRun[]): FootRun[] =>
+        runs.map(({ x, y }) => ({ x, y: y - top }));
       const shape = {
         left,
         right,
@@ -383,19 +447,27 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
         tabWidth: g.tabW,
         tabHeight: g.tabH,
         chamfer: g.chamfer,
-        // Filed, a folder paints its pitch plus the tab of the row in front; the
-        // element clips it to whatever slot the track gives it this frame.
-        closedHeight: g.rowPitch + g.tabH,
+        // The element clips a folder to whatever slot the track gives it this
+        // frame, so the closed outline only has to be long enough never to be
+        // the shorter of the two — a column of the pile that runs out early
+        // hands the folder above it everything down to the foot of the sheet.
+        closedHeight: sc.clientHeight,
         bodyTop,
-        openHeight: bodyTop + track.openBody[k],
+        foot: local(track.foot[k]),
       };
-      // Both outlines up front: `apply` swaps between them when a folder opens
-      // or files, which happens once a turn rather than once a frame.
+      // THREE outlines up front, because a page's foot depends on what is still
+      // in the pile and a turn takes one folder out of it. `apply` swaps
+      // between them once a turn rather than once a frame.
       part.closed = folderClipPath(shape, false);
       part.open = folderClipPath(shape, true);
-      part.shape.style.clipPath = folders[k].hasAttribute('data-open')
-        ? part.open
-        : part.closed;
+      // The same folder while the next one is in the air: the pile it stops at
+      // is the pile MINUS that folder, which is exactly the next folder's own
+      // foot. This is what fills the column the riser vacates.
+      part.turning =
+        k + 1 < track.foot.length
+          ? folderClipPath({ ...shape, foot: local(track.foot[k + 1]) }, true)
+          : part.open;
+      part.shape.style.clipPath = part[shapeStateOf(folders[k])];
 
       part.strip.style.left = `${left}px`;
       part.strip.style.width = `${right - left}px`;
@@ -469,6 +541,12 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
         lenisRef.current?.stop();
         apply(y);
       },
+      park: (y: number) => {
+        introRef.current = false;
+        lenisRef.current?.start();
+        lenisRef.current?.scrollTo(y, { immediate: true, force: true });
+      },
+      scrolling: () => Boolean(lenisRef.current?.isScrolling),
       release: () => {
         introRef.current = false;
         if (readyRef.current.armed) lenisRef.current?.start();
@@ -478,6 +556,58 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       delete window.__pv;
     };
   }, [apply]);
+
+  /**
+   * THE SETTLE. A folder must never come to rest in mid-air.
+   *
+   * The rise is 1:1 with the scroll and linear, which is the whole point — the
+   * folder is exactly where the wheel put it — but it means the wheel can leave
+   * it anywhere, including halfway between the pile and the cabinet, which is
+   * not a state the cabinet has. So when the scroll has been quiet for
+   * `settleIdleMs` with a turn part done, the track tweens to the nearer end of
+   * it: back to the foot of the page you were reading, or on to the top of the
+   * next one.
+   *
+   * A rewind is a turn run backwards, so this catches those too, at no cost.
+   *
+   * FOUR THINGS IT MUST NOT DO. It must not fire while the reader is still
+   * scrolling — the idle timer is armed from the scroll itself, and Lenis emits
+   * every frame while its own smoothing runs out, so the timer cannot fire
+   * until the wheel and the lerp have both finished. It must not fire during
+   * the entrance (`introRef`), which owns the position. It must not fire on top
+   * of a tab click, which is a tween with somewhere to be — Lenis carries the
+   * `userData` of whatever asked for the scroll, so the click tags itself and
+   * this reads the tag. And it must not fight the reader afterwards: Lenis
+   * replaces a running `scrollTo` with the wheel's own the moment one arrives.
+   */
+  const settleTimerRef = useRef(0);
+  const trySettle = useCallback(() => {
+    const track = trackRef.current;
+    const lenis = lenisRef.current;
+    if (!track || !lenis || introRef.current || !readyRef.current.armed) return;
+    if (lenis.isScrolling) return;
+    if ((lenis.userData as { pv?: string } | undefined)?.pv === 'sliver') return;
+
+    const at = positionAt(track, positionRef.current);
+    const p = at.turn;
+    if (p === null || at.section < 0) return;
+    if (p <= look.settleLow || p >= look.settleHigh) return;
+
+    const back = track.start[at.section] + track.pageScroll[at.section];
+    const target = Math.min(p < 0.5 ? back : back + track.turnDistance, maxPosition(track));
+    lenis.scrollTo(target, {
+      duration: look.settleMs / 1000,
+      easing: easeOutCubic,
+      userData: { pv: 'settle' },
+    });
+  }, []);
+
+  /** Restart the quiet-scroll countdown. Called from the scroll tick and from
+   *  the wheel, so a gesture that moves nothing still counts as input. */
+  const armSettle = useCallback(() => {
+    window.clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = window.setTimeout(trySettle, look.settleIdleMs);
+  }, [trySettle]);
 
   /** Hand the position over to the scroller and let the wheel move it. */
   const unlock = useCallback(() => {
@@ -549,6 +679,7 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       strip: folder.querySelector<HTMLElement>('.pv-folder__strip')!,
       closed: '',
       open: '',
+      turning: '',
     }));
     trackRef.current = null; // a different project: nothing to carry across
     activeRef.current = initialRef.current;
@@ -598,8 +729,14 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
 
     const onScroll = () => {
       if (!introRef.current) apply(sc.scrollTop);
+      armSettle();
     };
     sc.addEventListener('scroll', onScroll, { passive: true });
+    // A gesture that moves nothing — the wheel at either end of the track, a
+    // trackpad's dying momentum — is still the reader's hand on the controls.
+    sc.addEventListener('wheel', armSettle, { passive: true });
+    sc.addEventListener('touchmove', armSettle, { passive: true });
+    sc.addEventListener('keydown', armSettle);
 
     const lenis = new Lenis({
       wrapper: sc,
@@ -619,9 +756,13 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       offScroll();
       lenis.destroy();
       lenisRef.current = null;
+      window.clearTimeout(settleTimerRef.current);
       sc.removeEventListener('scroll', onScroll);
+      sc.removeEventListener('wheel', armSettle);
+      sc.removeEventListener('touchmove', armSettle);
+      sc.removeEventListener('keydown', armSettle);
     };
-  }, [apply, smoothing]);
+  }, [apply, armSettle, smoothing]);
 
   /**
    * A tab was clicked: scroll the track to that folder's TOP.
@@ -648,6 +789,10 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
         // The dial's curve, not Lenis's default: a long rewind wants to arrive
         // slowly, and this is the one tween in the view a person watches.
         easing: easeOutCubic,
+        // Tagged so the settle leaves it alone. Lenis clears `userData` when
+        // the tween lands and replaces it when anything else — the reader's
+        // wheel included — takes the scroll over, so the tag cannot get stuck.
+        userData: { pv: 'sliver' },
       });
     } else if (sc) {
       sc.scrollTo({ top: target, behavior: 'smooth' });
