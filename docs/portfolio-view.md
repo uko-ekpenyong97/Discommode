@@ -28,7 +28,8 @@ wildyriftian.com/works for the pile.
 
 A project is a set of **folders**, one per section. A folder is a **tab** on top
 of a **body**, and — when it is the one you are reading — a full-sheet-width
-**page** below.
+**page** below. A page has no column: it is the folder's width less one inset
+each side, twelve grid columns wide (see [The page](#the-page)).
 
 Folders alternate columns: even index left, odd right, `row = floor(k/2)`.
 Three regions top to bottom: the **cabinet** (read, docked from the top), the
@@ -62,7 +63,10 @@ proportions are treated as being for.
 | `settleMs` / `settleIdleMs` | 450 / 120 | How long the settle takes, and how quiet the scroll must be first. |
 | `riseDelayMs` / `riseMs` | 500 / 900 | Entrance. |
 | `pageAlpha` / `pageBlurPx` / `pageSaturate` | 0.76 / 24 / 1.2 | The glass. |
-| `columnPx` | 656 | Centred content column inside a page. |
+| `pageInsetPx` | 24 | The page's inset each side — and the strip's text inset. One number, so they line up. Does not scale. |
+| `gridGapPx` | 52 | The page grid's gutter. Scales. |
+| `textMeasureCh` | 0 | Cap on the body's line length. 0 is off. |
+| `headerScale` | 1 | Multiplier on the page's opening title. |
 | `lenisLerp` / `wheelMultiplier` | 0.1 / 1 | |
 | `sliverClickMs` / `sliverReturn` | 1100 / `top` | Folder click → `positionOf(k)`; `bottom` lands where you left it. |
 | `pageSurface` | `frosted` | `solid` for A/B. Forced by `prefers-reduced-transparency` / `prefers-contrast`. |
@@ -210,6 +214,49 @@ drives it first. A scroller cannot go negative.
   reads as "the turn, 99.98% done" and **two folders are open at a resting
   position**.
 
+## The page
+
+A page is **not a column**. It is the folder's own width less `pageInsetPx` each
+side, and a twelve-column grid on a `gridGapPx` gutter inside what is left. Text
+runs to the right inset; media spans the measure; a `bleed` block escapes both
+insets to the folder's edges. The reference is a Notion page set to full width,
+and wildyriftian's works list for the rows.
+
+**The inset is shared with the strip.** `pageInsetPx` is also the padding on
+`.pv-folder__strip`, so the page's opening number sits at exactly the x the
+cabinet's tab labels do and the two draw one line down the sheet. It is the one
+folder length that does NOT scale with the sheet, because the labels it lines up
+with do not either. (The large title sits at that x too; the strip's own title
+is a number's width further in, since the number comes first on one line and
+above on the other.)
+
+**The grid is on the RUN, not on the page.** A run is what carries the hairline
+and the vertical rhythm; putting the grid one level down leaves both untouched
+and gives every block a grid area without a wrapper.
+
+| Block | Span | |
+| --- | --- | --- |
+| `title`, `caption`, `text` | 12 | Left-aligned, no max-width. `.pv-body` takes `--pv-measure` when `textMeasureCh` is on. |
+| `image`, `video`, `rive` | 12 | `bleed: true` → the folder's edges. |
+| `twoUp` | 6 + 6 | |
+| `row` | 7 + 5 | Text left, media pinned right. The list row. |
+| `statGrid` | 4 × 3 | |
+| `linkPill` | 12 | Inline inside it. |
+
+A block can override with `span`; `spanOf` in `Blocks.tsx` holds the defaults.
+
+**The composite blocks lay the twelve out again inside themselves** rather than
+taking a share of the outer grid. It looks redundant and is not: seven twelfths
+of a measure is not seven columns once the eleven gutters are counted, and a
+nested grid on the same gutter lands on exactly the outer grid's lines. It also
+keeps a two-up one block rather than two, which the reveal and the run's
+stagger both depend on.
+
+**`textMeasureCh` is off by default**, so a paragraph runs the full measure —
+which at 16px is a long line. The dial is the lever if that reads too long: 90
+is the figure to try. It caps the words without reintroducing a column, so the
+block still owns its twelve.
+
 ## The painting rule
 
 > A folder paints from its own tab down to the BODY of the row in front of it.
@@ -311,8 +358,13 @@ Targets: 4.5:1, or **7:1 under 18px**. Worst measured at shipped defaults:
 7.9:1 at 1728×996 and 8.0:1 at 1440×900, over the grid on a cold `#view-NN` —
 the hardest backdrop, harder than opening from the detail view. Size does not
 move a ratio, so shrinking the strip's type cost nothing: `.pv-folder__no` reads
-9.8:1 at 9px. Re-measure after any hue or alpha change: the palette gaining
-lighter hues is what pushed `.pv-folder__no` from 0.68 to 0.74.
+9.8:1 at 9px. Nor did widening the page: a full-measure paragraph crosses more
+of the backdrop than a 656px one did, but the probe takes the worst tenth under
+each run either way, and `.pv-body` came back at 9.61:1 / 9.43:1 against
+9.40:1 / 9.32:1 at the 656px column.
+Re-measure after any hue or alpha change — the palette gaining lighter hues is
+what pushed `.pv-folder__no` from 0.68 to 0.74 — and after any change to how
+wide or how tall a run of text is.
 
 Hues alternate rather than running round the wheel (02: 14/200/42/150/280/330).
 At 12% lightness two neighbouring hues are the same colour, and the pile reads
@@ -328,6 +380,12 @@ The track is derived from **measured** folder heights, so two rules:
    throws you onto the wrong folder. Gate opens in ~30–50ms; there is a 1s
    fallback that arms anyway.
 2. Every rebuild preserves the semantic position (above).
+
+`pv-verify` proves this rather than asserting it: it opens the view in a cold
+context with every `/projects/placeholder/` response held back 1500ms, measures
+each page at the moment the track arms, lets the media through and measures
+again. Last run: **0 of 22 images decoded when the track armed**, 12 after, and
+the six page heights identical to the pixel.
 
 Neither should ever have to do anything, because **every media block reserves
 its box from intrinsic dimensions** carried in the block data
@@ -366,7 +424,7 @@ ones that landed on glass. A drag (>4px) is not a click.
 
 ## The dev dock
 
-`#view-NN?intro`. Panels: **PV STACK**, **PV FOLDERS**, **PV MOTION**,
+`#view-NN?intro`. Panels: **PV STACK**, **PV FOLDERS**, **PV PAGE**, **PV MOTION**,
 **PV GLASS**, **PV PILL**, **PV TRACK**, **PV REVEAL**, and **PORTFOLIO**
 (Replay Open / Replay Close / Copy motion). The timeline is the open storyboard;
 the close is a separate storyboard (sheet leads, scrim trails 100ms) so "Replay
@@ -407,6 +465,11 @@ count, whose last folder has no partner), and checks:
 
 - the paint pass (above) — seams and smears, as pixel counts, on every rest and
   five points of every turn;
+- the page's layout: the header on the tab labels' line, content filling the
+  measure from inset to inset, nothing centred, the two-up halves meeting at the
+  gutter, a list row's seven and five, a bleed block reaching the folder's edges;
+- page heights identical before and after the media lands, with the media held
+  back until after the track has armed;
 - the rising folder carries a page, and lands with no pop (`Δtop`, `Δheight`
   across the last hair of the turn);
 - the rise is linear in `p`, to within the half device pixel snapping is

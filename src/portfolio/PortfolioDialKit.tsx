@@ -143,7 +143,6 @@ export default function PortfolioDialKit() {
 
   const geometry = useDialKit('PV STACK', {
     glassColumnVw: [LOOK.glassColumnVw, 0, 50, 1],
-    columnPx: [LOOK.columnPx, 320, 900, 1],
     // `rowPitch` is the trade the whole layout turns on: what is left between
     // the two piles is the open folder's body, so a taller step shows you more
     // of the project and less of any one part of it.
@@ -171,6 +170,16 @@ export default function PortfolioDialKit() {
     headerTitlePx: [LOOK.headerTitlePx, 40, 400, 2],
     hoverLiftPx: [LOOK.hoverLiftPx, 0, 60, 1],
     dimOpacity: [LOOK.dimOpacity, 0, 1, 0.01],
+  });
+
+  // THE PAGE. A page is the folder's width less an inset either side, and a
+  // twelve-column grid inside that; these are the four numbers it takes.
+  const page = useDialKit('PV PAGE', {
+    pageInsetPx: [LOOK.pageInsetPx, 0, 200, 1],
+    gridGapPx: [LOOK.gridGapPx, 0, 160, 1],
+    // 0 is off — the body runs to the right inset. 90 is the alternative.
+    textMeasureCh: [LOOK.textMeasureCh, 0, 140, 1],
+    headerScale: [LOOK.headerScale, 0.3, 2, 0.01],
   });
 
   const motion = useDialKit('PV MOTION', {
@@ -234,7 +243,10 @@ export default function PortfolioDialKit() {
     scrimBlurPx: geometry.scrimBlurPx,
     scrimAlpha: geometry.scrimAlpha,
     glassColumnVw: geometry.glassColumnVw,
-    columnPx: geometry.columnPx,
+    pageInsetPx: page.pageInsetPx,
+    gridGapPx: page.gridGapPx,
+    textMeasureCh: page.textMeasureCh,
+    headerScale: page.headerScale,
     rowPitchPx: geometry.rowPitchPx,
     turnDistancePx: geometry.turnDistancePx,
     sectionShadowAlpha: geometry.sectionShadowAlpha,

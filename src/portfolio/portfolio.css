@@ -174,7 +174,9 @@
   top: 0;
   pointer-events: auto;
   display: block;
-  padding: 0 24px;
+  /* The same inset the page uses: the tab's label and the page's title are on
+     one line down the sheet, and one dial moves both. */
+  padding: 0 var(--pv-inset, 24px);
   border: 0;
   background: none;
   color: rgba(255, 255, 255, 0.92);
@@ -255,7 +257,7 @@
 .pv-folder__thumbs {
   display: none;
   position: absolute;
-  left: 24px;
+  left: var(--pv-inset, 24px);
   bottom: calc(100% - var(--pv-tab-h, 22px));
   pointer-events: none;
 }
@@ -292,11 +294,11 @@
 }
 
 /* The page opens with the folder's number and title again, large — the same two
-   things the folder showed you in the cabinet, said properly. */
+   things the folder showed you in the cabinet, said properly. Left-aligned at
+   the INSET, which is the same number the strip's label sits at, so the page's
+   title starts on the line the cabinet's tabs already drew. */
 .pv-folder__header {
-  width: min(var(--pv-column, 656px), calc(100% - 48px));
-  margin: 0 auto;
-  padding: 56px 0 8px;
+  padding: 56px var(--pv-inset, 24px) 8px;
 }
 .pv-folder__heading {
   margin: 8px 0 0;
@@ -307,10 +309,12 @@
   color: #fff;
 }
 
+/* THE PAGE'S MEASURE: the folder's whole width, less an inset on each side.
+   There is no centred column any more — a page is as wide as the thing it is
+   printed on, text runs to the right inset, and media spans the measure. The
+   only glass a reader should ever see beside content is those two insets. */
 .pv-folder__column {
-  width: min(var(--pv-column, 656px), calc(100% - 48px));
-  margin: 0 auto;
-  padding-bottom: 96px;
+  padding: 0 var(--pv-inset, 24px) 96px;
 }
 
 /* SOLID: flat, no backdrop at all. `backdrop-filter: none` rather than a no-op

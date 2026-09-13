@@ -45,7 +45,7 @@ const twoUp = (): Block => ({
     },
     {
       media: imageMedia('two-up-b.webp'),
-      text: 'The gap is 52px between the columns and 24px between a frame and its text — the two rhythms the reference uses.',
+      text: 'The two halves are six of the page\u2019s twelve columns each, so they meet on the same grid line every other block lands on — and the gutter between them is the page\u2019s own.',
     },
   ],
 });
@@ -68,6 +68,26 @@ const video = (): Block => ({
   h: ASSETS.video.h,
   caption: 'Muted, looping, and paused the moment it leaves the scroller.',
 });
+
+/** A list row: text across seven columns, media pinned to the right across
+ *  five. The shape a project takes when it is listing things. */
+const row = (i: number): Block => ({
+  type: 'row',
+  heading: ROWS[i % ROWS.length][0],
+  text: ROWS[i % ROWS.length][1],
+  media: imageMedia('two-up-a.webp'),
+});
+
+const ROWS: [string, string][] = [
+  [
+    'A row reads as a line in a table',
+    'Seven columns of text and five of media, pinned to the right edge of the measure. Stack a few and they read as a list of things rather than as a stack of separate blocks.',
+  ],
+  [
+    'The grid is the same twelve throughout',
+    'A row lays the page\u2019s twelve columns out again inside itself rather than splitting seven-twelfths off the measure — seven twelfths of a width is not seven columns once the gutters are counted.',
+  ],
+];
 
 const rive = (): Block => ({
   type: 'rive',
@@ -115,39 +135,47 @@ const PROSE: [string, string[]][] = [
   [
     'Edge to edge',
     [
-      'A bleed image escapes the 656px column and runs the full width of the page — the page, not the viewport, because the page is the frame the notebook holds.',
+      'The page runs to an inset on either side and no further, so a bleed image has only that inset to escape — out to the folder\u2019s own edges, which is the frame the cabinet holds.',
     ],
   ],
 ];
 
 /**
  * One beat of a section. The cycle is fixed so a length is reproducible, and
- * ordered so that even the SHORTEST section any placeholder asks for carries
- * the video and the Rive artboard — the two blocks with a lifecycle worth
- * watching, and the two that would otherwise only appear in long projects.
+ * ordered by how much a block is worth seeing. The video and the Rive artboard
+ * come first after the two-up, because they are the two with a LIFECYCLE — they
+ * mount, play and tear down as they cross the viewport — and `projects.test.ts`
+ * holds every project to carrying both. The ninth slot is a repeat, so the
+ * longest placeholder section shows every kind of block there is exactly once.
  */
 function beat(i: number): Block {
-  switch (i % 8) {
+  const cycle = Math.floor(i / 9);
+  switch (i % 9) {
     case 0: {
-      const [heading, body] = PROSE[Math.floor(i / 8) % PROSE.length];
+      const [heading, body] = PROSE[cycle % PROSE.length];
       return { type: 'text', heading, body };
     }
     case 1:
       return twoUp();
     case 2:
-      return { type: 'image', alt: '', caption: 'Full column width.', ...image('wide.webp') };
-    case 3: {
-      const [heading, body] = PROSE[(Math.floor(i / 8) + 3) % PROSE.length];
-      return { type: 'text', heading, body };
-    }
-    case 4:
       return video();
-    case 5:
+    case 3:
       return rive();
+    case 4:
+      return row(cycle);
+    case 5:
+      return { type: 'image', alt: '', caption: 'The full measure.', ...image('wide.webp') };
     case 6:
       return stats();
-    default:
+    case 7:
       return { type: 'image', alt: '', bleed: true, ...image('bleed.webp') };
+    default: {
+      // The ninth slot, and the only one a section has to be genuinely long to
+      // reach: a second helping of prose. Everything a project can SAY is in
+      // the first eight, so the longest placeholder section shows all of it.
+      const [heading, body] = PROSE[(cycle + 3) % PROSE.length];
+      return { type: 'text', heading, body };
+    }
   }
 }
 
@@ -157,20 +185,29 @@ const BEATS_PER_RUN = 3;
 export interface SectionSpec {
   title: string;
   hue: number;
-  /** Roughly how many viewports tall, at 900px with the default page width. */
+  /** Roughly how many viewports tall, at 996px with the default page layout. */
   viewports: number;
 }
 
 /**
- * Beats per viewport, measured: the cycle above averages ~330px a block at the
- * 656px column, plus a 140px run break every three. Tuned against the real
- * rendered heights rather than derived — see the `viewports` figures in the
- * project files and the `[pv:track]` log that prints what they came out as.
+ * Beats per viewport, and the fixed cost of a section on top.
+ *
+ * MEASURED, not derived, and re-measured whenever the page's layout changes —
+ * the full-width page nearly doubled what a beat costs, because a beat is
+ * mostly media and media now spans the measure. Fitting the rendered heights of
+ * six sections at 1728×996 gives 0.57 viewports a beat over a 0.45 floor (the
+ * header, the caption and the link pill), so a beat is `1 / 0.57`. See the
+ * `viewports` figures in the project files and the `[pv:track]` log that prints
+ * what they came out as.
  */
-const BEATS_PER_VIEWPORT = 2.1;
+const BEATS_PER_VIEWPORT = 1.77;
+const SECTION_FLOOR_VIEWPORTS = 0.45;
 
 export function placeholderSection({ title, hue, viewports }: SectionSpec): Section {
-  const count = Math.max(1, Math.round((viewports - 0.25) * BEATS_PER_VIEWPORT));
+  const count = Math.max(
+    1,
+    Math.round((viewports - SECTION_FLOOR_VIEWPORTS) * BEATS_PER_VIEWPORT),
+  );
   // No title block: the page opens with the folder's own number and title, at
   // the size the reference gives it, and a project should not say its name
   // twice running.

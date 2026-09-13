@@ -91,8 +91,26 @@ export interface PortfolioLook {
   /** The band down the left of the viewport the sheet does not cover, in vw.
    *  The grid shows through it; only the close pill sits there. */
   glassColumnVw: number;
-  /** The centred content column inside a folder's body (px). */
-  columnPx: number;
+  /**
+   * THE PAGE. A page is as wide as the folder it is printed on, less an inset
+   * on each side; the twelve columns of its grid divide what is left.
+   *
+   * `pageInsetPx` is also the strip's text inset — one number, so a page's
+   * title and the cabinet's tab labels sit on the same line down the sheet. It
+   * does NOT scale with the sheet, because the labels it lines up with do not.
+   * `gridGapPx` does, like every other folder length.
+   */
+  pageInsetPx: number;
+  gridGapPx: number;
+  /**
+   * A cap on the body's line length, in `ch`. Zero is off, and off is the
+   * default: a page's text runs to the right inset like everything else. 90 is
+   * the figure to try if a full-width measure reads too long.
+   */
+  textMeasureCh: number;
+  /** Multiplier on the page's opening title, over `headerTitlePx * scale`. The
+   *  page got a lot wider; this is the lever for what that did to its title. */
+  headerScale: number;
   /**
    * The width the folder geometry below is measured AT. Everything from here to
    * `headerTitlePx` is a proportion of the sheet rather than a fixed size,
@@ -199,7 +217,11 @@ export const LOOK: PortfolioLook = {
   scrimBlurPx: 16,
   scrimAlpha: 0.4,
   glassColumnVw: 25,
-  columnPx: 656,
+  // 24 is the strip's text inset, and the point is that they are one number.
+  pageInsetPx: 24,
+  gridGapPx: 52,
+  textMeasureCh: 0,
+  headerScale: 1,
   // The folder geometry below is measured off the reference, and the reference
   // is a whole page at 2560 where this is a sheet beside a glass column. Taken
   // literally — scaling against the 1920 a 2560 viewport leaves for the sheet —
@@ -383,7 +405,10 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-glass-col', `${look.glassColumnVw}vw`);
   s.setProperty('--pv-hover-lift', `${look.hoverLiftPx}px`);
   s.setProperty('--pv-dim', String(look.dimOpacity));
-  s.setProperty('--pv-column', `${look.columnPx}px`);
+  s.setProperty('--pv-inset', `${look.pageInsetPx}px`);
+  // `none`, not `0`: this is a max-width, and zero would collapse every
+  // paragraph on the page rather than uncap it.
+  s.setProperty('--pv-measure', look.textMeasureCh > 0 ? `${look.textMeasureCh}ch` : 'none');
   s.setProperty('--pv-section-shadow', String(look.sectionShadowAlpha));
   s.setProperty('--pv-page-alpha', String(look.pageAlpha));
   s.setProperty('--pv-page-blur', `${look.pageBlurPx}px`);
@@ -417,7 +442,9 @@ const VARS = [
   '--pv-scrim-blur',
   '--pv-scrim-alpha',
   '--pv-glass-col',
-  '--pv-column',
+  '--pv-inset',
+  '--pv-measure',
+  '--pv-grid-gap',
   '--pv-tab-h',
   '--pv-row-pitch',
   '--pv-strip-h',
