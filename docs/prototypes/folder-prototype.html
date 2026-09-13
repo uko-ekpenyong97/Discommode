@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Folder prototype — stacked sections</title>
+<style>
+  :root {
+    --page-left: 25vw;        /* glass column on the left */
+    --tab-h: 64px;            /* height of a folder tab */
+    --pitch: 72px;            /* vertical step between stacked folders */
+    --tab-w: 34%;             /* tab width as a share of the folder */
+    --turn: 720px;            /* scroll spent on one folder rising */
+    --glass-alpha: 0.62;
+    --glass-blur: 24px;
+    --ink: #f3efe8;
+    --ink-dim: rgba(243,239,232,0.62);
+    --rule: rgba(243,239,232,0.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink); background: #0a0908; overflow: hidden; }
+
+  /* stand-in for the grid behind the glass */
+  .backdrop {
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(60vw 60vh at 20% 30%, #7a3b2c 0%, transparent 60%),
+      radial-gradient(50vw 50vh at 78% 70%, #2c5a7a 0%, transparent 60%),
+      radial-gradient(40vw 40vh at 60% 20%, #b9a04a 0%, transparent 55%),
+      #1b1714;
+    animation: drift 18s ease-in-out infinite alternate; filter: blur(16px);
+  }
+  .backdrop::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,0.4); }
+  @keyframes drift { from { transform: scale(1.05); } to { transform: scale(1.12) translate(-2vw, 1vh); } }
+
+  .scroller { position: fixed; inset: 0; z-index: 1; overflow-y: scroll; overscroll-behavior: contain; scrollbar-width: none; }
+  .scroller::-webkit-scrollbar { display: none; }
+  .spacer { width: 1px; }
+
+  /* the sheet: everything right of the glass column */
+  .sheet {
+    position: fixed; top: 0; bottom: 0; left: var(--page-left); right: 0; z-index: 2;
+    pointer-events: none; transform: translateX(100%); will-change: transform;
+  }
+
+  /* a folder = slot (clips to what's visible) > shape (tab + body glass) > scroll container */
+  .slot { position: absolute; left: 0; right: 0; overflow: hidden; pointer-events: auto; will-change: transform; }
+  .folder {
+    position: absolute; left: 0; right: 0; top: 0; height: 100vh;
+    background: hsl(var(--hue) 34% 12% / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    clip-path: polygon(0 0, var(--tab-w) 0, calc(var(--tab-w) + var(--tab-h)) var(--tab-h), 100% var(--tab-h), 100% 100%, 0 100%);
+  }
+  .folder::before { /* the tab edge, a touch lighter than the body so the shape reads */
+    content: ""; position: absolute; left: 0; top: 0; height: var(--tab-h); width: 100%;
+    background: hsl(var(--hue) 40% 18% / 0.5);
+    clip-path: polygon(0 0, var(--tab-w) 0, calc(var(--tab-w) + var(--tab-h)) 100%, 0 100%);
+  }
+  .tab {
+    position: absolute; left: 0; top: 0; height: var(--tab-h); width: var(--tab-w);
+    display: flex; align-items: center; gap: 18px; padding: 0 28px;
+    cursor: pointer; border: 0; background: none; color: inherit; font: inherit; text-align: left;
+  }
+  .tab .num { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.04em; }
+  .tab .title { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; }
+  .tab:hover .title, .tab:focus-visible .title { text-decoration: underline; text-underline-offset: 4px; }
+  .tab:focus-visible { outline: none; }
+
+  .scroll { position: absolute; left: 0; right: 0; top: var(--tab-h); bottom: 0; overflow-y: hidden; }
+  .inner { padding: 56px 72px 200px; }
+  .inner h1 { font-size: 72px; line-height: 0.95; letter-spacing: -0.02em; margin: 0 0 10px; font-weight: 500; }
+  .inner .kicker { color: var(--ink-dim); font-size: 14px; margin: 0 0 48px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; padding: 32px 0; border-top: 1px dashed var(--rule); }
+  .row p { font-size: 17px; line-height: 1.55; margin: 0; max-width: 34em; color: rgba(243,239,232,0.92); }
+  .row .media { aspect-ratio: 16/10; border-radius: 4px; background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.10); }
+  .inner .end { color: var(--ink-dim); font-size: 13px; padding-top: 24px; border-top: 1px dashed var(--rule); }
+
+  /* chrome */
+  .close {
+    position: fixed; left: 40px; bottom: 40px; z-index: 3; width: 96px; height: 96px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.25); border: 0.5px solid currentColor; cursor: pointer;
+    transition: color .25s, background .25s, transform .25s; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .close:hover { transform: scale(0.92); background: rgba(0,0,0,0.75); color: #fff; }
+  .close svg { width: 36px; height: 36px; stroke: currentColor; stroke-width: 1; fill: none; }
+  .dials {
+    position: fixed; right: 20px; top: 20px; z-index: 3; width: 220px;
+    background: rgba(0,0,0,0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px 14px; font-size: 11px; color: var(--ink-dim);
+  }
+  .dials label { display: grid; grid-template-columns: 1fr 44px; gap: 6px; align-items: center; margin: 6px 0; }
+  .dials input { grid-column: 1 / -1; width: 100%; }
+  .dials .v { text-align: right; color: var(--ink); }
+  .dials button { margin-top: 8px; width: 100%; font: inherit; padding: 6px; background: rgba(255,255,255,0.08); color: var(--ink); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; cursor: pointer; }
+  .dials .hint { margin-top: 8px; line-height: 1.4; }
+  .readout { position: fixed; left: 20px; top: 20px; z-index: 3; font-size: 11px; color: var(--ink-dim); }
+
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .folder { background: #0e0c0b; backdrop-filter: none; -webkit-backdrop-filter: none; } }
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+<div class="scroller" id="scroller"><div class="spacer" id="spacer"></div></div>
+<div class="sheet" id="sheet"></div>
+
+<button class="close" aria-label="Close project" onclick="location.reload()"><svg viewBox="0 0 55 55"><path d="M3 3l49 49M52 3L3 52"/></svg></button>
+<div class="readout" id="readout"></div>
+<div class="dials">
+  <label>turn distance <span class="v" id="turnV"></span><input id="turn" type="range" min="240" max="1400" step="20" value="720"></label>
+  <label>stack pitch <span class="v" id="pitchV"></span><input id="pitch" type="range" min="40" max="140" step="2" value="72"></label>
+  <label>tab height <span class="v" id="tabhV"></span><input id="tabh" type="range" min="40" max="120" step="2" value="64"></label>
+  <label>tab width <span class="v" id="tabwV"></span><input id="tabw" type="range" min="20" max="60" step="1" value="34"></label>
+  <label>glass column <span class="v" id="leftV"></span><input id="left" type="range" min="10" max="45" step="1" value="25"></label>
+  <label>glass alpha <span class="v" id="alphaV"></span><input id="alpha" type="range" min="0.2" max="1" step="0.02" value="0.62"></label>
+  <label>glass blur <span class="v" id="blurV"></span><input id="blur" type="range" min="0" max="40" step="2" value="24"></label>
+  <button id="replay">Replay entrance</button>
+  <div class="hint">Unread folders wait at the bottom. Scroll a folder to its end and keep going: the next one rises and docks under the read stack at the top. Click any tab to jump.</div>
+</div>
+
+<script>
+  const sections = [
+    { title: "Overview", hue: 14,  beats: 2 },
+    { title: "Research", hue: 30,  beats: 5 },
+    { title: "Motion",   hue: 200, beats: 3 },
+    { title: "Build",    hue: 150, beats: 6 },
+    { title: "Outcome",  hue: 280, beats: 1 },
+  ];
+  const copy = [
+    "Each section is a folder. The tab carries its number and name; the body holds the work. You read to the end and the next folder rises from the stack below.",
+    "Folders you have read collect at the top as tabs, the ones still to come wait at the bottom. Either stack is a table of contents you can click.",
+    "Nothing about type, colour or tab shape is decided here. This is the mechanic: one scroll value, folders moving between two stacks.",
+  ];
+
+  const sheet = document.getElementById('sheet'), scroller = document.getElementById('scroller'), spacer = document.getElementById('spacer'), readout = document.getElementById('readout');
+  const slots = [], scrolls = [];
+  sections.forEach((s, i) => {
+    const slot = document.createElement('div'); slot.className = 'slot'; slot.style.setProperty('--hue', s.hue); slot.style.zIndex = 10 + i;
+    let rows = '';
+    for (let b = 0; b < s.beats; b++) rows += `<div class="row"><div class="media"></div><p>${copy[b % copy.length]}</p></div>`;
+    slot.innerHTML = `<div class="folder">
+        <button class="tab"><span class="num">0${i + 1}</span><span class="title">${s.title}</span></button>
+        <div class="scroll"><div class="inner"><h1>${s.title}</h1><p class="kicker">Folder ${i + 1} of ${sections.length}</p>${rows}<div class="end">End of ${s.title}. Keep scrolling to open the next folder.</div></div></div>
+      </div>`;
+    slot.querySelector('.tab').addEventListener('click', () => tweenTo(track.start[i]));
+    sheet.appendChild(slot); slots.push(slot); scrolls.push(slot.querySelector('.scroll'));
+  });
+
+  // ---- geometry ----
+  const N = sections.length;
+  const cssPx = v => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(v));
+  let G = {};
+  function geometry() {
+    G.VH = innerHeight; G.pitch = cssPx('--pitch'); G.tabH = cssPx('--tab-h'); G.turn = cssPx('--turn');
+    G.topY = k => k * G.pitch;                       // read stack: folder k's tab
+    G.botY = k => G.VH - (N - k) * G.pitch;          // unread stack: folder k's tab
+  }
+  // visible body height of folder k while it is the open one
+  const bodyH = k => (k < N - 1 ? G.botY(k + 1) : G.VH) - G.topY(k) - G.tabH;
+
+  let track = { start: [], scroll: [], length: 0 };
+  function measure() {
+    geometry();
+    track.scroll = scrolls.map((el, k) => Math.max(0, el.scrollHeight - bodyH(k)));
+    let acc = 0; track.start = [];
+    for (let k = 0; k < N; k++) { track.start[k] = acc; acc += track.scroll[k] + (k < N - 1 ? G.turn : 0); }
+    track.length = acc + G.VH;
+    spacer.style.height = track.length + 'px';
+  }
+
+  // y < 0 is the entrance: folder 0 rising out of the bottom stack (active = -1)
+  function layout(y) {
+    let active = -1, turning = false, p = 0;
+    if (y < 0) { active = -1; turning = true; p = 1 + y / G.turn; }
+    else for (let k = 0; k < N; k++) {
+      const end = track.start[k] + track.scroll[k];
+      if (y <= end + 0.5) { active = k; break; }
+      if (k < N - 1 && y < track.start[k + 1]) { active = k; turning = true; p = (y - end) / G.turn; break; }
+      active = k;
+    }
+    const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // the rise is 1:1 with scroll but eased in position
+    const ys = [];
+    for (let k = 0; k < N; k++) {
+      if (k <= active) ys[k] = G.topY(k);
+      else if (turning && k === active + 1) ys[k] = G.botY(k) + (G.topY(k) - G.botY(k)) * ease(Math.max(0, Math.min(1, p)));
+      else ys[k] = G.botY(k);
+    }
+    for (let k = 0; k < N; k++) {
+      const h = (k < N - 1 ? ys[k + 1] : G.VH) - ys[k];           // each folder shows only its slot: no glass over glass
+      slots[k].style.transform = `translateY(${ys[k]}px)`;
+      slots[k].style.height = Math.max(0, h) + 'px';
+      let st = 0;
+      if (k < active) st = track.scroll[k];
+      else if (k === active) st = Math.min(track.scroll[k], Math.max(0, y - track.start[k]));
+      if (scrolls[k].scrollTop !== st) scrolls[k].scrollTop = st;
+    }
+    readout.textContent = active < 0 ? 'opening' : `y ${Math.round(y)} · folder ${active + 1}${turning ? ' → ' + (active + 2) + ' (' + Math.round(p * 100) + '%)' : ''}`;
+  }
+
+  // ---- smoothing + tweens ----
+  let target = 0, current = 0, tween = null, locked = true;
+  scroller.addEventListener('scroll', () => { if (!tween && !locked) target = scroller.scrollTop; }, { passive: true });
+  function tweenTo(y, dur = 1100) { tween = { from: current, to: y, t0: performance.now(), dur }; }
+  function frame(now) {
+    if (tween) {
+      const q = Math.min(1, (now - tween.t0) / tween.dur), e = 1 - Math.pow(1 - q, 3);
+      current = tween.from + (tween.to - tween.from) * e;
+      if (q >= 1) { tween = null; if (current >= 0) { locked = false; scroller.scrollTop = current; target = current; } }
+    } else if (!locked) {
+      current += (target - current) * 0.12;
+      if (Math.abs(target - current) < 0.1) current = target;
+    }
+    layout(current);
+    requestAnimationFrame(frame);
+  }
+
+  // entrance: sheet slides in, then folder 0 rises from the bottom stack
+  function enter() {
+    locked = true; tween = null; current = -G.turn; target = 0; scroller.scrollTop = 0;
+    sheet.style.transition = 'none'; sheet.style.transform = 'translateX(100%)';
+    layout(current);
+    requestAnimationFrame(() => {
+      sheet.style.transition = 'transform 0.7s cubic-bezier(0.4, 0, 0.1, 1)';
+      sheet.style.transform = 'translateX(0)';
+      setTimeout(() => tweenTo(0, 900), 500);
+    });
+  }
+
+  // ---- dials ----
+  const root = document.documentElement;
+  const semantic = y => { for (let k = 0; k < N; k++) { const end = track.start[k] + track.scroll[k]; if (y <= end) return { k, off: y - track.start[k], p: 0 }; if (k < N - 1 && y < track.start[k + 1]) return { k, off: track.scroll[k], p: (y - end) / G.turn }; } return { k: N - 1, off: track.scroll[N - 1], p: 0 }; };
+  const restore = pos => { const y = track.start[pos.k] + pos.off + pos.p * G.turn; current = target = y; if (!locked) scroller.scrollTop = y; };
+  const rebuild = () => { if (current < 0) { measure(); return; } const pos = semantic(current); measure(); restore(pos); };
+  const bind = (id, cssVar, fmt, after) => { const inp = document.getElementById(id), out = document.getElementById(id + 'V'); const apply = () => { root.style.setProperty(cssVar, fmt(inp.value)); out.textContent = fmt(inp.value); after && after(); }; inp.addEventListener('input', apply); apply(); };
+  bind('turn', '--turn', v => v + 'px', rebuild);
+  bind('pitch', '--pitch', v => v + 'px', rebuild);
+  bind('tabh', '--tab-h', v => v + 'px', rebuild);
+  bind('tabw', '--tab-w', v => v + '%');
+  bind('left', '--page-left', v => v + 'vw');
+  bind('alpha', '--glass-alpha', v => v);
+  bind('blur', '--glass-blur', v => v + 'px');
+  document.getElementById('replay').addEventListener('click', enter);
+  window.addEventListener('resize', rebuild);
+
+  measure(); enter(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
