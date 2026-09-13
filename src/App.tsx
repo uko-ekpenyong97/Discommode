@@ -179,7 +179,10 @@ export default function App({ suspended = false }: AppProps) {
   const stageStyle = { '--detail-ms': `${config.detailTransitionMs}ms` } as CSSProperties;
 
   return (
-    <div className="app" data-suspended={suspended || undefined}>
+    // `inert` as well as the CSS `pointer-events: none`: a layer above the app
+    // owns the keyboard too, and without this Tab walks straight into the
+    // detail bar underneath and Enter fires a button nobody can see.
+    <div className="app" data-suspended={suspended || undefined} inert={suspended}>
       <SkyLayer env={envSnapshot.env} />
       <div className={gridClass} data-locked={inDetail || undefined} style={stageStyle}>
         <GridPlane

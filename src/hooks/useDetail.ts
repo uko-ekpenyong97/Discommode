@@ -127,9 +127,11 @@ export function useDetail(suspended = false): DetailController {
   // Browser back/forward: reconcile state to the hash.
   useEffect(() => {
     const sync = () => {
-      // `#read-…` is the reader's namespace: ignore it so opening/closing the
-      // reader never collapses or re-enters the detail view underneath.
-      if (window.location.hash.startsWith('#read-')) return;
+      // `#read-…` and `#view-…` are the overlay layers' namespaces: ignore them
+      // so opening/closing the reader or the project view never collapses or
+      // re-enters the detail view frozen underneath.
+      const hash = window.location.hash;
+      if (hash.startsWith('#read-') || hash.startsWith('#view-')) return;
       const idx = indexForSlug(hashSlug());
       if (idx >= 0) {
         if (modeRef.current === 'grid') {

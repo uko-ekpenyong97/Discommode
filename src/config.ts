@@ -38,9 +38,17 @@ export const dragDeadZonePx = 4;
 /** Upper bound on the settle-time scaling for long flicks. */
 export const settleTauMaxScale = 2;
 
-/** World cell centred at startup (the initially focused card). */
-export const START_COL = 2;
-export const START_ROW = 2;
+/**
+ * World cell centred on a cold load with no hash — the grid's HOME.
+ *
+ * `contentIndex(col, row) = mod(row * wrapStride + col, N)`, so cell (0, 0) is
+ * content index 0 for ANY wrap stride: the site always opens on the first card
+ * in the manifest (01, Discommode) rather than wherever the lattice happened to
+ * land. Deep links (`#item-NN`, `#read-NN`, `#view-NN`) are unaffected — they
+ * centre on their own card via `nearestCellForContent`.
+ */
+export const START_COL = 0;
+export const START_ROW = 0;
 
 // --- Reactive (dialed) config ------------------------------------------------
 

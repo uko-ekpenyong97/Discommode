@@ -1,0 +1,28 @@
+/* The project view as a layer over the app: a fixed full-viewport pane above
+   the detail/morph/minimap stack (minimap is z-index 30), alongside the reader
+   layer at the same depth — the two are never up at once.
+
+   There is no fade-IN here: the open is the storyboarded scrim + sheet, driven
+   by `--pv-*` (see portfolioMotion.ts), and a wrapper fade on top of it would
+   double the scrim's own. The fade-OUT is only for an EXTERNAL close (Back, a
+   hand-edited hash), where nothing played the CLOSE storyboard and the layer
+   would otherwise vanish in one frame. FADE_OUT_MS in PortfolioGate.tsx must
+   match the duration. */
+.portfolio-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.portfolio-layer[data-exiting] {
+  animation: portfolio-fade-out 200ms ease both;
+}
+
+@keyframes portfolio-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

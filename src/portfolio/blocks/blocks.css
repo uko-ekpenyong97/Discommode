@@ -1,0 +1,296 @@
+/* Type and layout for the blocks. Nothing here animates the ENTRANCE of a
+   block — that is reveal.css — except the media crossfade, which belongs to
+   the media and not to the block (a block can be fully revealed while its
+   image is still decoding). */
+
+/* `contain: layout` keeps a block's internal layout its own business: nothing
+   inside one can collapse a margin through it or otherwise change the height of
+   anything else on the page. Page height is the input the whole track is built
+   from, so it has to be a function of the content alone. */
+.pv-block {
+  margin: 0 0 28px;
+  contain: layout;
+}
+
+/* TEXT OVER GLASS. The page glass is doing most of the work, but what is behind
+   it is a live grid and it is not always dark — so every block that is only
+   type gets two things the media blocks do not need:
+
+     a hairline shadow, which buys contrast at the glyph edge where it matters
+     and nowhere else, and
+
+     a very soft dark pool behind the block, wide and feathered, so a bright
+     cover passing underneath is damped locally rather than by raising the
+     page's tint for the whole project.
+
+   Deliberately weak: this is a safety net under `pageAlpha`, not a card. If a
+   block needs more than this the alpha is wrong, and `contrastProbe.ts` is what
+   says so. */
+.pv-block:is(
+    [data-block='title'],
+    [data-block='caption'],
+    [data-block='text'],
+    [data-block='linkPill']
+  ) {
+  padding: 24px;
+  margin: -24px -24px 4px;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35), transparent 70%);
+}
+
+.pv-folder :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill),
+.pv-folder .pv-figcaption {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Solid pages need neither — and the same goes for anyone who has asked for
+   less transparency or more contrast, who gets solid pages whatever the dial
+   says (see portfolio.css) and should not then be reading through a shadow. */
+:root[data-pv-surface='solid'] .pv-block {
+  background: none;
+}
+:root[data-pv-surface='solid'] .pv-folder :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+  text-shadow: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .pv-block {
+    background: none;
+  }
+  .pv-folder :is(.pv-title, .pv-caption, .pv-heading, .pv-body, .pv-twoup__text, .pv-stat__label, .pv-linkpill, .pv-figcaption) {
+    text-shadow: none;
+  }
+}
+.pv-block:last-child {
+  margin-bottom: 0;
+}
+
+/* Edge to edge of the PAGE, escaping the centred content column. The page, not
+   the viewport — the page is the frame. */
+/* Edge to edge of the FOLDER, escaping the centred column. `cqw` rather than a
+   variable: the folder's body is the query container, so this stays right
+   through a resize and a dial change with nothing to keep in step. */
+.pv-block--bleed {
+  width: 100cqw;
+  margin-left: calc((100% - 100cqw) / 2);
+}
+
+/* ── type ──────────────────────────────────────────────────────────────── */
+
+.pv-title {
+  margin: 0;
+  font-size: clamp(48px, 8.5vw, 120px);
+  line-height: 0.94;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+  color: #fff;
+}
+
+/* INK ALPHA IS A CONTRAST CEILING, not a shade.
+   Translucent white text blends with the very backdrop it is compared against,
+   so its ratio converges on a fixed maximum as the backdrop darkens: 0.5 white
+   can never beat 5.3:1, 0.62 never beats 7.9:1. Darkening the glass moves a
+   12px caption by hundredths. The only way to give small type headroom over a
+   LIVE backdrop is to raise its own alpha — so the small mono labels sit at
+   0.74 (ceiling 11.4:1) and body at 0.82. They still read as secondary; they
+   are just no longer relying on the backdrop staying dark. */
+.pv-caption {
+  margin: 12px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.pv-heading {
+  margin: 0 0 16px;
+  font-size: 22px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+}
+
+.pv-body {
+  margin: 0 0 16px;
+  font-size: 16px;
+  line-height: 1.62;
+  color: rgba(255, 255, 255, 0.82);
+}
+.pv-body:last-child {
+  margin-bottom: 0;
+}
+
+/* ── media ─────────────────────────────────────────────────────────────── */
+
+/* The frame is the placeholder: a flat tint the decoded image crossfades over,
+   and the box the flip reveal turns. It is already the right SIZE — the media
+   inside carries its intrinsic `width`/`height`, so the browser reserves the
+   box before the asset arrives and the page's height never changes under the
+   reader. */
+.pv-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pv-img,
+.pv-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+.pv-video {
+  transition-duration: 450ms;
+}
+.pv-img.is-loaded,
+.pv-video.is-loaded {
+  opacity: 1;
+}
+
+.pv-figure {
+  margin: 0;
+}
+
+.pv-figcaption {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+/* ── two-up ────────────────────────────────────────────────────────────── */
+
+/* 52px between the columns, 24px between a frame and its paragraph. */
+.pv-twoup {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 52px;
+}
+
+.pv-twoup__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.pv-twoup__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+/* ── stat grid ─────────────────────────────────────────────────────────── */
+
+.pv-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.pv-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pv-stat__label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+/* ── link pill ─────────────────────────────────────────────────────────── */
+
+.pv-linkpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 100px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
+}
+.pv-linkpill:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+}
+.pv-linkpill__icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── rive ──────────────────────────────────────────────────────────────── */
+
+/* The box is held open at the artboard's ratio (written inline from the block
+   data), so the lazy mount never reflows the page and never invalidates the
+   track the spacer was measured against. */
+.pv-rive {
+  position: relative;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pv-rive__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The stand-in for a project whose `.riv` has not landed yet. It animates only
+   while mounted, which is the point — watch it start and stop as the block
+   crosses the one-viewport window. */
+.pv-rive__stand-in {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.pv-rive__orbit {
+  position: absolute;
+  width: 38%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  animation: pv-rive-spin 2.4s linear infinite;
+}
+
+.pv-rive__label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+@keyframes pv-rive-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pv-rive__orbit {
+    animation: none;
+  }
+  .pv-img,
+  .pv-video {
+    opacity: 1;
+    transition: none;
+  }
+}

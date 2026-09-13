@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notebook prototype — tabbed sections</title>
+<style>
+  :root {
+    --page-w: 720px;
+    --tab-w: 64px;
+    --tab-h: 132px;
+    --tab-gap: 6px;
+    --tab-top: 0px;
+    --turn: 720px;           /* scroll distance spent on one page turn */
+    --glass-alpha: 0.55;
+    --glass-blur: 24px;
+    --ink: #f3efe8;
+    --ink-dim: rgba(243,239,232,0.62);
+    --paper: rgba(14,12,11, var(--glass-alpha));
+    --rule: rgba(243,239,232,0.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #0a0908;
+    overflow: hidden;
+  }
+
+  /* ---- stand-in for the grid: covers + shader behind the glass ---- */
+  .backdrop {
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(60vw 60vh at 20% 30%, #7a3b2c 0%, transparent 60%),
+      radial-gradient(50vw 50vh at 78% 70%, #2c5a7a 0%, transparent 60%),
+      radial-gradient(40vw 40vh at 60% 20%, #b9a04a 0%, transparent 55%),
+      #1b1714;
+    animation: drift 18s ease-in-out infinite alternate;
+    filter: blur(16px);
+  }
+  .backdrop::after {
+    content: ""; position: absolute; inset: 0;
+    background: rgba(0,0,0,0.4);
+  }
+  @keyframes drift {
+    from { background-position: 0 0, 0 0, 0 0; transform: scale(1.05) translate(0,0); }
+    to   { background-position: 6vw 4vh, -5vw 6vh, 3vw -5vh; transform: scale(1.12) translate(-2vw, 1vh); }
+  }
+
+  /* ---- the scroller: one virtual track ---- */
+  .scroller {
+    position: fixed; inset: 0; z-index: 1;
+    overflow-y: scroll; overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .scroller::-webkit-scrollbar { display: none; }
+  .spacer { width: 1px; }
+
+  /* ---- the notebook: fixed stage, tabs + stacked sections ---- */
+  .stage {
+    position: fixed; inset: 0; z-index: 2;
+    pointer-events: none;
+  }
+  .book {
+    position: absolute;
+    left: 50%; top: 0; height: 100vh;
+    width: calc(var(--page-w) + var(--tab-w));
+    transform: translateX(-50%);
+  }
+  .page-area {
+    position: absolute; top: 0; bottom: 0;
+    left: var(--tab-w); width: var(--page-w);
+  }
+
+  .section {
+    position: absolute; inset: 0;
+    overflow-y: hidden;                /* its own scroll container, driven by JS */
+    background: hsl(var(--hue) 34% 11% / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    box-shadow: -24px 0 48px rgba(0,0,0,0.45);
+    pointer-events: auto;
+    will-change: transform;
+  }
+  .section[data-turned="1"] { box-shadow: none; }
+
+  .inner { padding: 96px 72px 160px; max-width: 100%; }
+  .inner h1 { font-size: 84px; line-height: 0.95; letter-spacing: -0.02em; margin: 0 0 12px; font-weight: 500; }
+  .inner .kicker { color: var(--ink-dim); font-size: 14px; margin: 0 0 56px; }
+  .inner p { font-size: 17px; line-height: 1.55; max-width: 34em; margin: 0 0 28px; color: rgba(243,239,232,0.92); }
+  .inner figure { margin: 0 0 40px; }
+  .inner figure > div {
+    width: 100%; aspect-ratio: 16/10; border-radius: 4px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04));
+    border: 1px solid rgba(255,255,255,0.10);
+  }
+  .inner figcaption { font-size: 12px; color: var(--ink-dim); margin-top: 10px; }
+  .inner hr { border: 0; border-top: 1px solid var(--rule); margin: 56px 0; }
+  .inner .end { color: var(--ink-dim); font-size: 13px; padding-top: 24px; }
+
+  /* ---- tabs: one per section, sticky-note style down the left edge ---- */
+  .tab {
+    position: absolute;
+    left: 0; width: calc(var(--tab-w) + 18px);   /* tucks 18px under the page edge */
+    height: var(--tab-h);
+    top: calc(var(--tab-top) + var(--i) * (var(--tab-h) + var(--tab-gap)));
+    border-radius: 10px 0 0 10px;
+    background: hsl(var(--hue) 44% 20% / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+    color: var(--ink);
+    pointer-events: auto;
+    cursor: pointer;
+    border: 0; padding: 0;
+    font: inherit;
+    transition: transform .25s ease, filter .25s ease, background-color .25s ease;
+    box-shadow: -10px 0 24px rgba(0,0,0,0.35);
+  }
+  .tab:hover, .tab:focus-visible { transform: translateX(-6px); outline: none; filter: brightness(1.25); }
+  .tab .label {
+    position: absolute; left: 0; top: 0; width: var(--tab-w); height: 100%;
+    writing-mode: vertical-rl; transform: rotate(180deg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; letter-spacing: 0.02em; font-weight: 500;
+  }
+  .tab[data-active="1"] { background: hsl(var(--hue) 40% 15% / var(--glass-alpha)); box-shadow: none; }
+  .tab[data-active="1"]::after { content: ""; position: absolute; top: 0; bottom: 0; right: -2px; width: 22px; background: inherit; }
+  .tab[data-active="1"] .label { font-weight: 600; }
+
+  /* ---- close pill + dials (prototype chrome) ---- */
+  .close {
+    position: fixed; left: 40px; bottom: 40px; z-index: 3;
+    width: 96px; height: 96px; border-radius: 50%;
+    background: rgba(0,0,0,0.6); color: rgba(255,255,255,0.25);
+    border: 0.5px solid currentColor; cursor: pointer;
+    transition: color .25s, background .25s, transform .25s;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .close:hover { transform: scale(0.92); background: rgba(0,0,0,0.75); color: #fff; }
+  .close svg { width: 36px; height: 36px; stroke: currentColor; stroke-width: 1; fill: none; }
+
+  .dials {
+    position: fixed; right: 20px; top: 20px; z-index: 3;
+    background: rgba(0,0,0,0.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+    padding: 12px 14px; font-size: 11px; color: var(--ink-dim); width: 220px;
+  }
+  .dials label { display: grid; grid-template-columns: 1fr 44px; gap: 6px; align-items: center; margin: 6px 0; }
+  .dials input { grid-column: 1 / -1; width: 100%; }
+  .dials .v { text-align: right; color: var(--ink); }
+  .dials .hint { margin-top: 8px; line-height: 1.4; }
+  .readout { position: fixed; left: 20px; top: 20px; z-index: 3; font-size: 11px; color: var(--ink-dim); }
+
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .section { background: #0e0c0b; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  }
+  @media (max-width: 900px) {
+    :root { --page-w: calc(100vw - var(--tab-w) - 24px); --turn: 480px; }
+  }
+</style>
+</head>
+<body>
+<div class="backdrop"></div>
+
+<div class="scroller" id="scroller"><div class="spacer" id="spacer"></div></div>
+
+<div class="stage">
+  <div class="book" id="book">
+    <div class="page-area" id="pages"></div>
+  </div>
+</div>
+
+<button class="close" aria-label="Close project" onclick="location.reload()">
+  <svg viewBox="0 0 55 55"><path d="M3 3l49 49M52 3L3 52"/></svg>
+</button>
+
+<div class="readout" id="readout"></div>
+
+<div class="dials">
+  <label>turn distance <span class="v" id="turnV"></span><input id="turn" type="range" min="240" max="1200" step="20" value="720"></label>
+  <label>glass alpha <span class="v" id="alphaV"></span><input id="alpha" type="range" min="0.2" max="1" step="0.05" value="0.55"></label>
+  <label>glass blur <span class="v" id="blurV"></span><input id="blur" type="range" min="0" max="40" step="2" value="24"></label>
+  <label>tab top offset <span class="v" id="tabtV"></span><input id="tabt" type="range" min="0" max="160" step="4" value="0"></label>
+  <label>tab height <span class="v" id="tabhV"></span><input id="tabh" type="range" min="72" max="200" step="4" value="132"></label>
+  <div class="hint">Scroll to read. At the bottom of a section, keep scrolling: the next section covers it. Click a tab to jump back.</div>
+</div>
+
+<script>
+  // ---------- content: sections of different lengths ----------
+  const sections = [
+    { title: "Overview",  hue: 14,  paras: 3, figs: 1 },
+    { title: "Research",  hue: 30,  paras: 6, figs: 2 },
+    { title: "Motion",    hue: 200, paras: 4, figs: 3 },
+    { title: "Build",     hue: 150, paras: 8, figs: 2 },
+    { title: "Outcome",   hue: 280, paras: 2, figs: 1 },
+  ];
+  const lorem = [
+    "The brief was a reading surface that could hold a whole project without ever feeling like a page you scroll past. Each section is a divider with a tab; you read to the end and the next one turns in over it.",
+    "Finished sections stay in the stack. Their tabs keep them one click away, and returning to one rewinds it to its title so the section reads the same way twice.",
+    "Nothing here is decided about type or colour. The tabs carry a tint so the stack is legible, the paper is glass so the covers behind keep moving, and the rest is the mechanics.",
+    "Section length is a content decision. A short one turns quickly; a long one holds you. The track sums whatever the project needs.",
+  ];
+
+  const pagesEl = document.getElementById('pages');
+  const bookEl = document.getElementById('book');
+  const scroller = document.getElementById('scroller');
+  const spacer = document.getElementById('spacer');
+  const readout = document.getElementById('readout');
+
+  const sectionEls = [], tabEls = [];
+  sections.forEach((s, i) => {
+    const sec = document.createElement('section');
+    sec.className = 'section';
+    sec.style.zIndex = 10; // reordered per frame
+    sec.style.setProperty('--hue', s.hue);
+    let html = `<div class="inner"><h1>${s.title}</h1><p class="kicker">Section ${i + 1} of ${sections.length}</p>`;
+    for (let p = 0; p < s.paras; p++) {
+      html += `<p>${lorem[p % lorem.length]}</p>`;
+      if (p % 2 === 1 && s.figs > 0) { html += `<figure><div></div><figcaption>Placeholder media, ${s.title.toLowerCase()} ${p + 1}</figcaption></figure>`; s.figs--; }
+    }
+    html += `<hr><div class="end">End of ${s.title}. Keep scrolling to turn the page.</div></div>`;
+    sec.innerHTML = html;
+    pagesEl.appendChild(sec);
+    sectionEls.push(sec);
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.style.setProperty('--i', i);
+    tab.style.setProperty('--hue', s.hue);
+    tab.innerHTML = `<span class="label">${s.title}</span>`;
+    tab.addEventListener('click', () => scrollToTrack(track.start[i]));
+    bookEl.appendChild(tab);
+    tabEls.push(tab);
+  });
+
+  // ---------- track: the same math as pageTrack.ts, turn instead of slide ----------
+  let track = { start: [], scroll: [], length: 0, turn: 720 };
+  function measure() {
+    const VH = window.innerHeight;
+    track.turn = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--turn'));
+    track.scroll = sectionEls.map(el => Math.max(0, el.scrollHeight - VH));
+    track.start = [];
+    let acc = 0;
+    for (let k = 0; k < sectionEls.length; k++) {
+      track.start[k] = acc;
+      acc += track.scroll[k] + (k < sectionEls.length - 1 ? track.turn : 0);
+    }
+    track.length = acc + VH;
+    spacer.style.height = track.length + 'px';
+  }
+
+  function layout(y) {
+    const N = sectionEls.length;
+    let active = 0, turning = false, progress = 0;
+    for (let k = 0; k < N; k++) {
+      const end = track.start[k] + track.scroll[k];
+      if (y <= end + 0.5) { active = k; break; }
+      if (k < N - 1 && y < track.start[k + 1]) { active = k; turning = true; progress = (y - end) / track.turn; break; }
+      active = k;
+    }
+    for (let k = 0; k < N; k++) {
+      const el = sectionEls[k];
+      let st = 0, tx = 0;
+      if (k < active) st = track.scroll[k];
+      else if (k === active) st = Math.min(track.scroll[k], Math.max(0, y - track.start[k]));
+      // the incoming section slides in from the right over the current one, 1:1 with scroll
+      if (turning && k === active + 1) tx = (1 - progress) * 100;
+      else if (k > active) tx = 100;
+      if (el.scrollTop !== st) el.scrollTop = st;
+      el.style.transform = `translateX(${tx}%)`;
+      el.style.zIndex = k <= active ? 10 + k : (turning && k === active + 1 ? 10 + k : 1);
+      el.dataset.turned = k < active ? '1' : '0';
+      el.style.visibility = tx >= 100 ? 'hidden' : 'visible';
+      const isActive = (k === active && !turning) || (turning && k === active + 1 && progress > 0.5);
+      tabEls[k].dataset.active = isActive ? '1' : '0';
+      tabEls[k].style.zIndex = isActive ? 40 : 10 + k;
+    }
+    readout.textContent = `y ${Math.round(y)} · section ${active + 1}${turning ? ' → ' + (active + 2) + ' (' + Math.round(progress * 100) + '%)' : ''}`;
+  }
+
+  // ---------- smoothing: a light lerp standing in for Lenis ----------
+  let target = 0, current = 0, tween = null;
+  scroller.addEventListener('scroll', () => { if (!tween) target = scroller.scrollTop; }, { passive: true });
+  function scrollToTrack(y) {
+    const from = scroller.scrollTop, t0 = performance.now(), dur = 1100;
+    tween = { from, to: y, t0, dur };
+  }
+  function frame(now) {
+    if (tween) {
+      const p = Math.min(1, (now - tween.t0) / tween.dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      const y = tween.from + (tween.to - tween.from) * e;
+      scroller.scrollTop = y; target = y; current = y;
+      if (p >= 1) tween = null;
+    } else {
+      current += (target - current) * 0.12;
+      if (Math.abs(target - current) < 0.1) current = target;
+    }
+    layout(current);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- dials ----------
+  const root = document.documentElement;
+  const bind = (id, cssVar, fmt, after) => {
+    const inp = document.getElementById(id), out = document.getElementById(id + 'V');
+    const apply = () => { root.style.setProperty(cssVar, fmt(inp.value)); out.textContent = fmt(inp.value); after && after(); };
+    inp.addEventListener('input', apply); apply();
+  };
+  bind('turn', '--turn', v => v + 'px', () => { const pos = semantic(current); measure(); restore(pos); });
+  bind('alpha', '--glass-alpha', v => v);
+  bind('blur', '--glass-blur', v => v + 'px');
+  bind('tabh', '--tab-h', v => v + 'px');
+  bind('tabt', '--tab-top', v => v + 'px');
+
+  function semantic(y) { // (section, offset, turnProgress) so rebuilds keep the reader, not the pixel
+    for (let k = 0; k < sectionEls.length; k++) {
+      const end = track.start[k] + track.scroll[k];
+      if (y <= end) return { k, off: y - track.start[k], p: 0 };
+      if (k < sectionEls.length - 1 && y < track.start[k + 1]) return { k, off: track.scroll[k], p: (y - end) / track.turn };
+    }
+    return { k: sectionEls.length - 1, off: track.scroll[sectionEls.length - 1], p: 0 };
+  }
+  function restore(pos) {
+    const y = track.start[pos.k] + pos.off + pos.p * track.turn;
+    scroller.scrollTop = y; target = y; current = y;
+  }
+
+  window.addEventListener('resize', () => { const pos = semantic(current); measure(); restore(pos); });
+  measure();
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

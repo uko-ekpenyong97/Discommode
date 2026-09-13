@@ -1,0 +1,127 @@
+/* The scroll reveal.
+
+   One class per kind of entrance, all of them switched on by a single
+   IntersectionObserver adding `is-in` (see useReveal.ts) and all of them
+   ONE-WAY: `animation-fill-mode: forwards` plus an observer that unobserves on
+   entry, so scrolling back up shows settled content rather than replaying.
+
+   Everything is `animation`, not `transition`, for the blocks: an animation
+   with an explicit `from` cannot be interrupted mid-way by a re-render writing
+   the same class, and `--reveal-delay` staggers siblings without any JS
+   scheduling.
+
+   Scoped under `.pv-page` so these very generic names cannot reach the rest of
+   the app. */
+
+/* ── blocks ────────────────────────────────────────────────────────────── */
+
+.pv-page .reveal {
+  opacity: 0;
+}
+
+.pv-page .reveal.is-in {
+  animation: pv-reveal var(--pv-reveal-ms, 800ms) ease var(--reveal-delay, 0ms) forwards;
+}
+
+@keyframes pv-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(var(--pv-reveal-offset, 10px));
+    filter: blur(var(--pv-reveal-blur, 10px));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* ── title characters ──────────────────────────────────────────────────── */
+
+/* The block itself does not fade — each character does, on a decelerating
+   per-character delay written inline by `charDelayMs`. */
+.pv-page .reveal-char {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.28em);
+  transition:
+    opacity var(--pv-char-ms, 500ms) ease,
+    transform var(--pv-char-ms, 500ms) cubic-bezier(0.2, 0, 0, 1);
+}
+
+.pv-page .reveal-chars.is-in .reveal-char {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── hero frames ───────────────────────────────────────────────────────── */
+
+/* The one or two frames a project leads with turn in from depth. Perspective
+   is inside the transform so the effect does not depend on an ancestor's
+   `perspective` surviving a layout change. */
+.pv-page .reveal-flip {
+  opacity: 0;
+}
+
+.pv-page .reveal-flip.is-in {
+  animation: pv-flip var(--pv-flip-ms, 500ms) ease var(--pv-flip-delay, 300ms) forwards;
+}
+
+@keyframes pv-flip {
+  from {
+    opacity: 0;
+    transform: perspective(1000px) translateZ(calc(-1 * var(--pv-flip-depth, 500px)))
+      rotateY(var(--pv-flip-angle, 45deg));
+  }
+  to {
+    opacity: 1;
+    transform: perspective(1000px) translateZ(0) rotateY(0deg);
+  }
+}
+
+/* ── run hairline ──────────────────────────────────────────────────── */
+
+/* Drawn from nothing as the run arrives. The run is its own reveal target —
+   the rule is a pseudo-element, so it needs no node of its own. */
+.pv-run {
+  position: relative;
+  padding: 92px 0 48px;
+}
+
+.pv-run:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.18);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 600ms ease-out 300ms;
+}
+
+.pv-run:not(:first-child).is-in::before {
+  transform: scaleX(1);
+}
+
+/* Reduced motion: everything is simply present. */
+@media (prefers-reduced-motion: reduce) {
+  .pv-page .reveal,
+  .pv-page .reveal-flip {
+    opacity: 1;
+  }
+  .pv-page .reveal.is-in,
+  .pv-page .reveal-flip.is-in {
+    animation: none;
+  }
+  .pv-page .reveal-char {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .pv-run:not(:first-child)::before {
+    transform: scaleX(1);
+    transition: none;
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "_comment": "The placeholder media, as data. ONE table, read by two things that must not drift: scripts/make-placeholders.mjs generates the files from it, and placeholder.ts puts the same w/h into the block data so every media box is laid out at its final size BEFORE the asset loads. A page whose height changes when an image decodes moves every page start behind it, which is a jump under the reader's hands.",
+  "media": {
+    "wide.webp": { "w": 2000, "h": 1200, "bg": "#33404d", "ink": "#dce6f0", "label": "IMAGE" },
+    "bleed.webp": { "w": 2400, "h": 1100, "bg": "#3d3444", "ink": "#ece3f2", "label": "BLEED" },
+    "two-up-a.webp": { "w": 1000, "h": 1200, "bg": "#384a42", "ink": "#e2efe8", "label": "A" },
+    "two-up-b.webp": { "w": 1000, "h": 1200, "bg": "#4a4038", "ink": "#f2e8de", "label": "B" },
+    "stat-1.webp": { "w": 600, "h": 600, "bg": "#2e3b47", "ink": "#dbe5ef", "label": "01" },
+    "stat-2.webp": { "w": 600, "h": 600, "bg": "#3a3345", "ink": "#e8e0f0", "label": "02" },
+    "stat-3.webp": { "w": 600, "h": 600, "bg": "#33443c", "ink": "#dfeee6", "label": "03" },
+    "stat-4.webp": { "w": 600, "h": 600, "bg": "#453a30", "ink": "#f0e6da", "label": "04" },
+    "video-poster.webp": { "w": 1920, "h": 1080, "bg": "#22303c", "ink": "#cfdde9", "label": "VIDEO" }
+  },
+  "video": { "file": "loop.mp4", "w": 960, "h": 540, "seconds": 4 },
+  "riveArtboard": { "w": 3, "h": 2 }
+}
