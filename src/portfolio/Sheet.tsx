@@ -10,12 +10,13 @@ import {
   layout,
   maxPosition,
   minPosition,
+  pageTop,
   positionAt,
   positionOf,
   resolve,
   rowOf,
 } from './pageTrack';
-import type { Track, TrackPosition } from './pageTrack';
+import type { Track, TrackLayout, TrackPosition } from './pageTrack';
 import { ScrollerContext } from './scroller';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
@@ -65,13 +66,15 @@ import type { Project } from './blocks/types';
  */
 
 /**
- * What the face of a folder spends on things other than the title: the 10px of
- * air under the tab, the 11px mono number's line box, and the gap between the
- * number and the title. Fixed rather than scaled — scaled, the number would be
- * 6px on a laptop — which is why the title has to be fitted to what is left
+ * What a folder's strip spends on things other than the title: the air above
+ * and below the line. Fixed rather than scaled — scaled, it would vanish on a
+ * laptop — which is why the title has to be FITTED to what is left of the strip
  * rather than simply scaled with everything else.
  */
-const FACE_CHROME = 10 + 16 + 4;
+const STRIP_CHROME = 8;
+
+/** Smallest a folder's title may be fitted to before legibility beats layout. */
+const MIN_TITLE_PX = 12;
 
 /** The tab-click tween's curve — decelerating, so a long rewind settles. */
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
@@ -79,13 +82,17 @@ const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 /**
  * DEV: the painting invariant, checked rather than assumed.
  *
- * Every folder gets its own slot and nothing may paint over anything else — on
- * glass that is not an optimisation but the difference between a stack and a
- * smear, because a `backdrop-filter` samples whatever is behind it. The
- * geometry is unit-tested; this asks the browser whether the geometry made it
- * to the screen intact.
+ * Every folder paints its own slot and nothing else — on glass that is not an
+ * optimisation but the difference between a stack and a smear, because a
+ * `backdrop-filter` samples whatever is behind it. Slots in a column now
+ * OVERLAP by exactly one tab: a folder runs down to the body of the row in
+ * front so that its own body fills the notch beside that row's tab rather than
+ * leaving glass there, and the row in front (higher index, higher z) covers the
+ * rest. Any more than a tab of overlap is two folders sharing a band, which is
+ * the smear. The geometry is unit-tested; this asks the browser whether it made
+ * it to the screen intact.
  */
-function assertSlotsTile(stack: HTMLElement): void {
+function assertSlotsTile(stack: HTMLElement, tabHeight: number): void {
   // The outline is a `clip-path`, and an invalid one is not an error — the
   // declaration is simply dropped and every folder paints as a full-width
   // rectangle. Only the browser can say whether the string it was given was
@@ -115,11 +122,46 @@ function assertSlotsTile(stack: HTMLElement): void {
       // side by side in it and their outlines tile (see `folderClipPath`).
       if (a.side !== b.side) continue;
       const overlap = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
-      if (overlap > 1) {
-        console.error(`[pv:stack] folders ${a.k} and ${b.k} overlap by ${Math.round(overlap)}px`);
+      // `offsetTop`/`offsetHeight` are integers and the geometry is not, so the
+      // slack is two: one for each rounded edge of the band.
+      if (overlap > tabHeight + 2) {
+        console.error(
+          `[pv:stack] folders ${a.k} and ${b.k} overlap by ${Math.round(overlap)}px — ` +
+            `a tab (${Math.round(tabHeight)}px) is the most a row may reach into the next`,
+        );
         return;
       }
     }
+  }
+}
+
+/**
+ * DEV: the handle `scripts/pv-verify.mjs` drives the view through.
+ *
+ * The checks that matter here are ones only a browser can answer — did the clip
+ * take, is there glass between two rows, is the page where it will be a frame
+ * before it lands — and every one of them needs the track PARKED at an exact
+ * position while it measures and screenshots. There is no other way in: the
+ * position is not the scrollTop, and Lenis owns the scrollTop.
+ *
+ * `import.meta.env.DEV` is a literal, so the whole block leaves a production
+ * build with the rest of the dead branch.
+ */
+export interface PortfolioProbe {
+  track: () => Track | null;
+  position: () => number;
+  layout: () => TrackLayout | null;
+  armed: () => boolean;
+  /** Park the track at `y` and hold it there — the same lock the entrance uses,
+   *  so neither the scroller nor Lenis moves it under the camera. */
+  seek: (y: number) => void;
+  /** Hand the position back to the scroller. */
+  release: () => void;
+}
+
+declare global {
+  interface Window {
+    __pv?: PortfolioProbe;
   }
 }
 
@@ -203,6 +245,7 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
 
     const l = layout(track, position);
     const parts = partsRef.current;
+    let hovering = false;
     for (let k = 0; k < folders.length; k++) {
       const el = folders[k];
       const f = l.folders[k];
@@ -212,6 +255,17 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       el.style.zIndex = String(f.zIndex);
       el.toggleAttribute('data-top', k === l.topIndex);
       el.toggleAttribute('data-active', k === l.activeIndex);
+
+      // HOVER SURVIVES A FOLDER MOVING OUT FROM UNDER THE POINTER. A pointer
+      // that has not moved gets no `pointerleave` when the thing beneath it
+      // does, so a folder hovered as the entrance lifted it kept the flag and
+      // left the whole pile dimmed behind a folder that was no longer a place
+      // to go. Anything that has become a page is no longer hoverable, so the
+      // flag comes off here; `data-hovering` follows whether ANY is left.
+      if (el.hasAttribute('data-hover')) {
+        if (f.bodyVisible) el.toggleAttribute('data-hover', false);
+        else hovering = true;
+      }
 
       // The outline gains the full-width page when the folder opens and loses
       // it again when it files. Swapped here rather than re-cut per frame: the
@@ -235,6 +289,8 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
         else for (const video of body.querySelectorAll('video')) video.pause();
       }
     }
+
+    stackRef.current?.toggleAttribute('data-hovering', hovering);
 
     if (l.activeIndex !== activeRef.current) {
       activeRef.current = l.activeIndex;
@@ -276,22 +332,20 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     const sheetWidth = stack.getBoundingClientRect().width;
     const scale = sheetWidth / look.referenceSheetPx;
     const g = {
-      bodyH: look.bodyHPx * scale,
       tabH: look.tabHPx * scale,
       tabW: look.tabWPx * scale,
       chamfer: look.chamferPx * scale,
+      strip: look.stripHPx * scale,
       rowPitch: look.rowPitchPx * scale,
     };
-    const stripHeight = g.tabH - 1 + g.bodyH;
 
     const track = buildTrack({
       heights: partsRef.current.map(({ inner }) => inner.getBoundingClientRect().height),
       viewportHeight: sc.clientHeight,
       rowPitch: g.rowPitch,
-      stripHeight,
+      strip: g.strip,
       tabHeight: g.tabH,
       turnDistance: look.turnDistancePx,
-      unfoldShare: look.unfoldShare,
       easeRise: look.easeRise,
     });
     trackRef.current = track;
@@ -300,12 +354,14 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     // disagree by a rounding step.
     stack.style.setProperty('--pv-row-pitch', `${g.rowPitch}px`);
     stack.style.setProperty('--pv-tab-h', `${g.tabH}px`);
-    stack.style.setProperty('--pv-strip-h', `${stripHeight}px`);
-    // The title has to fit the FACE of the folder — the part of its body the row
-    // in front does not cover — under the number, whatever the dial says. A
-    // title that overflows is one sliced in half by the folder above.
-    const face = g.rowPitch - g.tabH;
-    const titleSize = Math.max(12, Math.min(look.titleSizePx * scale, face - FACE_CHROME));
+    stack.style.setProperty('--pv-strip-h', `${g.strip}px`);
+    // The title has to fit the STRIP, whatever the dial says: rows this compact
+    // leave no room for a line that overflows, and the folder in front would
+    // slice it in half.
+    const titleSize = Math.max(
+      MIN_TITLE_PX,
+      Math.min(look.titleSizePx * scale, g.strip - STRIP_CHROME),
+    );
     stack.style.setProperty('--pv-title', `${titleSize}px`);
     stack.style.setProperty('--pv-header-title', `${look.headerTitlePx * scale}px`);
 
@@ -316,6 +372,10 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       const split = ((r % 2 === 0 ? look.splitA : look.splitB) / 100) * sheetWidth;
       const left = k % 2 === 0 ? 0 : split;
       const right = k % 2 === 0 ? split : sheetWidth;
+      // Where this folder's page begins is a question of which column it is in
+      // — see `pageTop` — and the answer has to be the same one the track used
+      // to size the page, or the glass and the content disagree by a hair.
+      const bodyTop = pageTop(g.tabH, g.strip, k);
       const shape = {
         left,
         right,
@@ -323,9 +383,11 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
         tabWidth: g.tabW,
         tabHeight: g.tabH,
         chamfer: g.chamfer,
-        stripHeight,
-        bodyTop: g.rowPitch,
-        height: g.rowPitch + track.openBody[k],
+        // Filed, a folder paints its pitch plus the tab of the row in front; the
+        // element clips it to whatever slot the track gives it this frame.
+        closedHeight: g.rowPitch + g.tabH,
+        bodyTop,
+        openHeight: bodyTop + track.openBody[k],
       };
       // Both outlines up front: `apply` swaps between them when a folder opens
       // or files, which happens once a turn rather than once a frame.
@@ -337,10 +399,11 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
 
       part.strip.style.left = `${left}px`;
       part.strip.style.width = `${right - left}px`;
-      // As tall as the folder SHOWS, not as tall as it is: the row in front
-      // covers the rest, and a hit area you cannot see is a trap.
+      // As tall as the folder SHOWS, not as tall as it paints: the row in front
+      // covers the notch below, and a hit area you cannot see is a trap. The
+      // LABEL inside it is the strip proper (`--pv-strip-h`).
       part.strip.style.height = `${g.rowPitch}px`;
-      part.body.style.top = `${g.rowPitch}px`;
+      part.body.style.top = `${bodyTop}px`;
       part.body.style.height = `${track.openBody[k]}px`;
     });
     // The spacer is the only reason the scroller has anywhere to go: the track's
@@ -393,6 +456,29 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     [measure],
   );
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    window.__pv = {
+      track: () => trackRef.current,
+      position: () => positionRef.current,
+      layout: () => (trackRef.current ? layout(trackRef.current, positionRef.current) : null),
+      armed: () => readyRef.current.armed,
+      seek: (y: number) => {
+        if (!trackRef.current) return;
+        introRef.current = true;
+        lenisRef.current?.stop();
+        apply(y);
+      },
+      release: () => {
+        introRef.current = false;
+        if (readyRef.current.armed) lenisRef.current?.start();
+      },
+    };
+    return () => {
+      delete window.__pv;
+    };
+  }, [apply]);
+
   /** Hand the position over to the scroller and let the wheel move it. */
   const unlock = useCallback(() => {
     introRef.current = false;
@@ -401,7 +487,8 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
     lenisRef.current?.start();
     if (import.meta.env.DEV) {
       const stack = stackRef.current;
-      if (stack) assertSlotsTile(stack);
+      const track = trackRef.current;
+      if (stack && track) assertSlotsTile(stack, track.tabHeight);
     }
   }, []);
 
@@ -542,8 +629,8 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
    * Which is the whole navigation, and it needs no special casing in either
    * direction — the track between here and there is the same track. Clicking a
    * tab in the unread pile runs forward through every folder in between, rows
-   * rising and bodies unfolding in sequence; clicking one in the read pile runs
-   * the same thing backwards.
+   * rising and carrying their pages up in sequence; clicking one in the read
+   * pile runs the same thing backwards.
    *
    * `sliverReturn: 'bottom'` lands on the line you left instead. Shorter, less
    * of a performance; the dial is there to A/B them.

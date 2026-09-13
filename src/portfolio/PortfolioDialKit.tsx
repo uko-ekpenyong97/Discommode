@@ -158,8 +158,11 @@ export default function PortfolioDialKit() {
   // scaled by the sheet's real width, so a dial means the same proportion
   // whatever the viewport.
   const tabs = useDialKit('PV FOLDERS', {
-    bodyHPx: [LOOK.bodyHPx, 60, 400, 1],
-    tabHPx: [LOOK.tabHPx, 16, 120, 1],
+    tabHPx: [LOOK.tabHPx, 10, 120, 1],
+    // The strip is the folder's whole visible face in a pile, so it and
+    // `rowPitchPx` are the pair that decide how compact the two piles are and
+    // therefore how much sheet is left for the page. Tuned by eye, together.
+    stripHPx: [LOOK.stripHPx, 20, 200, 1],
     tabWPx: [LOOK.tabWPx, 120, 1200, 4],
     chamferPx: [LOOK.chamferPx, 0, 160, 1],
     splitA: [LOOK.splitA, 20, 80, 1],
@@ -171,7 +174,6 @@ export default function PortfolioDialKit() {
   });
 
   const motion = useDialKit('PV MOTION', {
-    unfoldShare: [LOOK.unfoldShare, 0.05, 1, 0.01],
     easeRise: { type: 'select', options: ['linear', 'easeOut'], default: LOOK.easeRise },
     riseDelayMs: [LOOK.riseDelayMs, 0, 2000, 10],
     riseMs: [LOOK.riseMs, 100, 3000, 10],
@@ -231,8 +233,8 @@ export default function PortfolioDialKit() {
     turnDistancePx: geometry.turnDistancePx,
     sectionShadowAlpha: geometry.sectionShadowAlpha,
     referenceSheetPx: LOOK.referenceSheetPx,
-    bodyHPx: tabs.bodyHPx,
     tabHPx: tabs.tabHPx,
+    stripHPx: tabs.stripHPx,
     tabWPx: tabs.tabWPx,
     chamferPx: tabs.chamferPx,
     splitA: tabs.splitA,
@@ -241,7 +243,6 @@ export default function PortfolioDialKit() {
     headerTitlePx: tabs.headerTitlePx,
     hoverLiftPx: tabs.hoverLiftPx,
     dimOpacity: tabs.dimOpacity,
-    unfoldShare: motion.unfoldShare,
     easeRise: motion.easeRise as PortfolioLook['easeRise'],
     riseDelayMs: motion.riseDelayMs,
     riseMs: motion.riseMs,

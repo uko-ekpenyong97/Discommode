@@ -120,11 +120,12 @@
 
 /* A FOLDER. The element is its SLOT — the share of the screen it currently has,
    from the top of its tab down to whatever is below it — and it clips to that.
-   Which is the entire painting rule: filed, you get one row pitch, which is
-   less than the folder is tall, so the row in front covers the rest and the
-   overlap makes a stack of paper look like a stack of paper; open, you get that
-   pitch plus your page. No folder ever paints over another, which on glass is
-   not an optimisation but the difference between a stack and a smear. */
+   Which is the entire painting rule: filed, you get your pitch plus the tab of
+   the row in front, so that row covers the overlap and your body fills the
+   notch beside its tab instead of leaving glass; open, you get your strip plus
+   your page, out to the top of the pile. A folder paints nothing outside its
+   slot, which on glass is not an optimisation but the difference between a
+   stack and a smear. */
 .pv-folder {
   position: absolute;
   left: 0;
@@ -165,29 +166,39 @@
   filter: drop-shadow(0 -14px 26px rgba(0, 0, 0, var(--pv-section-shadow, 0.45)));
 }
 
-/* THE FOLDER'S FACE: its number and its title, sitting in its own body, and the
-   way back — every folder in either pile is a link to itself. `Sheet` puts it
-   in its column; the text sits at the bottom of the body, under the tab. */
+/* THE FOLDER'S FACE, and the way back — every folder in either pile is a link
+   to itself. `Sheet` puts it in its column and gives it the folder's whole
+   VISIBLE height, so the hit area is the part you can see. */
 .pv-folder__strip {
   position: absolute;
   top: 0;
   pointer-events: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 4px;
-  /* Under the tab, not at the foot of the body: the row in front covers the
-     bottom of every filed folder, so anything down there is unreadable. */
-  padding: calc(var(--pv-tab-h, 22px) + 10px) 32px 0;
+  display: block;
+  padding: 0 24px;
   border: 0;
   background: none;
   color: rgba(255, 255, 255, 0.92);
   text-align: left;
   cursor: pointer;
 }
+
+/* THE STRIP PROPER: one line, the number beside the title, centred in the strip
+   so it rides across the tab and the sliver of body under it. Rows this compact
+   have no second line to give it — and the tab and the body are one sheet of
+   glass with one tint, so there is no edge for the line to cross. */
+.pv-folder__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--pv-strip-h, 32px);
+}
+
+/* The open folder says its title again, large, at the top of its own page: the
+   small one is still there, but it is no longer somewhere to go, and it must
+   not take the pointer off the page underneath it. */
 .pv-folder[data-open] .pv-folder__strip {
   cursor: default;
+  pointer-events: none;
 }
 .pv-folder__strip:focus-visible {
   outline: none;
@@ -204,8 +215,16 @@
   color: rgba(255, 255, 255, 0.74);
 }
 
+/* On the strip it is a label beside the title rather than a line of its own, so
+   it goes down to 9px — the page's header keeps the 11. `flex: none` because a
+   long title must eat the space, never the number. */
+.pv-folder__label .pv-folder__no {
+  flex: none;
+  font-size: 9px;
+}
+
 .pv-folder__title {
-  font-size: var(--pv-title, 36px);
+  font-size: var(--pv-title, 23px);
   line-height: 1;
   letter-spacing: -0.02em;
   white-space: nowrap;
@@ -236,7 +255,7 @@
 .pv-folder__thumbs {
   display: none;
   position: absolute;
-  left: 32px;
+  left: 24px;
   bottom: calc(100% - var(--pv-tab-h, 22px));
   pointer-events: none;
 }

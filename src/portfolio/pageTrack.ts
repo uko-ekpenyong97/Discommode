@@ -18,10 +18,12 @@
  *
  * ONE POSITION drives all of it. You scroll the open folder; at its end the
  * scroll carries into a TURN, and a turn is always the same thing: the NEXT
- * FOLDER, alone, rises out of the pile to its slot in the cabinet, and over the
- * last stretch of the rise its content unfolds out from under it to become the
- * new open body. One folder per turn, so a row fills in two turns — left, then
- * right — and a half-filled row is a perfectly ordinary state.
+ * FOLDER, alone, rises out of the pile to its slot in the cabinet — and it
+ * CARRIES ITS PAGE the whole way. The page hangs from the rising strip with its
+ * foot pinned to the top of the pile, so it is already the size it will be when
+ * the folder lands: nothing unfolds at the end, and there is nothing to pop.
+ * One folder per turn, so a row fills in two turns — left, then right — and a
+ * half-filled row is a perfectly ordinary state.
  *
  *   folder 0 vertical │ turn │ folder 1 vertical │ turn │ folder 2 vertical
  *   ├─────────────────>├─────>├─────────────────>├─────>├────────────────>
@@ -44,19 +46,18 @@ export interface TrackMetrics {
   /** The sheet's height — the space the three regions share. */
   viewportHeight: number;
   /** Vertical step between rows, in both the cabinet and the pile. Less than
-   *  `stripHeight`, which is what makes the rows overlap. */
+   *  the slot a folder paints, which is what makes the rows overlap. */
   rowPitch: number;
-  /** A folder's own height: its tab plus its body, less the 1px the tab sits
-   *  into the body by. */
-  stripHeight: number;
+  /** The STRIP: the labelled face of a folder, measured from the top of its
+   *  tab. Taller than the tab, so the label straddles the tab and the sliver of
+   *  body under it — and it is where an open RIGHT folder's page begins, its
+   *  partner's strip being the thing beside it. */
+  strip: number;
   /** The tab's height on its own. The cabinet is offset by it, so the first
    *  row's tab is on the sheet rather than above it. */
   tabHeight: number;
   /** Scroll spent on one turn. */
   turnDistance: number;
-  /** The fraction of a turn, at its end, over which the risen folder's content
-   *  unfolds. The rest of the turn is the rise. */
-  unfoldShare: number;
   /** Curve for a rising folder's POSITION. The scroll stays 1:1 either way —
    *  this only bends where the folder is at a given point through the turn. */
   easeRise?: RiseEase;
@@ -72,21 +73,20 @@ export interface Track {
   /**
    * The content height each folder has WHEN IT IS THE OPEN ONE.
    *
-   * Per folder, not one number: the open body runs from one row below the
-   * folder's own row down to the top of the pile, and a left folder leaves its
-   * partner in the pile while a right folder does not — so the two alternate,
-   * a row pitch apart. This is what `pageScroll` is measured against, so it has
-   * to be derived before the track is.
+   * Per folder, not one number: the page runs from {@link pageTop} down to
+   * {@link pileHead}, and a left folder's page starts under its own tab while a
+   * right folder's starts under the strip beside it — so the two alternate by
+   * the difference. This is what `pageScroll` is measured against, so it has to
+   * be derived before the track is.
    */
   openBody: number[];
   turnDistance: number;
   viewportHeight: number;
   rowPitch: number;
-  stripHeight: number;
+  strip: number;
   tabHeight: number;
   /** Number of rows: two folders to a row, the last possibly half empty. */
   rows: number;
-  unfoldShare: number;
   easeRise: RiseEase;
 }
 
@@ -149,6 +149,11 @@ const SEGMENT_EPSILON = 0.5;
 /** The point in a turn at which the new folder becomes the one you are in. */
 const HANDOVER = 0.5;
 
+/** The corner radius a folder's outline is cut with: the tab's outer corner and
+ *  the body's. Here rather than in the stylesheet because the OUTLINE is
+ *  geometry — {@link pageTop} has to leave room for it. */
+export const FOLDER_RADIUS = 6;
+
 /** Which row a folder sits in — two to a row, even on the left. */
 export function rowOf(k: number): number {
   return Math.floor(k / 2);
@@ -179,14 +184,59 @@ export function pileTop(viewportHeight: number, rowPitch: number, rows: number, 
   return viewportHeight - (rows - r) * rowPitch;
 }
 
+/**
+ * Where an OPEN folder's page begins, measured from the top of its own tab.
+ *
+ * The two columns differ, and they have to: whatever is beside the page in that
+ * band must be a folder rather than glass.
+ *
+ * A LEFT folder is the only one docked in its row — its partner is still in the
+ * pile — so nothing is beside it and the page starts at the tab's own bottom
+ * lip, taking the whole row's width with it. When the partner docks later, its
+ * strip paints over that band; it has the higher index, so it has the higher z.
+ *
+ * A RIGHT folder has its partner docked in the same row, so the page starts
+ * under the STRIP and the partner's strip is what fills the other column.
+ */
+export function pageTop(tabHeight: number, strip: number, k: number): number {
+  // One pixel INTO the body, the same lip the tab sits at — the page's top edge
+  // and the tab's bottom edge are the same line (see `folderClipPath`).
+  const lip = Math.max(0, tabHeight - 1);
+  // A right folder's page has to clear the rounded corner of its own column
+  // strip, or the outline doubles back on itself.
+  return k % 2 === 0 ? lip : Math.max(lip + FOLDER_RADIUS, strip);
+}
+
+/**
+ * The top of the pile as seen from folder `k` — where its page stops.
+ *
+ * The FIRST FULL ROW of the pile, not the first row: one turn in two leaves the
+ * pile's top row with a read folder in one column and an unread one in the
+ * other, and a page that stopped at that row would leave a row-deep band of
+ * backdrop beside the unread folder. So the page runs a row deeper, under the
+ * half-row, and the folder still piled there — a later index, a higher z —
+ * paints over it. That row is `rowOf(k + 2)` from either column.
+ *
+ * Which leaves, above each column's topmost piled tab, exactly one notch of
+ * glass: a tab sticking up out of nothing, which is what a tab is.
+ */
+export function pileHead(
+  viewportHeight: number,
+  rowPitch: number,
+  rows: number,
+  n: number,
+  k: number,
+): number {
+  return k + 2 < n ? pileTop(viewportHeight, rowPitch, rows, rowOf(k + 2)) : viewportHeight;
+}
+
 export function buildTrack({
   heights,
   viewportHeight,
   rowPitch,
-  stripHeight,
+  strip,
   tabHeight,
   turnDistance,
-  unfoldShare,
   easeRise = 'linear',
 }: TrackMetrics): Track {
   // A project always has at least one folder; an empty list would make every
@@ -198,11 +248,13 @@ export function buildTrack({
   // The open body runs from one row below the folder's own row down to the top
   // of the pile — and what is at the top of the pile is whatever is NOT read
   // yet, which for a left folder includes its own partner.
-  const openBody = h.map((_, k) => {
-    const next = k + 1;
-    const top = next < n ? pileTop(viewportHeight, rowPitch, rows, rowOf(next)) : viewportHeight;
-    return Math.max(0, top - (cabinetTop(tabHeight, rowPitch, rowOf(k)) + rowPitch));
-  });
+  const openBody = h.map((_, k) =>
+    Math.max(
+      0,
+      pileHead(viewportHeight, rowPitch, rows, n, k) -
+        (cabinetTop(tabHeight, rowPitch, rowOf(k)) + pageTop(tabHeight, strip, k)),
+    ),
+  );
 
   const pageScroll = h.map((height, k) => Math.max(0, height - openBody[k]));
 
@@ -219,10 +271,9 @@ export function buildTrack({
     turnDistance,
     viewportHeight,
     rowPitch,
-    stripHeight,
+    strip,
     tabHeight,
     rows,
-    unfoldShare,
     easeRise,
   };
 }
@@ -264,16 +315,24 @@ const easeOutCubic = (x: number): number => 1 - Math.pow(1 - x, 3);
  * Three states and one moving part. Folders you have read are docked in the
  * cabinet; folders you have not are in the pile; and during a turn exactly ONE
  * folder is between the two, travelling from its pile slot to its cabinet slot
- * and unfolding its content over the last stretch of the journey.
+ * and carrying its page up with it.
  *
- * A folder paints one row pitch of itself, which is less than it is tall — the
- * row in front covers the rest, and that overlap is what makes a stack of paper
- * look like a stack of paper. The exception is the folder you are reading,
- * which paints its strip AND the open body below it, out to the top of the
- * pile.
+ * A folder paints from its own tab top down to the BODY of the row in front of
+ * it — its pitch plus that row's tab. The row in front covers the overlap, and
+ * the row behind fills the notch beside the front row's tab, so there is no
+ * glass between two rows: only above the topmost tab of each pile, which is
+ * where a folder's tab is supposed to stick up out of nothing.
+ *
+ * The exception is the folder you are reading, which paints its strip AND the
+ * full-width page below it, out to the top of the pile. Where that page begins
+ * depends on the folder's column: a LEFT folder is alone in its row, so its
+ * page starts under its own tab and takes the whole row with it; a RIGHT one
+ * has its partner docked beside it, so its page starts under the STRIP and
+ * leaves that partner showing.
  */
 export function layout(track: Track, position: number): TrackLayout {
-  const { start, pageScroll, rowPitch, tabHeight: T, openBody, viewportHeight: VH, rows: R } = track;
+  const { start, pageScroll, rowPitch, tabHeight: T, strip, openBody, viewportHeight: VH } = track;
+  const R = track.rows;
   const n = start.length;
   const at = positionAt(track, position);
   const a = at.section;
@@ -281,9 +340,13 @@ export function layout(track: Track, position: number): TrackLayout {
   const turning = at.turn !== null;
   const riser = Math.min(a + 1, n - 1);
   const ease = track.easeRise === 'easeOut' ? easeOutCubic : (x: number): number => x;
-  // The rise takes all of the turn but the last stretch; the content unfolds
-  // over that stretch, from under the strip that has just landed.
-  const unfold = clamp((p - (1 - track.unfoldShare)) / track.unfoldShare, 0, 1);
+  /** A filed folder's share: its own pitch, plus the tab of the row in front —
+   *  so its body fills the notch beside that tab instead of leaving glass. The
+   *  bottom row of a pile has nothing in front of it and stops at the sheet. */
+  const filed = (r: number): number => (r + 1 < R ? rowPitch + T : rowPitch);
+  /** The row the open folder is docked in — the one row of the cabinet whose
+   *  members stop at the page rather than at the row in front. */
+  const openRow = rowOf(Math.max(a, 0));
 
   const folders: FolderLayout[] = [];
   for (let k = 0; k < n; k++) {
@@ -292,17 +355,28 @@ export function layout(track: Track, position: number): TrackLayout {
     let clipHeight: number;
 
     if (k <= a) {
-      // Docked. The one you are reading keeps its open body; the rest are a row
-      // pitch of themselves, the remainder covered by the row in front.
       top = cabinetTop(T, rowPitch, r);
-      clipHeight = rowPitch + (k === a ? openBody[k] : 0);
+      clipHeight =
+        k === a
+          ? // The one you are reading: its strip and the page under it.
+            pageTop(T, strip, k) + openBody[k]
+          : r === openRow
+            ? // Its partner, docked beside it: the page begins under the strip,
+              // so that is where this one stops.
+              pageTop(T, strip, a)
+            : filed(r);
     } else if (turning && k === riser) {
+      // Rising, and carrying its page: the foot of the page is pinned to the
+      // top of the pile for the whole journey, so the page grows out from under
+      // the strip as the strip climbs and is already its final size on landing.
+      // Never less than the folder showed while it was filed, or the first
+      // frame of a turn would take a row out of the pile.
       const from = pileTop(VH, rowPitch, R, r);
       top = from + (cabinetTop(T, rowPitch, r) - from) * ease(p);
-      clipHeight = rowPitch + openBody[k] * unfold;
+      clipHeight = Math.max(filed(r), pileHead(VH, rowPitch, R, n, k) - top);
     } else {
       top = pileTop(VH, rowPitch, R, r);
-      clipHeight = rowPitch;
+      clipHeight = filed(r);
     }
 
     folders.push({
@@ -310,7 +384,10 @@ export function layout(track: Track, position: number): TrackLayout {
       clipHeight: Math.max(0, clipHeight),
       scrollTop: k < a ? pageScroll[k] : k === a ? at.offset : 0,
       zIndex: k + 1,
-      bodyVisible: clipHeight > rowPitch + SEGMENT_EPSILON,
+      // The open folder, and the one on its way up — which carries its page
+      // from the first frame of the turn, so it is rendered from the first
+      // frame too. Nothing else has a page at all.
+      bodyVisible: k === a || (turning && k === riser),
     });
   }
 
@@ -386,12 +463,15 @@ export interface FolderShape {
   tabWidth: number;
   tabHeight: number;
   chamfer: number;
-  /** Tab plus body, less the 1px overlap between them. */
-  stripHeight: number;
-  /** Where the open body starts, measured from the folder's own top. */
+  /** How far down the shape runs when the folder is FILED: the largest slot it
+   *  can be given while closed, which is its pitch plus the tab of the row in
+   *  front. The element clips it to whatever slot it actually has. */
+  closedHeight: number;
+  /** Where the open page starts, measured from the folder's own top — see
+   *  {@link pageTop}. */
   bodyTop: number;
-  /** How far down the shape runs when the body is fully out. */
-  height: number;
+  /** How far down the shape runs when the page is out. */
+  openHeight: number;
   radius?: number;
 }
 
@@ -410,7 +490,7 @@ export interface FolderShape {
  */
 export function folderClipPath(shape: FolderShape, open: boolean): string {
   const { left: L, right: R, sheetWidth: W, tabHeight: T, chamfer: C } = shape;
-  const r = shape.radius ?? 6;
+  const r = shape.radius ?? FOLDER_RADIUS;
   // The tab has to END inside its own column, with the chamfer's run and a
   // notch of clear body after it. Otherwise the chamfer walks out past the
   // column's edge and the outline doubles back on itself — which is exactly
@@ -423,17 +503,22 @@ export function folderClipPath(shape: FolderShape, open: boolean): string {
   const px = (v: number): string => String(Math.round(v * 100) / 100);
   // The tab's bottom edge is also the body's top edge, one pixel up.
   const lip = Math.max(0, T - 1);
-  const bottom = open ? shape.height : shape.stripHeight;
-
-  // Tab: rounded outer corner, along the top, then the chamfer down to the body.
-  const head =
-    `M ${px(L + r)} 0 ` +
-    `H ${px(L + tw)} ` +
-    `L ${px(L + tw + C)} ${px(lip)} ` +
-    `H ${px(R - r)} ` +
-    `A ${px(r)} ${px(r)} 0 0 1 ${px(R)} ${px(lip + r)} `;
+  const bottom = open ? shape.openHeight : shape.closedHeight;
 
   const tail = `H ${px(L)} V ${px(r)} A ${px(r)} ${px(r)} 0 0 1 ${px(L + r)} 0 Z`;
+  // Tab: rounded outer corner, along the top, then the chamfer down to the body.
+  const tab = `M ${px(L + r)} 0 H ${px(L + tw)} L ${px(L + tw + C)} ${px(lip)} `;
+
+  // A LEFT folder's page starts at the tab's own lip, so there is no column
+  // strip under the tab to round the corner of: the outline steps straight off
+  // the chamfer to the far edge of the SHEET. Rounding it anyway would send the
+  // path back UP from `lip + r` to `lip`, and a self-crossing outline is not an
+  // error — the browser clips to something nobody asked for.
+  if (open && L <= 0 && shape.bodyTop <= lip + r) {
+    return `path('${tab}H ${px(W)} V ${px(bottom)} ${tail}')`;
+  }
+
+  const head = tab + `H ${px(R - r)} ` + `A ${px(r)} ${px(r)} 0 0 1 ${px(R)} ${px(lip + r)} `;
 
   if (!open) {
     return `path('${head}V ${px(bottom)} ${tail}')`;

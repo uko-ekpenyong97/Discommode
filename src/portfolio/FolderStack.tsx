@@ -19,17 +19,20 @@ import type { Block, Project } from './blocks/types';
  *              junction seams however exactly the tints match.
  *   __thumbs   a slot for the thumbnails that pop above the tab on hover.
  *              Empty and hidden until there is content to put in it.
- *   __strip    the number and the title, sitting in the folder's own body, and
- *              the way back: every folder in either pile is a link to itself.
+ *   __strip    the way back — every folder in either pile is a link to itself.
+ *              Sized to the whole visible face, so the hit area is what you can
+ *              see; the __label inside it is the STRIP proper, the number and
+ *              the title riding across the tab and the sliver of body under it.
  *   __content  the page, and the scroll container: `Sheet` writes `scrollTop`
  *              here. It opens with the same number and title again, large.
  *
  * The `<article>` itself clips (`overflow: hidden`) and its height is the
- * folder's share of the screen. That is the entire painting rule: one row pitch
- * when it is filed, which is less than the folder is tall — the row in front
- * covers the rest, and that overlap is what makes a stack of paper look like a
- * stack of paper — and a pitch plus its page when it is the one you are
- * reading.
+ * folder's share of the screen. That is the entire painting rule: filed, a
+ * folder runs from its own tab down to the BODY of the row in front of it, so
+ * the row in front covers the overlap and this one's body fills the notch
+ * beside that row's tab — no glass between two rows, and the overlap is what
+ * makes a stack of paper look like a stack of paper. Open, it runs from its tab
+ * to the top of the pile, and everything under the strip is its page.
  */
 
 /** Consecutive blocks group into one run; `newRun` starts a fresh one. A run is
@@ -103,8 +106,10 @@ export function FolderStack({ project, stackRef, onSelect }: FolderStackProps) {
               onPointerEnter={onEnter}
               onPointerLeave={onLeave}
             >
-              <span className="pv-folder__no">{no}</span>
-              <span className="pv-folder__title">{section.title}</span>
+              <span className="pv-folder__label">
+                <span className="pv-folder__no">{no}</span>
+                <span className="pv-folder__title">{section.title}</span>
+              </span>
             </button>
             <div className="pv-folder__content">
               <div className="pv-folder__inner">

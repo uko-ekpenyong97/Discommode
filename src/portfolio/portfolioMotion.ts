@@ -100,27 +100,30 @@ export interface PortfolioLook {
    * at any viewport instead of becoming a different layout on a laptop.
    */
   referenceSheetPx: number;
-  /** A folder: the height of its body, of the tab on top of it, the tab's width
-   *  and the 45° chamfer at the tab's far end. */
-  bodyHPx: number;
+  /** A folder: the height of the tab on top of it, the tab's width and the 45°
+   *  chamfer at the tab's far end. */
   tabHPx: number;
   tabWPx: number;
   chamferPx: number;
-  /** Vertical step between rows, in the cabinet and the pile alike. LESS than a
-   *  folder is tall, which is what makes rows overlap and a pile read as a
-   *  pile; what is left between the two piles is the open page. */
+  /** The STRIP: the labelled face, measured from the top of the tab. Taller than
+   *  the tab, so the number and the title straddle the tab and the sliver of
+   *  body under it — and it is where an open right folder's page begins, its
+   *  partner's strip being what fills the column beside it. A folder has no
+   *  height of its own beyond this: what it PAINTS is its slot, which the track
+   *  runs down to the body of the row in front. */
+  stripHPx: number;
+  /** Vertical step between rows, in the cabinet and the pile alike. LESS than
+   *  the slot a folder paints, which is what makes rows overlap and a pile read
+   *  as a pile; what is left between the two piles is the open page. */
   rowPitchPx: number;
   /** Where the columns divide, as a percentage of the sheet. Even rows use the
    *  first, odd rows the second, so the cabinet never reads as a table. */
   splitA: number;
   splitB: number;
-  /** The title on a folder's own body, and the much larger one its open page
-   *  opens with. */
+  /** The title on a folder's strip — fitted to it, never taller than it — and
+   *  the much larger one its open page opens with. */
   titleSizePx: number;
   headerTitlePx: number;
-  /** The fraction of a turn, at its end, over which the risen folder's page
-   *  unfolds out from under it. The rest of the turn is the rise. */
-  unfoldShare: number;
   /** Hover: how far the folder under the pointer lifts, and how far every other
    *  folder fades while it is up. */
   hoverLiftPx: number;
@@ -184,21 +187,21 @@ export const LOOK: PortfolioLook = {
   // The folder geometry below is measured off the reference, and the reference
   // is a whole page at 2560 where this is a sheet beside a glass column. Taken
   // literally — scaling against the 1920 a 2560 viewport leaves for the sheet —
-  // a laptop gets 73px rows and a 36px title in a 50px gap, which is the
-  // reference's proportions and none of its legibility. 1600 is the width the
-  // proportions are treated as being for, which at a 1080 sheet gives an 88px
-  // row and a title that fits the face of the folder with room to spare.
+  // a laptop gets none of the reference's legibility, only its proportions.
+  // 1600 is the width the proportions are treated as being for: at the 1296
+  // sheet a 1728 viewport gives, a 45px row and a 23px title.
   referenceSheetPx: 1600,
-  bodyHPx: 148,
-  tabHPx: 40,
+  // Compact rows: a folder in either pile is its tab and a sliver, so six of
+  // them cost a fifth of the sheet and the page you are reading gets the rest.
+  tabHPx: 22,
   tabWPx: 608,
   chamferPx: 40,
-  rowPitchPx: 130,
+  stripHPx: 40,
+  rowPitchPx: 56,
   splitA: 50,
   splitB: 38,
-  titleSizePx: 64,
+  titleSizePx: 28,
   headerTitlePx: 160,
-  unfoldShare: 0.3,
   hoverLiftPx: 12,
   dimOpacity: 0.1,
   turnDistancePx: 720,
@@ -394,8 +397,6 @@ const VARS = [
   '--pv-scrim-blur',
   '--pv-scrim-alpha',
   '--pv-glass-col',
-  '--pv-slot-h',
-  '--pv-body-h',
   '--pv-column',
   '--pv-tab-h',
   '--pv-row-pitch',

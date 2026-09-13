@@ -47,15 +47,14 @@ proportions are treated as being for.
 | --- | --- | --- |
 | `glassColumnVw` | 25 | Left band the sheet never covers. Grid shows through; close pill lives there. |
 | `referenceSheetPx` | 1600 | Scale basis for everything below down to `headerTitlePx`. |
-| `bodyHPx` | 148 | |
-| `tabHPx` | 40 | Tab sits 1px *into* the body, so `stripHeight = tabH - 1 + bodyH`. |
+| `tabHPx` | 22 | Tab sits 1px *into* the body; that lip is where a left folder's page starts. |
 | `tabWPx` | 608 | **Preferred.** Clamped per column — see the clip-path note. |
 | `chamferPx` | 40 | 45°, at the tab's far end. |
-| `rowPitchPx` | 130 | Step between rows. Less than `stripHeight`, which is what makes rows overlap. |
+| `stripHPx` | 40 | The **strip**: the labelled face, from the tab's top. Taller than the tab, so the label rides across the tab and the sliver of body under it. |
+| `rowPitchPx` | 56 | Step between rows. Less than the slot a folder paints, which is what makes rows overlap. |
 | `splitA` / `splitB` | 50 / 38 | Column split, even / odd rows. Alternating so the cabinet never reads as a table. |
-| `titleSizePx` | 64 | Fitted, not just scaled — see below. |
+| `titleSizePx` | 28 | Fitted to the strip, not just scaled — see below. |
 | `headerTitlePx` | 160 | The page's opening title. |
-| `unfoldShare` | 0.3 | Fraction of a turn, at its end, over which the page unfolds. |
 | `hoverLiftPx` / `dimOpacity` | 12 / 0.1 | |
 | `turnDistancePx` | 720 | Scroll spent on one turn. |
 | `easeRise` | `easeOut` | Curves the rising folder's *position*; scroll stays 1:1. |
@@ -71,38 +70,60 @@ proportions are treated as being for.
 ```
 cabinetTop(tabH, pitch, r) = tabH + r * pitch      // offset by a tab, or row 0's tab is off the sheet
 pileTop(VH, pitch, rows, r) = VH - (rows - r) * pitch   // anchored to the bottom, last row lowest
+pageTop(tabH, strip, k)  = k even ? tabH - 1 : max(tabH - 1 + 6, strip)  // where an open page starts
+pileHead(…, n, k)        = k + 2 < n ? pileTop(rowOf(k + 2)) : VH        // …and where it stops
 ```
 
 The pile is anchored from the bottom so a row's place does not depend on how
 many are left — the rows that stay put when one rises genuinely do not move.
 
-**The title is fitted, not scaled.** The number (11px mono) and its padding
-cannot shrink with the geometry and stay readable, so
-`titleSize = min(titleSizePx * scale, face - FACE_CHROME)` where
-`face = rowPitch - tabH` and `FACE_CHROME = 10 + 16 + 4`. Otherwise the title
-overflows the part of the folder the row in front does not cover, and you read
-half of every word.
+**`pageTop` is per column, and it has to be.** Whatever is beside an open page
+in that band must be a folder rather than glass. A LEFT folder is the only one
+docked in its row, so its page starts at its own tab's lip and takes the whole
+width; when its partner docks later, the partner's strip paints over that band
+(higher index, higher z). A RIGHT folder has its partner docked beside it, so
+the page starts under the STRIP and the partner fills the other column. The
+`+ 6` on the right-hand case is the corner radius: the page must clear the
+rounded corner of its own column strip or the outline doubles back.
+
+**`pileHead` is the first FULL row of the pile, not the first row.** A turn
+raises one folder, so one turn in two leaves the pile's top row read in one
+column and unread in the other. A page that stopped at that row would leave a
+row-deep band of backdrop beside the folder still in it, so it runs a row
+deeper — under the half-row — and that folder, later and higher, paints over
+it. From either column the line is `rowOf(k + 2)`.
+
+**The title is fitted, not scaled.** Rows this compact have no room for a line
+that overflows, so `titleSize = max(12, min(titleSizePx * scale, strip -
+STRIP_CHROME))` with `STRIP_CHROME = 8` for the air above and below it. The
+number is 9px on the strip (11px in the page's header, where there is room),
+fixed rather than scaled — scaled, it would be 6px on a laptop.
 
 ## The track
 
 `pageTrack.ts` is pure and has no DOM. One scroll position drives everything.
 
 ```
-openBody[k] = pileTop(rowOf(k+1)) - (cabinetTop(rowOf(k)) + pitch)   // per folder
+openBody[k] = pileHead(k) - (cabinetTop(rowOf(k)) + pageTop(k))   // per folder
 pageScroll[k] = max(0, contentHeight[k] - openBody[k])
 start[k+1] = start[k] + pageScroll[k] + turnDistance
 maxPosition = start[n-1] + pageScroll[n-1]
 minPosition = -turnDistance
 ```
 
-`openBody` is **per folder**, not one number: a left folder leaves its own
-partner in the pile and a right folder does not, so the two alternate a row
-pitch apart. Derive it before the track.
+`openBody` is **per folder**, not one number: both columns of a row stop at the
+same line, but a left folder's page starts at its own tab's lip and a right
+one's under the strip beside it. Derive it before the track.
 
 A **turn** always does the same thing: folder `k+1` alone rises from its pile
-slot to its cabinet slot, and over the last `unfoldShare` its page unfolds from
-under it. One folder per turn, so a row fills in two and a half-filled cabinet
-row is an ordinary state.
+slot to its cabinet slot, and it **carries its page** the whole way — the page
+hangs from the rising strip with its foot pinned to `pileHead`, so it grows as
+the strip climbs and is already the size it will be when the strip lands.
+Nothing unfolds at the end and there is nothing to pop. The folder underneath
+keeps painting until `p = 1`: it is being covered, not hidden, and at `p = 1`
+the cover is complete, so its collapse to a filed slot is invisible. One folder
+per turn, so a row fills in two and a half-filled cabinet row is an ordinary
+state.
 
 `layout(track, y)` returns per folder `{ top, clipHeight, scrollTop, zIndex,
 bodyVisible }` plus `activeIndex`, `topIndex`, `turning`, `progress`.
@@ -141,11 +162,18 @@ drives it first. A scroller cannot go negative.
 
 ## The painting rule
 
-> A folder paints from its own top down to whatever is below it.
+> A folder paints from its own tab down to the BODY of the row in front of it.
 
-One row pitch when it is filed — less than the folder is tall, so the row in
-front covers the rest, and that overlap is what makes a pile of paper look like
-a pile of paper. A pitch plus its page when it is the one you are reading.
+Its own pitch plus that row's tab. The row in front covers the overlap, and the
+row behind fills the notch beside the front row's tab — which is the difference
+between rows that overlap and rows with the backdrop showing between them. The
+overlap is what makes a pile of paper look like a pile of paper. The exception
+is the folder you are reading: its strip, and its page out to `pileHead`.
+
+So slots in a column now overlap, deliberately, by exactly one tab. The
+invariant is no longer "slots tile" but **"a folder paints nothing outside its
+slot"**, with z-order (index order) deciding the rest. `assertSlotsTile` in
+`Sheet` checks the tab-deep overlap and no more.
 
 Implemented as: `.pv-folder` is `overflow: hidden`, `Sheet` writes its `top`
 and `height`. Nothing else.
@@ -153,13 +181,19 @@ and `height`. Nothing else.
 **On glass this is correctness, not an optimisation.** `backdrop-filter` samples
 whatever is behind the element, so a folder left in the paint order under
 another is blurred *into* it and its title ghosts through. At most two pages
-ever paint: the one you are reading and the one unfolding over it.
+ever paint: the one you are reading and the one rising over it.
 
-How to check it (the unit tests cover the maths; this covers the screen):
-repaint every folder without `data-open` magenta and invert its content —
-neither touches layout, so the track is untouched — and screenshot. Frames must
-be pixel-identical. Freeze the shader sky, the videos and all animations first
-or you are measuring the clock. Current: 22 of 22 scroll positions identical.
+**The glass that is supposed to be there** is one notch — a tab deep — above the
+topmost tab of the cabinet and above each column's topmost tab in the pile. A
+tab sticking up out of nothing is what a tab is. Anything else is a seam.
+
+How to check it, on the screen rather than in the maths:
+`node scripts/pv-verify.mjs` against `npm run dev`. It repaints every folder in
+a flat opaque colour of its own and the scrim in flat green — neither touches
+layout, so the track is the track — and then counts pixels: green inside the
+sheet is a seam, a folder's blue outside its slot is a smear. Current: 0 and 0,
+at rest on folders 0, 1 and 2 and at p = 0.3 / 0.6 / 0.9 of two turns, at
+1728×996 and 1440×900.
 
 ## The clip-path lesson
 
@@ -208,12 +242,14 @@ Current text alphas, all measured:
 | `.pv-body` | 16px | 0.82 |
 | `.pv-linkpill` | 12px | 0.85 |
 | `.pv-caption` / `.pv-figcaption` / `.pv-twoup__text` / `.pv-stat__label` | 10–14px | 0.74 |
-| `.pv-folder__no` | 11px | 0.74 |
+| `.pv-folder__no` | 9px on the strip, 11px in the header | 0.74 |
 
 Targets: 4.5:1, or **7:1 under 18px**. Worst measured at shipped defaults:
-7.28:1, over the grid on a cold `#view-NN` — the hardest backdrop, harder than
-opening from the detail view. Re-measure after any hue or alpha change: the
-palette gaining lighter hues is what pushed `.pv-folder__no` from 0.68 to 0.74.
+7.9:1 at 1728×996 and 8.0:1 at 1440×900, over the grid on a cold `#view-NN` —
+the hardest backdrop, harder than opening from the detail view. Size does not
+move a ratio, so shrinking the strip's type cost nothing: `.pv-folder__no` reads
+9.8:1 at 9px. Re-measure after any hue or alpha change: the palette gaining
+lighter hues is what pushed `.pv-folder__no` from 0.68 to 0.74.
 
 Hues alternate rather than running round the wheel (02: 14/200/42/150/280/330).
 At 12% lightness two neighbouring hues are the same colour, and the pile reads
@@ -294,8 +330,28 @@ the sheet is parked off the right edge there.
 
 ## Running the checks
 
-No test runner drives the browser. The verification above was done with
-Playwright scripts against `npm run dev` (`chromium.launch({ channel: 'chrome'
-})`, viewport 1440×900 and 2560×1352). Worth rebuilding as committed scripts if
-this view keeps changing — the unit tests cover `pageTrack` thoroughly and
-nothing else, and every bug in this list was one only a browser could see.
+```
+npm run dev          # in one shell
+npm test             # pageTrack, in node
+npm run verify:pv    # the same view, in Chrome
+```
+
+`scripts/pv-verify.mjs` is the browser suite, and it exists because the unit
+tests cover `pageTrack` thoroughly and nothing else, while every bug this view
+has had was one only a browser could see. It runs both signed-off viewports
+(1728×996, 1440×900) and checks, per frame:
+
+- the paint pass (above) — seams and smears, as pixel counts;
+- the rising folder carries a page, and lands with no pop (`Δtop`, `Δheight`
+  across the last hair of the turn);
+- rows, strip, title size, and the share of the sheet the open page keeps;
+- hover dims the piles and never the page — including a folder that OPENS under
+  a resting pointer, which sends no `pointerleave` and used to leave the whole
+  pile dimmed behind a page (`apply` sweeps the flag);
+- contrast, via `__pvProbe`;
+- fps over a scripted wheel scroll (60, vsync-capped, unchanged from `main`);
+- deep link, resize, `inert`, Escape, and the reader still opening.
+
+It drives the track through `window.__pv` — a dev-only handle on `Sheet` that
+parks the position and holds it, which is the only way to hold a mid-turn frame
+still: the position is not the scrollTop, and Lenis owns the scrollTop.
