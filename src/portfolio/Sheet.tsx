@@ -86,6 +86,20 @@ const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
  * to the screen intact.
  */
 function assertSlotsTile(stack: HTMLElement): void {
+  // The outline is a `clip-path`, and an invalid one is not an error — the
+  // declaration is simply dropped and every folder paints as a full-width
+  // rectangle. Only the browser can say whether the string it was given was
+  // one it would take, so ask it; a unit test on the string cannot.
+  for (const shape of stack.querySelectorAll<HTMLElement>('.pv-folder__shape')) {
+    if (getComputedStyle(shape).clipPath === 'none') {
+      console.error(
+        `[pv:stack] folder ${shape.parentElement?.dataset.k} has no clip — the browser ` +
+          `rejected ${JSON.stringify(shape.style.clipPath)}`,
+      );
+      break;
+    }
+  }
+
   // `offsetTop`/`offsetHeight`, not the client rect: a hovered folder is lifted
   // by a transform, and a lift is not an overlap.
   const rects = Array.from(stack.querySelectorAll<HTMLElement>('.pv-folder')).map((el) => ({
@@ -275,6 +289,7 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       viewportHeight: sc.clientHeight,
       rowPitch: g.rowPitch,
       stripHeight,
+      tabHeight: g.tabH,
       turnDistance: look.turnDistancePx,
       unfoldShare: look.unfoldShare,
       easeRise: look.easeRise,

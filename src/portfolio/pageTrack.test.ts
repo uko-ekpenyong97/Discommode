@@ -21,6 +21,7 @@ const metrics = (over: Partial<TrackMetrics> = {}): TrackMetrics => ({
   heights: [1800, 3600, 2700, 4500, 1350, 2250],
   viewportHeight: 900,
   rowPitch: 130,
+  tabHeight: 40,
   stripHeight: 187, // 40px tab + 148px body, less the 1px lip
   turnDistance: 720,
   unfoldShare: 0.3,
@@ -29,6 +30,7 @@ const metrics = (over: Partial<TrackMetrics> = {}): TrackMetrics => ({
 
 const TURN = 720;
 const PITCH = 130;
+const TAB = 40;
 
 describe('rows and columns', () => {
   it('puts two folders in a row, even on the left', () => {
@@ -42,7 +44,10 @@ describe('rows and columns', () => {
   });
 
   it('steps rows by the pitch, from the top in the cabinet and the bottom in the pile', () => {
-    expect([0, 1, 2].map((r) => cabinetTop(PITCH, r))).toEqual([0, 130, 260]);
+    // The cabinet starts one TAB down, not at zero: a folder's tab sticks up
+    // above its body, and docking the first row flush would put it off the
+    // sheet entirely.
+    expect([0, 1, 2].map((r) => cabinetTop(TAB, PITCH, r))).toEqual([40, 170, 300]);
     expect([0, 1, 2].map((r) => pileTop(900, PITCH, 3, r))).toEqual([510, 640, 770]);
   });
 
@@ -58,21 +63,22 @@ describe('buildTrack', () => {
     const t = buildTrack(metrics());
     // Reading a LEFT folder, its own partner is still in the pile, so the pile
     // starts one row higher and the body is one pitch shorter.
-    expect(t.openBody[0]).toBe(510 - 130);
-    expect(t.openBody[1]).toBe(640 - 130);
-    expect(t.openBody[2]).toBe(640 - 260);
-    expect(t.openBody[3]).toBe(770 - 260);
-    expect(t.openBody[4]).toBe(770 - 390);
+    // …and the cabinet's tab offset comes off every one of them.
+    expect(t.openBody[0]).toBe(510 - 130 - TAB);
+    expect(t.openBody[1]).toBe(640 - 130 - TAB);
+    expect(t.openBody[2]).toBe(640 - 260 - TAB);
+    expect(t.openBody[3]).toBe(770 - 260 - TAB);
+    expect(t.openBody[4]).toBe(770 - 390 - TAB);
     // The last folder has nothing below it at all.
-    expect(t.openBody[5]).toBe(900 - 390);
+    expect(t.openBody[5]).toBe(900 - 390 - TAB);
   });
 
   it('scrolls each folder by its overflow past its OWN body, then turns', () => {
     const t = buildTrack(metrics());
-    expect(t.pageScroll[0]).toBe(1800 - 380);
-    expect(t.pageScroll[1]).toBe(3600 - 510);
-    expect(t.start[1]).toBe(1420 + TURN);
-    expect(t.start[2]).toBe(1420 + TURN + 3090 + TURN);
+    expect(t.pageScroll[0]).toBe(1800 - 340);
+    expect(t.pageScroll[1]).toBe(3600 - 470);
+    expect(t.start[1]).toBe(1460 + TURN);
+    expect(t.start[2]).toBe(1460 + TURN + 3130 + TURN);
   });
 
   it('a folder shorter than its body still has a segment, just no scroll', () => {
@@ -84,9 +90,9 @@ describe('buildTrack', () => {
   it('a single-folder project is just that folder, with no turn', () => {
     const t = buildTrack(metrics({ heights: [2700] }));
     expect(t.rows).toBe(1);
-    expect(t.openBody[0]).toBe(900 - 130);
+    expect(t.openBody[0]).toBe(900 - 130 - TAB);
     expect(t.start).toEqual([0]);
-    expect(maxPosition(t)).toBe(2700 - 770);
+    expect(maxPosition(t)).toBe(2700 - 730);
   });
 
   it('reaches one turn BEFORE the start, which is the entrance', () => {
@@ -103,7 +109,7 @@ describe('layout — the cabinet and the pile', () => {
     expect(l.turning).toBe(false);
     // Folder 0 docked at the top; its own partner and everything after it are
     // still in the pile, in their own rows.
-    expect(l.folders.map((f) => f.top)).toEqual([0, 510, 640, 640, 770, 770]);
+    expect(l.folders.map((f) => f.top)).toEqual([TAB, 510, 640, 640, 770, 770]);
     // The open one paints its strip AND its body; the rest paint one pitch.
     expect(l.folders[0].clipHeight).toBe(PITCH + track.openBody[0]);
     expect(l.folders.slice(1).map((f) => f.clipHeight)).toEqual([130, 130, 130, 130, 130]);
@@ -113,15 +119,15 @@ describe('layout — the cabinet and the pile', () => {
   it('leaves a half-filled cabinet row while only the left folder has risen', () => {
     const l = layout(track, positionOf(track, 2));
     // Folders 0 and 1 docked in row 0; 2 docked alone in row 1; 3 still piled.
-    expect(l.folders.map((f) => f.top)).toEqual([0, 0, 130, 640, 770, 770]);
+    expect(l.folders.map((f) => f.top)).toEqual([TAB, TAB, TAB + 130, 640, 770, 770]);
     expect(l.folders[3].top).toBe(pileTop(900, PITCH, 3, 1));
   });
 
   it('fills the cabinet row by row as you read', () => {
     const tops = (k: number): number[] => layout(track, positionOf(track, k)).folders.map((f) => f.top);
-    expect(tops(1)).toEqual([0, 0, 640, 640, 770, 770]);
-    expect(tops(3)).toEqual([0, 0, 130, 130, 770, 770]);
-    expect(tops(5)).toEqual([0, 0, 130, 130, 260, 260]);
+    expect(tops(1)).toEqual([TAB, TAB, 640, 640, 770, 770]);
+    expect(tops(3)).toEqual([TAB, TAB, TAB + 130, TAB + 130, 770, 770]);
+    expect(tops(5)).toEqual([TAB, TAB, TAB + 130, TAB + 130, TAB + 260, TAB + 260]);
   });
 
   it('shrinks the pile by one folder a turn, never moving the rest', () => {
@@ -145,15 +151,15 @@ describe('layout — the turn', () => {
     const l = at(0, 0.5);
     expect(l.turning).toBe(true);
     // Folder 1 is on its way from the pile to row 0; folders 2–5 have not moved.
-    expect(l.folders[1].top).toBeGreaterThan(0);
+    expect(l.folders[1].top).toBeGreaterThan(TAB);
     expect(l.folders[1].top).toBeLessThan(510);
     expect(l.folders[2].top).toBe(640);
   });
 
   it('carries it 1:1 with the scroll, from its pile slot to its cabinet slot', () => {
     expect(at(0, 0).folders[1].top).toBe(510);
-    expect(at(0, 0.5).folders[1].top).toBe(510 + (0 - 510) * 0.5);
-    expect(at(0, 1).folders[1].top).toBeCloseTo(0, 6);
+    expect(at(0, 0.5).folders[1].top).toBe(510 + (TAB - 510) * 0.5);
+    expect(at(0, 1).folders[1].top).toBeCloseTo(TAB, 6);
   });
 
   it('keeps the folder you are leaving open until the new one has landed', () => {
@@ -182,9 +188,9 @@ describe('layout — the turn', () => {
     // A left folder's replacement opens in the same place; a right folder's
     // opens one pitch lower, with the new strip landing on the old body's top.
     const sameRow = layout(track, track.start[1]);
-    expect(cabinetTop(PITCH, rowOf(1)) + PITCH).toBe(cabinetTop(PITCH, rowOf(0)) + PITCH);
+    expect(cabinetTop(TAB, PITCH, rowOf(1))).toBe(cabinetTop(TAB, PITCH, rowOf(0)));
     const nextRow = layout(track, track.start[2]);
-    expect(nextRow.folders[2].top).toBe(cabinetTop(PITCH, rowOf(1)) + PITCH - PITCH + PITCH);
+    expect(nextRow.folders[2].top).toBe(cabinetTop(TAB, PITCH, rowOf(0)) + PITCH);
     expect(sameRow.folders[0].bodyVisible).toBe(false);
     expect(nextRow.folders[1].bodyVisible).toBe(false);
   });
@@ -207,7 +213,7 @@ describe('layout — the turn', () => {
     for (const y of [0, 900, maxPosition(one)]) {
       const l = layout(one, y);
       expect(l.turning).toBe(false);
-      expect(l.folders[0].top).toBe(0);
+      expect(l.folders[0].top).toBe(TAB);
       expect(l.folders[0].bodyVisible).toBe(true);
     }
   });
@@ -226,8 +232,8 @@ describe('layout — the entrance', () => {
   });
 
   it('lands exactly on the resting first folder', () => {
-    expect(layout(track, -0.001).folders[0].top).toBeCloseTo(0, 1);
-    expect(layout(track, 0).folders[0].top).toBe(0);
+    expect(layout(track, -0.001).folders[0].top).toBeCloseTo(TAB, 1);
+    expect(layout(track, 0).folders[0].top).toBe(TAB);
     expect(layout(track, 0).turning).toBe(false);
   });
 });
@@ -329,7 +335,7 @@ describe('positionAt / resolve', () => {
   const track = buildTrack(metrics());
 
   it('round-trips every kind of position, the entrance included', () => {
-    for (const y of [-TURN, -TURN / 2, 0, 450, 1420, 1420 + 360, track.start[2] + 10, maxPosition(track)]) {
+    for (const y of [-TURN, -TURN / 2, 0, 450, 1460, 1460 + 360, track.start[2] + 10, maxPosition(track)]) {
       expect(resolve(track, positionAt(track, y))).toBeCloseTo(y, 6);
     }
   });
@@ -414,6 +420,20 @@ describe('folderClipPath', () => {
     expect(d).toContain('V 700 H 0'); // …and back along the bottom
     // The closed outline stops at the strip and never mentions the sheet width.
     expect(folderClipPath(shape, false)).not.toContain('1080');
+  });
+
+  it('clamps the tab so its chamfer lands INSIDE the column', () => {
+    // A narrow column and a preferred width that does not fit: unclamped, the
+    // chamfer runs past the column's right edge and the outline doubles back.
+    const narrow = folderClipPath({ ...shape, left: 0, right: 342 }, false);
+    const xs = [...narrow.matchAll(/[HL] (\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]));
+    expect(Math.max(...xs)).toBeLessThanOrEqual(342);
+  });
+
+  it('leaves a notch of clear body after the chamfer', () => {
+    const d = folderClipPath({ ...shape, left: 0, right: 400, tabWidth: 10000 }, false);
+    // tab + chamfer must stop a chamfer's width short of the column's edge.
+    expect(d).toContain('H 320 L 360 39'); // 400 − chamfer − notch
   });
 
   it('keeps a right-hand folder in its own column', () => {

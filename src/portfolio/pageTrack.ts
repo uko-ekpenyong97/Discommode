@@ -49,6 +49,9 @@ export interface TrackMetrics {
   /** A folder's own height: its tab plus its body, less the 1px the tab sits
    *  into the body by. */
   stripHeight: number;
+  /** The tab's height on its own. The cabinet is offset by it, so the first
+   *  row's tab is on the sheet rather than above it. */
+  tabHeight: number;
   /** Scroll spent on one turn. */
   turnDistance: number;
   /** The fraction of a turn, at its end, over which the risen folder's content
@@ -80,6 +83,7 @@ export interface Track {
   viewportHeight: number;
   rowPitch: number;
   stripHeight: number;
+  tabHeight: number;
   /** Number of rows: two folders to a row, the last possibly half empty. */
   rows: number;
   unfoldShare: number;
@@ -155,9 +159,15 @@ export function rowCount(n: number): number {
   return Math.max(1, Math.ceil(n / 2));
 }
 
-/** Where row `r` docks in the cabinet, measured to the top of its tab. */
-export function cabinetTop(rowPitch: number, r: number): number {
-  return r * rowPitch;
+/**
+ * Where row `r` docks in the cabinet, measured to the top of its TAB.
+ *
+ * Offset by one tab height, because the tab is the part of a folder that sticks
+ * up above its body: dock the first row at zero and its tab is off the top of
+ * the sheet, which is the one part of a folder you most need to see.
+ */
+export function cabinetTop(tabHeight: number, rowPitch: number, r: number): number {
+  return tabHeight + r * rowPitch;
 }
 
 /**
@@ -174,6 +184,7 @@ export function buildTrack({
   viewportHeight,
   rowPitch,
   stripHeight,
+  tabHeight,
   turnDistance,
   unfoldShare,
   easeRise = 'linear',
@@ -190,7 +201,7 @@ export function buildTrack({
   const openBody = h.map((_, k) => {
     const next = k + 1;
     const top = next < n ? pileTop(viewportHeight, rowPitch, rows, rowOf(next)) : viewportHeight;
-    return Math.max(0, top - (rowOf(k) + 1) * rowPitch);
+    return Math.max(0, top - (cabinetTop(tabHeight, rowPitch, rowOf(k)) + rowPitch));
   });
 
   const pageScroll = h.map((height, k) => Math.max(0, height - openBody[k]));
@@ -209,6 +220,7 @@ export function buildTrack({
     viewportHeight,
     rowPitch,
     stripHeight,
+    tabHeight,
     rows,
     unfoldShare,
     easeRise,
@@ -261,7 +273,7 @@ const easeOutCubic = (x: number): number => 1 - Math.pow(1 - x, 3);
  * pile.
  */
 export function layout(track: Track, position: number): TrackLayout {
-  const { start, pageScroll, rowPitch, openBody, viewportHeight: VH, rows: R } = track;
+  const { start, pageScroll, rowPitch, tabHeight: T, openBody, viewportHeight: VH, rows: R } = track;
   const n = start.length;
   const at = positionAt(track, position);
   const a = at.section;
@@ -282,11 +294,11 @@ export function layout(track: Track, position: number): TrackLayout {
     if (k <= a) {
       // Docked. The one you are reading keeps its open body; the rest are a row
       // pitch of themselves, the remainder covered by the row in front.
-      top = cabinetTop(rowPitch, r);
+      top = cabinetTop(T, rowPitch, r);
       clipHeight = rowPitch + (k === a ? openBody[k] : 0);
     } else if (turning && k === riser) {
       const from = pileTop(VH, rowPitch, R, r);
-      top = from + (cabinetTop(rowPitch, r) - from) * ease(p);
+      top = from + (cabinetTop(T, rowPitch, r) - from) * ease(p);
       clipHeight = rowPitch + openBody[k] * unfold;
     } else {
       top = pileTop(VH, rowPitch, R, r);
@@ -369,6 +381,8 @@ export interface FolderShape {
   right: number;
   /** Sheet width, for the open body, which is not in a column at all. */
   sheetWidth: number;
+  /** PREFERRED tab width. Clamped to what the column can hold — see
+   *  {@link folderClipPath}. */
   tabWidth: number;
   tabHeight: number;
   chamfer: number;
@@ -395,8 +409,14 @@ export interface FolderShape {
  * them to hide. Two corners are rounded: the tab's outer one and the body's.
  */
 export function folderClipPath(shape: FolderShape, open: boolean): string {
-  const { left: L, right: R, sheetWidth: W, tabWidth: tw, tabHeight: T, chamfer: C } = shape;
+  const { left: L, right: R, sheetWidth: W, tabHeight: T, chamfer: C } = shape;
   const r = shape.radius ?? 6;
+  // The tab has to END inside its own column, with the chamfer's run and a
+  // notch of clear body after it. Otherwise the chamfer walks out past the
+  // column's edge and the outline doubles back on itself — which is exactly
+  // what a narrow column does to a preferred width: at 2560 the 38% column and
+  // the tab are the same 730px, and the shape crossed itself.
+  const tw = Math.max(r * 2, Math.min(shape.tabWidth, R - L - C - Math.max(C, r * 2)));
   // SVG path data, which is UNITLESS — `path()` takes a `<string>` of path
   // commands, not CSS lengths, and a stray `px` makes the whole declaration
   // invalid and the clip silently disappear.
