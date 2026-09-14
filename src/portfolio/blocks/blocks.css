@@ -3,11 +3,28 @@
    the media and not to the block (a block can be fully revealed while its
    image is still decoding). */
 
+/* THE PAGE'S GRID lives on the RUN, not on the page: a run is the unit that
+   carries the hairline and the vertical rhythm, and putting the grid one level
+   down keeps both untouched. Twelve columns on the same gutter throughout, so a
+   block that divides the twelve inside itself — two-up, the stat grid, a list
+   row — lands on exactly the lines an outer span would have given it.
+
+   `row-gap: 0`: the rhythm between blocks is their own margin, unchanged. */
+.pv-run {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--pv-grid-gap, 42px);
+  row-gap: 0;
+  align-content: start;
+}
+
 /* `contain: layout` keeps a block's internal layout its own business: nothing
    inside one can collapse a margin through it or otherwise change the height of
    anything else on the page. Page height is the input the whole track is built
    from, so it has to be a function of the content alone. */
 .pv-block {
+  grid-column: span var(--pv-span, 12);
+  min-width: 0;
   margin: 0 0 28px;
   contain: layout;
 }
@@ -64,12 +81,14 @@
   margin-bottom: 0;
 }
 
-/* Edge to edge of the PAGE, escaping the centred content column. The page, not
-   the viewport — the page is the frame. */
-/* Edge to edge of the FOLDER, escaping the centred column. `cqw` rather than a
+/* Edge to edge of the FOLDER, escaping the page's insets. `cqw` rather than a
    variable: the folder's body is the query container, so this stays right
-   through a resize and a dial change with nothing to keep in step. */
+   through a resize and a dial change with nothing to keep in step — and the
+   arithmetic comes out at exactly minus one inset either side, whatever the
+   inset is. A bleed block still occupies its twelve columns of the grid, so
+   nothing lands beside it. */
 .pv-block--bleed {
+  grid-column: 1 / -1;
   width: 100cqw;
   margin-left: calc((100% - 100cqw) / 2);
 }
@@ -110,7 +129,13 @@
   color: #fff;
 }
 
+/* `--pv-measure` is the ONLY thing that caps a line, and it is off by default:
+   a page's text runs to the right inset, like everything else on it. The dial
+   is here because a full-width measure at 16px is a long line, and the fix for
+   that is a measure rather than a column — the block still owns the grid, the
+   words just stop earlier. */
 .pv-body {
+  max-width: var(--pv-measure, none);
   margin: 0 0 16px;
   font-size: 16px;
   line-height: 1.62;
@@ -164,11 +189,16 @@
 
 /* ── two-up ────────────────────────────────────────────────────────────── */
 
-/* 52px between the columns, 24px between a frame and its paragraph. */
+/* SIX AND SIX. A nested two-column grid on the page's own gutter lands on
+   exactly the lines a 6 + 6 pair of outer spans would have: six columns plus
+   the five gutters between them is half the measure less half a gutter, which
+   is what `1fr 1fr` with one gutter gives. So the halves meet at the page's
+   grid line without the block having to know where that line is. */
 .pv-twoup {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 52px;
+  column-gap: var(--pv-grid-gap, 42px);
+  row-gap: 24px;
 }
 
 .pv-twoup__cell {
@@ -184,12 +214,37 @@
   color: rgba(255, 255, 255, 0.74);
 }
 
+/* ── list row ──────────────────────────────────────────────────────────── */
+
+/* SEVEN AND FIVE, media on the right. Twelve nested columns rather than
+   `7fr 5fr`, because seven twelfths of the measure is not seven columns — the
+   gutters have to be counted, and the only way to count them right is to lay
+   the same twelve out again. */
+.pv-row {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--pv-grid-gap, 42px);
+  align-items: start;
+}
+
+.pv-row__text {
+  grid-column: 1 / span 7;
+  min-width: 0;
+}
+
+.pv-row__media {
+  grid-column: 8 / span 5;
+  min-width: 0;
+}
+
 /* ── stat grid ─────────────────────────────────────────────────────────── */
 
+/* FOUR THREES, by the same arithmetic as the two-up. */
 .pv-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  column-gap: var(--pv-grid-gap, 42px);
+  row-gap: 16px;
 }
 
 .pv-stat {

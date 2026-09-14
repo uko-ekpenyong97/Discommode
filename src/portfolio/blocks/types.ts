@@ -31,20 +31,34 @@ export type BlockBody =
   | { type: 'caption'; text: string }
   /** A subheading and its paragraphs. */
   | { type: 'text'; heading: string; body: string[] }
-  /** Two columns, each media + paragraph. */
+  /** Two columns, each media + paragraph. Six grid columns each. */
   | { type: 'twoUp'; columns: [TwoUpColumn, TwoUpColumn] }
-  /** Full column width, or edge-to-edge of the page with `bleed`. */
+  /**
+   * A LIST ROW: text on the left, a piece of media pinned to the right. Seven
+   * grid columns and five. For the part of a project that reads as a table —
+   * a list of pieces, a run of credits — where a stack of full-width blocks
+   * would read as a stack of separate things.
+   */
+  | { type: 'row'; heading: string; text: string; media: Media }
+  /** The full measure, or edge-to-edge of the folder with `bleed`. */
   | ({ type: 'image'; src: string; alt?: string; bleed?: boolean; caption?: string } & Sized)
-  /** Four columns of image + label. */
+  /** Four columns of image + label. Three grid columns each. */
   | { type: 'statGrid'; stats: Stat[] }
   /** An outlined pill with an icon, linking out. */
   | { type: 'linkPill'; label: string; href: string }
   /** Muted, looping, plays only while in view. */
-  | ({ type: 'video'; src: string; poster: string; caption?: string } & Sized)
+  | ({ type: 'video'; src: string; poster: string; bleed?: boolean; caption?: string } & Sized)
   /** Lazy-mounted Rive artboard; never runs once the view is closed. `w`/`h` are
    *  the ARTBOARD's ratio — the box is reserved at it, so the lazy mount never
    *  reflows the page. */
-  | ({ type: 'rive'; src: string; artboard?: string; stateMachine?: string; label?: string } & Sized);
+  | ({
+      type: 'rive';
+      src: string;
+      artboard?: string;
+      stateMachine?: string;
+      label?: string;
+      bleed?: boolean;
+    } & Sized);
 
 export interface TwoUpColumn {
   media: Media;
@@ -57,6 +71,13 @@ export interface Stat extends Sized {
 }
 
 export type Block = BlockBody & {
+  /**
+   * How many of the page's TWELVE columns this block takes. Omitted, the block
+   * takes its type's default (see `spanOf` in `Blocks.tsx`) — which is the
+   * whole twelve for everything that is not already two or four things side by
+   * side. Here so a project can narrow one block without a class of its own.
+   */
+  span?: number;
   /** Start a new RUN at this block — one `<div class="pv-run">` with a hairline
    *  divider above it. A run is a paragraph-level grouping inside a section,
    *  not a section: sections are the notebook's tabbed units. */

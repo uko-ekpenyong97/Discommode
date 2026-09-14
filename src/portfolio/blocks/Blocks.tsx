@@ -28,6 +28,24 @@ function revealClass(block: Block): string {
   return block.flip ? 'pv-block reveal-flip' : 'pv-block reveal';
 }
 
+/** The page's grid: twelve columns between the two insets. */
+const GRID_COLUMNS = 12;
+
+/**
+ * How many of the twelve a block takes when the project does not say.
+ *
+ * Everything is the full measure. That is the whole change from the 656px
+ * column this replaced: a page is as wide as the folder, text runs to the right
+ * inset, and media spans the measure rather than sitting in a gutter of its
+ * own. The blocks that are already several things side by side divide the
+ * twelve INSIDE themselves rather than each taking a share of it — a nested
+ * grid on the same gutter lands on exactly the same lines, and it keeps
+ * `twoUp`'s two cells one block rather than two.
+ */
+function spanOf(block: Block): number {
+  return block.span ?? GRID_COLUMNS;
+}
+
 /**
  * Crossfade placeholder → loaded. The class is added imperatively rather than
  * held in state: there are up to five articles of media on screen, and none of
@@ -314,6 +332,27 @@ function Title({ text }: { text: string }) {
   );
 }
 
+/**
+ * A LIST ROW: text on the left across seven columns, media pinned to the right
+ * across five. The reference's works list — the shape a project takes when what
+ * it is saying is a table of things rather than an argument.
+ */
+function RowBlock({ heading, text, media }: { heading: string; text: string; media: Media }) {
+  return (
+    <div className="pv-row">
+      <div className="pv-row__text">
+        <h3 className="pv-heading">{heading}</h3>
+        <p className="pv-body">{text}</p>
+      </div>
+      <div className="pv-row__media">
+        <div className="pv-frame">
+          <MediaView media={media} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TwoUpCell({ column }: { column: TwoUpColumn }) {
   return (
     <div className="pv-twoup__cell">
@@ -369,6 +408,8 @@ function BlockBodyView({ block }: { block: Block }) {
           <TwoUpCell column={block.columns[1]} />
         </div>
       );
+    case 'row':
+      return <RowBlock heading={block.heading} text={block.text} media={block.media} />;
     case 'image':
       return (
         <figure className="pv-figure">
@@ -418,17 +459,28 @@ function BlockBodyView({ block }: { block: Block }) {
   }
 }
 
-/** One block, wrapped in its reveal target. `--reveal-delay` staggers it behind
- *  its siblings in the same section. */
+/**
+ * One block, wrapped in its reveal target — and placed on the page's grid.
+ *
+ * `--reveal-delay` staggers it behind its siblings in the same run; `--pv-span`
+ * is how many of the twelve columns it takes. A `bleed` block leaves the grid
+ * entirely and runs to the folder's own edges.
+ */
 export function BlockView({ block, index }: { block: Block; index: number }) {
-  const bleed = block.type === 'image' && block.bleed;
+  const bleed =
+    (block.type === 'image' || block.type === 'video' || block.type === 'rive') && block.bleed;
   const className = bleed ? `${revealClass(block)} pv-block--bleed` : revealClass(block);
   return (
     <div
       data-reveal=""
       data-block={block.type}
       className={className}
-      style={{ '--reveal-delay': `calc(var(--pv-reveal-stagger, 30ms) * ${index})` } as CSSProperties}
+      style={
+        {
+          '--reveal-delay': `calc(var(--pv-reveal-stagger, 30ms) * ${index})`,
+          '--pv-span': spanOf(block),
+        } as CSSProperties
+      }
     >
       <BlockBodyView block={block} />
     </div>

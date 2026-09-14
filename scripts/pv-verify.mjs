@@ -391,7 +391,112 @@ async function run() {
       if (sheet !== page) await sheet.close();
     }
 
-    // 3 — compact rows, and what they leave for the page.
+    // 3 — THE PAGE'S LAYOUT. No centred column: a page is the folder's width
+    //     less one inset either side, and everything on it starts at the left
+    //     inset and is free to run to the right one.
+    await page.evaluate((y) => window.__pv.seek(y), track.start[3]);
+    await page.waitForTimeout(120);
+    const layout = await page.evaluate(() => {
+      const folder = document.querySelector('.pv-folder[data-open]');
+      const sheetBox = document.querySelector('.pv-scroller').getBoundingClientRect();
+      const x = (el) => el.getBoundingClientRect().left - sheetBox.left;
+      const right = (el) => el.getBoundingClientRect().right - sheetBox.left;
+      // The CONTENT box. A text block's soft dark pool is 24px of padding on a
+      // matching negative margin, so its border box overhangs the measure by
+      // exactly the pool — which is a feather, not content.
+      const inner = (el) => {
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        return [
+          r.left - sheetBox.left + parseFloat(cs.paddingLeft),
+          r.right - sheetBox.left - parseFloat(cs.paddingRight),
+        ];
+      };
+      const inset = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--pv-inset'),
+      );
+      const gap = parseFloat(
+        getComputedStyle(document.querySelector('.pv-stack')).getPropertyValue('--pv-grid-gap'),
+      );
+      // The line the cabinet already drew: the FIRST thing on a left-hand
+      // folder's strip, which is its number.
+      const tabInk = document.querySelector('.pv-folder[data-side="left"] .pv-folder__no');
+      const blocks = [...folder.querySelectorAll('.pv-run > .pv-block')];
+      const twoup = folder.querySelector('.pv-twoup');
+      const cells = twoup ? [...twoup.children] : [];
+      const row = folder.querySelector('.pv-row');
+      const bleed = folder.querySelector('.pv-block--bleed');
+      const body = [...folder.querySelectorAll('.pv-body')];
+      return {
+        inset,
+        gap,
+        sheet: sheetBox.width,
+        tabInkX: x(tabInk),
+        headerNoX: x(folder.querySelector('.pv-folder__header .pv-folder__no')),
+        headingX: x(folder.querySelector('.pv-folder__heading')),
+        // What the widest thing on the page actually reaches.
+        contentLeft: Math.min(
+          ...blocks.filter((b) => !b.matches('.pv-block--bleed')).map((b) => inner(b)[0]),
+        ),
+        contentRight: Math.max(
+          ...blocks.filter((b) => !b.matches('.pv-block--bleed')).map((b) => inner(b)[1]),
+        ),
+        bodyRight: body.length ? Math.max(...body.map(right)) : null,
+        twoup: cells.length === 2 ? { gap: x(cells[1]) - right(cells[0]), widths: cells.map((c) => c.getBoundingClientRect().width) } : null,
+        row: row ? { textRight: right(row.children[0]), mediaLeft: x(row.children[1]), mediaRight: right(row.children[1]) } : null,
+        bleed: bleed ? { left: x(bleed), right: right(bleed) } : null,
+        // Anything sitting with equal air either side of its parent and not
+        // filling it is a centred column by another name.
+        centred: blocks.filter((b) => {
+          const r = b.getBoundingClientRect();
+          const pr = b.parentElement.getBoundingClientRect();
+          return Math.abs(r.left - pr.left - (pr.right - r.right)) < 2 && r.width < pr.width - 4;
+        }).length,
+      };
+    });
+    const near = (a, b, t = 1) => Math.abs(a - b) <= t;
+    check(
+      near(layout.headerNoX, layout.inset) && near(layout.headerNoX, layout.tabInkX),
+      'the page header starts on the tab labels’ own line',
+      `header ${round(layout.headerNoX)}  tab ${round(layout.tabInkX)}  inset ${layout.inset}`,
+    );
+    check(near(layout.headingX, layout.inset), 'the large title is left-aligned at the inset', `${round(layout.headingX)}`);
+    check(
+      near(layout.contentLeft, layout.inset) && near(layout.contentRight, layout.sheet - layout.inset),
+      'content fills the measure — the only glass beside it is the two insets',
+      `${round(layout.contentLeft)}…${round(layout.contentRight)} of ${round(layout.sheet)}`,
+    );
+    check(
+      layout.bodyRight !== null && near(layout.bodyRight, layout.sheet - layout.inset),
+      'body text runs to the right inset',
+      `${round(layout.bodyRight)}`,
+    );
+    check(layout.centred === 0, 'nothing on the page is centred', `${layout.centred} blocks`);
+    check(
+      layout.twoup !== null &&
+        near(layout.twoup.gap, layout.gap) &&
+        near(layout.twoup.widths[0], layout.twoup.widths[1]),
+      'the two-up halves meet at the gutter',
+      layout.twoup ? `gap ${round(layout.twoup.gap)} of ${round(layout.gap)}` : 'no two-up on this page',
+    );
+    // Seven and five: the text stops one gutter short of the media, and the
+    // media is pinned to the right inset.
+    const grid = (layout.sheet - 2 * layout.inset - 11 * layout.gap) / 12;
+    check(
+      layout.row !== null &&
+        near(layout.row.mediaLeft - layout.row.textRight, layout.gap) &&
+        near(layout.row.mediaRight, layout.sheet - layout.inset) &&
+        near(layout.row.mediaRight - layout.row.mediaLeft, 5 * grid + 4 * layout.gap, 1.5),
+      'a list row is seven columns of text and five of media, pinned right',
+      layout.row ? `media ${round(layout.row.mediaLeft)}…${round(layout.row.mediaRight)}` : 'no row on this page',
+    );
+    check(
+      layout.bleed !== null && near(layout.bleed.left, 0) && near(layout.bleed.right, layout.sheet),
+      'a bleed block escapes both insets to the folder’s edges',
+      layout.bleed ? `${round(layout.bleed.left)}…${round(layout.bleed.right)}` : 'no bleed on this page',
+    );
+
+    // 4 — compact rows, and what they leave for the page.
     await page.evaluate((y) => window.__pv.seek(y), track.start[2]);
     await page.waitForTimeout(80);
     const slots = await readSlots(page);
@@ -412,7 +517,7 @@ async function run() {
       `${round(pageWidth.shape)} of ${round(pageWidth.sheet)}`,
     );
 
-    // 4 — hover dims the piles and never the page.
+    // 5 — hover dims the piles and never the page.
     await page.evaluate(() => window.__pv.release());
     // A REAL pointer: React derives enter/leave from `pointerover`/`pointerout`,
     // so a dispatched `pointerenter` reaches nothing.
@@ -432,7 +537,7 @@ async function run() {
     check(dim.open === 1 && dim.page === 1, 'hover never dims the open folder or its page');
     check(dim.piled < 0.5, 'hover dims the cabinet and the pile', `${dim.piled}`);
 
-    // 5 — a folder that opens UNDER a resting pointer must drop the hover. The
+    // 6 — a folder that opens UNDER a resting pointer must drop the hover. The
     //     pointer has not moved, so nothing sends a `pointerleave`; without the
     //     sweep in `apply` the whole pile stays dimmed behind a page.
     const stuck = await page.evaluate(async () => {
@@ -450,7 +555,7 @@ async function run() {
     check(!stuck.hovered && stuck.dimmed === 1, 'a folder that opens under the pointer drops the hover', JSON.stringify(stuck));
     await page.mouse.move(10, 10);
 
-    // 6 — THE SETTLE. A folder must never come to rest in mid-air, so a turn
+    // 7 — THE SETTLE. A folder must never come to rest in mid-air, so a turn
     //     left part done finishes itself: on past halfway, back before it.
     //     `park` is a real scroll, so the idle timer counts exactly as it would
     //     after a wheel — the only honest way to check this.
@@ -572,7 +677,7 @@ async function run() {
     });
     check(!clicked.turning && clicked.active === 3, 'a tab click still lands on its folder', JSON.stringify(clicked));
 
-    // 7 — contrast, re-measured: the titles got smaller.
+    // 8 — contrast, re-measured: the titles got smaller.
     await page.evaluate(() => window.__pv.seek(0));
     await page.waitForTimeout(200);
     const contrast = await page.evaluate(() => {
@@ -600,7 +705,7 @@ async function run() {
       bad('contrast — the probe returned nothing');
     }
 
-    // 8 — the frame budget, over a real wheel scroll.
+    // 9 — the frame budget, over a real wheel scroll.
     await page.evaluate(() => window.__pv.release());
     const fps = await measureFps(page);
     console.log(`  · ${fps} fps over a 2s wheel scroll`);
@@ -608,6 +713,65 @@ async function run() {
     const noisy = page.logs.filter((l) => /ACTIVE FOLDER MOVED|pageerror|error:|overlap by|no clip/.test(l));
     check(noisy.length === 0, 'no console errors on first open', noisy.join(' | '));
     await page.close();
+  }
+
+  // ── media reserves its box ─────────────────────────────────────────────────
+  //
+  // A page's height is the input the whole track is built from, so it has to be
+  // the same before and after its assets arrive. Every media block carries its
+  // intrinsic size for exactly this, and the full-width page changed every one
+  // of those boxes — so hold the assets back, measure, let them through, and
+  // measure again.
+  console.log('\n── layout-stable media ──────────────────────────────────────');
+  {
+    // Its OWN context: the shared one has these assets in its memory cache from
+    // every run above, and a cache hit never reaches the route that holds them
+    // back — so the page would arm with all the media already decoded and the
+    // check would prove nothing.
+    const cold = await context.browser().newContext({ deviceScaleFactor: 1 });
+    const held = await cold.newPage();
+    await held.setViewportSize(VIEWPORTS[0]);
+    await held.route('**/projects/placeholder/**', async (route) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      await route.continue();
+    });
+    const logs = [];
+    held.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
+    await held.goto(`${URL}/#view-${PROJECT}`, { waitUntil: 'commit' });
+    await held.waitForFunction(() => window.__pv?.armed(), null, { timeout: 15000 });
+    const heights = () =>
+      held.evaluate(() =>
+        [...document.querySelectorAll('.pv-folder__inner')].map((el) =>
+          Math.round(el.getBoundingClientRect().height),
+        ),
+      );
+    // Only the PROJECT's media. `document.images` also holds the grid's covers,
+    // which are behind the scrim, are not held back, and are already cached.
+    const loaded = () =>
+      held.evaluate(() => {
+        const mine = [...document.images].filter((i) => i.src.includes('/projects/placeholder/'));
+        return { of: mine.length, done: mine.filter((i) => i.complete).length };
+      });
+    const before = await heights();
+    const loadedAtArm = await loaded();
+    // Not "wait for every image": they are `loading="lazy"`, so the ones below
+    // the fold never start. Wait past the hold-back and count what arrived.
+    await held.waitForTimeout(3000);
+    const after = await heights();
+    const loadedNow = await loaded();
+    check(
+      loadedNow.done > loadedAtArm.done,
+      'the gate opened before the media did',
+      `${loadedAtArm.done} of ${loadedAtArm.of} decoded when the track armed, ${loadedNow.done} after`,
+    );
+    check(
+      String(before) === String(after),
+      'page heights are identical before and after the media lands',
+      `${before.join(', ')}`,
+    );
+    const moved = logs.filter((l) => /ACTIVE FOLDER MOVED/.test(l));
+    check(moved.length === 0, 'no rebuild moved the reader', moved.join(' | '));
+    await cold.close();
   }
 
   // ── the ways in and out ────────────────────────────────────────────────────

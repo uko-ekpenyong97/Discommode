@@ -425,7 +425,14 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
       Math.min(look.titleSizePx * scale, g.strip - STRIP_CHROME),
     );
     stack.style.setProperty('--pv-title', `${titleSize}px`);
-    stack.style.setProperty('--pv-header-title', `${look.headerTitlePx * scale}px`);
+    stack.style.setProperty(
+      '--pv-header-title',
+      `${look.headerTitlePx * scale * look.headerScale}px`,
+    );
+    // The page's gutter is a folder length like any other, so it scales; the
+    // page's INSET is not, because the strip's text inset it lines up with is
+    // a fixed number of pixels (see `portfolioMotion`).
+    stack.style.setProperty('--pv-grid-gap', `${look.gridGapPx * scale}px`);
 
     // The columns alternate row by row — an even row splits evenly, an odd one
     // does not — so the cabinet never reads as a table.
