@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect } from 'react';
 import { CONTENT, indexForProject } from '../content';
 import { ClosePill } from './ClosePill';
 import { Scrim } from './Scrim';
-import { Sheet } from './Sheet';
+import { Scroller } from './Scroller';
 import { logContrastProbe } from './contrastProbe';
 import { applyPortfolioLook, applyPortfolioRest, subscribeLook } from './portfolioMotion';
 import { closePortfolio, replacePortfolio } from './portfolioNav';
@@ -25,7 +25,7 @@ interface PortfolioViewProps {
 }
 
 /**
- * The project view: the blurred `Scrim`, the sliding `Sheet` with its page
+ * The project view: the blurred `Scrim`, the sliding `Scroller` with its page
  * track, and the `ClosePill`.
  *
  * One project, its pages, and the way out — nothing else. The other projects
@@ -100,7 +100,7 @@ export default function PortfolioView({ project, section, intro = false }: Portf
           arrive at after every link in the project. It paints above the sheet
           regardless (z-index). */}
       <ClosePill onClose={close} />
-      <Sheet
+      <Scroller
         // A different project is a different track: remount rather than try to
         // carry a scroll position between two unrelated page lists.
         key={current.id}

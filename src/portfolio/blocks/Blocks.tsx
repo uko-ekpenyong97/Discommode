@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { charDelayMs } from '../portfolioMotion';
-import { useScroller } from '../scroller';
+import { useScroller } from '../scrollerContext';
 import type { Block, Media, Stat, TwoUpColumn } from './types';
 import './blocks.css';
 

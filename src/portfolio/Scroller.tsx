@@ -19,7 +19,7 @@ import {
   rowOf,
 } from './pageTrack';
 import type { FootRun, Track, TrackLayout, TrackPosition } from './pageTrack';
-import { ScrollerContext } from './scroller';
+import { ScrollerContext } from './scrollerContext';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
 
@@ -212,7 +212,7 @@ declare global {
   }
 }
 
-interface SheetProps {
+interface ScrollerProps {
   project: Project;
   /** 0-based folder to open on (from `#view-NN/<section>`). */
   initialSection: number;
@@ -220,7 +220,7 @@ interface SheetProps {
   onSectionChange: (index: number) => void;
 }
 
-export function Sheet({ project, initialSection, onSectionChange }: SheetProps) {
+export function Scroller({ project, initialSection, onSectionChange }: ScrollerProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stackRef = useRef<HTMLDivElement>(null);
@@ -807,7 +807,7 @@ export function Sheet({ project, initialSection, onSectionChange }: SheetProps) 
   }, []);
 
   return (
-    <div className="pv-sheet">
+    <div className="pv-pane">
       <div className="pv-scroller" ref={attachScroller} data-locked={armed ? undefined : ''}>
         <ScrollerContext.Provider value={scroller}>
           <div className="pv-content" ref={contentRef}>

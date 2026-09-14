@@ -25,7 +25,7 @@ measured into `LOOK` below), `docs/prototypes/folder-prototype.html` and
 | --- | --- |
 | `PortfolioGate.tsx` | Outermost gate. Renders `ReaderGate` (which renders `App`) plus the view layer when the hash is `#view-…`. |
 | `PortfolioView.tsx` | Scrim + close pill + ground + the scroller. Owns the section index and the hash. |
-| `Sheet.tsx` | The one scroller. Measures, builds the track, applies a layout every frame. **The name is now wrong** — see [Not done](#not-done). |
+| `Scroller.tsx` | The one scroller. Measures, builds the track, applies a layout every frame. |
 | `Ground.tsx` | The opaque field the paper sits on: colour, grain, letterhead. |
 | `SheetCanvas.tsx` | The one fixed WebGL canvas. Mounts three.js, owns the plane, runs only during an entrance. |
 | `curlMaterial.ts` | The `ShaderMaterial` — cylindrical curl in the vertex stage, two point lights in the fragment stage. |
@@ -547,23 +547,17 @@ as soon as anything on this view is clipped or translucent again.
 
 ## Not done
 
-1. **`Sheet.tsx` is misnamed.** It is the scroller — the component that owns the
-   track and applies a layout every frame — and "sheet" now means the piece of
-   paper. Two meanings of the word in one directory is how the next person
-   reading this loses an hour. Rename it (`Scroller.tsx`) with its `--pv-sheet-*`
-   variables; it is a mechanical change and it was left out of this PR only to
-   keep the diff readable.
-2. **The texture is not a build step.** `npm run placeholders` captures
+1. **The texture is not a build step.** `npm run placeholders` captures
    `sheet.webp`, and nothing fails if a section's first viewport changes and the
    capture does not. The hand-off diff catches it *in the verify run*, which is
    the right signal in the wrong place. A content hash of the section's first
    viewport, checked at build, is the fix.
-3. **Close reversal.** The spec asked for the page to drop back the way it came
+2. **Close reversal.** The spec asked for the page to drop back the way it came
    as the view closes, trailing the scrim by 100ms. It currently leaves with the
    view. The entrance machinery — a tween driving the track position — is what
    to reuse: run it from the current position to `minPosition` on `requestExit`,
    100ms behind the scrim.
-4. **The letterhead's contrast is unmeasured.** See
+3. **The letterhead's contrast is unmeasured.** See
    [Contrast](#contrast-on-paper). It is mono type on `groundColor` and the
    paper target does not cover it.
 

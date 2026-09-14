@@ -59,12 +59,12 @@ const CLIPS = {
     to: { v: 1 },
     transition: { type: 'easing', duration: s(TIMING.enter.scrim.dur), ease: EASE.scrim },
   },
-  sheet: {
-    at: s(TIMING.enter.sheet.at),
-    duration: s(TIMING.enter.sheet.dur),
+  pane: {
+    at: s(TIMING.enter.pane.at),
+    duration: s(TIMING.enter.pane.dur),
     from: { v: 0 },
     to: { v: 1 },
-    transition: { type: 'easing', duration: s(TIMING.enter.sheet.dur), ease: EASE.sheet },
+    transition: { type: 'easing', duration: s(TIMING.enter.pane.dur), ease: EASE.pane },
   },
   pill: {
     at: s(TIMING.enter.pill.at),
@@ -216,7 +216,7 @@ export default function PortfolioDialKit() {
 
   // The scroller's own feel. `lenisLerp` and `wheelMultiplier` are the two
   // values CSS cannot carry, so changing either rebuilds the Lenis instance
-  // (see `Sheet`); the rest are custom properties like everything else.
+  // (see `Scroller`); the rest are custom properties like everything else.
   const track = useDialKit('PV TRACK', {
     lenisLerp: [LOOK.lenisLerp, 0.02, 1, 0.01],
     wheelMultiplier: [LOOK.wheelMultiplier, 0.2, 3, 0.05],
@@ -322,7 +322,7 @@ export default function PortfolioDialKit() {
           `// tuned values — paste over TIMING.enter and LOOK in src/portfolio/portfolioMotion.ts\n` +
           `enter: {\n` +
           `  scrim: ${clip(tl.scrim)},\n` +
-          `  sheet: ${clip(tl.sheet)},\n` +
+          `  pane: ${clip(tl.pane)},\n` +
           `  pill: ${clip(tl.pill)},\n` +
           `}\n\n{\n${body}\n}`;
         navigator.clipboard?.writeText(snippet).catch(() => {});
@@ -331,7 +331,7 @@ export default function PortfolioDialKit() {
         onTransport(action);
       }
     },
-    [onTransport, tl.scrim, tl.sheet, tl.pill],
+    [onTransport, tl.scrim, tl.pane, tl.pill],
   );
 
   useDialKit(
@@ -361,10 +361,10 @@ export default function PortfolioDialKit() {
     void time;
     applyPortfolioValues({
       scrim: tl.scrim.current.v,
-      sheet: tl.sheet.current.v,
+      pane: tl.pane.current.v,
       pill: tl.pill.current.v,
     });
-  }, [time, tl.scrim, tl.sheet, tl.pill]);
+  }, [time, tl.scrim, tl.pane, tl.pill]);
 
   return (
     <>

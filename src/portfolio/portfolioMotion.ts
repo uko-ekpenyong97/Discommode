@@ -1,17 +1,17 @@
 /* ─────────────────────────────────────────────────────────────
- * ANIMATION STORYBOARD — Portfolio view (glass over the world, sheet from the right)
+ * ANIMATION STORYBOARD — Portfolio view (glass over the world, the pane from the right)
  *
  * OPEN
  *    0ms  stage 0  REST    detail view (or grid) as it was; nothing over it
  *    0ms  stage 1  SCRIM   the blurred glass fades up over the whole page —
  *                          the hero card stays visible, out of focus, behind it
- *    0ms  stage 2  SHEET   the project sheet slides in from the right edge
+ *    0ms  stage 2  PANE    the project pane slides in from the right edge
  *  150ms  stage 3  PILL    the close pill drops in from its corner offset
  *  600ms  stage 4  READING handoff to the scroller
  *
- * CLOSE — NOT the open played backwards. The sheet LEADS (it is the thing
+ * CLOSE — NOT the open played backwards. The pane LEADS (it is the thing
  * leaving) and the scrim TRAILS it by 100ms, so the grid re-sharpens last and
- * the world never snaps back into focus before the sheet is out of the way.
+ * the world never snaps back into focus before the pane is out of the way.
  * ─────────────────────────────────────────────────────────────
  *
  * ONE values shape, TWO drivers — the same arrangement as `doorway.ts`. Every
@@ -21,7 +21,7 @@
  * dock's Copy output is pasted back.
  *
  * The three animated channels are published as CSS variables on `:root`
- * (`--pv-scrim`, `--pv-sheet`, `--pv-pill`), so per-frame work is three custom
+ * (`--pv-scrim`, `--pv-pane`, `--pv-pill`), so per-frame work is three custom
  * property writes and no React state changes at all. The LOOK values below are
  * published the same way — plus a mutable `look` singleton for the handful of
  * them that CSS can't consume (the scroller's smoothing) — which is what lets
@@ -35,8 +35,8 @@
 export interface PortfolioValues {
   /** 0→1 the blurred scrim over the page. → `--pv-scrim` */
   scrim: number;
-  /** 0→1 the sheet's slide from the right edge (0 = offscreen). → `--pv-sheet` */
-  sheet: number;
+  /** 0→1 the pane's slide from the right edge (0 = offscreen). → `--pv-pane` */
+  pane: number;
   /** 0→1 the close pill's drop-in from its corner offset. → `--pv-pill` */
   pill: number;
 }
@@ -45,12 +45,12 @@ export interface PortfolioValues {
 export const TIMING = {
   enter: {
     scrim: { at: 0, dur: 350 },
-    sheet: { at: 0, dur: 600 },
+    pane: { at: 0, dur: 600 },
     pill: { at: 150, dur: 250 },
   },
   exit: {
-    // The sheet leads; the scrim trails it by 100ms (see the header).
-    sheet: { at: 0, dur: 600 },
+    // The pane leads; the scrim trails it by 100ms (see the header).
+    pane: { at: 0, dur: 600 },
     pill: { at: 0, dur: 250 },
     scrim: { at: 100, dur: 350 },
   },
@@ -65,8 +65,8 @@ export const EXIT_MS = 600;
 export const EASE = {
   /** ease-out — the glass arrives and stops. */
   scrim: [0, 0, 0.58, 1] as [number, number, number, number],
-  /** The sheet's own curve: a hard start, a long settle. */
-  sheet: [0.4, 0, 0.1, 1] as [number, number, number, number],
+  /** The pane's own curve: a hard start, a long settle. */
+  pane: [0.4, 0, 0.1, 1] as [number, number, number, number],
   pill: [0, 0, 0.58, 1] as [number, number, number, number],
 };
 
@@ -327,7 +327,7 @@ function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x: number
 }
 
 const easeScrim = cubicBezier(...EASE.scrim);
-const easeSheet = cubicBezier(...EASE.sheet);
+const easePane = cubicBezier(...EASE.pane);
 const easePill = cubicBezier(...EASE.pill);
 
 /** Eased 0→1 progress of one clip at time `ms`. */
@@ -339,7 +339,7 @@ function channel(ms: number, clip: { at: number; dur: number }, ease: (x: number
 export function samplePortfolioEnter(ms: number): PortfolioValues {
   return {
     scrim: channel(ms, TIMING.enter.scrim, easeScrim),
-    sheet: channel(ms, TIMING.enter.sheet, easeSheet),
+    pane: channel(ms, TIMING.enter.pane, easePane),
     pill: channel(ms, TIMING.enter.pill, easePill),
   };
 }
@@ -348,7 +348,7 @@ export function samplePortfolioEnter(ms: number): PortfolioValues {
 export function samplePortfolioExit(ms: number): PortfolioValues {
   return {
     scrim: 1 - channel(ms, TIMING.exit.scrim, easeScrim),
-    sheet: 1 - channel(ms, TIMING.exit.sheet, easeSheet),
+    pane: 1 - channel(ms, TIMING.exit.pane, easePane),
     pill: 1 - channel(ms, TIMING.exit.pill, easePill),
   };
 }
@@ -356,23 +356,23 @@ export function samplePortfolioExit(ms: number): PortfolioValues {
 /* ── applying values ─────────────────────────────────────────────────────── */
 
 /** The live channel values. Defaults are REST — nothing over the page. */
-export const portfolio: PortfolioValues = { scrim: 0, sheet: 0, pill: 0 };
+export const portfolio: PortfolioValues = { scrim: 0, pane: 0, pill: 0 };
 
 /** Write the three channels to `:root` and mirror them into the singleton. */
 export function applyPortfolioValues(v: PortfolioValues): void {
   const s = document.documentElement.style;
   s.setProperty('--pv-scrim', v.scrim.toFixed(4));
-  s.setProperty('--pv-sheet', v.sheet.toFixed(4));
+  s.setProperty('--pv-pane', v.pane.toFixed(4));
   s.setProperty('--pv-pill', v.pill.toFixed(4));
   portfolio.scrim = v.scrim;
-  portfolio.sheet = v.sheet;
+  portfolio.pane = v.pane;
   portfolio.pill = v.pill;
 }
 
 /** Pin every channel to REST. Set before a driver takes over so a lazy-loaded
- *  dock never flashes a fully-open sheet over the page. */
+ *  dock never flashes a fully-open pane over the page. */
 export function applyPortfolioRest(): void {
-  applyPortfolioValues({ scrim: 0, sheet: 0, pill: 0 });
+  applyPortfolioValues({ scrim: 0, pane: 0, pill: 0 });
 }
 
 /**
@@ -437,7 +437,7 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
 
 const VARS = [
   '--pv-scrim',
-  '--pv-sheet',
+  '--pv-pane',
   '--pv-pill',
   '--pv-scrim-blur',
   '--pv-scrim-alpha',
@@ -482,7 +482,7 @@ export function resetPortfolioValues(): void {
   delete document.documentElement.dataset.pvSurface;
   Object.assign(look, LOOK); // a dev tuning session must not outlive the view
   portfolio.scrim = 0;
-  portfolio.sheet = 0;
+  portfolio.pane = 0;
   portfolio.pill = 0;
 }
 

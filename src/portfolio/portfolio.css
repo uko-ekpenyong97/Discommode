@@ -1,21 +1,21 @@
-/* The project view's anatomy: glass, sheet, scroller, page row, close pill.
+/* The project view's anatomy: glass, pane, scroller, page row, close pill.
 
    Every number that is worth tuning is a `--pv-*` custom property written by
    portfolioMotion.ts (defaults duplicated here as fallbacks, so the stylesheet
    still reads correctly on its own and a missed write degrades to the shipped
    look rather than to zero). The three ANIMATED channels — `--pv-scrim`,
-   `--pv-sheet`, `--pv-pill` — are written per frame by the driver; nothing in
+   `--pv-pane`, `--pv-pill` — are written per frame by the driver; nothing in
    this file has a transition on them, because the driver IS the curve.
 
    The page row's horizontal arrangement is NOT in here at all: every page's
    `transform` and `scrollTop` come out of `pageTrack.ts` and are written by
-   `Sheet`, per scroll tick. What this file owns is the frame each page is, and
+   `Scroller`, per scroll tick. What this file owns is the frame each page is, and
    the two states (`data-active`, `data-stacked`) the track puts it in. */
 
 .pv {
   position: absolute;
   inset: 0;
-  overflow: hidden; /* the sheet parks offscreen right before it slides in */
+  overflow: hidden; /* the pane parks offscreen right before it slides in */
   /* The app's only type token is `--mono`, which the labels and captions still
      use. A project is prose, so it needs a reading face as well. */
   --pv-sans: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
@@ -37,20 +37,20 @@
   will-change: opacity;
 }
 
-/* ── the sheet + its scroller ──────────────────────────────────────────── */
+/* ── the pane + its scroller ───────────────────────────────────────────── */
 
-/* The sheet starts at the right of a GLASS COLUMN and runs to the edge. That
+/* The pane starts at the right of a GLASS COLUMN and runs to the edge. That
    column is the only part of the view where the grid is just the grid: no
    folder ever reaches it, and the only thing in it is the way out.
 
-   Parked one full width to the right at rest; `--pv-sheet` drives it home. */
-.pv-sheet {
+   Parked one full width to the right at rest; `--pv-pane` drives it home. */
+.pv-pane {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   left: var(--pv-glass-col, 25vw);
-  transform: translateX(calc(100% * (1 - var(--pv-sheet, 0))));
+  transform: translateX(calc(100% * (1 - var(--pv-pane, 0))));
   will-change: transform;
 }
 
@@ -76,7 +76,7 @@
   display: none;
 }
 
-/* Locked until the first layout is real (see `Sheet`). Out of overflow, so the
+/* Locked until the first layout is real (see `Scroller`). Out of overflow, so the
    wheel does nothing at all — not even the native scroll that would otherwise
    run in the frames between mount and Lenis being created. Programmatic
    `scrollTop` still works, which is all the provisional layout needs. */
@@ -111,7 +111,7 @@
 /* ── the cabinet ────────────────────────────────────────────────────────── */
 
 /* The box the folders live in: the whole sheet, with every folder absolutely
-   positioned inside it. `Sheet` writes each one's top, height and z-index every
+   positioned inside it. `Scroller` writes each one's top, height and z-index every
    frame; nothing here moves on its own. */
 .pv-stack {
   position: absolute;
@@ -147,7 +147,7 @@
    (when open) the full-width page — because two adjacent ones do not join:
    `backdrop-filter` is per element, so each would blur its own backdrop with
    its own edge clamping and the junction would seam however exactly the tints
-   matched. The outline is a `clip-path` written by `Sheet` from
+   matched. The outline is a `clip-path` written by `Scroller` from
    `folderClipPath`, and swapped when the folder opens or files.
 
    `--pv-page-alpha` is the contrast lever, and the only thing between the text
@@ -167,7 +167,7 @@
 }
 
 /* THE FOLDER'S FACE, and the way back — every folder in either pile is a link
-   to itself. `Sheet` puts it in its column and gives it the folder's whole
+   to itself. `Scroller` puts it in its column and gives it the folder's whole
    VISIBLE height, so the hit area is the part you can see. */
 .pv-folder__strip {
   position: absolute;
@@ -276,7 +276,7 @@
   transform: rotate(-15deg);
 }
 
-/* THE PAGE, and the scroll container — `Sheet` writes `scrollTop` here, and its
+/* THE PAGE, and the scroll container — `Scroller` writes `scrollTop` here, and its
    top and height, because both come out of the track. It spans the whole sheet
    rather than the folder's column: a folder is a tab in a cabinet, but what you
    read is a page. */
@@ -432,7 +432,7 @@
    on its own. The track itself is unaffected: it is a mapping, not an
    animation, and the page still follows the wheel exactly. */
 @media (prefers-reduced-motion: reduce) {
-  .pv-sheet {
+  .pv-pane {
     transform: none;
   }
   .pv-scrim,

@@ -20,7 +20,7 @@
  * Neither repaint touches layout — no size, no position, no reflow of a folder's
  * content — so the track is exactly the track the reader gets.
  *
- * `window.__pv` (dev only, from `Sheet`) parks the track at an exact position,
+ * `window.__pv` (dev only, from `Scroller`) parks the track at an exact position,
  * which is the only way to hold a mid-turn frame still enough to measure.
  */
 
@@ -92,7 +92,7 @@ async function readSlots(page) {
     const stack = document.querySelector('.pv-stack');
     // The SCROLLER's box is the sheet. The stack is `inset: 0` in a sticky
     // stage whose `height: 100%` resolves against an auto-height parent, so it
-    // measures zero tall — the folders are placed by the inline tops `Sheet`
+    // measures zero tall — the folders are placed by the inline tops `Scroller`
     // writes, and those are in the scroller's coordinates.
     const sheet = document.querySelector('.pv-scroller').getBoundingClientRect();
     const cs = getComputedStyle(stack);

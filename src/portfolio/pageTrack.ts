@@ -59,7 +59,7 @@ export interface TrackMetrics {
   tabHeight: number;
   /** The sheet's width, and where the two columns divide in an even row and in
    *  an odd one, as a fraction of it. The page's foot is per COLUMN, so the
-   *  geometry that used to live entirely in `Sheet` has to be in here now. */
+   *  geometry that used to live entirely in `Scroller` has to be in here now. */
   sheetWidth: number;
   splits: [number, number];
   /** Scroll spent on one turn. */

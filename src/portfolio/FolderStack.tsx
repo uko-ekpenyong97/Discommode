@@ -5,7 +5,7 @@ import type { Block, Project } from './blocks/types';
 
 /**
  * The cabinet. One `<article>` per section, all of them absolutely positioned
- * in the same box; `Sheet` writes each one's `top`, `height` and `zIndex` every
+ * in the same box; `Scroller` writes each one's `top`, `height` and `zIndex` every
  * frame from a single call to `pageTrack`'s `layout()`. Nothing here re-renders
  * while you scroll.
  *
@@ -23,7 +23,7 @@ import type { Block, Project } from './blocks/types';
  *              Sized to the whole visible face, so the hit area is what you can
  *              see; the __label inside it is the STRIP proper, the number and
  *              the title riding across the tab and the sliver of body under it.
- *   __content  the page, and the scroll container: `Sheet` writes `scrollTop`
+ *   __content  the page, and the scroll container: `Scroller` writes `scrollTop`
  *              here. It opens with the same number and title again, large.
  *
  * The `<article>` itself clips (`overflow: hidden`) and its height is the
