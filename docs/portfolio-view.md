@@ -1023,29 +1023,75 @@ are worth keeping.
 
 ## Not done
 
-1. **The captures are not a build step.** `npm run placeholders` takes them, and
+The first two are live — they are the next things to do to this view, not
+observations about it.
+
+1. **The entrance's ROLL is to come back.** This PR softened it to a bend a
+   sheet makes in a hand — `uCurlAmount` −0.55, `curlTightness` 0.35,
+   `startRotation` −28° — and the look that is wanted is the tube it replaced:
+   **`uCurlAmount` −1, `curlTightness` 1, `startRotation` −45°**.
+
+   Two things make it more than three numbers.
+
+   **`curlTightness` is shared.** It is a material dial on `PV PAPER`, read off
+   `look` once and written to the uniform, while `curl`, `curlOrigin`,
+   `curlAxis` and `curlWrap` come off the POSE. So setting it to 1 for the
+   entrance sets it to 1 for the tear as well, and the tear's arc would go from
+   0.18 page heights to 0.03 — a crease across the whole peel. It has to move to
+   the pose first, the way `curlWrap` did and for exactly the same reason: the
+   radius is a property of the gesture, not of the paper.
+
+   **The bend has to be out by `curlOutAt`,** which is the constraint the
+   entrance has had all along. At amount −1 with `enterCurlOrigin` 0.15 the
+   fold is a tube at the top edge; check the hand-off diff after, because a
+   shape still resolving at the swap is the one thing the crossfade cannot hide.
+   `pv-verify` already asserts the sheet is flat and square by `p` = 0.60 and
+   will say so.
+
+2. **Everything the canvas draws is a 1× image on a 2× screen.** Measured, at
+   1728×996: the page rect is 1632 × 748 CSS px, the captures are 1632 × 748
+   DEVICE px — one texel per CSS pixel — and on a 2× display the renderer is at
+   `setPixelRatio(2)`, so its framebuffer is 3456 × 1992. The sheet therefore
+   samples a 1× texture into a 2× buffer and every glyph on it is magnified two
+   to one, next to an HTML page whose type is drawn at 2×. It is soft, and it is
+   soft at exactly the moment the two surfaces swap.
+
+   **The suite cannot see this.** `pv-verify` and `npm run placeholders` both
+   run at `deviceScaleFactor: 1`, so the rect match, both hand-off diffs and the
+   capture pipeline are all measured on a display where the mismatch does not
+   exist. That is the first thing to change.
+
+   The fix is a second set of captures at 2× and a `SheetCanvas.captureFor` that
+   picks on DPR as well as width — today it picks the nearest `width` alone, and
+   `sheetSrc` names a file by width alone, so the scale needs a name of its own.
+   Both have consequences worth costing first: the capture set goes from 832 KB
+   across 36 files to something near four times that, and the argument in
+   [The first-open lock](#the-first-open-lock-and-layout-stable-media) for
+   keeping the textures off the critical path gets stronger rather than weaker.
+
+3. **The captures are not a build step.** `npm run placeholders` takes them, and
    nothing fails if a section's first or last viewport changes and its capture
    does not. The hand-off diffs catch it *in the verify run*, which is the right
    signal in the wrong place. A content hash of each captured frame, checked at
    build, is the fix — and it now has to cover four captures per section rather
    than two.
-2. **three.js is 539 KB of the bundle.** Measured: 367 KB → 912 KB raw,
+4. **three.js is 539 KB of the bundle.** Measured: 367 KB → 912 KB raw,
    119 KB → 257 KB gzipped. It is a static import for the reason the view itself
    is one — the open is a storyboard that has to start on the click, and a chunk
    fetch in front of the first entrance is a blank ground. Splitting it behind
    the view's own 600ms fade would probably be invisible and has not been
    measured.
-3. **Close reversal.** The spec asked for the page to drop back the way it came
+5. **Close reversal.** The spec asked for the page to drop back the way it came
    as the view closes, trailing the scrim by 100ms. It currently leaves with the
    view. The entrance machinery — a tween driving the track position — is what
    to reuse: run it from the current position to `minPosition` on `requestExit`,
    100ms behind the scrim.
-4. **A hash change while the view is open does nothing.** A deep link works on a
+6. **A hash change while the view is open does nothing.** A deep link works on a
    fresh open; editing `#view-02/3` to `#view-02/5` in place, or a `popstate`
    that lands on a different section, leaves the scroller where it was.
    `PortfolioView` has the handle to fix it in one line — it did not seem worth
    doing without a case that wanted it.
-5. **The tear's flap is rigid.** Past the arc it is a straight plane, so a peel
+7. **The tear's flap is rigid.** Past the arc it is a straight plane, so a peel
    that travelled the whole sheet would put a stiff flag several page heights
    long into the frame. `peelTravel` is dialled to 0.45 to stay well inside
    that, and `curlDepth` flattens what is left. A flap that DROOPED — a second,
