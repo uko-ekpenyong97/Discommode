@@ -1,17 +1,18 @@
 /* ─────────────────────────────────────────────────────────────
- * ANIMATION STORYBOARD — Portfolio view (glass over the world, the pane from the right)
+ * ANIMATION STORYBOARD — Portfolio view (paper on a ground)
  *
  * OPEN
  *    0ms  stage 0  REST    detail view (or grid) as it was; nothing over it
- *    0ms  stage 1  SCRIM   the blurred glass fades up over the whole page —
- *                          the hero card stays visible, out of focus, behind it
- *    0ms  stage 2  PANE    the project pane slides in from the right edge
+ *    0ms  stage 1  SCRIM   the dark tint fades up over the whole page — the
+ *                          hero card stays where it was, behind it
+ *    0ms  stage 2  PANE    the ground and the sheet region fade in over it
  *  150ms  stage 3  PILL    the close pill drops in from its corner offset
- *  600ms  stage 4  READING handoff to the scroller
+ *  600ms  stage 4  READING handoff to the scroller, which runs section 0's
+ *                          entrance from the negative track
  *
  * CLOSE — NOT the open played backwards. The pane LEADS (it is the thing
  * leaving) and the scrim TRAILS it by 100ms, so the grid re-sharpens last and
- * the world never snaps back into focus before the pane is out of the way.
+ * the world never snaps back into focus before the paper is out of the way.
  * ─────────────────────────────────────────────────────────────
  *
  * ONE values shape, TWO drivers — the same arrangement as `doorway.ts`. Every
@@ -24,18 +25,22 @@
  * (`--pv-scrim`, `--pv-pane`, `--pv-pill`), so per-frame work is three custom
  * property writes and no React state changes at all. The LOOK values below are
  * published the same way — plus a mutable `look` singleton for the handful of
- * them that CSS can't consume (the scroller's smoothing) — which is what lets
- * the dock retune geometry, the page track and the reveal system live.
+ * them that CSS can't consume (the scroller's smoothing, every shader uniform)
+ * — which is what lets the dock retune geometry, the page track, the sheet's
+ * material and the reveal system live.
  *
- * The page track itself is NOT here: where each page sits at a given scroll
- * position is geometry, not a storyboard, and lives in `pageTrack.ts`.
+ * The page track itself is NOT here: where everything is at a given scroll
+ * position is geometry, not a storyboard, and lives in `pageTrack.ts`. What IS
+ * here is the shape of the entrance and the exit, because those are a look.
  */
+
+import type { PoseDials } from './pageTrack';
 
 /** The three channels the open/close is expressed in. All 0 at REST. */
 export interface PortfolioValues {
-  /** 0→1 the blurred scrim over the page. → `--pv-scrim` */
+  /** 0→1 the dark scrim over the page. → `--pv-scrim` */
   scrim: number;
-  /** 0→1 the pane's slide from the right edge (0 = offscreen). → `--pv-pane` */
+  /** 0→1 the ground and the sheet region fading in. → `--pv-pane` */
   pane: number;
   /** 0→1 the close pill's drop-in from its corner offset. → `--pv-pill` */
   pill: number;
@@ -63,7 +68,7 @@ export const EXIT_MS = 600;
 /** Per-channel easing. DialKit clips use the same arrays, so the dock preview
  *  and production Motion sample one curve each. */
 export const EASE = {
-  /** ease-out — the glass arrives and stops. */
+  /** ease-out — the tint arrives and stops. */
   scrim: [0, 0, 0.58, 1] as [number, number, number, number],
   /** The pane's own curve: a hard start, a long settle. */
   pane: [0.4, 0, 0.1, 1] as [number, number, number, number],
@@ -72,33 +77,45 @@ export const EASE = {
 
 /**
  * Everything that is a size, a colour or a duration rather than a channel: the
- * page geometry, the scroller's feel, and the whole scroll-reveal system. Written
- * to `:root` by {@link applyPortfolioLook} and read from there by the CSS, so
- * the dock can retune any of it live without a re-render.
+ * ground, the paper, the page geometry, the shader's every uniform, the
+ * scroller's feel, and the whole scroll-reveal system. Written to `:root` by
+ * {@link applyPortfolioLook} and read from there by the CSS, so the dock can
+ * retune any of it live without a re-render.
  */
-import type { RiseEase } from './pageTrack';
-
-/** Where a sliver click lands: the folder's title, or the line you left off at. */
-export type SliverReturn = 'top' | 'bottom';
-
-/** How a page is painted: live glass over the app, or flat black. */
-export type PageSurface = 'frosted' | 'solid';
-
 export interface PortfolioLook {
-  /** Scrim blur radius (px) and black alpha. */
-  scrimBlurPx: number;
+  /** The scrim's black alpha. TINT ONLY — the blur went with the frosted page,
+   *  because a full-viewport backdrop root that nothing is seen through is a
+   *  cost with nothing on the other side of it. */
   scrimAlpha: number;
-  /** The band down the left of the viewport the sheet does not cover, in vw.
-   *  The grid shows through it; only the close pill sits there. */
-  glassColumnVw: number;
+
+  /* ── the ground ────────────────────────────────────────────────────────── */
+  /** The opaque field the paper sits on. */
+  groundColor: string;
   /**
-   * THE PAGE. A page is as wide as the folder it is printed on, less an inset
-   * on each side; the twelve columns of its grid divide what is left.
-   *
-   * `pageInsetPx` is also the strip's text inset — one number, so a page's
-   * title and the cabinet's tab labels sit on the same line down the sheet. It
-   * does NOT scale with the sheet, because the labels it lines up with do not.
-   * `gridGapPx` does, like every other folder length.
+   * Below 1 the grid shows through, for A/B only. SHIP AT 1 — paper on glass is
+   * a contradiction, and every contrast figure in the docs is measured here.
+   */
+  groundAlpha: number;
+  /** Film grain over the ground and over the paper. One dial for both: they are
+   *  the same grain, and the sheet's texture has it baked in. */
+  grainOpacity: number;
+  /** The letterhead strip across the top of the ground, in px. */
+  letterheadHPx: number;
+
+  /* ── the paper ─────────────────────────────────────────────────────────── */
+  /** The page's surface, and the sheet's albedo where no texture has decoded. */
+  paperColor: string;
+  /** The ink, as a colour the alphas below are taken of. */
+  inkColor: string;
+  /** The page rect: a margin on the sides, and a deeper FOOT — the band the
+   *  close pill lives in, which is the one piece of chrome the view has. The
+   *  top is the letterhead's height plus `pageMarginPx`. */
+  pageMarginPx: number;
+  pageFootPx: number;
+  /**
+   * A page is the page rect less an inset each side; the twelve columns of its
+   * grid divide what is left. `pageInsetPx` is a margin on a page and margins
+   * do not grow with the paper the way type does, so it does not scale.
    */
   pageInsetPx: number;
   gridGapPx: number;
@@ -108,58 +125,68 @@ export interface PortfolioLook {
    * the figure to try if a full-width measure reads too long.
    */
   textMeasureCh: number;
-  /** Multiplier on the page's opening title, over `headerTitlePx * scale`. The
-   *  page got a lot wider; this is the lever for what that did to its title. */
-  headerScale: number;
+  /** The page's own letterhead block: the size of the title on it. */
+  letterheadTitlePx: number;
+
+  /* ── the sheet's material (PV PAPER) ───────────────────────────────────── */
+  /** Mixes the cone's half-angle away from π/2 — see `curlMaterial.ts`. */
+  curlTightness: number;
+  /** How much of the sheet the roll reaches when fully rolled, and which edge
+   *  it runs from (0 the bottom, 1 the top). */
+  curlOrigin: number;
+  curlOriginEdge: number;
+  /** The two point lights, in the reference's world units. */
+  lightA: number;
+  lightAX: number;
+  lightAY: number;
+  lightAZ: number;
+  lightB: number;
+  lightBX: number;
+  lightBY: number;
+  lightBZ: number;
+  /** Matte, with a small reflective term. */
+  paperRoughness: number;
+  paperReflect: number;
+  /** The hairline along the sheet's edge, and the page's inset ring — ONE dial,
+   *  because an edge that only one of them has is an edge the hand-off's
+   *  crossfade would have to hide. */
+  edgeAlpha: number;
+  /** Pointer tilt: how far, and how fast it follows. Rides on the curl, so a
+   *  flat sheet is exactly flat — see `curlMaterial.ts`. */
+  mouseTiltDeg: number;
+  mouseLerp: number;
+
+  /* ── the track, and the shape of an entrance and an exit (PV MOTION) ────── */
+  /** Scroll spent on one entrance and one exit (px). A feel, not a length. */
+  enterDistancePx: number;
+  exitDistancePx: number;
+  /** How far through an exit the next sheet starts unrolling. */
+  enterOverlap: number;
+  /** The crossfade at the hand-off (ms). */
+  handoffMs: number;
+  /** The entrance, as four staggered windows of its own progress. */
+  startRotationDeg: number;
+  rotationEndAt: number;
+  scaleBase: number;
+  scaleTargetAt: number;
+  curlOutAt: number;
+  /** Where the sheet rises from, in page heights. Negative is below. */
+  riseFromH: number;
+  /** The exit, as CSS 3D on the live page. */
+  exitScale: number;
+  exitRotateDeg: number;
+  exitRiseH: number;
+  /** Where in the exit the opacity starts to go. Late, on purpose. */
+  exitFadeFrom: number;
+
   /**
-   * The width the folder geometry below is measured AT. Everything from here to
-   * `headerTitlePx` is a proportion of the sheet rather than a fixed size,
-   * scaled by `sheetWidth / referenceSheetPx`, so the cabinet keeps its shape
-   * at any viewport instead of becoming a different layout on a laptop.
-   */
-  referenceSheetPx: number;
-  /** A folder: the height of the tab on top of it, the tab's width and the 45°
-   *  chamfer at the tab's far end. */
-  tabHPx: number;
-  tabWPx: number;
-  chamferPx: number;
-  /** The STRIP: the labelled face, measured from the top of the tab. Taller than
-   *  the tab, so the number and the title straddle the tab and the sliver of
-   *  body under it — and it is where an open right folder's page begins, its
-   *  partner's strip being what fills the column beside it. A folder has no
-   *  height of its own beyond this: what it PAINTS is its slot, which the track
-   *  runs down to the body of the row in front. */
-  stripHPx: number;
-  /** Vertical step between rows, in the cabinet and the pile alike. LESS than
-   *  the slot a folder paints, which is what makes rows overlap and a pile read
-   *  as a pile; what is left between the two piles is the open page. */
-  rowPitchPx: number;
-  /** Where the columns divide, as a percentage of the sheet. Even rows use the
-   *  first, odd rows the second, so the cabinet never reads as a table. */
-  splitA: number;
-  splitB: number;
-  /** The title on a folder's strip — fitted to it, never taller than it — and
-   *  the much larger one its open page opens with. */
-  titleSizePx: number;
-  headerTitlePx: number;
-  /** Hover: how far the folder under the pointer lifts, and how far every other
-   *  folder fades while it is up. */
-  hoverLiftPx: number;
-  dimOpacity: number;
-  /** Scroll spent on one turn (px). Its own dial, not a width: how far the
-   *  wheel travels to turn a folder is a feel, not a length. */
-  turnDistancePx: number;
-  /** Curve for a rising row's POSITION. `linear` is the default and the point:
-   *  the folder is exactly where the scroll says it is, and Lenis does all the
-   *  smoothing there is. The dial stays for A/B. */
-  easeRise: RiseEase;
-  /**
-   * THE SETTLE. A folder must never come to rest in mid-air, so when the scroll
-   * stops with a turn part-done the track tweens to the nearer end of it.
+   * THE SETTLE. A sheet must never come to rest in mid-air, so when the scroll
+   * stops partway through a TURN — an exit and the entrance that overlaps it,
+   * taken as one move — the track tweens to the nearer end of it.
    *
    * `settleLow`/`settleHigh` bound the part of a turn worth finishing: below the
-   * first the folder has barely left, above the second it has all but landed,
-   * and in both cases moving it is a twitch rather than a resolution.
+   * first the page has barely left, above the second the sheet has all but
+   * landed, and in both cases moving it is a twitch rather than a resolution.
    * `settleIdleMs` is how long the scroll must have been quiet — Lenis's own
    * smoothing has to have run out first, or the settle fights the wheel.
    */
@@ -167,26 +194,19 @@ export interface PortfolioLook {
   settleHigh: number;
   settleMs: number;
   settleIdleMs: number;
-  /** The entrance: how long after the sheet starts sliding the first row leaves
-   *  the pile, and how long it takes to dock. */
+  /** The entrance TO THE VIEW: how long after the pane arrives section 0's
+   *  sheet starts unrolling, and how long it takes. */
   riseDelayMs: number;
   riseMs: number;
-  /** Alpha of the shadow the open folder casts back over the read pile. */
-  sectionShadowAlpha: number;
-  /** Lenis: smoothing factor on the sheet scroller, and the wheel gain. */
+
+  /* ── the scroller ──────────────────────────────────────────────────────── */
+  /** Lenis: smoothing factor on the scroller, and the wheel gain. */
   lenisLerp: number;
   wheelMultiplier: number;
-  /** How long clicking a sliver takes to scroll the track back (ms). */
-  sliverClickMs: number;
-  /** Where a sliver click lands — see {@link SliverReturn}. */
-  sliverReturn: SliverReturn;
-  /** How a page is painted — see {@link PageSurface}. */
-  pageSurface: PageSurface;
-  /** The page glass: its black tint, its backdrop blur, and how much it lifts
-   *  the colour coming through. Only used by `pageSurface: 'frosted'`. */
-  pageAlpha: number;
-  pageBlurPx: number;
-  pageSaturate: number;
+  /** How long a letterhead number takes to scroll the track to its section. */
+  letterheadClickMs: number;
+
+  /* ── chrome ────────────────────────────────────────────────────────────── */
   /** Close pill: diameter, its inset from the bottom-left corner, the offset it
    *  enters from, its own backdrop blur, and the ink alpha at rest vs hover
    *  (the ring and the X share one colour). */
@@ -197,6 +217,8 @@ export interface PortfolioLook {
   pillInkRest: number;
   pillInkHover: number;
   pillHoverScale: number;
+
+  /* ── the reveal system ─────────────────────────────────────────────────── */
   /** `.reveal`: duration, starting blur, starting offset, per-sibling stagger. */
   revealMs: number;
   revealBlurPx: number;
@@ -214,67 +236,83 @@ export interface PortfolioLook {
 }
 
 export const LOOK: PortfolioLook = {
-  scrimBlurPx: 16,
   scrimAlpha: 0.4,
-  glassColumnVw: 25,
-  // 24 is the strip's text inset, and the point is that they are one number.
-  pageInsetPx: 24,
+
+  // Deep ink blue, and DARKER than it looks like it needs to be. The paper
+  // reads as paper against it either way; what set the value is that mono type
+  // on it is held to the same 7:1 bar the ink on the paper is, and the ground's
+  // grain is source-over — so its worst patch is a lighter field, and a lighter
+  // field is where the letterhead's 11px type runs out of room. Measured, not
+  // chosen: see `docs/portfolio-view.md`.
+  groundColor: '#142a63',
+  groundAlpha: 1,
+  grainOpacity: 0.08,
+  letterheadHPx: 56,
+
+  paperColor: '#f4efe6',
+  inkColor: '#14120f',
+  pageMarginPx: 48,
+  // Deeper than the sides, and not for taste: the close pill is 96px at a 40px
+  // inset, and a page that ran under it would put chrome over content.
+  pageFootPx: 144,
+  pageInsetPx: 40,
   gridGapPx: 52,
   textMeasureCh: 0,
-  headerScale: 1,
-  // The folder geometry below is measured off the reference, and the reference
-  // is a whole page at 2560 where this is a sheet beside a glass column. Taken
-  // literally — scaling against the 1920 a 2560 viewport leaves for the sheet —
-  // a laptop gets none of the reference's legibility, only its proportions.
-  // 1600 is the width the proportions are treated as being for: at the 1296
-  // sheet a 1728 viewport gives, a 45px row and a 23px title.
-  referenceSheetPx: 1600,
-  // Compact rows: a folder in either pile is its tab and a sliver, so six of
-  // them cost a fifth of the sheet and the page you are reading gets the rest.
-  tabHPx: 22,
-  tabWPx: 608,
-  chamferPx: 40,
-  stripHPx: 40,
-  rowPitchPx: 56,
-  splitA: 50,
-  splitB: 38,
-  titleSizePx: 28,
-  headerTitlePx: 160,
-  hoverLiftPx: 12,
-  dimOpacity: 0.1,
-  turnDistancePx: 720,
-  easeRise: 'linear',
+  letterheadTitlePx: 96,
+
+  curlTightness: 0.62,
+  curlOrigin: 1,
+  curlOriginEdge: 0,
+  // The reference's constants, in the reference's world units. They transfer
+  // because the camera does — see `curlMaterial.ts`.
+  lightA: 1.14,
+  lightAX: 13,
+  lightAY: 5,
+  lightAZ: 10,
+  lightB: 0.8,
+  lightBX: 8,
+  lightBY: 5,
+  lightBZ: 10,
+  paperRoughness: 0.25,
+  paperReflect: 0.37,
+  edgeAlpha: 0.18,
+  mouseTiltDeg: 1.5,
+  mouseLerp: 0.06,
+
+  enterDistancePx: 900,
+  exitDistancePx: 600,
+  enterOverlap: 0.35,
+  handoffMs: 120,
+  startRotationDeg: -45,
+  rotationEndAt: 0.16,
+  scaleBase: 0.41,
+  scaleTargetAt: 0.22,
+  curlOutAt: 0.6,
+  riseFromH: -0.51,
+  exitScale: 0.58,
+  exitRotateDeg: 16,
+  exitRiseH: -0.3,
+  exitFadeFrom: 0.7,
+
   settleLow: 0.15,
   settleHigh: 0.85,
   settleMs: 450,
   settleIdleMs: 120,
   riseDelayMs: 500,
   riseMs: 900,
-  sectionShadowAlpha: 0.45,
+
   lenisLerp: 0.1,
   wheelMultiplier: 1,
-  // Longer than the 800ms of #10b: the click now rewinds the whole page, not
-  // just the last frame of it, so the travel is a page's worth further.
-  sliverClickMs: 1100,
-  sliverReturn: 'top',
-  pageSurface: 'frosted',
-  // Measured, not chosen. 0.76 is where the 11px figure caption clears 7:1 on
-  // the hardest backdrop the view has — a cold `#view-NN`, where the folders
-  // are over the GRID and its four full-size covers rather than the detail
-  // view's darker composition. It went up from the notebook's 0.68 because a
-  // folder's tint is lighter than a page's was (34% 12% against 34% 8%), which
-  // is what lets the hues tell the folders apart. Swept, not guessed:
-  // 0.68 → 6.81:1, 0.74 → 7.19, 0.80 → 7.63. See `contrastProbe.ts`.
-  pageAlpha: 0.76,
-  pageBlurPx: 24,
-  pageSaturate: 1.2,
+  letterheadClickMs: 1100,
+
   pillDiameterPx: 96,
   pillInsetPx: 40,
   pillOffsetPx: 73,
   pillBlurPx: 8,
-  pillInkRest: 0.2,
+  pillInkRest: 0.35,
   pillInkHover: 1,
   pillHoverScale: 0.92,
+
   revealMs: 800,
   revealBlurPx: 10,
   revealOffsetPx: 10,
@@ -286,6 +324,22 @@ export const LOOK: PortfolioLook = {
   flipMs: 500,
   flipDelayMs: 300,
 };
+
+/** The pose dials the track needs, pulled out of whatever look is live. */
+export function poseDials(from: PortfolioLook = look): PoseDials {
+  return {
+    startRotation: from.startRotationDeg,
+    rotationEndAt: from.rotationEndAt,
+    scaleBase: from.scaleBase,
+    scaleTargetAt: from.scaleTargetAt,
+    curlOutAt: from.curlOutAt,
+    riseFrom: from.riseFromH,
+    exitScale: from.exitScale,
+    exitRotate: from.exitRotateDeg,
+    exitRise: from.exitRiseH,
+    exitFadeFrom: from.exitFadeFrom,
+  };
+}
 
 /**
  * Per-character reveal delay — a DECELERATING ramp, `charRampMs * sqrt(i)`:
@@ -331,7 +385,11 @@ const easePane = cubicBezier(...EASE.pane);
 const easePill = cubicBezier(...EASE.pill);
 
 /** Eased 0→1 progress of one clip at time `ms`. */
-function channel(ms: number, clip: { at: number; dur: number }, ease: (x: number) => number): number {
+function channel(
+  ms: number,
+  clip: { at: number; dur: number },
+  ease: (x: number) => number,
+): number {
   return ease(clamp01((ms - clip.at) / clip.dur));
 }
 
@@ -370,15 +428,16 @@ export function applyPortfolioValues(v: PortfolioValues): void {
 }
 
 /** Pin every channel to REST. Set before a driver takes over so a lazy-loaded
- *  dock never flashes a fully-open pane over the page. */
+ *  dock never flashes a fully-open view over the page. */
 export function applyPortfolioRest(): void {
   applyPortfolioValues({ scrim: 0, pane: 0, pill: 0 });
 }
 
 /**
  * The LIVE look. Mutated in place so imperative readers (the scroller's Lenis
- * options, the sliver-click duration) always see the current value, exactly as
- * `config` does for the grid. Everything CSS can consume is a variable instead.
+ * options, the shader's uniforms, the track's dials) always see the current
+ * value, exactly as `config` does for the grid. Everything CSS can consume is a
+ * variable instead.
  */
 export const look: PortfolioLook = { ...LOOK };
 
@@ -386,7 +445,7 @@ type LookListener = (look: PortfolioLook) => void;
 const lookListeners = new Set<LookListener>();
 
 /** Subscribe to look changes — for the values that are NOT CSS variables and so
- *  need something torn down and rebuilt when they move. Returns an unsubscribe. */
+ *  need something rebuilt when they move. Returns an unsubscribe. */
 export function subscribeLook(fn: LookListener): () => void {
   lookListeners.add(fn);
   return () => {
@@ -396,23 +455,27 @@ export function subscribeLook(fn: LookListener): () => void {
 
 /** Publish the look: CSS variables for everything CSS can use, the `look`
  *  singleton for the rest. Called once on mount and again on every dock change,
- *  so geometry, the track and the reveal system all retune live. */
+ *  so the ground, the page, the track, the shader and the reveal system all
+ *  retune live. */
 export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   Object.assign(look, next);
   const s = document.documentElement.style;
-  s.setProperty('--pv-scrim-blur', `${look.scrimBlurPx}px`);
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
-  s.setProperty('--pv-glass-col', `${look.glassColumnVw}vw`);
-  s.setProperty('--pv-hover-lift', `${look.hoverLiftPx}px`);
-  s.setProperty('--pv-dim', String(look.dimOpacity));
+  s.setProperty('--pv-ground', look.groundColor);
+  s.setProperty('--pv-ground-alpha', String(look.groundAlpha));
+  s.setProperty('--pv-grain', String(look.grainOpacity));
+  s.setProperty('--pv-letterhead-h', `${look.letterheadHPx}px`);
+  s.setProperty('--pv-paper', look.paperColor);
+  s.setProperty('--pv-ink', look.inkColor);
+  s.setProperty('--pv-edge', String(look.edgeAlpha));
+  s.setProperty('--pv-page-margin', `${look.pageMarginPx}px`);
   s.setProperty('--pv-inset', `${look.pageInsetPx}px`);
+  s.setProperty('--pv-grid-gap', `${look.gridGapPx}px`);
   // `none`, not `0`: this is a max-width, and zero would collapse every
   // paragraph on the page rather than uncap it.
   s.setProperty('--pv-measure', look.textMeasureCh > 0 ? `${look.textMeasureCh}ch` : 'none');
-  s.setProperty('--pv-section-shadow', String(look.sectionShadowAlpha));
-  s.setProperty('--pv-page-alpha', String(look.pageAlpha));
-  s.setProperty('--pv-page-blur', `${look.pageBlurPx}px`);
-  s.setProperty('--pv-page-saturate', String(look.pageSaturate));
+  s.setProperty('--pv-letterhead-title', `${look.letterheadTitlePx}px`);
+  s.setProperty('--pv-handoff-ms', `${look.handoffMs}ms`);
   s.setProperty('--pv-pill-d', `${look.pillDiameterPx}px`);
   s.setProperty('--pv-pill-inset', `${look.pillInsetPx}px`);
   s.setProperty('--pv-pill-offset', `${look.pillOffsetPx}px`);
@@ -420,9 +483,6 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-pill-ink', String(look.pillInkRest));
   s.setProperty('--pv-pill-ink-hover', String(look.pillInkHover));
   s.setProperty('--pv-pill-hover-scale', String(look.pillHoverScale));
-  // A mode, not a number: 'solid' has to take `backdrop-filter` off the page
-  // entirely rather than set it to a no-op, which still costs a backdrop root.
-  document.documentElement.dataset.pvSurface = look.pageSurface;
   s.setProperty('--pv-reveal-ms', `${look.revealMs}ms`);
   s.setProperty('--pv-reveal-blur', `${look.revealBlurPx}px`);
   s.setProperty('--pv-reveal-offset', `${look.revealOffsetPx}px`);
@@ -439,23 +499,24 @@ const VARS = [
   '--pv-scrim',
   '--pv-pane',
   '--pv-pill',
-  '--pv-scrim-blur',
   '--pv-scrim-alpha',
-  '--pv-glass-col',
+  '--pv-ground',
+  '--pv-ground-alpha',
+  '--pv-grain',
+  '--pv-letterhead-h',
+  '--pv-paper',
+  '--pv-ink',
+  '--pv-edge',
+  '--pv-page-margin',
   '--pv-inset',
-  '--pv-measure',
   '--pv-grid-gap',
-  '--pv-tab-h',
-  '--pv-row-pitch',
-  '--pv-strip-h',
-  '--pv-title',
-  '--pv-header-title',
-  '--pv-hover-lift',
-  '--pv-dim',
-  '--pv-section-shadow',
-  '--pv-page-alpha',
-  '--pv-page-blur',
-  '--pv-page-saturate',
+  '--pv-measure',
+  '--pv-letterhead-title',
+  '--pv-handoff-ms',
+  '--pv-page-x',
+  '--pv-page-y',
+  '--pv-page-w',
+  '--pv-page-h',
   '--pv-pill-d',
   '--pv-pill-inset',
   '--pv-pill-ink',
@@ -479,7 +540,6 @@ const VARS = [
 export function resetPortfolioValues(): void {
   const s = document.documentElement.style;
   for (const v of VARS) s.removeProperty(v);
-  delete document.documentElement.dataset.pvSurface;
   Object.assign(look, LOOK); // a dev tuning session must not outlive the view
   portfolio.scrim = 0;
   portfolio.pane = 0;

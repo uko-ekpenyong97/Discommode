@@ -1,185 +1,108 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import Lenis from 'lenis';
 import { animate } from 'motion';
-import { FolderStack } from './FolderStack';
-import { look, subscribeLook } from './portfolioMotion';
+import { SectionPage } from './SectionPage';
+import { SheetCanvas } from './SheetCanvas';
+import type { SheetCanvasHandle } from './SheetCanvas';
+import { look, poseDials, subscribeLook } from './portfolioMotion';
 import {
-  bottomOf,
   buildTrack,
-  cabinetTop,
-  columnOf,
-  folderClipPath,
+  enterWindow,
   layout,
   maxPosition,
   minPosition,
-  pageTop,
   positionAt,
   positionOf,
   resolve,
-  rowOf,
+  restingPose,
+  settleTarget,
+  turnAt,
 } from './pageTrack';
-import type { FootRun, Track, TrackLayout, TrackPosition } from './pageTrack';
+import type { PagePose, Track, TrackLayout, TrackPosition } from './pageTrack';
+import type { ScreenRect } from './fitPlaneToRect';
 import { ScrollerContext } from './scrollerContext';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
 
 /**
- * The sheet: the pane that slides in from the right, and the ONE scroller that
- * drives the whole project.
+ * THE SCROLLER: the one scroll container, and the thing that turns a position
+ * into a frame.
  *
- * The page itself cannot scroll — `body` is locked to a single viewport and the
- * grid must not move while a project is open — so the sheet brings its own: a
- * full-height box with a hidden scrollbar and a spacer sized to the track's
+ * The document cannot scroll — `body` is locked to a single viewport and the
+ * grid must not move while a project is open — so this brings its own: a
+ * full-viewport box with a hidden scrollbar and a spacer sized to the track's
  * length. That scroller's position IS the track position. Every tick it goes
- * through `pageTrack`'s `layout()` and comes back out as a top, a height and a
- * z-index per folder, which is how one wheel gesture carries you down a folder,
- * brings the next one over or up, and carries on down that, with no mode and no
- * state machine in between.
+ * through `pageTrack`'s `layout()` and comes back out as at most one page pose
+ * and at most one sheet pose, which is how one wheel gesture carries you down a
+ * page, tilts it away, unrolls the next one and carries on down that, with no
+ * mode and no state machine in between.
  *
  * Everything here is imperative on purpose: scrolling writes geometry straight
- * to the DOM. The only React state is the scroller ELEMENT (the observers need
- * it as a root) and the armed flag.
+ * to the DOM and one `render` call to the canvas. The only React state is the
+ * scroller ELEMENT (the observers need it as a root) and the armed flag.
  *
  * Smoothing is Lenis, scoped to this scroller via its `wrapper`/`content`
  * options — the grid keeps its own feel entirely. Lenis honours
  * `prefers-reduced-motion` itself by dropping to 1:1.
  *
- * THE POSITION IS NOT THE SCROLLTOP. It usually is, but the entrance runs the
- * track from `-turnDistance` to 0 — the first row rising out of the pile before
- * there is anything to scroll — and a scroller cannot go negative. So the
- * position lives in `positionRef`, the scroller is one way of driving it, and
- * the intro tween is another.
+ * THE POSITION IS NOT THE SCROLLTOP. It usually is, but the track starts at
+ * `-enterDistance` — section 0's sheet fully rolled and out of frame — and a
+ * scroller cannot go negative. So the position lives in `positionRef`, the
+ * scroller is one way of driving it, and the intro tween is another.
  *
  * TWO RULES keep the track honest, and both exist because it is derived from
- * MEASURED folder heights:
+ * MEASURED page heights:
  *
  *  1. The scroller stays LOCKED until the first layout is real — fonts ready
- *     and every folder measured at least once. Before that the heights are a
+ *     and every page measured at least once. Before that the heights are a
  *     guess, and a guess you can scroll is a guess that throws you onto the
- *     wrong folder.
- *  2. A rebuild preserves the SEMANTIC position (folder, offset, turn
- *     progress), never the pixel one. A folder growing moves every start behind
- *     it, so the same `y` is a different place; `positionAt` → `resolve`
- *     carries the reader across instead, in the same frame as the change.
+ *     wrong section. The TEXTURES are deliberately not part of that gate:
+ *     `sheet.webp` decoding affects no layout, and waiting on it would put a
+ *     WebGL asset on the critical path of a scroll lock.
+ *  2. A rebuild preserves the SEMANTIC position (section, segment, how far
+ *     through), never the pixel one. See `positionAt` / `resolve`.
  *
  * Neither should ever have to do any work: the blocks reserve their media boxes
- * from intrinsic sizes, so a folder's height is the same before and after its
+ * from intrinsic sizes, so a page's height is the same before and after its
  * assets load. They are here because "should" is not a guarantee.
  */
 
-/**
- * What a folder's strip spends on things other than the title: the air above
- * and below the line. Fixed rather than scaled — scaled, it would vanish on a
- * laptop — which is why the title has to be FITTED to what is left of the strip
- * rather than simply scaled with everything else.
- */
-const STRIP_CHROME = 8;
-
-/** Smallest a folder's title may be fitted to before legibility beats layout. */
-const MIN_TITLE_PX = 12;
-
-/** The tab-click tween's curve — decelerating, so a long rewind settles. */
+/** The settle's and the letterhead click's curve — decelerating, so a long
+ *  rewind arrives slowly. */
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 
-/**
- * Which of a folder's three outlines it is wearing. The page's foot depends on
- * what is still in the pile, and a turn takes one folder out of it, so the
- * folder UNDER a rising one needs an outline of its own — see `measure`.
- */
-type ShapeState = 'closed' | 'open' | 'turning';
+/** The flat sheet: what the canvas holds while the page fades in over it. */
+const FLAT = { p: 1, rotationZ: 0, scale: 1, curl: 0, y: 0 };
 
 /**
  * Round to the device's pixel grid.
  *
- * A folder's top is a fraction of a scaled row pitch, so it lands wherever it
- * lands, and the strip's title and the page's first lines re-rasterise at a
- * different subpixel offset on every frame of a rise: the type crawls. Snapping
- * the slot's top AND bottom to real pixels costs at most half a device pixel of
- * position and buys type that holds still.
+ * The page rect comes out of a viewport size and two dials, so it lands
+ * wherever it lands, and half a device pixel of offset re-rasterises every run
+ * of type on it. Snapping both edges costs at most half a pixel of position and
+ * buys type that holds still through a resize.
  *
- * It is the TOP that is snapped, not a transform. Moving the folder by
- * `translateY` instead was measured: the glass survives it, but the text inside
- * a transformed box loses subpixel antialiasing and every run of type on the
- * sheet comes back lighter. The height has to be written per frame either way,
- * so there is no layout saved to pay for that.
+ * It is the RECT that is snapped, not a transform. The exit IS a transform, and
+ * the text inside a transformed box does lose subpixel antialiasing — that is
+ * acceptable there and only there, because the page is leaving and shrinking
+ * and nobody is reading it.
  */
 const snap = (v: number, dpr: number): number => Math.round(v * dpr) / dpr;
-
-/** A folder's current outline, as the DOM records it. */
-function shapeStateOf(el: HTMLElement): ShapeState {
-  return (el.dataset.shape as ShapeState) ?? 'closed';
-}
-
-/** The state a folder's outline should be in this frame. */
-function shapeStateFor(l: TrackLayout, k: number): ShapeState {
-  if (!l.folders[k].bodyVisible) return 'closed';
-  // The one in the air wears its own outline; the one it is rising off wears
-  // the outline that fills the slot being vacated.
-  return l.turning && k !== l.topIndex ? 'turning' : 'open';
-}
-
-/**
- * DEV: the painting invariant, checked rather than assumed.
- *
- * Every folder paints its own slot and nothing else — on glass that is not an
- * optimisation but the difference between a stack and a smear, because a
- * `backdrop-filter` samples whatever is behind it. Slots in a column now
- * OVERLAP by exactly one tab: a folder runs down to the body of the row in
- * front so that its own body fills the notch beside that row's tab rather than
- * leaving glass there, and the row in front (higher index, higher z) covers the
- * rest. Any more than a tab of overlap is two folders sharing a band, which is
- * the smear. The geometry is unit-tested; this asks the browser whether it made
- * it to the screen intact.
- */
-function assertSlotsTile(stack: HTMLElement, tabHeight: number): void {
-  // The outline is a `clip-path`, and an invalid one is not an error — the
-  // declaration is simply dropped and every folder paints as a full-width
-  // rectangle. Only the browser can say whether the string it was given was
-  // one it would take, so ask it; a unit test on the string cannot.
-  for (const shape of stack.querySelectorAll<HTMLElement>('.pv-folder__shape')) {
-    if (getComputedStyle(shape).clipPath === 'none') {
-      console.error(
-        `[pv:stack] folder ${shape.parentElement?.dataset.k} has no clip — the browser ` +
-          `rejected ${JSON.stringify(shape.style.clipPath)}`,
-      );
-      break;
-    }
-  }
-
-  // `offsetTop`/`offsetHeight`, not the client rect: a hovered folder is lifted
-  // by a transform, and a lift is not an overlap.
-  const rects = Array.from(stack.querySelectorAll<HTMLElement>('.pv-folder')).map((el) => ({
-    k: el.dataset.k,
-    side: el.dataset.side,
-    r: { top: el.offsetTop, bottom: el.offsetTop + el.offsetHeight },
-  }));
-  for (let i = 0; i < rects.length; i++) {
-    for (let j = i + 1; j < rects.length; j++) {
-      const a = rects[i];
-      const b = rects[j];
-      // Two folders of the same row share a band by design: the tab halves sit
-      // side by side in it and their outlines tile (see `folderClipPath`).
-      if (a.side !== b.side) continue;
-      const overlap = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
-      // `offsetTop`/`offsetHeight` are integers and the geometry is not, so the
-      // slack is two: one for each rounded edge of the band.
-      if (overlap > tabHeight + 2) {
-        console.error(
-          `[pv:stack] folders ${a.k} and ${b.k} overlap by ${Math.round(overlap)}px — ` +
-            `a tab (${Math.round(tabHeight)}px) is the most a row may reach into the next`,
-        );
-        return;
-      }
-    }
-  }
-}
 
 /**
  * DEV: the handle `scripts/pv-verify.mjs` drives the view through.
  *
- * The checks that matter here are ones only a browser can answer — did the clip
- * take, is there glass between two rows, is the page where it will be a frame
- * before it lands — and every one of them needs the track PARKED at an exact
+ * The checks that matter here are ones only a browser can answer — do the
+ * sheet's flat rect and the page's rect agree, does the swap show, is the
+ * canvas really idle — and every one of them needs the track PARKED at an exact
  * position while it measures and screenshots. There is no other way in: the
  * position is not the scrollTop, and Lenis owns the scrollTop.
  *
@@ -191,19 +114,28 @@ export interface PortfolioProbe {
   position: () => number;
   layout: () => TrackLayout | null;
   armed: () => boolean;
+  /** The stretch of track over which section `k`'s sheet is unrolling — NOT the
+   *  same as its `enter` segment, because of the overlap. */
+  enterWindow: (k: number) => { from: number; to: number } | null;
   /** Park the track at `y` and hold it there — the same lock the entrance uses,
    *  so neither the scroller nor Lenis moves it under the camera. */
   seek: (y: number) => void;
   /** Put the SCROLLER at `y` and let go. Unlike `seek` this is a real scroll,
    *  so the settle's idle timer starts counting exactly as it would after a
-   *  wheel — which is the only way to check that a folder left in mid-air
-   *  finishes its turn. */
+   *  wheel — which is the only way to check that a sheet left in mid-air
+   *  finishes its entrance. */
   park: (y: number) => void;
   /** Whether Lenis is still moving the scroll — its own smoothing runs on well
    *  past the last wheel event, and the settle waits for it. */
   scrolling: () => boolean;
   /** Hand the position back to the scroller. */
   release: () => void;
+  /** THE HAND-OFF INVARIANT: the flat plane's screen rect as three.js projects
+   *  it, and the live page's own rect. They must agree to a pixel. */
+  sheetRect: () => ScreenRect | null;
+  pageRect: () => ScreenRect | null;
+  /** Frames the canvas has painted. Must not move during a vertical run. */
+  canvasFrames: () => number;
 }
 
 declare global {
@@ -212,52 +144,56 @@ declare global {
   }
 }
 
+export interface ScrollerHandle {
+  /** Scroll the track to a section's page — what a letterhead number does, and
+   *  what a deep link resolves to. */
+  scrollToSection: (index: number) => void;
+}
+
 interface ScrollerProps {
   project: Project;
-  /** 0-based folder to open on (from `#view-NN/<section>`). */
+  /** 0-based section to open on (from `#view-NN/<section>`). */
   initialSection: number;
-  /** The folder being read changed — the hash follows it. */
+  /** The section being read changed — the hash and the letterhead follow it. */
   onSectionChange: (index: number) => void;
 }
 
-export function Scroller({ project, initialSection, onSectionChange }: ScrollerProps) {
+export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scroller(
+  { project, initialSection, onSectionChange },
+  handleRef,
+) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const stackRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<SheetCanvasHandle>(null);
 
   const trackRef = useRef<Track | null>(null);
-  const foldersRef = useRef<HTMLElement[]>([]);
-  /** Per folder, the parts the scroll loop writes to, and the two outlines it
-   *  swaps between. Collected once rather than queried per frame; the outlines
-   *  are re-cut on a measure, never on a frame. */
-  const partsRef = useRef<
-    {
-      body: HTMLElement;
-      inner: HTMLElement;
-      shape: HTMLElement;
-      strip: HTMLElement;
-      closed: string;
-      open: string;
-      turning: string;
-    }[]
-  >([]);
+  const pagesRef = useRef<HTMLElement[]>([]);
+  /** Per page, the two parts the scroll loop writes to. Collected once rather
+   *  than queried per frame. */
+  const partsRef = useRef<{ scroll: HTMLElement; inner: HTMLElement }[]>([]);
   const lenisRef = useRef<Lenis | null>(null);
   const activeRef = useRef(initialSection);
   /** The track position, which is NOT always the scroller's: the entrance runs
    *  it negative while the scroller sits at 0. */
   const positionRef = useRef(0);
   const introRef = useRef(false);
+  const pageRectRef = useRef<ScreenRect | null>(null);
   /** The first-layout gate (rule 1 above). `armed` unlocks the scroller. */
   const readyRef = useRef({ fonts: false, measured: new Set<Element>(), armed: false, at: 0 });
   // Only read on the FIRST measure of a project; after that the position is
   // carried across from the previous track (see `measure`).
   const initialRef = useRef(initialSection);
+  const reducedRef = useRef(false);
+  /** The 120ms crossfade at the end of an entrance: which page, and how far in.
+   *  Null when no swap is running. */
+  const handoffRef = useRef<{ index: number; alpha: number; raf: number } | null>(null);
+  /** Which page the last frame showed, so the hand-off fires once when it
+   *  changes. `-1` is "none — a sheet is unrolling"; `-2` is "nothing has been
+   *  painted yet", which must not count as a change. */
+  const lastRef = useRef(-2);
 
-  // False until the first layout is real AND the entrance has landed. Rendered
-  // as `data-locked`, which takes the scroller out of overflow entirely:
-  // stopping Lenis is not enough on its own, because Lenis is created in a
-  // passive effect and the scroller scrolls NATIVELY in the frames before that.
   const [armed, setArmed] = useState(false);
   // The scroller as a render input: the reveal observer and every block's
   // "am I on screen?" test need it as their root, and it only exists after the
@@ -284,210 +220,252 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
 
   useReveal(scroller, project.id);
 
-  /** One frame: the track position in, the pile's whole arrangement out. */
-  const apply = useCallback((position: number) => {
-    const track = trackRef.current;
-    const folders = foldersRef.current;
-    if (!track || folders.length === 0) return;
-    positionRef.current = position;
+  /**
+   * Show one page, or none, and put the canvas where the track says.
+   *
+   * `visibility`, not `opacity`, for the page that is not showing: a
+   * transparent page still composites and still runs its own animations, and
+   * the whole claim of this view is that ONE SURFACE PAINTS AT A TIME — except
+   * for `handoffMs` and the exit overlap.
+   */
+  const paint = useCallback(
+    (showIndex: number, pose: PagePose | null, alpha: number, exiting: boolean) => {
+      const pages = pagesRef.current;
+      const parts = partsRef.current;
+      const rect = pageRectRef.current;
+      for (let k = 0; k < pages.length; k++) {
+        const el = pages[k];
+        const live = k === showIndex && pose !== null;
+        const wasShown = el.style.visibility !== 'hidden';
+        const wasExiting = el.hasAttribute('data-exiting');
+        if (live && pose) {
+          el.style.visibility = '';
+          el.style.opacity = String(pose.opacity * alpha);
+          el.style.transform =
+            pose.scale === 1 && pose.rotateZ === 0 && pose.translateY === 0
+              ? ''
+              : `translate3d(0, ${(pose.translateY * (rect?.height ?? 0)).toFixed(2)}px, 0)` +
+                ` rotate(${pose.rotateZ.toFixed(3)}deg) scale(${pose.scale.toFixed(4)})`;
+          el.toggleAttribute('data-exiting', exiting);
+          const scroll = parts[k]?.scroll;
+          if (scroll && scroll.scrollTop !== pose.scrollTop) scroll.scrollTop = pose.scrollTop;
+        } else if (wasShown) {
+          el.style.visibility = 'hidden';
+          el.toggleAttribute('data-exiting', false);
+          // Put the pose back as well as hiding it. A page left in its exit
+          // pose is a page whose box is 58% of the rect and turned 16°, and
+          // every page is laid out whether or not it paints — so anything that
+          // measures one (the track's own rebuild included) would measure that.
+          el.style.transform = '';
+          el.style.opacity = '';
+        }
+        // A page that is out of the paint order is not out of an
+        // IntersectionObserver's reckoning — `visibility` is not something it
+        // notices — so a video under a sheet would keep decoding. Videos and
+        // Rive listen for this and stop; they stop on the exit too, the moment
+        // the page starts leaving.
+        if (live !== wasShown || (live && exiting !== wasExiting)) {
+          el.dispatchEvent(new CustomEvent('pv:shown', { bubbles: false }));
+          if (!live || exiting) for (const v of el.querySelectorAll('video')) v.pause();
+        }
+      }
+    },
+    [],
+  );
 
-    const l = layout(track, position);
-    const parts = partsRef.current;
-    const dpr = window.devicePixelRatio || 1;
-    let hovering = false;
-    for (let k = 0; k < folders.length; k++) {
-      const el = folders[k];
-      const f = l.folders[k];
-      const part = parts[k];
-      // Both edges on the pixel grid, and the height derived from the snapped
-      // top rather than snapped on its own — the foot of a page is pinned to
-      // the pile, and rounding the two independently would let it drift a
-      // pixel off the tab it is supposed to meet.
-      const top = snap(f.top, dpr);
-      el.style.top = `${top}px`;
-      el.style.height = `${snap(f.top + f.clipHeight, dpr) - top}px`;
-      el.style.zIndex = String(f.zIndex);
-      el.toggleAttribute('data-top', k === l.topIndex);
-      el.toggleAttribute('data-active', k === l.activeIndex);
+  /** One frame: the track position in, the whole view out. */
+  const apply = useCallback(
+    (position: number) => {
+      const track = trackRef.current;
+      const canvas = canvasRef.current;
+      if (!track || pagesRef.current.length === 0) return;
+      positionRef.current = position;
 
-      // HOVER SURVIVES A FOLDER MOVING OUT FROM UNDER THE POINTER. A pointer
-      // that has not moved gets no `pointerleave` when the thing beneath it
-      // does, so a folder hovered as the entrance lifted it kept the flag and
-      // left the whole pile dimmed behind a folder that was no longer a place
-      // to go. Anything that has become a page is no longer hoverable, so the
-      // flag comes off here; `data-hovering` follows whether ANY is left.
-      if (el.hasAttribute('data-hover')) {
-        if (f.bodyVisible) el.toggleAttribute('data-hover', false);
-        else hovering = true;
+      const d = poseDials();
+      const l = layout(track, position, d);
+      const handoff = handoffRef.current;
+      let shown: number;
+
+      if (reducedRef.current) {
+        // Reduced motion lands every section FLAT and keeps only the opacity of
+        // the hand-off. There is no unroll, no tilt and no per-scroll fade: a
+        // turn swaps the page at its midpoint and the 120ms crossfade is all
+        // that covers the swap. Fading the two halves of a turn in and out
+        // instead leaves the seam between them showing bare ground, which is a
+        // worse thing to do to someone who asked for less movement.
+        const turn = turnAt(track, position);
+        const at = positionAt(track, position);
+        const from = Math.max(0, turn ? turn.index : at.section);
+        shown =
+          turn === null
+            ? at.section
+            : turn.p < 0.5
+              ? from
+              : Math.min(from + 1, track.start.length - 1);
+        const scrollTop =
+          turn === null ? at.offset : shown === from ? track.pageScroll[from] : 0;
+        paint(shown, restingPose(scrollTop), handoff ? handoff.alpha : 1, false);
+        canvas?.hide();
+      } else {
+        shown = l.page ? l.page.index : -1;
+        paint(shown, l.page ? l.page.pose : null, handoff ? handoff.alpha : 1, l.segment === 'exit');
+        // The canvas holds the FLAT sheet under the page for the length of the
+        // crossfade, because the crossfade is the whole trick: two surfaces
+        // showing the same pixels, one replacing the other.
+        if (handoff) canvas?.show(handoff.index, FLAT);
+        else if (l.sheet) canvas?.show(l.sheet.index, l.sheet.pose);
+        else canvas?.hide();
       }
 
-      // The outline gains the full-width page when the folder opens, changes
-      // its foot when the folder above it leaves the pile, and loses the page
-      // again when it files. Swapped here rather than re-cut per frame: the
-      // page's HEIGHT is the wrapper's business, and only the shape changes.
-      el.toggleAttribute('data-open', f.bodyVisible);
-      const state = shapeStateFor(l, k);
-      if (part && state !== shapeStateOf(el)) {
-        el.dataset.shape = state;
-        part.shape.style.clipPath = part[state];
+      if (l.activeIndex !== activeRef.current) {
+        activeRef.current = l.activeIndex;
+        changeRef.current(l.activeIndex);
       }
 
-      const body = part?.body;
-      if (!body) continue;
-      if (body.scrollTop !== f.scrollTop) body.scrollTop = f.scrollTop;
-      // A folder that is filed is clipped to its strip anyway, but `overflow`
-      // is not something IntersectionObserver notices — a video in a folder
-      // that had gone back into the pile would keep decoding behind it.
-      const shown = f.bodyVisible;
-      if (shown !== (body.style.visibility !== 'hidden')) {
-        body.style.visibility = shown ? '' : 'hidden';
-        if (shown) body.dispatchEvent(new CustomEvent('pv:shown', { bubbles: false }));
-        else for (const video of body.querySelectorAll('video')) video.pause();
-      }
-    }
-
-    stackRef.current?.toggleAttribute('data-hovering', hovering);
-
-    if (l.activeIndex !== activeRef.current) {
-      activeRef.current = l.activeIndex;
-      changeRef.current(l.activeIndex);
-    }
-  }, []);
+      // The hand-off fires when the page being shown CHANGES — which, going
+      // forward, is the moment an entrance ends, and going back is the moment a
+      // rewind brings the previous page out of its exit pose. The first paint of
+      // all is not a change.
+      const last = lastRef.current;
+      lastRef.current = shown;
+      if (shown >= 0 && shown !== last && last !== -2) startHandoffRef.current(shown);
+    },
+    [paint],
+  );
 
   /**
-   * Re-derive the track: folder heights, the sheet's box, the row pitch and the
-   * turn distance, all measured or dialled rather than assumed. Runs on a
-   * resize AND whenever a folder's content settles — a late image extending one
-   * has to extend the track with it.
+   * THE HAND-OFF. The one trick the whole view rests on.
    *
-   * The position is carried across SEMANTICALLY — the folder, how far down it,
-   * and how far through a turn — never as a pixel offset. See `positionAt` /
-   * `resolve`. It should never have to do anything (the blocks reserve their
-   * media boxes), but a rebuild that moves the reader is the one failure this
-   * whole path exists to prevent, so the dev log below shouts about it.
+   * At the end of an entrance the HTML page fades in over the sheet across
+   * `handoffMs` at the identical rect, and the canvas stops. It is the same
+   * plate-crossfade the reader uses for a page turn, and it works for the same
+   * reason: two surfaces showing the same pixels, one replacing the other, with
+   * no geometry in between.
+   *
+   * Which means the invariant has to hold BEFORE the fade starts. If the two
+   * rects disagree the swap shows as a jump, and it shows at the corners, where
+   * a one-pixel step against the ground is visible. The dev warning below fires
+   * then, because a silent miss here looks like a rendering bug anywhere else
+   * in the view.
+   */
+  const startHandoff = useCallback(
+    (index: number) => {
+      const canvas = canvasRef.current;
+      if (handoffRef.current) cancelAnimationFrame(handoffRef.current.raf);
+
+      const el = pagesRef.current[index];
+      // The rect check only means anything when the page is AT REST. A rewind
+      // brings a page back out of its exit pose, which is a box at 58% of the
+      // rect turned 16°, and comparing the flat plane against that would report
+      // a five-hundred-pixel disagreement every time somebody scrolled up.
+      if (import.meta.env.DEV && el && el.style.transform === '') {
+        const sheet = canvas?.screenRect();
+        const page = el.getBoundingClientRect();
+        if (sheet && page) {
+          const dx = Math.max(
+            Math.abs(sheet.left - page.left),
+            Math.abs(sheet.top - page.top),
+            Math.abs(sheet.width - page.width),
+            Math.abs(sheet.height - page.height),
+          );
+          if (dx > 1) {
+            console.warn(
+              `[pv:handoff] the sheet's flat rect and the page's are ${dx.toFixed(2)}px apart — ` +
+                `the swap will show at the corners`,
+            );
+          }
+        }
+      }
+
+      const ms = Math.max(1, look.handoffMs);
+      const t0 = performance.now();
+      const state = { index, alpha: 0, raf: 0 };
+      handoffRef.current = state;
+      const frame = (now: number): void => {
+        state.alpha = Math.min(1, (now - t0) / ms);
+        if (state.alpha < 1) {
+          state.raf = requestAnimationFrame(frame);
+          apply(positionRef.current);
+        } else {
+          handoffRef.current = null;
+          apply(positionRef.current);
+        }
+      };
+      state.raf = requestAnimationFrame(frame);
+      apply(positionRef.current);
+    },
+    [apply],
+  );
+  // `apply` starts the hand-off and the hand-off drives `apply`; one of the two
+  // has to reach the other through a ref.
+  const startHandoffRef = useRef(startHandoff);
+  startHandoffRef.current = startHandoff;
+
+  /**
+   * Re-derive the track: the page rect from the viewport and two dials, the
+   * page heights from the DOM. Runs on a resize AND whenever a page's content
+   * settles — a late image extending one has to extend the track with it.
+   *
+   * The position is carried across SEMANTICALLY, never as a pixel offset. It
+   * should never have to do anything (the blocks reserve their media boxes),
+   * but a rebuild that moves the reader is the one failure this whole path
+   * exists to prevent, so the dev log below shouts about it.
    */
   const measure = useCallback(() => {
     const sc = scrollerRef.current;
-    const stack = stackRef.current;
+    const stage = stageRef.current;
     const spacer = spacerRef.current;
-    const folders = foldersRef.current;
-    if (!sc || !stack || !spacer || folders.length === 0) return;
+    const parts = partsRef.current;
+    if (!sc || !stage || !spacer || parts.length === 0) return;
 
     const previous = trackRef.current;
     const wasY = positionRef.current;
-    // Where the reader is, in the project's terms — not in pixels, which the
-    // rebuild is about to redefine.
     const held: TrackPosition = previous
       ? positionAt(previous, wasY)
-      : { section: initialRef.current, offset: 0, turn: null };
+      : { section: initialRef.current, segment: 'page', offset: 0, p: 0 };
 
-    // The reference is measured at one width; everything about a folder — how
-    // tall its body is, how wide its tab, how far the rows step — is a
-    // proportion of the sheet rather than a fixed number of pixels, so the
-    // cabinet keeps its shape at any size.
-    const sheetWidth = stack.getBoundingClientRect().width;
-    const scale = sheetWidth / look.referenceSheetPx;
-    const g = {
-      tabH: look.tabHPx * scale,
-      tabW: look.tabWPx * scale,
-      chamfer: look.chamferPx * scale,
-      strip: look.stripHPx * scale,
-      rowPitch: look.rowPitchPx * scale,
+    // THE PAGE RECT: the viewport, less a margin on the sides, the letterhead
+    // and a margin at the top, and a deeper FOOT at the bottom — the band the
+    // close pill lives in. Both edges land on the device pixel grid.
+    const dpr = window.devicePixelRatio || 1;
+    const box = sc.getBoundingClientRect();
+    const top = look.letterheadHPx + look.pageMarginPx;
+    const left = snap(look.pageMarginPx, dpr);
+    const right = snap(box.width - look.pageMarginPx, dpr);
+    const head = snap(top, dpr);
+    const foot = snap(box.height - look.pageFootPx, dpr);
+    const rect: ScreenRect = {
+      left,
+      top: head,
+      width: Math.max(1, right - left),
+      height: Math.max(1, foot - head),
     };
-
-    // The page's foot is per column now, so the track needs the column geometry
-    // that used to live only down here.
-    const splits: [number, number] = [look.splitA / 100, look.splitB / 100];
+    pageRectRef.current = rect;
+    stage.style.setProperty('--pv-page-x', `${rect.left}px`);
+    stage.style.setProperty('--pv-page-y', `${rect.top}px`);
+    stage.style.setProperty('--pv-page-w', `${rect.width}px`);
+    stage.style.setProperty('--pv-page-h', `${rect.height}px`);
+    // The canvas takes the rect in viewport coordinates, so the fit is against
+    // where the page actually is rather than where the stage thinks it is.
+    canvasRef.current?.fit({
+      left: box.left + rect.left,
+      top: box.top + rect.top,
+      width: rect.width,
+      height: rect.height,
+    });
 
     const track = buildTrack({
-      heights: partsRef.current.map(({ inner }) => inner.getBoundingClientRect().height),
-      viewportHeight: sc.clientHeight,
-      rowPitch: g.rowPitch,
-      strip: g.strip,
-      tabHeight: g.tabH,
-      sheetWidth,
-      splits,
-      turnDistance: look.turnDistancePx,
-      easeRise: look.easeRise,
+      heights: parts.map(({ inner }) => inner.getBoundingClientRect().height),
+      pageHeight: rect.height,
+      enterDistance: look.enterDistancePx,
+      exitDistance: look.exitDistancePx,
+      enterOverlap: look.enterOverlap,
     });
     trackRef.current = track;
 
-    // Published rather than recomputed in CSS, so the DOM and the track cannot
-    // disagree by a rounding step.
-    stack.style.setProperty('--pv-row-pitch', `${g.rowPitch}px`);
-    stack.style.setProperty('--pv-tab-h', `${g.tabH}px`);
-    stack.style.setProperty('--pv-strip-h', `${g.strip}px`);
-    // The title has to fit the STRIP, whatever the dial says: rows this compact
-    // leave no room for a line that overflows, and the folder in front would
-    // slice it in half.
-    const titleSize = Math.max(
-      MIN_TITLE_PX,
-      Math.min(look.titleSizePx * scale, g.strip - STRIP_CHROME),
-    );
-    stack.style.setProperty('--pv-title', `${titleSize}px`);
-    stack.style.setProperty(
-      '--pv-header-title',
-      `${look.headerTitlePx * scale * look.headerScale}px`,
-    );
-    // The page's gutter is a folder length like any other, so it scales; the
-    // page's INSET is not, because the strip's text inset it lines up with is
-    // a fixed number of pixels (see `portfolioMotion`).
-    stack.style.setProperty('--pv-grid-gap', `${look.gridGapPx * scale}px`);
-
-    // The columns alternate row by row — an even row splits evenly, an odd one
-    // does not — so the cabinet never reads as a table.
-    partsRef.current.forEach((part, k) => {
-      const { left, right } = columnOf(k, folders.length, sheetWidth, splits);
-      // Where this folder's page begins is a question of which column it is in
-      // — see `pageTop` — and the answer has to be the same one the track used
-      // to size the page, or the glass and the content disagree by a hair.
-      const bodyTop = pageTop(g.tabH, g.strip, k);
-      const top = cabinetTop(g.tabH, g.rowPitch, rowOf(k));
-      /** The track's foot is in the SHEET's coordinates; the clip is in the
-       *  folder's, and a docked folder's own top is where the two differ. */
-      const local = (runs: FootRun[]): FootRun[] =>
-        runs.map(({ x, y }) => ({ x, y: y - top }));
-      const shape = {
-        left,
-        right,
-        sheetWidth,
-        tabWidth: g.tabW,
-        tabHeight: g.tabH,
-        chamfer: g.chamfer,
-        // The element clips a folder to whatever slot the track gives it this
-        // frame, so the closed outline only has to be long enough never to be
-        // the shorter of the two — a column of the pile that runs out early
-        // hands the folder above it everything down to the foot of the sheet.
-        closedHeight: sc.clientHeight,
-        bodyTop,
-        foot: local(track.foot[k]),
-      };
-      // THREE outlines up front, because a page's foot depends on what is still
-      // in the pile and a turn takes one folder out of it. `apply` swaps
-      // between them once a turn rather than once a frame.
-      part.closed = folderClipPath(shape, false);
-      part.open = folderClipPath(shape, true);
-      // The same folder while the next one is in the air: the pile it stops at
-      // is the pile MINUS that folder, which is exactly the next folder's own
-      // foot. This is what fills the column the riser vacates.
-      part.turning =
-        k + 1 < track.foot.length
-          ? folderClipPath({ ...shape, foot: local(track.foot[k + 1]) }, true)
-          : part.open;
-      part.shape.style.clipPath = part[shapeStateOf(folders[k])];
-
-      part.strip.style.left = `${left}px`;
-      part.strip.style.width = `${right - left}px`;
-      // As tall as the folder SHOWS, not as tall as it paints: the row in front
-      // covers the notch below, and a hit area you cannot see is a trap. The
-      // LABEL inside it is the strip proper (`--pv-strip-h`).
-      part.strip.style.height = `${g.rowPitch}px`;
-      part.body.style.top = `${bodyTop}px`;
-      part.body.style.height = `${track.openBody[k]}px`;
-    });
-    // The spacer is the only reason the scroller has anywhere to go: the track's
-    // length minus the one viewport the sticky stage already occupies.
-    spacer.style.height = `${Math.max(0, track.length - track.viewportHeight)}px`;
+    // The spacer is the only reason the scroller has anywhere to go: the whole
+    // forward extent, since the sticky stage already occupies one viewport.
+    spacer.style.height = `${Math.max(0, maxPosition(track))}px`;
 
     // Back into pixels against the NEW track, synchronously — there must be no
     // frame that paints the new starts against the old position.
@@ -505,23 +483,24 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
     apply(position);
 
     if (import.meta.env.DEV && previous) {
-      const before = layout(previous, wasY).activeIndex;
-      const after = layout(track, position).activeIndex;
-      const heights = track.pageScroll.map((v, i) => Math.round(v + track.openBody[i]));
-      const was = previous.pageScroll.map((v, i) => Math.round(v + previous.openBody[i]));
+      const d = poseDials();
+      const before = layout(previous, wasY, d).activeIndex;
+      const after = layout(track, position, d).activeIndex;
+      const heights = track.heights.map(Math.round);
+      const was = previous.heights.map(Math.round);
       if (String(heights) !== String(was) || before !== after) {
-        const line = `[pv:track] heights ${was} → ${heights}  folder ${before} → ${after}`;
-        // A rebuild that changes which folder you are on is THE bug this is
+        const line = `[pv:track] heights ${was} → ${heights}  section ${before} → ${after}`;
+        // A rebuild that changes which section you are on is THE bug this is
         // here to catch: it means the reader was moved by something loading.
-        if (before !== after) console.warn(`${line}  ← ACTIVE FOLDER MOVED`);
+        if (before !== after) console.warn(`${line}  ← ACTIVE SECTION MOVED`);
         else console.log(line);
       }
     }
   }, [apply]);
 
   // Retuning the look in the dev dock changes the geometry the track was built
-  // from — the row pitch, the turn distance, the tab — so it has to re-derive.
-  // The two values CSS cannot carry rebuild the Lenis instance as well.
+  // from — the page rect, the two distances, the overlap — so it has to
+  // re-derive. The two values CSS cannot carry rebuild Lenis as well.
   useEffect(
     () =>
       subscribeLook((next) => {
@@ -540,8 +519,10 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
     window.__pv = {
       track: () => trackRef.current,
       position: () => positionRef.current,
-      layout: () => (trackRef.current ? layout(trackRef.current, positionRef.current) : null),
+      layout: () =>
+        trackRef.current ? layout(trackRef.current, positionRef.current, poseDials()) : null,
       armed: () => readyRef.current.armed,
+      enterWindow: (k: number) => (trackRef.current ? enterWindow(trackRef.current, k) : null),
       seek: (y: number) => {
         if (!trackRef.current) return;
         introRef.current = true;
@@ -558,6 +539,14 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
         introRef.current = false;
         if (readyRef.current.armed) lenisRef.current?.start();
       },
+      sheetRect: () => canvasRef.current?.screenRect() ?? null,
+      pageRect: () => {
+        const live = pagesRef.current.find((el) => el.style.visibility !== 'hidden');
+        if (!live) return null;
+        const r = live.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      },
+      canvasFrames: () => canvasRef.current?.frames() ?? 0,
     };
     return () => {
       delete window.__pv;
@@ -565,15 +554,18 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
   }, [apply]);
 
   /**
-   * THE SETTLE. A folder must never come to rest in mid-air.
+   * THE SETTLE. A sheet must never come to rest in mid-air.
    *
-   * The rise is 1:1 with the scroll and linear, which is the whole point — the
-   * folder is exactly where the wheel put it — but it means the wheel can leave
-   * it anywhere, including halfway between the pile and the cabinet, which is
-   * not a state the cabinet has. So when the scroll has been quiet for
-   * `settleIdleMs` with a turn part done, the track tweens to the nearer end of
-   * it: back to the foot of the page you were reading, or on to the top of the
-   * next one.
+   * The entrance is 1:1 with the scroll and linear, which is the whole point —
+   * the sheet is exactly where the wheel put it — but it means the wheel can
+   * leave it anywhere, including halfway out of its roll, which is not a state
+   * the view has. So when the scroll has been quiet for `settleIdleMs` with a
+   * TURN part done, the track tweens to the nearer end of it.
+   *
+   * A turn, not a segment: the exit and the entrance that overlaps it are one
+   * move, and the boundary between them is the one position with nothing on
+   * screen but ground. Settling to the nearer end of the EXIT would park the
+   * reader exactly there. See `turnAt`.
    *
    * A rewind is a turn run backwards, so this catches those too, at no cost.
    *
@@ -581,11 +573,12 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
    * scrolling — the idle timer is armed from the scroll itself, and Lenis emits
    * every frame while its own smoothing runs out, so the timer cannot fire
    * until the wheel and the lerp have both finished. It must not fire during
-   * the entrance (`introRef`), which owns the position. It must not fire on top
-   * of a tab click, which is a tween with somewhere to be — Lenis carries the
-   * `userData` of whatever asked for the scroll, so the click tags itself and
-   * this reads the tag. And it must not fight the reader afterwards: Lenis
-   * replaces a running `scrollTo` with the wheel's own the moment one arrives.
+   * the entrance to the view (`introRef`), which owns the position. It must not
+   * fire on top of a letterhead click, which is a tween with somewhere to be —
+   * Lenis carries the `userData` of whatever asked for the scroll, so the click
+   * tags itself and this reads the tag. And it must not fight the reader
+   * afterwards: Lenis replaces a running `scrollTo` with the wheel's own the
+   * moment one arrives.
    */
   const settleTimerRef = useRef(0);
   const trySettle = useCallback(() => {
@@ -593,16 +586,13 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
     const lenis = lenisRef.current;
     if (!track || !lenis || introRef.current || !readyRef.current.armed) return;
     if (lenis.isScrolling) return;
-    if ((lenis.userData as { pv?: string } | undefined)?.pv === 'sliver') return;
+    if ((lenis.userData as { pv?: string } | undefined)?.pv === 'letterhead') return;
 
-    const at = positionAt(track, positionRef.current);
-    const p = at.turn;
-    if (p === null || at.section < 0) return;
-    if (p <= look.settleLow || p >= look.settleHigh) return;
+    const turn = turnAt(track, positionRef.current);
+    if (!turn || turn.index < 0) return;
+    if (turn.p <= look.settleLow || turn.p >= look.settleHigh) return;
 
-    const back = track.start[at.section] + track.pageScroll[at.section];
-    const target = Math.min(p < 0.5 ? back : back + track.turnDistance, maxPosition(track));
-    lenis.scrollTo(target, {
+    lenis.scrollTo(Math.min(settleTarget(track, turn), maxPosition(track)), {
       duration: look.settleMs / 1000,
       easing: easeOutCubic,
       userData: { pv: 'settle' },
@@ -622,42 +612,35 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
     readyRef.current.armed = true;
     setArmed(true);
     lenisRef.current?.start();
-    if (import.meta.env.DEV) {
-      const stack = stackRef.current;
-      const track = trackRef.current;
-      if (stack && track) assertSlotsTile(stack, track.tabHeight);
-    }
   }, []);
 
   /**
    * Open the gate. The first layout is real, so build the track from it — and
-   * then, on a fresh open, run the ENTRANCE: the track starts one turn BEFORE
-   * zero, which is row 0 still down in the pile, and the tween carries it up to
-   * its slot. Expressed as a position rather than as an animation of its own,
-   * so the rise you see on the way in is the same rise the wheel gives you
-   * later, and scrolling back up re-runs it.
+   * then, on a fresh open, run the ENTRANCE: the track starts one entrance
+   * BEFORE zero, which is section 0's sheet fully rolled and out of frame, and
+   * the tween carries it up to the hand-off. Expressed as a position rather
+   * than as an animation of its own, so the unroll you see on the way in is the
+   * same unroll the wheel gives you later.
    *
-   * A deep link skips it: `#view-02/4` is a request for a particular folder,
-   * not for the opening of the project.
+   * A deep link skips it: `#view-02/3` is a request for a section, not for the
+   * opening of a project, and lands flat on it with no entrance replay. So does
+   * `prefers-reduced-motion`.
    */
   const arm = useCallback(() => {
     const ready = readyRef.current;
     if (ready.armed || introRef.current || !ready.fonts) return;
-    if (foldersRef.current.length === 0 || ready.measured.size < foldersRef.current.length) return;
+    if (partsRef.current.length === 0 || ready.measured.size < partsRef.current.length) return;
     measure();
 
     if (import.meta.env.DEV) {
-      const heights = trackRef.current?.pageScroll.map((v, i) =>
-        Math.round(v + (trackRef.current?.openBody[i] ?? 0)),
-      );
       console.log(
-        `[pv:track] armed in ${Math.round(performance.now() - ready.at)}ms  heights ${heights}`,
+        `[pv:track] armed in ${Math.round(performance.now() - ready.at)}ms  ` +
+          `heights ${trackRef.current?.heights.map(Math.round)}`,
       );
     }
 
     const track = trackRef.current;
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!track || initialRef.current !== 0 || reduced) {
+    if (!track || initialRef.current !== 0 || reducedRef.current) {
       unlock();
       return;
     }
@@ -672,33 +655,30 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
     });
   }, [apply, measure, unlock]);
 
-  // Collect the folder elements and keep them measured. Re-runs when the
-  // project changes, the only time the folder count can change.
+  // Collect the page elements and keep them measured. Re-runs when the project
+  // changes, the only time the section count can change.
   useLayoutEffect(() => {
-    const stack = stackRef.current;
-    if (!stack) return;
-    const folders = Array.from(stack.querySelectorAll<HTMLElement>('.pv-folder'));
-    foldersRef.current = folders;
-    partsRef.current = folders.map((folder) => ({
-      body: folder.querySelector<HTMLElement>('.pv-folder__content')!,
-      inner: folder.querySelector<HTMLElement>('.pv-folder__inner')!,
-      shape: folder.querySelector<HTMLElement>('.pv-folder__shape')!,
-      strip: folder.querySelector<HTMLElement>('.pv-folder__strip')!,
-      closed: '',
-      open: '',
-      turning: '',
+    const stage = stageRef.current;
+    if (!stage) return;
+    reducedRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const pages = Array.from(stage.querySelectorAll<HTMLElement>('.pv-page'));
+    pagesRef.current = pages;
+    partsRef.current = pages.map((page) => ({
+      scroll: page.querySelector<HTMLElement>('.pv-page__scroll')!,
+      inner: page.querySelector<HTMLElement>('.pv-page__inner')!,
     }));
     trackRef.current = null; // a different project: nothing to carry across
     activeRef.current = initialRef.current;
     positionRef.current = 0;
     introRef.current = false;
+    lastRef.current = -2;
     readyRef.current = { fonts: false, measured: new Set(), armed: false, at: performance.now() };
-    measure(); // provisional: arranges the pile, but the scroller stays locked
+    measure(); // provisional: lays the pages out, but the scroller stays locked
 
-    // The gate: fonts resolved AND every folder through at least one layout
-    // pass. With the blocks reserving their media boxes this is a frame or two,
-    // but a gate that can never open is worse than a slightly stale track, so
-    // it also gives up after a second and arms anyway.
+    // The gate: fonts resolved AND every page through at least one layout pass.
+    // With the blocks reserving their media boxes this is a frame or two, but a
+    // gate that can never open is worse than a slightly stale track, so it also
+    // gives up after a second and arms anyway.
     void document.fonts.ready.then(() => {
       readyRef.current.fonts = true;
       arm();
@@ -720,9 +700,11 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
     window.addEventListener('resize', measure);
     return () => {
       window.clearTimeout(fallback);
+      if (handoffRef.current) cancelAnimationFrame(handoffRef.current.raf);
+      handoffRef.current = null;
       ro.disconnect();
       window.removeEventListener('resize', measure);
-      foldersRef.current = [];
+      pagesRef.current = [];
       partsRef.current = [];
     };
   }, [project.id, measure, arm]);
@@ -772,52 +754,56 @@ export function Scroller({ project, initialSection, onSectionChange }: ScrollerP
   }, [apply, armSettle, smoothing]);
 
   /**
-   * A tab was clicked: scroll the track to that folder's TOP.
+   * A letterhead number was clicked: scroll the track to that section's page.
    *
    * Which is the whole navigation, and it needs no special casing in either
    * direction — the track between here and there is the same track. Clicking a
-   * tab in the unread pile runs forward through every folder in between, rows
-   * rising and carrying their pages up in sequence; clicking one in the read
-   * pile runs the same thing backwards.
-   *
-   * `sliverReturn: 'bottom'` lands on the line you left instead. Shorter, less
-   * of a performance; the dial is there to A/B them.
+   * number ahead runs forward through every page in between, each one tilting
+   * away as the next unrolls; clicking one behind runs the same thing
+   * backwards.
    */
   const scrollToSection = useCallback((index: number) => {
     const track = trackRef.current;
     const lenis = lenisRef.current;
     const sc = scrollerRef.current;
     if (!track || introRef.current) return;
-    const target =
-      look.sliverReturn === 'bottom' ? bottomOf(track, index) : positionOf(track, index);
+    const target = Math.min(positionOf(track, index), maxPosition(track));
     if (lenis) {
-      lenis.scrollTo(Math.min(target, maxPosition(track)), {
-        duration: look.sliverClickMs / 1000,
+      lenis.scrollTo(target, {
+        duration: look.letterheadClickMs / 1000,
         // The dial's curve, not Lenis's default: a long rewind wants to arrive
         // slowly, and this is the one tween in the view a person watches.
         easing: easeOutCubic,
         // Tagged so the settle leaves it alone. Lenis clears `userData` when
         // the tween lands and replaces it when anything else — the reader's
         // wheel included — takes the scroll over, so the tag cannot get stuck.
-        userData: { pv: 'sliver' },
+        userData: { pv: 'letterhead' },
       });
     } else if (sc) {
       sc.scrollTo({ top: target, behavior: 'smooth' });
     }
   }, []);
 
+  useImperativeHandle(handleRef, () => ({ scrollToSection }), [scrollToSection]);
+
   return (
-    <div className="pv-pane">
+    <>
+      {/* Before the scroller in the DOM, so the page paints OVER it: at the
+          hand-off the page fades in on top of the sheet, and a canvas above it
+          would hide the very thing arriving. */}
+      <SheetCanvas ref={canvasRef} captures={project.sections.map((s) => s.sheets)} />
       <div className="pv-scroller" ref={attachScroller} data-locked={armed ? undefined : ''}>
         <ScrollerContext.Provider value={scroller}>
           <div className="pv-content" ref={contentRef}>
-            <div className="pv-stage">
-              <FolderStack project={project} stackRef={stackRef} onSelect={scrollToSection} />
+            <div className="pv-stage" ref={stageRef}>
+              {project.sections.map((section, k) => (
+                <SectionPage key={k} section={section} index={k} />
+              ))}
             </div>
             <div className="pv-spacer" ref={spacerRef} aria-hidden="true" />
           </div>
         </ScrollerContext.Provider>
       </div>
-    </div>
+    </>
   );
-}
+});

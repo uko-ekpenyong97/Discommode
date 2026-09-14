@@ -1,11 +1,11 @@
 /**
  * A project is an ORDERED ARRAY OF BLOCKS — the whole content model. Adding a
  * kind of thing a project can say means adding a variant here and a case in
- * `Blocks.tsx`; it never means touching the sheet, the strip or the scroller.
+ * `Blocks.tsx`; it never means touching the sheet, the page or the scroller.
  *
- * Sections: consecutive blocks group into one `<section>`. A block with
- * `newSection: true` starts a fresh one (and gets the hairline divider above
- * it), so the rhythm is authored in the data rather than inferred from types.
+ * Runs: consecutive blocks group into one `<div class="pv-run">`. A block with
+ * `newRun: true` starts a fresh one (and gets the hairline divider above it),
+ * so the rhythm is authored in the data rather than inferred from types.
  */
 
 /**
@@ -25,6 +25,17 @@ export type Media =
   | ({ kind: 'video'; src: string; poster: string } & Sized);
 
 export type BlockBody =
+  /**
+   * THE LETTERHEAD. The number, the title and a mono date/ref line, at the top
+   * of the page. Every section opens with one, and that is what makes
+   * `sheet.webp` a picture of a DOCUMENT rather than a crop of a scrolling
+   * list — the capture is the section's first viewport, so whatever is at the
+   * top of the page is what the rolled sheet is showing.
+   *
+   * Not the same thing as the letterhead STRIP on the ground, which names the
+   * project and never moves. This one is printed on the paper.
+   */
+  | { type: 'letterhead'; no: string; title: string; ref: string }
   /** ~120px display heading, revealed per character. */
   | { type: 'title'; text: string }
   /** A thin one-liner — a dateline, a role, a year. */
@@ -40,7 +51,7 @@ export type BlockBody =
    * would read as a stack of separate things.
    */
   | { type: 'row'; heading: string; text: string; media: Media }
-  /** The full measure, or edge-to-edge of the folder with `bleed`. */
+  /** The full measure, or edge-to-edge of the page with `bleed`. */
   | ({ type: 'image'; src: string; alt?: string; bleed?: boolean; caption?: string } & Sized)
   /** Four columns of image + label. Three grid columns each. */
   | { type: 'statGrid'; stats: Stat[] }
@@ -79,8 +90,8 @@ export type Block = BlockBody & {
    */
   span?: number;
   /** Start a new RUN at this block — one `<div class="pv-run">` with a hairline
-   *  divider above it. A run is a paragraph-level grouping inside a section,
-   *  not a section: sections are the notebook's tabbed units. */
+   *  divider above it. A run is a paragraph-level grouping inside a page, not a
+   *  section: a section is a whole sheet of paper. */
   newRun?: boolean;
   /** Give this block the 3D flip-in rather than the standard reveal — for the
    *  one or two frames a project leads with. */
@@ -88,30 +99,61 @@ export type Block = BlockBody & {
 };
 
 /**
- * One tabbed section of a project — a divider in the notebook.
+ * The capture of a section's first viewport, as a texture.
+ *
+ * The intrinsic size is carried for the same reason every other piece of media
+ * carries one, even though nothing lays out around this one: it is the table
+ * the generator writes the file from, a texture whose size is a guess is a
+ * texture nobody can tell has gone stale — and here it is also how the right
+ * capture is CHOSEN. See {@link Section.sheets}.
+ */
+export interface SheetTexture {
+  src: string;
+  width: number;
+  height: number;
+}
+
+/**
+ * One SECTION of a project, which is one sheet of paper.
  *
  * Where a section break falls is a content decision, never a computed split of
- * a long list: a section is what a tab names, and only the person writing the
- * project knows where one ends.
+ * a long list: a section is a sheet, and only the person writing the project
+ * knows where one ends.
  */
 export interface Section {
-  /** The tab's label, running down the left edge. */
+  /** Named on the ground's letterhead while you are reading it, and on the
+   *  page's own letterhead block. */
   title: string;
-  /** HSL hue for this section's glass and its tab. Sections are told apart by
-   *  colour as much as by label, so it belongs to the content, not to a theme. */
-  hue: number;
   blocks: Block[];
+  /**
+   * ONE CAPTURE PER SIGNED-OFF VIEWPORT, widest first.
+   *
+   * It would be tidier for one capture to serve both, and it does not work.
+   * The page's type is a fixed number of pixels and its measure is not, so a
+   * page at 1632 wraps its lines somewhere a page at 1344 does not — the two
+   * are different documents, not the same document at two scales, and no amount
+   * of resampling turns one into the other. Measured: a single capture put the
+   * hand-off diff at 8–16% of the page's pixels at the viewport it was not
+   * taken at, against a 2% budget. With one each it is under 2% at both.
+   *
+   * `SheetCanvas` picks the one whose `width` is nearest the live page's rect,
+   * so a project that ships one capture still works — at one viewport.
+   */
+  sheets: SheetTexture[];
 }
 
 export interface Project {
   /** Project id — the `NN` in `#view-NN`. */
   id: string;
-  /** Shown in the sheet's chrome; not a block. */
+  /** Shown on the ground's letterhead; not a block. */
   title: string;
+  /** A dateline for the ground's letterhead. A placeholder until there is a
+   *  real project to put one on. */
+  ref: string;
   /**
    * The project's SECTIONS, in order. The count is unbounded — one section is a
-   * perfectly good project, and the notebook derives everything from the list's
-   * length, down to how tall the tabs have to be to fit (see `pageTrack.ts`).
+   * perfectly good project, and it exercises the case with no turn at all (see
+   * `pageTrack.ts`).
    */
   sections: Section[];
 }

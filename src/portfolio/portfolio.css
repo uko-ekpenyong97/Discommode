@@ -1,4 +1,4 @@
-/* The project view's anatomy: glass, pane, scroller, page row, close pill.
+/* The project view's anatomy: scrim, ground, canvas, page, close pill.
 
    Every number that is worth tuning is a `--pv-*` custom property written by
    portfolioMotion.ts (defaults duplicated here as fallbacks, so the stylesheet
@@ -7,64 +7,255 @@
    `--pv-pane`, `--pv-pill` — are written per frame by the driver; nothing in
    this file has a transition on them, because the driver IS the curve.
 
-   The page row's horizontal arrangement is NOT in here at all: every page's
-   `transform` and `scrollTop` come out of `pageTrack.ts` and are written by
-   `Scroller`, per scroll tick. What this file owns is the frame each page is, and
-   the two states (`data-active`, `data-stacked`) the track puts it in. */
+   Where the page is and what pose it is in is NOT in here at all: the rect
+   comes out of `Scroller`'s measure as four variables, and the exit's transform
+   is written per frame. What this file owns is the frame the page is, the
+   surface it is printed on, and the order the three layers paint in.
+
+   FRONT TO BACK, and it is exactly three things:
+
+     the page    live HTML on paper — the thing you read
+     the sheet   the same page as a texture on a curled plane, in WebGL,
+                 visible only while it is unrolling
+     the ground  a full-viewport opaque field with a letterhead across the top
+
+   The page and the sheet occupy the same rectangle and are never both visible,
+   except for `handoffMs`. */
 
 .pv {
   position: absolute;
   inset: 0;
-  overflow: hidden; /* the pane parks offscreen right before it slides in */
-  /* The app's only type token is `--mono`, which the labels and captions still
-     use. A project is prose, so it needs a reading face as well. */
+  overflow: hidden;
+  /* The app's only type token is `--mono`, which the letterhead and the
+     captions use. A project is prose, so it needs a reading face as well. */
   --pv-sans: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif;
   font-family: var(--pv-sans);
-  color: rgba(255, 255, 255, 0.88);
 }
 
-/* ── the glass ─────────────────────────────────────────────────────────── */
+/* Visually hidden, still read out. The letterhead's numbers are links to
+   sections, and "03" is not what they are called. */
+.pv-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
-/* Over the grid AND the detail view, so the hero card stays visible — blurred,
-   still live — behind it. Clicking dismisses, like the detail backdrop. */
+/* ── the scrim ─────────────────────────────────────────────────────────── */
+
+/* Over the grid AND the detail view, so the card the project was opened from is
+   still there — still live — for the 600ms the ground takes to arrive over it.
+
+   TINT ONLY. The `backdrop-filter` went with the frosted page: a full-viewport
+   blur that nothing is ever seen through past those 600ms is a backdrop root
+   the compositor maintains for the whole time the view is open. What it costs
+   is a sharp grid behind a 40% black for the length of one fade, once per open.
+
+   It takes no pointer events either: the ground is opaque and full-viewport, so
+   nothing would ever reach it. The way out is on `.pv-pane` (see
+   `useDismissOnGround`) and on the pill. */
 .pv-scrim {
   position: absolute;
   inset: 0;
   background: rgba(0, 0, 0, var(--pv-scrim-alpha, 0.4));
-  backdrop-filter: blur(var(--pv-scrim-blur, 16px));
-  -webkit-backdrop-filter: blur(var(--pv-scrim-blur, 16px));
   opacity: var(--pv-scrim, 0);
+  pointer-events: none;
   will-change: opacity;
 }
 
-/* ── the pane + its scroller ───────────────────────────────────────────── */
+/* ── the pane: ground, canvas, scroller ────────────────────────────────── */
 
-/* The pane starts at the right of a GLASS COLUMN and runs to the edge. That
-   column is the only part of the view where the grid is just the grid: no
-   folder ever reaches it, and the only thing in it is the way out.
-
-   Parked one full width to the right at rest; `--pv-pane` drives it home. */
+/* Everything that is the project, as one layer that fades in over the scrim.
+   It FADES rather than slides: there is no band of app left beside it to slide
+   in from, and a full-viewport opaque field arriving by translation reads as a
+   shutter. */
 .pv-pane {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: var(--pv-glass-col, 25vw);
-  transform: translateX(calc(100% * (1 - var(--pv-pane, 0))));
+  inset: 0;
+  opacity: var(--pv-pane, 0);
+  will-change: opacity;
+}
+
+/* THE GROUND. Opaque, full-viewport, and it never moves.
+
+   `--pv-ground-alpha` below 1 lets the grid show through, which is a debugging
+   affordance and not a look: every contrast figure in the docs is measured at
+   1, and paper over glass is the thing this model exists to stop doing. */
+.pv-ground {
+  position: absolute;
+  inset: 0;
+  background: var(--pv-ground, #142a63);
+  opacity: var(--pv-ground-alpha, 1);
+}
+
+/* FILM GRAIN, as a compositor-only loop.
+
+   One tile of SVG turbulence, four times the viewport, stepped around by a
+   transform eight times a second. Stepping `background-position` instead would
+   repaint a full-viewport layer at every step — under a page of type, during
+   the one segment where nothing is supposed to be costing frames. A transform
+   on its own layer costs the compositor and nothing else. */
+.pv-grain,
+.pv-page__grain {
+  position: absolute;
+  inset: -100%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: var(--pv-grain, 0.08);
+  pointer-events: none;
+  animation: pv-grain 800ms steps(1) infinite;
   will-change: transform;
 }
 
-/* Exactly one viewport, and the only thing in the view that scrolls. Its
-   position is the TRACK position: one gesture carries you down a page, across
-   to the next, and down that one. `overscroll-behavior: contain` stops a scroll
-   past either end from reaching the document (and the grid) underneath. The
-   scrollbar is hidden — the page is the only thing that should read as moving,
-   and its extent is the project's, not one page's. */
-.pv-scroller {
+@keyframes pv-grain {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  12.5% {
+    transform: translate3d(-7%, 4%, 0);
+  }
+  25% {
+    transform: translate3d(4%, -6%, 0);
+  }
+  37.5% {
+    transform: translate3d(-3%, -4%, 0);
+  }
+  50% {
+    transform: translate3d(6%, 3%, 0);
+  }
+  62.5% {
+    transform: translate3d(-5%, 6%, 0);
+  }
+  75% {
+    transform: translate3d(3%, -3%, 0);
+  }
+  87.5% {
+    transform: translate3d(-6%, -5%, 0);
+  }
+}
+
+/* THE LETTERHEAD. A mono strip across the top of the ground: the project, the
+   section numbers as links, the section you are on, and a dateline. It sits on
+   the GROUND and not on the paper, so it does not move when a sheet does and it
+   never has to be part of a texture.
+
+   Its type is the one run in the view the paper's contrast target says nothing
+   about, because it is not on paper — it has its own measurement against
+   `groundColor`. See `contrastProbe.ts`. */
+.pv-letterhead {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the grain and UNDER THE PAPER, which is the one ordering decision in
+     this file worth writing down. A page part-way through its exit is turned
+     16° and rides up over this band, and the obvious fix — chrome on top, the
+     way the close pill is — makes it worse rather than better: the strip is
+     white mono, the paper is warm off-white, and white on off-white is not
+     navigation you can read. Paper covering what is printed on the ground under
+     it is also what paper does. The strip is back the moment the page has
+     gone. */
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: var(--pv-letterhead-h, 56px);
+  padding: 0 var(--pv-page-margin, 48px);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.pv-letterhead__project {
+  flex: none;
+  color: #fff;
+}
+
+.pv-letterhead__nav {
+  display: flex;
+  gap: 10px;
+}
+
+/* The only navigation the view has. A number at rest is dimmer than the strip
+   around it; the current one is full white and so is a hover, so "where am I"
+   and "where could I go" are the same signal read twice.
+
+   0.80 is the floor, not a taste: mono type on the ground is held to the same
+   7:1 the ink on the paper is, and the ground's grain is source-over, so its
+   worst patch is a LIGHTER field under the same white. That leaves very little
+   room between "dim" and "white" — which is why the current one is marked with
+   a rule as well as with a weight of light. */
+.pv-letterhead__no {
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: color 180ms ease;
+}
+.pv-letterhead__no:hover,
+.pv-letterhead__no:focus-visible {
+  color: #fff;
+}
+.pv-letterhead__no[data-current] {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+.pv-letterhead__no:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+.pv-letterhead__section {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pv-letterhead__ref {
+  flex: none;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* THE SHEET'S CANVAS. Over the ground and under the page — the page has to fade
+   in ON TOP of the sheet at the hand-off, and a canvas above it would hide the
+   very thing arriving.
+
+   `pointer-events: none` throughout, even mid-entrance: the only thing you can
+   do to a sheet while it unrolls is scroll it, and the scroller is underneath.
+   `uMouse` reads the pointer from the window for the same reason. */
+.pv-canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  /* The glass closes the view when you click it, but it is not an affordance —
-     the pill and the slivers are. No pointer, no hover state. */
+  pointer-events: none;
+}
+
+/* Exactly one viewport, and the only thing in the view that scrolls. Its
+   position is the TRACK position: one gesture carries you down a page, tilts it
+   away, unrolls the next and carries on down that.
+
+   It covers the whole viewport rather than the page, because the wheel has to
+   work wherever the pointer is. That is also why the click-to-leave moved onto
+   `.pv-pane`: nothing under this element can hear a press.
+
+   `overscroll-behavior: contain` stops a scroll past either end from reaching
+   the document (and the grid) underneath. The scrollbar is hidden — the page is
+   the only thing that should read as moving, and its extent is the project's,
+   not one section's. */
+.pv-scroller {
+  position: absolute;
+  inset: 0;
   cursor: default;
   overflow-x: hidden;
   overflow-y: scroll;
@@ -76,10 +267,11 @@
   display: none;
 }
 
-/* Locked until the first layout is real (see `Scroller`). Out of overflow, so the
-   wheel does nothing at all — not even the native scroll that would otherwise
-   run in the frames between mount and Lenis being created. Programmatic
-   `scrollTop` still works, which is all the provisional layout needs. */
+/* Locked until the first layout is real (see `Scroller`). Out of overflow, so
+   the wheel does nothing at all — not even the native scroll that would
+   otherwise run in the frames between mount and Lenis being created.
+   Programmatic `scrollTop` still works, which is all the provisional layout
+   needs. */
 .pv-scroller[data-locked] {
   overflow-y: hidden;
 }
@@ -91,10 +283,9 @@
   position: relative;
 }
 
-/* Pinned for the whole scroll range, so the pile stays put while the spacer
-   behind it supplies the range. Sticky rather than a floating sibling: it has
-   to stay INSIDE the scroller for every block's visibility test to resolve
-   against the same box. */
+/* Pinned for the whole scroll range, so the pages stay put while the spacer
+   behind them supplies the range. Sticky rather than a floating sibling: it has
+   to stay INSIDE the scroller for the pages' own boxes to resolve against it. */
 .pv-stage {
   position: sticky;
   top: 0;
@@ -102,250 +293,85 @@
 }
 
 /* Invisible, and the only reason the scroller has anywhere to go: the track's
-   length minus the one viewport the stage already occupies. */
+   whole forward extent, since the sticky stage already occupies one viewport. */
 .pv-spacer {
   opacity: 0;
   pointer-events: none;
 }
 
-/* ── the cabinet ────────────────────────────────────────────────────────── */
+/* ── the page ──────────────────────────────────────────────────────────── */
 
-/* The box the folders live in: the whole sheet, with every folder absolutely
-   positioned inside it. `Scroller` writes each one's top, height and z-index every
-   frame; nothing here moves on its own. */
-.pv-stack {
+/* THE RECT, and the paper. Every section's page is in the same box and all of
+   them are in the DOM from the first frame — the track is built from measured
+   heights, so a page that is not showing still has to be laid out. `Scroller`
+   decides which one paints.
+
+   The four variables come out of the measure, both edges already on the device
+   pixel grid: the viewport, less a margin on the sides, the letterhead and a
+   margin at the top, and a deeper FOOT at the bottom. The foot is the band the
+   close pill lives in, and it is deeper for exactly that reason — a page that
+   ran under the pill would put chrome over content.
+
+   The element is what the EXIT transforms, so it carries the origin and the
+   hint; the transform itself is written per frame and must not be transitioned. */
+.pv-page {
+  position: absolute;
+  left: var(--pv-page-x, 48px);
+  top: var(--pv-page-y, 104px);
+  width: var(--pv-page-w, 100px);
+  height: var(--pv-page-h, 100px);
+  overflow: hidden;
+  background: var(--pv-paper, #f4efe6);
+  color: var(--pv-ink, #14120f);
+  transform-origin: center;
+  will-change: transform, opacity;
+  /* TWO shadows, and only one of them is shared with the sheet.
+
+     The hairline is INSET, so it is inside the page's rect — which means the
+     sheet has to draw one too, in the same ink at the same alpha, or the
+     hand-off's crossfade would have an edge appearing in it. `--pv-edge` is the
+     one dial and `curlMaterial` reads it as a uniform.
+
+     The soft drop is OUTSIDE the rect, so it is outside the hand-off diff
+     entirely. It arrives with the page's own opacity over those 120ms, which
+     reads as the sheet settling onto the ground rather than as a shadow
+     switching on. */
+  box-shadow:
+    inset 0 0 0 1px rgb(from var(--pv-ink, #14120f) r g b / var(--pv-edge, 0.18)),
+    0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+/* The scroll container for the section's vertical run. Inset over the rect
+   rather than being it, so the grain above can hold still while the type moves
+   under it — which is what grain on paper does. */
+.pv-page__scroll {
   position: absolute;
   inset: 0;
-}
-
-/* A FOLDER. The element is its SLOT — the share of the screen it currently has,
-   from the top of its tab down to whatever is below it — and it clips to that.
-   Which is the entire painting rule: filed, you get your pitch plus the tab of
-   the row in front, so that row covers the overlap and your body fills the
-   notch beside its tab instead of leaving glass; open, you get your strip plus
-   your page, out to the top of the pile. A folder paints nothing outside its
-   slot, which on glass is not an optimisation but the difference between a
-   stack and a smear. */
-.pv-folder {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 0;
   overflow: hidden;
-  /* The element spans the whole sheet whatever column the folder is drawn in —
-     the open page needs that width — so it must not be a pointer target, or a
-     folder in the right column would swallow every click over its neighbour in
-     the left. Its FACE and its PAGE take pointers; the rest of it is paint. */
-  pointer-events: none;
-  transition:
-    opacity 250ms ease,
-    transform 250ms ease;
-}
-
-/* THE SURFACE. One glass element for the whole outline — tab, chamfer, body and
-   (when open) the full-width page — because two adjacent ones do not join:
-   `backdrop-filter` is per element, so each would blur its own backdrop with
-   its own edge clamping and the junction would seam however exactly the tints
-   matched. The outline is a `clip-path` written by `Scroller` from
-   `folderClipPath`, and swapped when the folder opens or files.
-
-   `--pv-page-alpha` is the contrast lever, and the only thing between the text
-   and whatever the grid happens to be showing; `contrastProbe.ts` measures it
-   on every hue. */
-.pv-folder__shape {
-  position: absolute;
-  inset: 0;
-  background: hsl(var(--pv-hue, 0) 34% 12% / var(--pv-page-alpha, 0.76));
-  backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
-  -webkit-backdrop-filter: blur(var(--pv-page-blur, 24px)) saturate(var(--pv-page-saturate, 1.2));
-}
-
-/* Only the folder you are reading casts, and back over the cabinet above it. */
-.pv-folder[data-open] .pv-folder__shape {
-  filter: drop-shadow(0 -14px 26px rgba(0, 0, 0, var(--pv-section-shadow, 0.45)));
-}
-
-/* THE FOLDER'S FACE, and the way back — every folder in either pile is a link
-   to itself. `Scroller` puts it in its column and gives it the folder's whole
-   VISIBLE height, so the hit area is the part you can see. */
-.pv-folder__strip {
-  position: absolute;
-  top: 0;
-  pointer-events: auto;
-  display: block;
-  /* The same inset the page uses: the tab's label and the page's title are on
-     one line down the sheet, and one dial moves both. */
-  padding: 0 var(--pv-inset, 24px);
-  border: 0;
-  background: none;
-  color: rgba(255, 255, 255, 0.92);
-  text-align: left;
-  cursor: pointer;
-}
-
-/* THE STRIP PROPER: one line, the number beside the title, centred in the strip
-   so it rides across the tab and the sliver of body under it. Rows this compact
-   have no second line to give it — and the tab and the body are one sheet of
-   glass with one tint, so there is no edge for the line to cross. */
-.pv-folder__label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--pv-strip-h, 32px);
-}
-
-/* The open folder says its title again, large, at the top of its own page: the
-   small one is still there, but it is no longer somewhere to go, and it must
-   not take the pointer off the page underneath it. */
-.pv-folder[data-open] .pv-folder__strip {
-  cursor: default;
-  pointer-events: none;
-}
-.pv-folder__strip:focus-visible {
-  outline: none;
-}
-
-/* 0.74, and measured rather than picked: over glass a translucent white's
-   contrast is set by its OWN alpha, not by how dark the glass is. At 0.5 an
-   11px number came out at 4.71:1; at 0.68 it cleared 7:1 on the old hues and
-   then fell to 6.84 when the palette gained lighter ones. */
-.pv-folder__no {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.74);
-}
-
-/* On the strip it is a label beside the title rather than a line of its own, so
-   it goes down to 9px — the page's header keeps the 11. `flex: none` because a
-   long title must eat the space, never the number. */
-.pv-folder__label .pv-folder__no {
-  flex: none;
-  font-size: 9px;
-}
-
-.pv-folder__title {
-  font-size: var(--pv-title, 23px);
-  line-height: 1;
-  letter-spacing: -0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  text-decoration: 1px solid underline transparent;
-  text-underline-offset: 6px;
-  transition: text-decoration-color 200ms ease;
-}
-.pv-folder__strip:hover .pv-folder__title,
-.pv-folder__strip:focus-visible .pv-folder__title {
-  text-decoration-color: currentColor;
-}
-
-/* HOVER. The folder under the pointer lifts; everything else in both piles
-   fades back, so the one you are about to open is the only thing on the board.
-   The open folder is exempt — it is what you are reading, not somewhere to go. */
-.pv-stack[data-hovering] .pv-folder:not([data-hover]):not([data-open]) {
-  opacity: var(--pv-dim, 0.1);
-}
-.pv-folder[data-hover] {
-  transform: translateY(calc(-1 * var(--pv-hover-lift, 12px)));
-}
-
-/* The thumbnails that pop above the tab. The slot is here so the geometry
-   around it is settled; it stays hidden until a project has images for it. */
-.pv-folder__thumbs {
-  display: none;
-  position: absolute;
-  left: var(--pv-inset, 24px);
-  bottom: calc(100% - var(--pv-tab-h, 22px));
-  pointer-events: none;
-}
-.pv-folder__thumbs span {
-  display: inline-block;
-  width: 200px;
-  aspect-ratio: 4 / 3;
-}
-.pv-folder__thumbs span:nth-child(1) {
-  transform: rotate(-5deg);
-}
-.pv-folder__thumbs span:nth-child(2) {
-  transform: rotate(6deg);
-}
-.pv-folder__thumbs span:nth-child(3) {
-  transform: rotate(-15deg);
-}
-
-/* THE PAGE, and the scroll container — `Scroller` writes `scrollTop` here, and its
-   top and height, because both come out of the track. It spans the whole sheet
-   rather than the folder's column: a folder is a tab in a cabinet, but what you
-   read is a page. */
-.pv-folder__content {
-  position: absolute;
-  left: 0;
-  right: 0;
-  pointer-events: auto;
-  overflow-x: hidden;
-  overflow-y: hidden;
   perspective: 1000px;
   /* The query container a bleed block measures itself against, so "edge to edge
      of the page" needs no variable kept in step with the layout. */
   container-type: inline-size;
 }
 
-/* The page opens with the folder's number and title again, large — the same two
-   things the folder showed you in the cabinet, said properly. Left-aligned at
-   the INSET, which is the same number the strip's label sits at, so the page's
-   title starts on the line the cabinet's tabs already drew. */
-.pv-folder__header {
-  padding: 56px var(--pv-inset, 24px) 8px;
-}
-.pv-folder__heading {
-  margin: 8px 0 0;
-  font-size: var(--pv-header-title, 90px);
-  line-height: 0.96;
-  letter-spacing: -0.03em;
-  font-weight: 600;
-  color: #fff;
+/* THE PAGE'S MEASURE: the whole rect, less an inset on each side. There is no
+   centred column — a page is as wide as the thing it is printed on, text runs
+   to the right inset, and media spans the measure. */
+.pv-page__inner {
+  padding: var(--pv-inset, 40px) var(--pv-inset, 40px) 96px;
 }
 
-/* THE PAGE'S MEASURE: the folder's whole width, less an inset on each side.
-   There is no centred column any more — a page is as wide as the thing it is
-   printed on, text runs to the right inset, and media spans the measure. The
-   only glass a reader should ever see beside content is those two insets. */
-.pv-folder__column {
-  padding: 0 var(--pv-inset, 24px) 96px;
-}
-
-/* SOLID: flat, no backdrop at all. `backdrop-filter: none` rather than a no-op
-   filter — a no-op still creates a backdrop root and still costs. Chosen by the
-   dock's `pageSurface` dial, and forced below for anyone who has asked for less
-   transparency or more contrast. */
-:root[data-pv-surface='solid'] .pv-folder__shape {
-  background: hsl(var(--pv-hue, 0) 34% 12%);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .pv-folder__shape {
-    background: hsl(var(--pv-hue, 0) 34% 12%);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pv-folder {
-    transition: none;
-  }
+/* Inside the page so it tilts away with it; outside the scroller so it does not
+   scroll with the type. */
+.pv-page__grain {
+  mix-blend-mode: multiply;
 }
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
 
-/* Bottom-left of the viewport, which is inside the glass column — the one band
-   the sheet never covers, so the pill competes with nothing for it and a corner
-   is where a way out belongs when the rest of the screen is a document.
+/* Bottom-left of the viewport, in the page's foot — the one band of ground the
+   paper never reaches, so the pill competes with nothing for it and a corner is
+   where a way out belongs when the rest of the screen is a document.
 
    The OUTER button is the entrance only: `--pv-pill` is written per frame by
    the motion driver, so nothing here may have a transition on `transform`. */
@@ -354,8 +380,8 @@
   left: var(--pv-pill-inset, 40px);
   bottom: var(--pv-pill-inset, 40px);
   z-index: 3;
-  width: var(--pv-pill-d, 146px);
-  height: var(--pv-pill-d, 146px);
+  width: var(--pv-pill-d, 96px);
+  height: var(--pv-pill-d, 96px);
   padding: 0;
   border: 0;
   background: none;
@@ -368,7 +394,7 @@
   will-change: transform, opacity;
 }
 
-/* The INNER disc is the ring, the glass and the hover — its own transform, so
+/* The INNER disc is the ring, the tint and the hover — its own transform, so
    the 0.25s hover transition never fights the driver's per-frame writes. Ring
    and glyph share `currentColor`, so they brighten together. */
 .pv-close__disc {
@@ -378,10 +404,10 @@
   height: 100%;
   border: 0.5px solid currentColor;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(var(--pv-pill-blur, 8px));
   -webkit-backdrop-filter: blur(var(--pv-pill-blur, 8px));
-  color: rgba(255, 255, 255, var(--pv-pill-ink, 0.2));
+  color: rgba(255, 255, 255, var(--pv-pill-ink, 0.35));
   transition:
     color 250ms ease,
     background 250ms ease,
@@ -391,7 +417,7 @@
 .pv-close:hover .pv-close__disc,
 .pv-close:focus-visible .pv-close__disc {
   color: rgba(255, 255, 255, var(--pv-pill-ink-hover, 1));
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.45);
   transform: scale(var(--pv-pill-hover-scale, 0.92));
 }
 
@@ -427,15 +453,18 @@
   box-shadow: inset 0 0 0 1px currentColor;
 }
 
-/* Reduced motion: no slide, no blur ramp — the view is simply there. The
-   reveals are neutralised in reveal.css, and Lenis drops its smoothing to 1:1
-   on its own. The track itself is unaffected: it is a mapping, not an
-   animation, and the page still follows the wheel exactly. */
+/* Reduced motion: no grain loop, no entrance — the view is simply there, and
+   every section lands flat with only the hand-off's opacity left (see
+   `Scroller`). The reveals are neutralised in reveal.css, and Lenis drops its
+   smoothing to 1:1 on its own. The track itself is unaffected: it is a mapping,
+   not an animation, and the page still follows the wheel exactly. */
 @media (prefers-reduced-motion: reduce) {
-  .pv-pane {
-    transform: none;
+  .pv-grain,
+  .pv-page__grain {
+    animation: none;
   }
   .pv-scrim,
+  .pv-pane,
   .pv-close {
     opacity: 1;
   }
@@ -443,9 +472,8 @@
     transform: none;
   }
   .pv-close__disc {
-    transition: color 250ms ease, background 250ms ease;
-  }
-  .pv-tab {
-    transition: none;
+    transition:
+      color 250ms ease,
+      background 250ms ease;
   }
 }

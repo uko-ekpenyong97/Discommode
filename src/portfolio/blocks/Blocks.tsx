@@ -12,9 +12,9 @@ import './blocks.css';
  * it, so nothing is left running behind the scrim).
  *
  * Every block is a reveal target: it carries the reveal class and `data-reveal`
- * for the sheet's single IntersectionObserver to pick up, and a
- * `--reveal-delay` from its position among its section's siblings. The
- * animations themselves are entirely in `reveal.css` — nothing here animates.
+ * for its page's IntersectionObserver to pick up, and a `--reveal-delay` from
+ * its position among its run's siblings. The animations themselves are entirely
+ * in `reveal.css` — nothing here animates.
  */
 
 /**
@@ -25,6 +25,9 @@ import './blocks.css';
  */
 function revealClass(block: Block): string {
   if (block.type === 'title') return 'pv-block reveal-chars';
+  // The letterhead is what the section's CAPTURE is a picture of, so it must
+  // be at rest in that capture rather than part-way through a reveal.
+  if (block.type === 'letterhead') return 'pv-block';
   return block.flip ? 'pv-block reveal-flip' : 'pv-block reveal';
 }
 
@@ -35,9 +38,9 @@ const GRID_COLUMNS = 12;
  * How many of the twelve a block takes when the project does not say.
  *
  * Everything is the full measure. That is the whole change from the 656px
- * column this replaced: a page is as wide as the folder, text runs to the right
- * inset, and media spans the measure rather than sitting in a gutter of its
- * own. The blocks that are already several things side by side divide the
+ * column this replaced: a page is as wide as the sheet it is printed on, text
+ * runs to the right inset, and media spans the measure rather than sitting in a
+ * gutter of its own. The blocks that are already several things side by side divide the
  * twelve INSIDE themselves rather than each taking a share of it — a nested
  * grid on the same gutter lands on exactly the same lines, and it keeps
  * `twoUp`'s two cells one block rather than two.
@@ -81,9 +84,9 @@ function ExternalIcon() {
 
 /**
  * A muted, looping clip that plays only while it is on screen. Pausing out of
- * view is not a nicety: every page of a project is mounted at once and the
- * sheet can be closed at any scroll position, and a decoding video costs frames
- * wherever it is.
+ * view is not a nicety: every page of a project is mounted at once, all in the
+ * same rect, and the view can be closed at any scroll position — a decoding
+ * video costs frames wherever it is, including under a sheet.
  */
 function VideoMedia({
   src,
@@ -106,14 +109,16 @@ function VideoMedia({
     if (!el) return;
 
     // TWO conditions, not one. On screen is the obvious half; the other is that
-    // this clip's section is still painting — a covered section is
-    // `visibility: hidden`, which IntersectionObserver does not notice, so
-    // without this a video would keep decoding under a page nobody can see
-    // through. `pv:shown` is the Sheet telling us the section is back.
-    const section = el.closest<HTMLElement>('.pv-section');
+    // this clip's PAGE is still being read — a page that is not the live one is
+    // `visibility: hidden`, and a page part-way through its exit is tilting
+    // away at 58% with nobody watching it. IntersectionObserver notices
+    // neither, so without this a video would keep decoding behind a sheet.
+    // `pv:shown` is the Scroller telling us either has changed.
+    const page = el.closest<HTMLElement>('.pv-page');
     let onScreen = false;
     const sync = () => {
-      const showing = !section || section.style.visibility !== 'hidden';
+      const showing =
+        !page || (page.style.visibility !== 'hidden' && !page.hasAttribute('data-exiting'));
       if (onScreen && showing) void el.play().catch(() => {});
       else el.pause();
     };
@@ -123,10 +128,10 @@ function VideoMedia({
         onScreen = entry.isIntersecting;
         sync();
       },
-      { root: scroller, threshold: 0.01 },
+      { root: el.closest('.pv-page__scroll') ?? scroller, threshold: 0.01 },
     );
     io.observe(el);
-    section?.addEventListener('pv:shown', sync);
+    page?.addEventListener('pv:shown', sync);
 
     // The crossfade is driven off a native listener, not React's
     // `onLoadedData`: `loadeddata` can already have fired by the time the
@@ -138,7 +143,7 @@ function VideoMedia({
 
     return () => {
       io.disconnect();
-      section?.removeEventListener('pv:shown', sync);
+      page?.removeEventListener('pv:shown', sync);
       el.removeEventListener('loadeddata', onData);
       el.pause();
     };
@@ -176,12 +181,10 @@ function isRiv(buffer: ArrayBuffer): boolean {
  * Rive instance runs its own rAF loop, so one left alive behind the scrim would
  * cost frames on the grid for as long as the tab is open.
  *
- * Its observer is rooted on the PAGE, not the sheet scroller — the one place in
- * the view that differs. A page clips its own content, and an ancestor clip is
- * applied before the root margin is, so a margin measured against the scroller
- * would be thrown away at the page's edge and the artboard would only ever
- * mount as it came into view. Rooted on the page the margin means what it says:
- * one viewport of warning in either direction.
+ * Its observer is rooted on the page's own scroll box, and the margin then
+ * means what it says: one viewport of warning in either direction. Rooted
+ * anywhere further out, an ancestor clip would be applied before the root
+ * margin was and the artboard would only ever mount as it came into view.
  *
  * The `.riv` is fetched first and the runtime imported only if those bytes
  * exist: a project that has no artboard yet costs one 404, not a megabyte of
@@ -215,7 +218,7 @@ function RiveBlock({
     const el = hostRef.current;
     if (!el) return;
     const io = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), {
-      root: el.closest('.pv-page') ?? scroller,
+      root: el.closest('.pv-page__scroll') ?? scroller,
       rootMargin: '100% 0px',
     });
     io.observe(el);
@@ -386,6 +389,14 @@ function StatCell({ stat }: { stat: Stat }) {
 
 function BlockBodyView({ block }: { block: Block }) {
   switch (block.type) {
+    case 'letterhead':
+      return (
+        <header className="pv-letterhead-block">
+          <span className="pv-letterhead-block__no">{block.no}</span>
+          <h2 className="pv-letterhead-block__title">{block.title}</h2>
+          <span className="pv-letterhead-block__ref">{block.ref}</span>
+        </header>
+      );
     case 'title':
       return <Title text={block.text} />;
     case 'caption':
@@ -464,7 +475,7 @@ function BlockBodyView({ block }: { block: Block }) {
  *
  * `--reveal-delay` staggers it behind its siblings in the same run; `--pv-span`
  * is how many of the twelve columns it takes. A `bleed` block leaves the grid
- * entirely and runs to the folder's own edges.
+ * entirely and runs to the page's own edges.
  */
 export function BlockView({ block, index }: { block: Block; index: number }) {
   const bleed =

@@ -1,39 +1,46 @@
 /**
  * The project view, checked in a real browser.
  *
- * The unit tests cover `pageTrack` thoroughly and nothing else, and every bug
- * this view has had was one only a browser could see: a `clip-path` the browser
- * quietly dropped, a row of glass between two folders, a page that popped into
- * place a frame after it landed. This is the suite that asks the browser.
+ * The unit tests cover `pageTrack` and `fitPlaneToRect` thoroughly and nothing
+ * else, and every bug this view has had was one only a browser could see: a
+ * declaration the browser quietly dropped, a page that popped into place a
+ * frame after it landed, two surfaces that were supposed to be the same pixels
+ * and were not. This is the suite that asks the browser.
  *
  *   npm run dev            # in another shell
  *   node scripts/pv-verify.mjs
  *
- * THE PAINT PASS is the heart of it. Repainting every folder in a flat, opaque
- * colour of its own — one per index, all of them `rgb(r, 0, 255)` — and the
- * scrim in flat green turns the question "is the cabinet airtight, and did
- * every folder stay inside its slot?" into two pixel counts:
+ * THE HAND-OFF is the heart of it. Everything else in the view is a mapping
+ * from one number; the one thing that is not is the swap at the end of an
+ * entrance, where the HTML page fades in over the WebGL sheet at the identical
+ * rect. Two checks hold it:
  *
- *   green inside the sheet   → GLASS: the backdrop showing through a seam
- *   blue outside its slot    → SMEAR: a folder painting where it must not
+ *   the RECT MATCH   the flat plane's screen rect, as three.js projects it,
+ *                    against the live page's own — one pixel, both axes
+ *   the DIFF         a screenshot of the sheet a frame before the swap against
+ *                    a screenshot of the page a frame after it — two per cent
+ *                    of the pixels inside the page rect may differ
  *
- * Neither repaint touches layout — no size, no position, no reflow of a folder's
- * content — so the track is exactly the track the reader gets.
+ * The rect match is the invariant; the diff is what catches everything the
+ * invariant cannot say anything about — a stale texture, a lighting gradient
+ * the flat HTML does not have, a hairline on one surface and not the other.
  *
- * `window.__pv` (dev only, from `Scroller`) parks the track at an exact position,
- * which is the only way to hold a mid-turn frame still enough to measure.
+ * `window.__pv` (dev only, from `Scroller`) parks the track at an exact
+ * position, which is the only way to hold a mid-entrance frame still enough to
+ * measure. The position is not the scrollTop, and Lenis owns the scrollTop.
  */
 
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 
-const URL = process.argv.includes('--url')
+const ORIGIN = process.argv.includes('--url')
   ? process.argv[process.argv.indexOf('--url') + 1]
   : 'http://localhost:5173';
+
+/** Card 02 is five sections of uneven length; 03 is ONE, the case with no exit
+ *  and no turn anywhere; 04 is three, the smallest count with a middle one. */
 const PROJECT = '02';
-/** Both shapes of project: an even folder count, and an odd one — whose last
- *  row holds a single folder and leaves a column of the pile empty. */
-const PROJECTS = ['02', '04'];
+const PROJECTS = ['02', '03', '04'];
 
 /** The two viewports the view is signed off at. */
 const VIEWPORTS = [
@@ -41,9 +48,31 @@ const VIEWPORTS = [
   { name: '1440×900', width: 1440, height: 900 },
 ];
 
-/** Points through a turn the rising folder is checked at: just after it leaves,
- *  through the middle, and just before it lands. */
-const TURN_POINTS = [0.05, 0.2, 0.5, 0.8, 0.95];
+/** Points through an entrance the sheet is checked at. */
+const ENTER_POINTS = [0.05, 0.2, 0.4, 0.6, 0.8, 0.95];
+
+/**
+ * A pixel counts as different when a channel moves by more than this — an
+ * eighth of the range.
+ *
+ * Below that the measurement is dominated by how the two rasterisers antialias
+ * a glyph edge: the GPU sampling a texture one texel to one pixel, and the
+ * browser drawing type. Measured on the page that is all prose, which has more
+ * glyph edges than any other: 3.1% of its pixels differ at a tolerance of 14
+ * and 1.4% at 32, the mean absolute difference across the whole page is 1.5
+ * levels, and the two screenshots are indistinguishable at 4x. A tolerance that
+ * calls that a failure is a tolerance measuring the rasteriser.
+ *
+ * It still has teeth, and the control below proves it: the same measurement run
+ * against the WRONG section's page reports a fifth of the page differing.
+ */
+const CHANNEL_TOLERANCE = 32;
+
+/** The thresholds, all of them in one place. */
+const RECT_PX = 1;
+const DIFF_PCT = 2;
+const FRAME_MS = 20;
+const CONTRAST = 7;
 
 let failures = 0;
 const ok = (label, extra = '') => console.log(`  ✓ ${label}${extra ? `  ${extra}` : ''}`);
@@ -53,228 +82,23 @@ const bad = (label, extra = '') => {
 };
 const check = (pass, label, extra = '') => (pass ? ok(label, extra) : bad(label, extra));
 const round = (v) => Math.round(v * 10) / 10;
-/** The bounding box of a set of offending pixels, for a failure worth finding. */
-const box = (pts) =>
-  `x ${Math.min(...pts.map((p) => p[0]))}…${Math.max(...pts.map((p) => p[0]))}` +
-  `  y ${Math.min(...pts.map((p) => p[1]))}…${Math.max(...pts.map((p) => p[1]))}  ${pts.length}px`;
+const pct = (v) => `${Math.round(v * 1000) / 1000}%`;
 
-/* ── the paint pass ───────────────────────────────────────────────────────── */
+/* ── driving the view ─────────────────────────────────────────────────────── */
 
-/** Folder `k`'s flat colour. Blue pinned at 255 and green at 0, so a folder is
- *  never mistaken for the scrim, and the index rides in the red channel. */
-const paintOf = (k) => ({ r: 20 + k * 30, g: 0, b: 255 });
-
-const PAINT_CSS = (n) => `
-  .pv-scrim {
-    background: rgb(0, 255, 0) !important;
-    opacity: 1 !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-  }
-  .pv-folder__shape { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; filter: none !important; }
-  /* visibility, not display: hiding these by layout would resize a folder's
-     content and rebuild the track under the frame being measured. */
-  .pv-folder__strip, .pv-folder__content, .pv-folder__thumbs, .pv-close { visibility: hidden !important; }
-  .pv-folder { transition: none !important; }
-  ${Array.from({ length: n }, (_, k) => {
-    const { r, g, b } = paintOf(k);
-    return `.pv-folder[data-k="${k}"] .pv-folder__shape { background: rgb(${r}, ${g}, ${b}) !important; }`;
-  }).join('\n  ')}
-`;
-
-/**
- * What each folder is ALLOWED to paint, in sheet coordinates: its own column
- * for the strip, and — when it is the open one — the whole sheet below the top
- * of its page.
- */
-async function readSlots(page) {
-  return page.evaluate(() => {
-    const stack = document.querySelector('.pv-stack');
-    // The SCROLLER's box is the sheet. The stack is `inset: 0` in a sticky
-    // stage whose `height: 100%` resolves against an auto-height parent, so it
-    // measures zero tall — the folders are placed by the inline tops `Scroller`
-    // writes, and those are in the scroller's coordinates.
-    const sheet = document.querySelector('.pv-scroller').getBoundingClientRect();
-    const cs = getComputedStyle(stack);
-    const num = (v) => parseFloat(cs.getPropertyValue(v));
-    return {
-      sheet: { left: sheet.left, top: sheet.top, width: sheet.width, height: sheet.height },
-      tabH: num('--pv-tab-h'),
-      strip: num('--pv-strip-h'),
-      rowPitch: num('--pv-row-pitch'),
-      titlePx: num('--pv-title'),
-      folders: Array.from(document.querySelectorAll('.pv-folder')).map((el) => {
-        const strip = el.querySelector('.pv-folder__strip');
-        const left = parseFloat(strip.style.left);
-        const width = parseFloat(strip.style.width);
-        const body = el.querySelector('.pv-folder__content');
-        return {
-          k: Number(el.dataset.k),
-          side: el.dataset.side,
-          open: el.hasAttribute('data-open'),
-          top: el.offsetTop,
-          height: el.offsetHeight,
-          left,
-          right: left + width,
-          bodyTop: parseFloat(body.style.top),
-          bodyHeight: parseFloat(body.style.height),
-        };
-      }),
-    };
-  });
+async function openView(context, viewport, hash = `#view-${PROJECT}`) {
+  const page = await context.newPage();
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  const logs = [];
+  page.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
+  page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
+  await page.goto(`${ORIGIN}/${hash}`, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+  // The intro tween owns the position for its first second and a half.
+  await page.waitForTimeout(1800);
+  page.logs = logs;
+  return page;
 }
-
-/** Nothing painted this pixel — the backdrop is showing through. */
-const GLASS = -2;
-/** A blend: two folders' colours meeting along an edge. Not evidence either way. */
-const EDGE = -1;
-
-/**
- * Screenshot the sheet with every folder flat-painted, and account for every
- * pixel of it: which folder painted it, or nothing did.
- *
- * Antialiasing is the whole difficulty. Where one folder's chamfer crosses
- * another, the blend along it lands on a THIRD folder's colour exactly as often
- * as not — 50% of 110 over 50% of 50 is 80, and 80 is folder 2. So a pixel only
- * counts when its four neighbours agree with it: an outline is one pixel wide,
- * and a folder painting where it should not is never one pixel wide.
- */
-async function paintPass(page, slots) {
-  const clip = {
-    x: Math.round(slots.sheet.left),
-    y: Math.round(slots.sheet.top),
-    width: Math.floor(slots.sheet.width),
-    height: Math.floor(slots.sheet.height),
-  };
-  const png = await page.screenshot({ clip, animations: 'disabled' });
-  const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
-  const { width, height, channels } = info;
-
-  const byRed = new Map();
-  for (const f of slots.folders) byRed.set(paintOf(f.k).r, f);
-
-  const cls = new Int16Array(width * height);
-  for (let i = 0, px = 0; px < cls.length; px++, i += channels) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    if (g > 200 && r < 60 && b < 60) cls[px] = GLASS;
-    else if (b >= 250 && g <= 8 && byRed.has(r)) cls[px] = byRed.get(r).k;
-    else cls[px] = EDGE;
-  }
-  const solid = (x, y) => {
-    const i = y * width + x;
-    const c = cls[i];
-    if (x > 0 && cls[i - 1] !== c) return EDGE;
-    if (x < width - 1 && cls[i + 1] !== c) return EDGE;
-    if (y > 0 && cls[i - width] !== c) return EDGE;
-    if (y < height - 1 && cls[i + width] !== c) return EDGE;
-    return c;
-  };
-
-  const glass = [];
-  const outside = new Map();
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const c = solid(x, y);
-      if (c === EDGE) continue;
-      if (c === GLASS) {
-        glass.push([x, y]);
-        continue;
-      }
-      const f = slots.folders[c];
-      // The slot: the folder's own column, plus the sheet's width under the top
-      // of its page once it is the open one.
-      const inColumn = x >= f.left - 1 && x <= f.right + 1;
-      const inBand = y >= f.top - 1 && y <= f.top + f.height + 1;
-      const inPage = f.open && y >= f.top + f.bodyTop - 1 && y <= f.top + f.height + 1;
-      if (inBand && (inColumn || inPage)) continue;
-      if (!outside.has(f.k)) outside.set(f.k, []);
-      outside.get(f.k).push([x, y]);
-    }
-  }
-  return { glass, outside, width, height, png };
-}
-
-/**
- * The glass that is SUPPOSED to be there, as rectangles in sheet coordinates —
- * MASKED, not tolerated. Two kinds, and only two:
- *
- *  1. above the cabinet's top row — a folder's tab sticks up out of nothing at
- *     the top of a pile, which is what a tab is for;
- *  2. above the topmost piled tab OF EACH COLUMN, for the same reason. One
- *     tab deep and no deeper: the page's foot is per column now, so it comes
- *     down to meet each column's pile wherever that pile starts.
- *
- * There is no third. The slot a rising folder vacates used to need one; the
- * page under it now reaches into that column from the frame it leaves.
- */
-function allowedGlass(slots, layout) {
-  const { tabH, sheet, folders } = slots;
-  const W = sheet.width;
-  const open = layout.activeIndex;
-  const riser = layout.turning ? layout.topIndex : -1;
-  const rects = [];
-
-  const docked = folders.filter((f) => f.k <= open && f.k !== riser);
-  const cabinetTop = docked.length > 0 ? Math.min(...docked.map((f) => f.top)) : 0;
-  rects.push({ x0: -1, x1: W + 1, y0: -1, y1: cabinetTop + tabH + 1 });
-
-  for (const side of ['left', 'right']) {
-    const resting = folders.filter((f) => f.side === side && f.k > open && f.k !== riser);
-    if (resting.length === 0) continue;
-    const head = resting.reduce((a, b) => (a.top <= b.top ? a : b));
-    rects.push({ x0: head.left - 1, x1: head.right + 1, y0: head.top - 1, y1: head.top + tabH + 1 });
-  }
-  return rects;
-}
-
-/* ── one frame, measured ──────────────────────────────────────────────────── */
-
-async function frame(page, label, { seek, quiet = false } = {}) {
-  if (seek !== undefined) await page.evaluate((y) => window.__pv.seek(y), seek);
-  await page.waitForTimeout(60);
-
-  const slots = await readSlots(page);
-  const layout = await page.evaluate(() => window.__pv.layout());
-
-  // Not `addStyleTag`: it takes no id, and a paint pass left in the head would
-  // still be there when the contrast probe ran — measuring text over a flat
-  // green scrim and a hidden page.
-  await page.evaluate((css) => {
-    const el = document.createElement('style');
-    el.id = 'pv-paint';
-    el.textContent = css;
-    document.head.append(el);
-  }, PAINT_CSS(slots.folders.length));
-  await page.waitForTimeout(80);
-  const { glass, outside } = await paintPass(page, slots);
-  await page.evaluate(() => document.getElementById('pv-paint').remove());
-
-  const rects = allowedGlass(slots, layout);
-  const inside = ([x, y]) => rects.some((r) => x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1);
-  const stray = glass.filter((p) => !inside(p));
-  const smear = [...outside.values()].reduce((a, p) => a + p.length, 0);
-
-  const clean = stray.length === 0 && smear === 0;
-  // Every sample is checked; only the interesting ones are printed. A run that
-  // prints one line per frame is a run nobody reads.
-  if (!quiet || !clean) {
-    check(stray.length === 0, `${label} — no glass between the rows`, `${stray.length} px`);
-    check(
-      smear === 0,
-      `${label} — every folder inside its slot`,
-      smear ? `${smear} px from folders ${[...outside.keys()].join(', ')}` : '0 differing',
-    );
-  } else {
-    failures += 0;
-  }
-  if (stray.length > 0) console.log(`      glass ${box(stray)}`);
-  for (const [k, pts] of outside) console.log(`      folder ${k} ${box(pts)}`);
-  return { slots, layout, clean };
-}
-
-/* ── the run ──────────────────────────────────────────────────────────────── */
 
 /** The parts of the track the checks steer by. */
 const readTrack = (page) =>
@@ -283,493 +107,556 @@ const readTrack = (page) =>
     return {
       start: t.start,
       pageScroll: t.pageScroll,
-      openBody: t.openBody,
-      footMin: t.footMin,
-      footMax: t.footMax,
-      turnDistance: t.turnDistance,
-      rowPitch: t.rowPitch,
-      tabHeight: t.tabHeight,
-      strip: t.strip,
-      viewportHeight: t.viewportHeight,
+      heights: t.heights,
+      pageHeight: t.pageHeight,
+      enterDistance: t.enterDistance,
+      exitDistance: t.exitDistance,
+      enterOverlap: t.enterOverlap,
+      windows: t.start.map((_, k) => window.__pv.enterWindow(k)),
     };
   });
 
-async function openView(context, viewport, hash = `#view-${PROJECT}`) {
-  const page = await context.newPage();
-  await page.setViewportSize(viewport);
-  const logs = [];
-  page.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
-  page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
-  await page.goto(`${URL}/${hash}`, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 15000 });
-  await page.waitForTimeout(300);
-  page.logs = logs;
-  return page;
+const seek = async (page, y) => {
+  await page.evaluate((y) => window.__pv.seek(y), y);
+  await page.waitForTimeout(50);
+};
+
+/** `p` through section `k`'s entrance WINDOW — which is not the same as its
+ *  `enter` segment, because of the overlap. */
+const atEnter = (track, k, p) => {
+  const w = track.windows[k];
+  return w.from + (w.to - w.from) * p;
+};
+
+/** Every video on its first frame, and every CSS animation pinned by the
+ *  screenshot itself. A clip that is playing is a pixel difference that means
+ *  nothing, and it is the only one the diff cannot tell from a real one. */
+const parkMedia = (page) =>
+  page.evaluate(async () => {
+    for (const v of document.querySelectorAll('video')) {
+      v.pause();
+      v.currentTime = 0;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+/* ── the hand-off diff ────────────────────────────────────────────────────── */
+
+/** Share of pixels differing by more than {@link CHANNEL_TOLERANCE}, and the
+ *  mean absolute difference per channel over the whole rect — which is the
+ *  figure that says whether a difference is broad (a gradient) or narrow (an
+ *  edge). */
+async function differing(a, b) {
+  const [x, y] = await Promise.all([
+    sharp(a).raw().toBuffer({ resolveWithObject: true }),
+    sharp(b).raw().toBuffer({ resolveWithObject: true }),
+  ]);
+  if (x.info.width !== y.info.width || x.info.height !== y.info.height) return 100;
+  const n = x.info.width * x.info.height;
+  const c = x.info.channels;
+  let differ = 0;
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * c;
+    const dr = Math.abs(x.data[o] - y.data[o]);
+    const dg = Math.abs(x.data[o + 1] - y.data[o + 1]);
+    const db = Math.abs(x.data[o + 2] - y.data[o + 2]);
+    total += dr + dg + db;
+    if (dr > CHANNEL_TOLERANCE || dg > CHANNEL_TOLERANCE || db > CHANNEL_TOLERANCE) differ++;
+  }
+  return { pct: (differ / n) * 100, mean: total / (n * 3) };
 }
+
+/**
+ * One entrance's hand-off: the rect match a frame before the swap, and the
+ * diff across it.
+ *
+ * The "after" shot waits out the crossfade rather than taking it at p = 1.001,
+ * and it has to: a frame past the swap the page is at one per cent opacity over
+ * a canvas still showing the sheet, so a diff there would compare the sheet
+ * with itself and pass on anything. What is worth comparing is the last frame
+ * of the sheet against the settled page.
+ */
+async function handoff(page, track, k, handoffMs) {
+  await seek(page, atEnter(track, k, 0.999));
+  const rects = await page.evaluate(() => ({
+    sheet: window.__pv.sheetRect(),
+    page: (() => {
+      // The page is hidden a frame before the swap, so its rect comes off the
+      // element rather than off the probe's "which one is live" test.
+      const el = document.querySelector(`.pv-page[data-k="${window.__pv.layout().sheet.index}"]`);
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    })(),
+  }));
+  const drift = Math.max(
+    Math.abs(rects.sheet.left - rects.page.left),
+    Math.abs(rects.sheet.top - rects.page.top),
+    Math.abs(rects.sheet.width - rects.page.width),
+    Math.abs(rects.sheet.height - rects.page.height),
+  );
+
+  const clip = {
+    x: Math.round(rects.page.left),
+    y: Math.round(rects.page.top),
+    width: Math.round(rects.page.width),
+    height: Math.round(rects.page.height),
+  };
+  await parkMedia(page);
+  const before = await page.screenshot({ clip, animations: 'disabled' });
+
+  await seek(page, track.start[k]);
+  await page.waitForTimeout(handoffMs + 250);
+  await parkMedia(page);
+  const after = await page.screenshot({ clip, animations: 'disabled' });
+
+  const { pct, mean } = await differing(before, after);
+  return { drift, diff: pct, mean, before, clip };
+}
+
+/* ── the run ──────────────────────────────────────────────────────────────── */
 
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   const context = await browser.newContext({ deviceScaleFactor: 1 });
+  const handoffMs = 120;
 
   for (const viewport of VIEWPORTS) {
     console.log(`\n── ${viewport.name} ──────────────────────────────────────────`);
+
+    // 1 — THE HAND-OFF, on every entrance of every card.
+    for (const id of PROJECTS) {
+      const page = await openView(context, viewport, `#view-${id}`);
+      const track = await readTrack(page);
+      let worstDrift = 0;
+      let worstDiff = 0;
+      let worstMean = 0;
+      let control = null;
+      for (let k = 0; k < track.start.length; k++) {
+        const { drift, diff, mean, before, clip } = await handoff(page, track, k, handoffMs);
+        worstDrift = Math.max(worstDrift, drift);
+        worstDiff = Math.max(worstDiff, diff);
+        worstMean = Math.max(worstMean, mean);
+        if (drift > RECT_PX) bad(`card ${id} section ${k} — rect match`, `${round(drift)}px apart`);
+        if (diff > DIFF_PCT) bad(`card ${id} section ${k} — hand-off diff`, pct(diff));
+        // THE CONTROL, once per card: the same measurement against the page of
+        // the NEXT section. If that comes out small the diff is measuring
+        // nothing and every pass above is worthless.
+        if (control === null && k + 1 < track.start.length) {
+          await seek(page, track.start[k + 1]);
+          await page.waitForTimeout(handoffMs + 250);
+          await parkMedia(page);
+          const wrong = await page.screenshot({ clip, animations: 'disabled' });
+          control = (await differing(before, wrong)).pct;
+        }
+      }
+      check(
+        worstDrift <= RECT_PX,
+        `card ${id}: the sheet's flat rect is the page's rect`,
+        `worst ${Math.round(worstDrift * 1000) / 1000}px of ${RECT_PX}`,
+      );
+      check(
+        worstDiff <= DIFF_PCT,
+        `card ${id}: the hand-off does not show`,
+        `worst ${pct(worstDiff)} of ${DIFF_PCT}% differing, mean ${Math.round(worstMean * 100) / 100} levels`,
+      );
+      if (control !== null) {
+        check(
+          control > 10,
+          `card ${id}: …and the diff can tell two pages apart`,
+          `the wrong section's page differs on ${pct(control)}`,
+        );
+      }
+
+      // 2 — THE CURL IS OUT BY p = 0.60 AND STAYS OUT. A curl still resolving
+      //     at the swap is a shape the flat HTML cannot match, so the crossfade
+      //     would have to hide a shape change rather than a surface change.
+      const curls = await page.evaluate(
+        async ([k, points]) => {
+          const out = [];
+          for (const p of points) {
+            const w = window.__pv.enterWindow(k);
+            window.__pv.seek(w.from + (w.to - w.from) * p);
+            out.push({ p, ...window.__pv.layout().sheet.pose });
+          }
+          return out;
+        },
+        [Math.min(1, track.start.length - 1), ENTER_POINTS],
+      );
+      const late = curls.filter((c) => c.p >= 0.6);
+      check(
+        late.every((c) => c.curl === 0) && curls.some((c) => c.curl < 0),
+        `card ${id}: the curl is out by p = 0.60 and stays out`,
+        late.map((c) => `${c.p}:${c.curl}`).join(' '),
+      );
+      // …and the sheet is exactly the page at the end of its window.
+      const landed = curls[curls.length - 1];
+      check(
+        landed.scale === 1 && landed.rotationZ === 0,
+        `card ${id}: the sheet is flat and full size well before the swap`,
+        `p ${landed.p}  scale ${landed.scale}  rot ${landed.rotationZ}`,
+      );
+      await page.close();
+    }
+
     const page = await openView(context, viewport);
     const track = await readTrack(page);
 
-    // 1 — every rest, and every point of every turn, on both projects. The
-    //     paint pass answers the same two questions each time; only the frames
-    //     that fail say anything.
-    for (const id of PROJECTS) {
-      const sheet = id === PROJECT ? page : await openView(context, viewport, `#view-${id}`);
-      const t = await readTrack(sheet);
-      let clean = 0;
-      let total = 0;
-      for (let k = 0; k < t.start.length; k++) {
-        total++;
-        if ((await frame(sheet, `card ${id} rest on folder ${k}`, { seek: t.start[k], quiet: true })).clean) clean++;
+    // 3 — THE CANVAS IS IDLE during a vertical run. Zero frames, not cheap
+    //     ones: it is the longest segment by far and the only one where the
+    //     reader is actually reading.
+    await seek(page, track.start[1]);
+    await page.waitForTimeout(handoffMs + 300);
+    const idle = await page.evaluate(async () => {
+      const before = window.__pv.canvasFrames();
+      const t = window.__pv.track();
+      // A real scroll down the middle of the section, nowhere near either end.
+      for (let i = 1; i <= 20; i++) {
+        window.__pv.seek(t.start[1] + (t.pageScroll[1] * i) / 24);
+        await new Promise((r) => requestAnimationFrame(r));
       }
-      for (let k = 0; k + 1 < t.start.length; k++) {
-        const foot = t.start[k] + t.pageScroll[k];
-        for (const p of TURN_POINTS) {
-          total++;
-          const label = `card ${id} turn ${k}→${k + 1} at p=${p}`;
-          const { slots, layout, clean: ok } = await frame(sheet, label, {
-            seek: foot + t.turnDistance * p,
-            quiet: true,
-          });
-          if (ok) clean++;
-          const riser = slots.folders[k + 1];
-          const shown = riser.height - riser.bodyTop;
-          if (!(layout.folders[k + 1].bodyVisible && shown > slots.strip)) {
-            bad(`${label} — the riser carries its page`, `${round(shown)}px under the strip`);
-          }
-          if (!layout.folders[k].bodyVisible) bad(`${label} — the folder below went out`);
-        }
-        // …and it lands with the page already where it ends up.
-        const pop = await page.evaluate(
-          async ([a, b]) => {
-            const rect = () => {
-              const f = document.querySelector('.pv-folder[data-top]');
-              return { top: f.offsetTop, height: f.offsetHeight };
+      return window.__pv.canvasFrames() - before;
+    });
+    check(idle === 0, 'the canvas paints nothing during a vertical run', `${idle} frames`);
+
+    // 4 — THE FRAME BUDGET, through an entrance and through an exit with the
+    //     canvas active. Sampled off rAF, so a long frame is a long frame.
+    for (const [label, from, to] of [
+      ['an entrance', atEnter(track, 1, 0), atEnter(track, 1, 1)],
+      ['an exit', track.start[1] + track.pageScroll[1], track.start[2] - track.enterDistance],
+    ]) {
+      const frames = await page.evaluate(
+        ([from, to]) =>
+          new Promise((resolve) => {
+            const times = [];
+            const t0 = performance.now();
+            let last = t0;
+            const step = (now) => {
+              times.push(now - last);
+              last = now;
+              const p = Math.min(1, (now - t0) / 1200);
+              window.__pv.seek(from + (to - from) * p);
+              if (p < 1) requestAnimationFrame(step);
+              else resolve(times);
             };
-            window.__pv.seek(a);
-            const before = rect();
-            window.__pv.seek(b);
-            return { before, after: rect() };
-          },
-          [foot + t.turnDistance * 0.999, t.start[k + 1]],
-        );
-        if (Math.abs(pop.before.top - pop.after.top) > 1.5 || Math.abs(pop.before.height - pop.after.height) > 1.5) {
-          bad(`card ${id} turn ${k}→${k + 1} — pop at the dock`, JSON.stringify(pop));
-        }
-      }
-      ok(
-        `card ${id}: ${total} frames — no glass outside the notches, no folder outside its slot`,
-        `${clean}/${total} clean`,
+            requestAnimationFrame(step);
+          }),
+        [from, to],
       );
-
-      // 2 — the rise is LINEAR: the folder is where the scroll put it, to
-      //     within the half device pixel the snapping is allowed to move it.
-      const rise = await sheet.evaluate(() => {
-        const t = window.__pv.track();
-        const foot = t.start[0] + t.pageScroll[0];
-        const out = [];
-        for (let p = 0.1; p < 0.95; p += 0.1) {
-          window.__pv.seek(foot + t.turnDistance * p);
-          out.push({ p, y: document.querySelector('.pv-folder[data-k="1"]').offsetTop });
-        }
-        return out;
-      });
-      // Fit the two ends and hold every point between them to the line.
-      const a = rise[0];
-      const b = rise[rise.length - 1];
-      const worst = Math.max(
-        ...rise.map(({ p, y }) => Math.abs(y - (a.y + ((b.y - a.y) * (p - a.p)) / (b.p - a.p)))),
-      );
-      check(worst <= 1, `card ${id}: the rise is linear in p`, `worst ${round(worst)}px off the line`);
-
-      if (sheet !== page) await sheet.close();
+      // The first two are the ramp-up: a shader compile, a texture upload, a
+      // layer being promoted. What matters is the steady state.
+      const worst = Math.max(...frames.slice(2));
+      check(worst <= FRAME_MS, `no frame over ${FRAME_MS}ms through ${label}`, `worst ${round(worst)}ms over ${frames.length} frames`);
     }
 
-    // 3 — THE PAGE'S LAYOUT. No centred column: a page is the folder's width
-    //     less one inset either side, and everything on it starts at the left
-    //     inset and is free to run to the right one.
-    await page.evaluate((y) => window.__pv.seek(y), track.start[3]);
-    await page.waitForTimeout(120);
+    // 5 — THE PAGE'S LAYOUT. A page is the rect less one inset either side, and
+    //     everything on it starts at the left inset and is free to run to the
+    //     right one.
+    //
+    //     Measured across EVERY page, not just the live one. The pages are all
+    //     in the same rect and all laid out from the first frame — only one of
+    //     them paints — and no single section carries every kind of block, so a
+    //     check that looked at one would report "no row on this page" and mean
+    //     nothing by it. `getBoundingClientRect` does not care about
+    //     `visibility`.
+    await seek(page, track.start[1] + 200);
+    await page.waitForTimeout(handoffMs + 200);
     const layout = await page.evaluate(() => {
-      const folder = document.querySelector('.pv-folder[data-open]');
-      const sheetBox = document.querySelector('.pv-scroller').getBoundingClientRect();
-      const x = (el) => el.getBoundingClientRect().left - sheetBox.left;
-      const right = (el) => el.getBoundingClientRect().right - sheetBox.left;
-      // The CONTENT box. A text block's soft dark pool is 24px of padding on a
-      // matching negative margin, so its border box overhangs the measure by
-      // exactly the pool — which is a feather, not content.
-      const inner = (el) => {
-        const r = el.getBoundingClientRect();
-        const cs = getComputedStyle(el);
-        return [
-          r.left - sheetBox.left + parseFloat(cs.paddingLeft),
-          r.right - sheetBox.left - parseFloat(cs.paddingRight),
-        ];
+      const pages = [...document.querySelectorAll('.pv-page')];
+      const boxOf = (el) => el.closest('.pv-page').getBoundingClientRect();
+      const x = (n) => n.getBoundingClientRect().left - boxOf(n).left;
+      const right = (n) => n.getBoundingClientRect().right - boxOf(n).left;
+      /** The first one of these anywhere in the project. */
+      const first = (sel) => {
+        for (const p of pages) {
+          const found = p.querySelector(sel);
+          if (found) return found;
+        }
+        return null;
       };
-      const inset = parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue('--pv-inset'),
-      );
-      const gap = parseFloat(
-        getComputedStyle(document.querySelector('.pv-stack')).getPropertyValue('--pv-grid-gap'),
-      );
-      // The line the cabinet already drew: the FIRST thing on a left-hand
-      // folder's strip, which is its number.
-      const tabInk = document.querySelector('.pv-folder[data-side="left"] .pv-folder__no');
-      const blocks = [...folder.querySelectorAll('.pv-run > .pv-block')];
-      const twoup = folder.querySelector('.pv-twoup');
+      const all = (sel) => pages.flatMap((p) => [...p.querySelectorAll(sel)]);
+      const cs = getComputedStyle(document.documentElement);
+      const inset = parseFloat(cs.getPropertyValue('--pv-inset'));
+      const gap = parseFloat(cs.getPropertyValue('--pv-grid-gap'));
+      const width = pages[0].getBoundingClientRect().width;
+
+      const letterhead = first('.pv-letterhead-block__no');
+      const blocks = all('.pv-run > .pv-block');
+      const measured = blocks.filter((b) => !b.matches('.pv-block--bleed'));
+      const twoup = first('.pv-twoup');
       const cells = twoup ? [...twoup.children] : [];
-      const row = folder.querySelector('.pv-row');
-      const bleed = folder.querySelector('.pv-block--bleed');
-      const body = [...folder.querySelectorAll('.pv-body')];
+      const row = first('.pv-row');
+      const bleed = first('.pv-block--bleed');
+      const body = all('.pv-body');
       return {
         inset,
         gap,
-        sheet: sheetBox.width,
-        tabInkX: x(tabInk),
-        headerNoX: x(folder.querySelector('.pv-folder__header .pv-folder__no')),
-        headingX: x(folder.querySelector('.pv-folder__heading')),
-        // What the widest thing on the page actually reaches.
-        contentLeft: Math.min(
-          ...blocks.filter((b) => !b.matches('.pv-block--bleed')).map((b) => inner(b)[0]),
-        ),
-        contentRight: Math.max(
-          ...blocks.filter((b) => !b.matches('.pv-block--bleed')).map((b) => inner(b)[1]),
-        ),
+        width,
+        letterheadX: x(letterhead),
+        titleX: x(first('.pv-letterhead-block__title')),
+        contentLeft: Math.min(...measured.map(x)),
+        contentRight: Math.max(...measured.map(right)),
         bodyRight: body.length ? Math.max(...body.map(right)) : null,
-        twoup: cells.length === 2 ? { gap: x(cells[1]) - right(cells[0]), widths: cells.map((c) => c.getBoundingClientRect().width) } : null,
-        row: row ? { textRight: right(row.children[0]), mediaLeft: x(row.children[1]), mediaRight: right(row.children[1]) } : null,
+        twoup:
+          cells.length === 2
+            ? { gap: x(cells[1]) - right(cells[0]), widths: cells.map((c) => c.getBoundingClientRect().width) }
+            : null,
+        row: row
+          ? { textRight: right(row.children[0]), mediaLeft: x(row.children[1]), mediaRight: right(row.children[1]) }
+          : null,
         bleed: bleed ? { left: x(bleed), right: right(bleed) } : null,
-        // Anything sitting with equal air either side of its parent and not
-        // filling it is a centred column by another name.
+        // Anything with equal air either side of its parent and not filling it
+        // is a centred column by another name.
         centred: blocks.filter((b) => {
           const r = b.getBoundingClientRect();
-          const pr = b.parentElement.getBoundingClientRect();
-          return Math.abs(r.left - pr.left - (pr.right - r.right)) < 2 && r.width < pr.width - 4;
+          const p = b.parentElement.getBoundingClientRect();
+          return Math.abs(r.left - p.left - (p.right - r.right)) < 2 && r.width < p.width - 4;
         }).length,
       };
     });
     const near = (a, b, t = 1) => Math.abs(a - b) <= t;
     check(
-      near(layout.headerNoX, layout.inset) && near(layout.headerNoX, layout.tabInkX),
-      'the page header starts on the tab labels’ own line',
-      `header ${round(layout.headerNoX)}  tab ${round(layout.tabInkX)}  inset ${layout.inset}`,
-    );
-    check(near(layout.headingX, layout.inset), 'the large title is left-aligned at the inset', `${round(layout.headingX)}`);
-    check(
-      near(layout.contentLeft, layout.inset) && near(layout.contentRight, layout.sheet - layout.inset),
-      'content fills the measure — the only glass beside it is the two insets',
-      `${round(layout.contentLeft)}…${round(layout.contentRight)} of ${round(layout.sheet)}`,
+      near(layout.letterheadX, layout.inset) && near(layout.titleX, layout.inset),
+      'the letterhead block sits on the inset line',
+      `no ${round(layout.letterheadX)}  title ${round(layout.titleX)}  inset ${layout.inset}`,
     );
     check(
-      layout.bodyRight !== null && near(layout.bodyRight, layout.sheet - layout.inset),
+      near(layout.contentLeft, layout.inset) && near(layout.contentRight, layout.width - layout.inset),
+      'content fills the measure — the only paper beside it is the two insets',
+      `${round(layout.contentLeft)}…${round(layout.contentRight)} of ${round(layout.width)}`,
+    );
+    check(
+      layout.bodyRight !== null && near(layout.bodyRight, layout.width - layout.inset),
       'body text runs to the right inset',
       `${round(layout.bodyRight)}`,
     );
     check(layout.centred === 0, 'nothing on the page is centred', `${layout.centred} blocks`);
     check(
-      layout.twoup !== null &&
-        near(layout.twoup.gap, layout.gap) &&
-        near(layout.twoup.widths[0], layout.twoup.widths[1]),
+      layout.twoup !== null && near(layout.twoup.gap, layout.gap) && near(layout.twoup.widths[0], layout.twoup.widths[1]),
       'the two-up halves meet at the gutter',
-      layout.twoup ? `gap ${round(layout.twoup.gap)} of ${round(layout.gap)}` : 'no two-up on this page',
+      layout.twoup ? `gap ${round(layout.twoup.gap)} of ${round(layout.gap)}` : 'no two-up in this project',
     );
-    // Seven and five: the text stops one gutter short of the media, and the
-    // media is pinned to the right inset.
-    const grid = (layout.sheet - 2 * layout.inset - 11 * layout.gap) / 12;
+    const column = (layout.width - 2 * layout.inset - 11 * layout.gap) / 12;
     check(
       layout.row !== null &&
         near(layout.row.mediaLeft - layout.row.textRight, layout.gap) &&
-        near(layout.row.mediaRight, layout.sheet - layout.inset) &&
-        near(layout.row.mediaRight - layout.row.mediaLeft, 5 * grid + 4 * layout.gap, 1.5),
+        near(layout.row.mediaRight, layout.width - layout.inset) &&
+        near(layout.row.mediaRight - layout.row.mediaLeft, 5 * column + 4 * layout.gap, 1.5),
       'a list row is seven columns of text and five of media, pinned right',
-      layout.row ? `media ${round(layout.row.mediaLeft)}…${round(layout.row.mediaRight)}` : 'no row on this page',
+      layout.row ? `media ${round(layout.row.mediaLeft)}…${round(layout.row.mediaRight)}` : 'no row in this project',
     );
     check(
-      layout.bleed !== null && near(layout.bleed.left, 0) && near(layout.bleed.right, layout.sheet),
-      'a bleed block escapes both insets to the folder’s edges',
-      layout.bleed ? `${round(layout.bleed.left)}…${round(layout.bleed.right)}` : 'no bleed on this page',
+      layout.bleed !== null && near(layout.bleed.left, 0) && near(layout.bleed.right, layout.width),
+      'a bleed block escapes both insets to the page’s edges',
+      layout.bleed ? `${round(layout.bleed.left)}…${round(layout.bleed.right)}` : 'no bleed in this project',
     );
 
-    // 4 — compact rows, and what they leave for the page.
-    await page.evaluate((y) => window.__pv.seek(y), track.start[2]);
-    await page.waitForTimeout(80);
-    const slots = await readSlots(page);
-    const open = slots.folders[2];
-    const share = (open.bodyHeight / slots.sheet.height) * 100;
-    console.log(
-      `  · rows ${round(slots.rowPitch)}px  tab ${round(slots.tabH)}  strip ${round(slots.strip)}  title ${round(slots.titlePx)}px`,
-    );
-    check(share >= 60, 'three docked, three piled — the page keeps the sheet', `${round(share)}%`);
-    const pageWidth = await page.evaluate(() => {
-      const f = document.querySelector('.pv-folder[data-open]');
-      const shape = f.querySelector('.pv-folder__shape').getBoundingClientRect();
-      return { shape: shape.width, sheet: f.parentElement.getBoundingClientRect().width };
-    });
-    check(
-      Math.abs(pageWidth.shape - pageWidth.sheet) < 1,
-      'the open page fills the sheet width',
-      `${round(pageWidth.shape)} of ${round(pageWidth.sheet)}`,
-    );
-
-    // 5 — hover dims the piles and never the page.
-    await page.evaluate(() => window.__pv.release());
-    // A REAL pointer: React derives enter/leave from `pointerover`/`pointerout`,
-    // so a dispatched `pointerenter` reaches nothing.
-    await page.hover('.pv-folder[data-k="4"] .pv-folder__strip');
-    await page.waitForTimeout(350);
-    const dim = await page.evaluate(() => {
-      const open = document.querySelector('.pv-folder[data-open]');
-      const piled = document.querySelector('.pv-folder:not([data-open]):not([data-hover])');
-      return {
-        hovered: !!document.querySelector('.pv-folder[data-hover]'),
-        open: Number(getComputedStyle(open).opacity),
-        page: Number(getComputedStyle(open.querySelector('.pv-folder__content')).opacity),
-        piled: Number(getComputedStyle(piled).opacity),
-      };
-    });
-    check(dim.hovered, 'a folder in the pile takes the hover');
-    check(dim.open === 1 && dim.page === 1, 'hover never dims the open folder or its page');
-    check(dim.piled < 0.5, 'hover dims the cabinet and the pile', `${dim.piled}`);
-
-    // 6 — a folder that opens UNDER a resting pointer must drop the hover. The
-    //     pointer has not moved, so nothing sends a `pointerleave`; without the
-    //     sweep in `apply` the whole pile stays dimmed behind a page.
-    const stuck = await page.evaluate(async () => {
+    // 6 — CONTRAST, on paper and on the ground, sampled down a whole section so
+    //     every kind of run of type is measured somewhere.
+    const contrast = await page.evaluate(async () => {
       const t = window.__pv.track();
-      window.__pv.seek(t.start[4]);
-      // Long enough for the 250ms dim transition to have run all the way back.
-      await new Promise((r) => setTimeout(r, 500));
-      const out = {
-        hovered: !!document.querySelector('.pv-folder[data-hover]'),
-        dimmed: Number(getComputedStyle(document.querySelector('.pv-folder[data-k="1"]')).opacity),
-      };
-      window.__pv.release();
-      return out;
+      const worst = new Map();
+      for (let i = 0; i <= 8; i++) {
+        window.__pv.seek(t.start[1] + (t.pageScroll[1] * i) / 8);
+        await new Promise((r) => setTimeout(r, 120));
+        for (const s of window.__pvProbe()?.samples ?? []) {
+          const key = `${s.kind}|${s.surface}`;
+          const had = worst.get(key);
+          if (!had || s.ratio < had.ratio) worst.set(key, s);
+        }
+      }
+      return [...worst.values()].sort((a, b) => a.ratio - b.ratio);
     });
-    check(!stuck.hovered && stuck.dimmed === 1, 'a folder that opens under the pointer drops the hover', JSON.stringify(stuck));
-    await page.mouse.move(10, 10);
+    const failed = contrast.filter((s) => !s.pass);
+    check(
+      contrast.length > 0 && failed.length === 0,
+      `contrast ≥ ${CONTRAST}:1, ink on paper and mono on the ground`,
+      `worst ${contrast[0]?.ratio}:1 across ${contrast.length} kinds`,
+    );
+    for (const s of contrast) {
+      console.log(`      ${s.pass ? ' ' : '←'} ${s.kind.padEnd(26)} ${s.surface.padEnd(7)} ${String(s.fontPx).padStart(3)}px  ${s.ratio}:1`);
+    }
 
-    // 7 — THE SETTLE. A folder must never come to rest in mid-air, so a turn
-    //     left part done finishes itself: on past halfway, back before it.
-    //     `park` is a real scroll, so the idle timer counts exactly as it would
-    //     after a wheel — the only honest way to check this.
+    // 7 — THE SETTLE. A sheet must never come to rest in mid-air, so a TURN —
+    //     an exit and the entrance that overlaps it, as one move — left part
+    //     done finishes itself: on past halfway, back before it.
     for (const p of [0.5, 0.75, 0.25]) {
       const settled = await page.evaluate(async (p) => {
         const t = window.__pv.track();
-        const foot = t.start[0] + t.pageScroll[0];
-        window.__pv.park(Math.round(foot + t.turnDistance * p));
+        const from = t.start[0] + t.pageScroll[0];
+        window.__pv.park(Math.round(from + (t.exitDistance + t.enterDistance) * p));
         // A scroller quantises to device pixels, so read back where it landed
         // rather than assuming: at exactly half a turn either end is nearer.
-        await new Promise((r) => setTimeout(r, 30));
-        const from = window.__pv.layout().progress;
+        await new Promise((r) => setTimeout(r, 40));
+        const at = () => window.__pv.layout();
+        const started = (window.__pv.position() - from) / (t.exitDistance + t.enterDistance);
         const t0 = performance.now();
-        while (window.__pv.layout().turning && performance.now() - t0 < 3000) {
+        while (at().segment !== 'page' && performance.now() - t0 < 3000) {
           await new Promise((r) => requestAnimationFrame(r));
         }
-        return {
-          from,
-          active: window.__pv.layout().activeIndex,
-          turning: window.__pv.layout().turning,
-          ms: Math.round(performance.now() - t0),
-        };
+        return { from: started, segment: at().segment, active: at().activeIndex, ms: Math.round(performance.now() - t0) };
       }, p);
-      // The decision is made on the exact figure, not a rounded one: a
-      // scroller lands a ten-thousandth short of half a turn as often as not.
       const nearer = settled.from >= 0.5 ? 1 : 0;
       check(
-        !settled.turning && settled.active === nearer,
+        settled.segment === 'page' && settled.active === nearer,
         `settle: a turn left at p=${settled.from.toFixed(2)} runs ${nearer ? 'on' : 'back'}`,
         `${settled.ms}ms`,
       );
-      // 120ms of quiet, then a 450ms tween — anything much past that is a
-      // folder hanging in the air long enough for the reader to notice.
-      check(settled.ms <= 900, `settle: …and lands promptly`, `${settled.ms}ms`);
+      // 120ms of quiet, then a 450ms tween — anything much past that is a sheet
+      // hanging in the air long enough for the reader to notice.
+      check(settled.ms <= 1200, 'settle: …and lands promptly', `${settled.ms}ms`);
     }
 
-    // The same thing with a real hand on the wheel, end to end: park at the
-    // foot of folder 0, wheel half a turn, stop. Nothing must settle WHILE the
-    // wheel is turning, and the folder must dock once it stops.
-    await page.evaluate(() => {
-      const t = window.__pv.track();
-      window.__pv.park(Math.round(t.start[0] + t.pageScroll[0]));
-    });
-    await page.waitForTimeout(300);
-    await page.mouse.move(1000, 500);
-    for (let i = 0; i < 3; i++) {
-      await page.mouse.wheel(0, 120); // 3 × 120 = half of a 720px turn
-      await page.waitForTimeout(40);
-    }
-    const during = await page.evaluate(() => window.__pv.layout().turning);
-    const wheeled = await page.evaluate(async () => {
-      // Where the wheel actually left it. Lenis's own smoothing runs on for
-      // most of a second after the last wheel event, and it crawls the last
-      // few pixels — so wait for Lenis to say it has stopped rather than
-      // guessing from two samples that happened to match.
-      const t1 = performance.now();
-      while (window.__pv.scrolling() && performance.now() - t1 < 3000) {
-        await new Promise((r) => requestAnimationFrame(r));
-      }
-      const from = window.__pv.layout().progress;
-      const t0 = performance.now();
-      while (window.__pv.layout().turning && performance.now() - t0 < 3000) {
-        await new Promise((r) => requestAnimationFrame(r));
-      }
-      const at = window.__pv.layout();
-      return { from, active: at.activeIndex, turning: at.turning, ms: Math.round(performance.now() - t0) };
-    });
-    check(during, 'settle: nothing fires while the wheel is still turning');
-    check(
-      !wheeled.turning && wheeled.active === (wheeled.from >= 0.5 ? 1 : 0),
-      `settle: half a turn on the wheel (p=${wheeled.from.toFixed(2)}), then stop — it lands`,
-      `${wheeled.ms}ms after the scroll came to rest`,
-    );
-
-    // …and a rewind is a turn run backwards, so it settles the same way.
-    const rewound = await page.evaluate(async () => {
-      const t = window.__pv.track();
-      window.__pv.park(t.start[2]);
-      await new Promise((r) => setTimeout(r, 200));
-      // Back up into the turn that brought folder 2 in, a third of the way.
-      const foot = t.start[1] + t.pageScroll[1];
-      window.__pv.park(foot + t.turnDistance * 0.3);
-      await new Promise((r) => setTimeout(r, 900));
-      const at = window.__pv.layout();
-      return { turning: at.turning, active: at.activeIndex };
-    });
-    check(!rewound.turning && rewound.active === 1, 'settle: a rewind left part done runs back', JSON.stringify(rewound));
-
-    // Outside the band it must do nothing at all, or a folder that has barely
-    // moved twitches under a reader who has stopped reading it.
+    // Outside the band it must do nothing at all, or a page that has barely
+    // started to leave twitches under a reader who has stopped reading it.
     const held = await page.evaluate(
       async ([lo, hi]) => {
         const t = window.__pv.track();
-        const foot = t.start[0] + t.pageScroll[0];
+        const from = t.start[0] + t.pageScroll[0];
+        const len = t.exitDistance + t.enterDistance;
         const out = [];
         for (const p of [lo / 2, 1 - (1 - hi) / 2]) {
-          window.__pv.park(foot + t.turnDistance * p);
+          window.__pv.park(Math.round(from + len * p));
           await new Promise((r) => setTimeout(r, 900));
-          out.push(Math.round(window.__pv.layout().progress * 100) / 100);
+          out.push(Math.round(((window.__pv.position() - from) / len) * 100) / 100);
         }
         return out;
       },
       [0.15, 0.85],
     );
     check(
-      Math.abs(held[0] - 0.075) < 0.02 && Math.abs(held[1] - 0.925) < 0.02,
+      Math.abs(held[0] - 0.075) < 0.03 && Math.abs(held[1] - 0.925) < 0.03,
       'settle: below the low dial and above the high one, nothing moves',
       JSON.stringify(held),
     );
 
-    // A tab click owns the scroll while it runs; the settle must not grab it.
+    // The same thing with a real hand on the wheel, end to end: park at the
+    // bottom of section 0, wheel part-way into the turn, stop. Nothing must
+    // settle WHILE the wheel is turning, and the sheet must land once it stops.
+    await page.evaluate(() => {
+      const t = window.__pv.track();
+      window.__pv.park(Math.round(t.start[0] + t.pageScroll[0]));
+    });
+    await page.waitForTimeout(400);
+    await page.mouse.move(viewport.width / 2, viewport.height / 2);
+    for (let i = 0; i < 5; i++) {
+      await page.mouse.wheel(0, 120);
+      await page.waitForTimeout(40);
+    }
+    const during = await page.evaluate(() => window.__pv.layout().segment !== 'page');
+    const wheeled = await page.evaluate(async () => {
+      // Where the wheel actually left it. Lenis's own smoothing runs on for
+      // most of a second after the last wheel event and crawls the last few
+      // pixels, so wait for Lenis to say it has stopped rather than guessing.
+      const t1 = performance.now();
+      while (window.__pv.scrolling() && performance.now() - t1 < 3000) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      const t = window.__pv.track();
+      const from = t.start[0] + t.pageScroll[0];
+      const started = (window.__pv.position() - from) / (t.exitDistance + t.enterDistance);
+      const t0 = performance.now();
+      while (window.__pv.layout().segment !== 'page' && performance.now() - t0 < 3000) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return { from: started, active: window.__pv.layout().activeIndex, segment: window.__pv.layout().segment, ms: Math.round(performance.now() - t0) };
+    });
+    check(during, 'settle: nothing fires while the wheel is still turning');
+    check(
+      wheeled.segment === 'page' && wheeled.active === (wheeled.from >= 0.5 ? 1 : 0),
+      `settle: part of a turn on the wheel (p=${wheeled.from.toFixed(2)}), then stop — it lands`,
+      `${wheeled.ms}ms after the scroll came to rest`,
+    );
+
+    // A letterhead click owns the scroll while it runs; the settle must not
+    // grab it, and it must land on the section it names.
     const clicked = await page.evaluate(async () => {
       window.__pv.park(0);
-      await new Promise((r) => setTimeout(r, 300));
-      document.querySelector('.pv-folder[data-k="3"] .pv-folder__strip').click();
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 400));
+      document.querySelectorAll('.pv-letterhead__no')[3].click();
+      await new Promise((r) => setTimeout(r, 2200));
       const at = window.__pv.layout();
-      return { turning: at.turning, active: at.activeIndex };
+      return { segment: at.segment, active: at.activeIndex };
     });
-    check(!clicked.turning && clicked.active === 3, 'a tab click still lands on its folder', JSON.stringify(clicked));
+    check(
+      clicked.segment === 'page' && clicked.active === 3,
+      'a letterhead number still lands on its section',
+      JSON.stringify(clicked),
+    );
 
-    // 8 — contrast, re-measured: the titles got smaller.
-    await page.evaluate(() => window.__pv.seek(0));
-    await page.waitForTimeout(200);
-    const contrast = await page.evaluate(() => {
-      const r = window.__pvProbe?.();
-      if (!r) return null;
-      // The worst run of each kind of text — the folder titles and the number
-      // are the ones this change touched.
-      const byKind = new Map();
-      for (const s of r.samples) {
-        const w = byKind.get(s.kind);
-        if (!w || s.ratio < w.ratio) byKind.set(s.kind, s);
-      }
-      return {
-        worst: r.worst,
-        failures: r.failures,
-        kinds: [...byKind.values()].map(
-          (s) => `${s.kind} ${s.fontPx}px  ${Math.round(s.ratio * 100) / 100}:1  needs ${s.required}${s.pass ? '' : '  ← BELOW'}`,
-        ),
-      };
-    });
-    if (contrast) {
-      check(contrast.failures === 0, 'contrast', `worst ${round(contrast.worst)}:1`);
-      for (const s of contrast.kinds) console.log(`      ${s}`);
-    } else {
-      bad('contrast — the probe returned nothing');
-    }
-
-    // 9 — the frame budget, over a real wheel scroll.
-    await page.evaluate(() => window.__pv.release());
-    const fps = await measureFps(page);
-    console.log(`  · ${fps} fps over a 2s wheel scroll`);
-
-    const noisy = page.logs.filter((l) => /ACTIVE FOLDER MOVED|pageerror|error:|overlap by|no clip/.test(l));
-    check(noisy.length === 0, 'no console errors on first open', noisy.join(' | '));
+    const noisy = page.logs.filter((l) => /ACTIVE SECTION MOVED|pageerror|error:|\[pv:handoff\]/.test(l));
+    check(noisy.length === 0, 'no console errors', noisy.slice(0, 3).join(' | '));
     await page.close();
   }
 
-  // ── media reserves its box ─────────────────────────────────────────────────
+  // ── layout-stable media, and a cold first open ──────────────────────────────
   //
   // A page's height is the input the whole track is built from, so it has to be
-  // the same before and after its assets arrive. Every media block carries its
-  // intrinsic size for exactly this, and the full-width page changed every one
-  // of those boxes — so hold the assets back, measure, let them through, and
-  // measure again.
-  console.log('\n── layout-stable media ──────────────────────────────────────');
+  // the same before and after its assets arrive. And the TEXTURES must not be
+  // part of that gate at all: `sheet.webp` decoding affects no layout, and
+  // waiting on it would put a WebGL asset on the critical path of a scroll lock.
+  console.log('\n── layout-stable media, textures cold ───────────────────────');
   {
     // Its OWN context: the shared one has these assets in its memory cache from
     // every run above, and a cache hit never reaches the route that holds them
     // back — so the page would arm with all the media already decoded and the
     // check would prove nothing.
-    const cold = await context.browser().newContext({ deviceScaleFactor: 1 });
+    const cold = await browser.newContext({ deviceScaleFactor: 1 });
     const held = await cold.newPage();
-    await held.setViewportSize(VIEWPORTS[0]);
-    await held.route('**/projects/placeholder/**', async (route) => {
-      await new Promise((r) => setTimeout(r, 1500));
+    await held.setViewportSize({ width: VIEWPORTS[0].width, height: VIEWPORTS[0].height });
+    // TWO hold-backs, because they answer two different questions. The block
+    // media is what a page's HEIGHT is made of, so it is held long enough to
+    // prove the heights do not move when it lands. The TEXTURES are held longer
+    // still, because the claim about them is stronger: the scroll lock has to
+    // arm before one of them has arrived at all.
+    const MEDIA_MS = 1500;
+    const TEXTURE_MS = 3000;
+    const seen = [];
+    const t0 = Date.now();
+    await held.route('**/projects/*/sheet-*.webp', async (route) => {
+      await new Promise((r) => setTimeout(r, TEXTURE_MS));
       await route.continue();
     });
+    await held.route('**/projects/placeholder/**', async (route) => {
+      await new Promise((r) => setTimeout(r, MEDIA_MS));
+      await route.continue();
+    });
+    held.on('response', (r) => seen.push({ url: r.url(), at: Date.now() - t0 }));
     const logs = [];
     held.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
-    await held.goto(`${URL}/#view-${PROJECT}`, { waitUntil: 'commit' });
-    await held.waitForFunction(() => window.__pv?.armed(), null, { timeout: 15000 });
-    const heights = () =>
-      held.evaluate(() =>
-        [...document.querySelectorAll('.pv-folder__inner')].map((el) =>
-          Math.round(el.getBoundingClientRect().height),
-        ),
-      );
-    // Only the PROJECT's media. `document.images` also holds the grid's covers,
-    // which are behind the scrim, are not held back, and are already cached.
-    const loaded = () =>
+    await held.goto(`${ORIGIN}/#view-${PROJECT}`, { waitUntil: 'commit' });
+    await held.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+    const armedAt = Date.now() - t0;
+    const heights = () => held.evaluate(() => window.__pv.track().heights.map(Math.round));
+    const decoded = () =>
       held.evaluate(() => {
         const mine = [...document.images].filter((i) => i.src.includes('/projects/placeholder/'));
         return { of: mine.length, done: mine.filter((i) => i.complete).length };
       });
     const before = await heights();
-    const loadedAtArm = await loaded();
+    const atArm = await decoded();
     // Not "wait for every image": they are `loading="lazy"`, so the ones below
-    // the fold never start. Wait past the hold-back and count what arrived.
-    await held.waitForTimeout(3000);
+    // the fold never start. Wait past both hold-backs and count what arrived.
+    await held.waitForTimeout(TEXTURE_MS + 1200);
     const after = await heights();
-    const loadedNow = await loaded();
+    const now = await decoded();
+    const firstTexture = seen.find((r) => /sheet-[\d-]+\.webp/.test(r.url))?.at;
     check(
-      loadedNow.done > loadedAtArm.done,
+      now.done > atArm.done,
       'the gate opened before the media did',
-      `${loadedAtArm.done} of ${loadedAtArm.of} decoded when the track armed, ${loadedNow.done} after`,
+      `${atArm.done} of ${atArm.of} decoded when the track armed, ${now.done} after`,
+    );
+    check(
+      firstTexture !== undefined && armedAt < firstTexture,
+      'the track armed with the textures cold',
+      `armed at ${armedAt}ms, first capture landed at ${firstTexture ?? 'never'}ms`,
     );
     check(
       String(before) === String(after),
       'page heights are identical before and after the media lands',
       `${before.join(', ')}`,
     );
-    const moved = logs.filter((l) => /ACTIVE FOLDER MOVED/.test(l));
+    const moved = logs.filter((l) => /ACTIVE SECTION MOVED/.test(l));
     check(moved.length === 0, 'no rebuild moved the reader', moved.join(' | '));
     await cold.close();
   }
@@ -777,31 +664,53 @@ async function run() {
   // ── the ways in and out ────────────────────────────────────────────────────
   console.log('\n── navigation ───────────────────────────────────────────────');
   const page = await openView(context, VIEWPORTS[0], `#view-${PROJECT}/4`);
-  const deep = await page.evaluate(() => ({
-    active: window.__pv.layout().activeIndex,
-    open: document.querySelectorAll('.pv-folder[data-open]').length,
-    turning: window.__pv.layout().turning,
-  }));
-  check(deep.active === 3 && deep.open === 1 && !deep.turning, 'deep link opens on its folder', JSON.stringify(deep));
+  const deep = await page.evaluate(() => {
+    const l = window.__pv.layout();
+    return {
+      active: l.activeIndex,
+      segment: l.segment,
+      sheet: l.sheet,
+      shown: [...document.querySelectorAll('.pv-page')].filter((p) => p.style.visibility !== 'hidden').length,
+      frames: window.__pv.canvasFrames(),
+    };
+  });
+  check(
+    deep.active === 3 && deep.segment === 'page' && deep.sheet === null && deep.shown === 1,
+    'a deep link lands flat on its section',
+    JSON.stringify({ active: deep.active, segment: deep.segment, shown: deep.shown }),
+  );
+  check(deep.frames === 0, 'a deep link replays no entrance — the canvas never painted', `${deep.frames} frames`);
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.waitForTimeout(400);
-  const resized = await page.evaluate(() => window.__pv.layout().activeIndex);
-  check(resized === 3, 'a resize keeps the reader on their folder', `folder ${resized}`);
+  await page.waitForTimeout(500);
+  const resized = await page.evaluate(() => ({
+    active: window.__pv.layout().activeIndex,
+    drift: (() => {
+      const s = window.__pv.sheetRect();
+      const r = document.querySelector('.pv-page[data-k="3"]').getBoundingClientRect();
+      return Math.max(Math.abs(s.left - r.left), Math.abs(s.top - r.top), Math.abs(s.width - r.width), Math.abs(s.height - r.height));
+    })(),
+  }));
+  check(resized.active === 3, 'a resize keeps the reader on their section', `section ${resized.active}`);
+  check(resized.drift <= RECT_PX, 'a resize re-fits the plane to the new page rect', `${round(resized.drift)}px apart`);
 
   const inert = await page.evaluate(() => document.querySelector('.app')?.hasAttribute('inert'));
   check(inert === true, 'the app behind is inert');
 
   await page.keyboard.press('Escape');
-  // The close is a storyboard (sheet out, scrim trailing it) and only then the
-  // hash change and the unmount — a second covers all of it with room.
+  // The close is a storyboard (the pane out, the scrim trailing it) and only
+  // then the hash change and the unmount — a second covers all of it with room.
   await page.waitForTimeout(1400);
   const closed = await page.evaluate(() => ({
     hash: location.hash,
     layer: !!document.querySelector('.portfolio-layer'),
     inert: document.querySelector('.app')?.hasAttribute('inert'),
   }));
-  check(!closed.hash.startsWith('#view-') && !closed.layer && !closed.inert, 'Escape closes the view', JSON.stringify(closed));
+  check(
+    !closed.hash.startsWith('#view-') && !closed.layer && !closed.inert,
+    'Escape closes the view',
+    JSON.stringify(closed),
+  );
 
   // The reader is the other full-screen layer; it must still open.
   const reader = await page.evaluate(async () => {
@@ -816,28 +725,6 @@ async function run() {
   await browser.close();
   console.log(failures === 0 ? '\nall green\n' : `\n${failures} failing\n`);
   process.exit(failures === 0 ? 0 : 1);
-}
-
-async function measureFps(page) {
-  await page.mouse.move(1000, 500);
-  const done = page.evaluate(
-    () =>
-      new Promise((resolve) => {
-        let frames = 0;
-        const t0 = performance.now();
-        const tick = () => {
-          frames++;
-          if (performance.now() - t0 < 2000) requestAnimationFrame(tick);
-          else resolve(Math.round((frames / (performance.now() - t0)) * 1000));
-        };
-        requestAnimationFrame(tick);
-      }),
-  );
-  for (let i = 0; i < 40; i++) {
-    await page.mouse.wheel(0, 120);
-    await page.waitForTimeout(45);
-  }
-  return done;
 }
 
 run().catch((e) => {

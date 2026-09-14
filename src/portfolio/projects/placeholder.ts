@@ -2,8 +2,8 @@ import type { Block, Media, Section, Stat } from '../blocks/types';
 import ASSETS from './placeholder-assets.json';
 
 /**
- * The placeholder SECTIONS — so the notebook's mechanics can be eye-tested
- * before any real project exists.
+ * The placeholder SECTIONS — so the paper's mechanics can be eye-tested before
+ * any real project exists.
  *
  * Length is the point. A section's height is what decides how long you scroll
  * before the track hands over to the turn, so the placeholders are built to
@@ -105,13 +105,13 @@ const PROSE: [string, string[]][] = [
   [
     'One scroll, no modes',
     [
-      'There is no gesture to learn and no control to find: the wheel does the whole project. Where the vertical run of a section ends, the turn begins, and the position is the same number throughout.',
+      'There is no gesture to learn and no control to find: the wheel does the whole project. Where the vertical run of a section ends, its sheet tilts away and the next one unrolls behind it, and the position is the same number throughout.',
     ],
   ],
   [
     'A section can be any length',
     [
-      'The track derives its extent from the measured height of each section, so a long one simply scrolls for longer before the turn. Nothing is fixed to a viewport count, and nothing here is a page in the printing sense.',
+      'The track derives its extent from the measured height of each section, so a long one simply scrolls for longer before its sheet leaves. A section shorter than the frame has no vertical run at all and goes straight from its entrance into its exit, which is a state the mechanics have to reduce to cleanly.',
     ],
   ],
   [
@@ -121,21 +121,21 @@ const PROSE: [string, string[]][] = [
     ],
   ],
   [
-    'The stack underneath',
+    'The sheet before this one',
     [
-      'The section before this one did not leave. It is directly underneath, still at the line you stopped reading, and its tab is still on the left. Click that tab and the track scrolls back: the sections turn out to the right in order, and you land on its title.',
+      'It did not go anywhere you can get back to by looking: it tilted away and stopped existing, and its number is still in the letterhead. Click that number and the track runs backwards through every sheet in between, each one re-rolling as the page in front of it comes back.',
     ],
   ],
   [
-    'Nothing runs behind the glass',
+    'Nothing runs behind a sheet',
     [
-      'The artboard mounts only once it is within one viewport of the scroll position and is torn down again on the way out. Closing the sheet unmounts every section, so a project can never leave a render loop running under the grid.',
+      'The artboard mounts only once it is within one viewport of the scroll position and is torn down again on the way out. A page that is not the live one is out of the paint order entirely, and so is one part-way through its exit — the video on it stops the moment it starts leaving.',
     ],
   ],
   [
     'Edge to edge',
     [
-      'The page runs to an inset on either side and no further, so a bleed image has only that inset to escape — out to the folder\u2019s own edges, which is the frame the cabinet holds.',
+      'The page runs to an inset on either side and no further, so a bleed image has only that inset to escape — out to the paper\u2019s own edges, and no further than that, because past them is ground.',
     ],
   ],
 ];
@@ -179,49 +179,154 @@ function beat(i: number): Block {
   }
 }
 
-/** How many beats sit in one run before the hairline divider. */
+/** How many blocks sit in one run before the hairline divider. */
 const BEATS_PER_RUN = 3;
 
 export interface SectionSpec {
   title: string;
-  hue: number;
-  /** Roughly how many viewports tall, at 996px with the default page layout. */
+  /** How many page heights tall the section should come out, near enough. See
+   *  {@link BLOCK_VP} for what "near enough" is and why it cannot be exact. */
   viewports: number;
 }
 
 /**
- * Beats per viewport, and the fixed cost of a section on top.
+ * WHAT EACH BLOCK COSTS, in page heights. MEASURED at 1728×996 with the shipped
+ * page rect (748px), including the block's own 28px margin, and re-measurable
+ * from the `[pv:track]` log any time the page's layout moves.
  *
- * MEASURED, not derived, and re-measured whenever the page's layout changes —
- * the full-width page nearly doubled what a beat costs, because a beat is
- * mostly media and media now spans the measure. Fitting the rendered heights of
- * six sections at 1728×996 gives 0.57 viewports a beat over a 0.45 floor (the
- * header, the caption and the link pill), so a beat is `1 / 0.57`. See the
- * `viewports` figures in the project files and the `[pv:track]` log that prints
- * what they came out as.
+ * A table rather than an average, because the average is useless here: a stat
+ * grid is half a page and a Rive block is one and a half. Sizing a section by a
+ * mean beat made a 1.5-viewport section and a 2-viewport one come out the same
+ * length, which takes the spread out of the placeholder — and the spread IS the
+ * placeholder. The short sections are what stress the
+ * entrance-straight-into-exit path and the long one is what is long enough to
+ * forget there is a sheet involved.
+ *
+ * So a section is FILLED: take beats from the cycle while the next one gets you
+ * nearer the target than it overshoots it, then top up with paragraphs, which
+ * are a sixth of a page each and are the fine adjustment. It still cannot be
+ * exact — the last beat either fits or it does not — but it lands within about
+ * a third of a page rather than within a whole one.
  */
-const BEATS_PER_VIEWPORT = 1.77;
-const SECTION_FLOOR_VIEWPORTS = 0.45;
+const BLOCK_VP: Record<string, number> = {
+  letterhead: 0.255,
+  text: 0.164,
+  twoUp: 1.33,
+  video: 1.237,
+  rive: 1.421,
+  row: 1.027,
+  image: 1.314,
+  imageBleed: 1.037,
+  statGrid: 0.535,
+  linkPill: 0.053,
+};
 
-export function placeholderSection({ title, hue, viewports }: SectionSpec): Section {
-  const count = Math.max(
-    1,
-    Math.round((viewports - SECTION_FLOOR_VIEWPORTS) * BEATS_PER_VIEWPORT),
-  );
-  // No title block: the page opens with the folder's own number and title, at
-  // the size the reference gives it, and a project should not say its name
-  // twice running.
-  const blocks: Block[] = [
-    { type: 'caption', text: `PLACEHOLDER — ${viewports} VIEWPORTS` },
-  ];
-  for (let i = 0; i < count; i++) {
-    const block = beat(i);
-    blocks.push(i > 0 && i % BEATS_PER_RUN === 0 ? { ...block, newRun: true } : block);
-  }
-  blocks.push({ type: 'linkPill', label: 'View the reference', href: 'https://halfof8.com/#space' });
-  return { title, hue, blocks };
+/** A run's own padding, and the page's inset — the two costs that are not a
+ *  block's. */
+const RUN_VP = 0.187;
+const PAGE_VP = 0.182;
+
+/** What a section costs before it says anything: the letterhead block, the link
+ *  pill, the first run's padding and the page's inset. */
+const FLOOR_VP = BLOCK_VP.letterhead + BLOCK_VP.linkPill + RUN_VP + PAGE_VP;
+
+function costOf(block: Block): number {
+  if (block.type === 'image' && block.bleed) return BLOCK_VP.imageBleed;
+  return BLOCK_VP[block.type] ?? BLOCK_VP.text;
 }
 
-export function placeholderSections(specs: SectionSpec[]): Section[] {
-  return specs.map(placeholderSection);
+/**
+ * THE PAGE RECT AT EACH SIGNED-OFF VIEWPORT, widest first — which is what the
+ * captures are, and what they are named after.
+ *
+ * MEASURED, from the shipped page dials: the viewport less `pageMarginPx` on
+ * each side, less the letterhead and a margin at the top, less the pill's foot
+ * at the bottom. One entry per viewport and not one in total, because a page's
+ * type is a fixed size and its measure is not — see `Section.sheets`.
+ */
+export const SHEET_SIZES = [
+  { width: 1632, height: 748 },
+  { width: 1344, height: 652 },
+];
+
+/**
+ * Where a section's capture lives. One per section per viewport, written by
+ * `npm run placeholders` from the live page and committed like every other
+ * WebP — see `docs/portfolio-view.md` on why this is a placeholder pipeline
+ * rather than a content one.
+ */
+export function sheetSrc(project: string, index: number, width: number): string {
+  return `/projects/${project}/sheet-${String(index + 1).padStart(2, '0')}-${width}.webp`;
+}
+
+export function placeholderSection(
+  project: string,
+  index: number,
+  { title, viewports }: SectionSpec,
+): Section {
+  const beats: Block[] = [];
+  const prose: Block[] = [];
+  let total = FLOOR_VP;
+  /** The padding a new run brings with it, which the fourth block in a section
+   *  pays and the fifth does not. */
+  const runCost = (n: number): number => (n > 0 && n % BEATS_PER_RUN === 0 ? RUN_VP : 0);
+  /** Take it if it gets us nearer the target than it overshoots — which is
+   *  rounding to the nearest whole block. */
+  const fits = (cost: number): boolean => total + cost / 2 <= viewports;
+
+  // Each section starts its cycle TWO beats further along than the last, and
+  // the stride is measured rather than chosen: with the page rect these dials
+  // give, a section of two to five page heights holds one to four beats, so a
+  // stride of one leaves the back of the nine-block cycle unreachable and a
+  // project would never once show a bleed image. Two covers the whole cycle
+  // across a project of five sections — and it is also what stops any two
+  // sections opening with the same thing.
+  //
+  // `projects.test.ts` holds every project to carrying the video and the Rive
+  // artboard, the two blocks with a lifecycle worth watching, and this is what
+  // makes those reachable for a project whose longest section is four page
+  // heights.
+  for (let i = 0; i < 32; i++) {
+    const block = beat(index * 2 + i);
+    const cost = costOf(block) + runCost(beats.length + prose.length);
+    if (!fits(cost)) break;
+    beats.push(block);
+    total += cost;
+  }
+  for (let i = 0; i < 16; i++) {
+    const [heading, body] = PROSE[(index * 2 + i) % PROSE.length];
+    const cost = BLOCK_VP.text + runCost(beats.length + prose.length);
+    if (!fits(cost)) break;
+    prose.push({ type: 'text', heading, body });
+    total += cost;
+  }
+  // A section always says at least one thing, however short it was asked to be.
+  if (beats.length === 0 && prose.length === 0) beats.push(beat(index * 2));
+
+  // Prose FIRST, media after. It is what makes the section's first viewport a
+  // page of type rather than a photograph — and the first viewport is what
+  // becomes `sheet.webp`, so it is what the rolled sheet reads as.
+  const body = [...prose, ...beats];
+
+  const blocks: Block[] = [
+    {
+      type: 'letterhead',
+      no: `SECTION ${String(index + 1).padStart(2, '0')}`,
+      title,
+      ref: `PLACEHOLDER \u00b7 ${viewports} VIEWPORTS`,
+    },
+    ...body.map((block, i) =>
+      i > 0 && i % BEATS_PER_RUN === 0 ? { ...block, newRun: true } : block,
+    ),
+    { type: 'linkPill', label: 'View the reference', href: 'https://www.virgilabloh.com/' },
+  ];
+  return {
+    title,
+    blocks,
+    sheets: SHEET_SIZES.map((size) => ({ src: sheetSrc(project, index, size.width), ...size })),
+  };
+}
+
+export function placeholderSections(project: string, specs: SectionSpec[]): Section[] {
+  return specs.map((spec, index) => placeholderSection(project, index, spec));
 }

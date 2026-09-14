@@ -1,20 +1,20 @@
 import type { Project } from '../blocks/types';
 import { placeholderSections } from './placeholder';
 
-/** Six folders — three full rows, which is the shape the stack was designed
- *  against: a read pile, an open folder and an unread pile all on screen. */
+/**
+ * FIVE sections, of deliberately uneven length. The spread is the point: 1.5vp
+ * and 2vp are the short runs that stress the entrance-straight-into-exit path,
+ * and 5vp is the one long enough to forget there is a sheet involved.
+ */
 export const project02: Project = {
   id: '02',
   title: 'Project 02',
-  sections: placeholderSections([
-    // The hues alternate rather than run round the wheel: at 12% lightness two
-    // neighbouring hues are the same colour, and the pile reads by colour as
-    // much as by label.
-    { title: 'Overview', hue: 14, viewports: 2 },
-    { title: 'Research', hue: 200, viewports: 4 },
-    { title: 'Motion', hue: 42, viewports: 3 },
-    { title: 'Build', hue: 150, viewports: 5 },
-    { title: 'Outcome', hue: 280, viewports: 1.5 },
-    { title: 'Appendix', hue: 330, viewports: 2.5 },
+  ref: 'DISCOMMODE · 2026',
+  sections: placeholderSections('02', [
+    { title: 'Overview', viewports: 2 },
+    { title: 'Research', viewports: 4 },
+    { title: 'Motion', viewports: 3 },
+    { title: 'Build', viewports: 5 },
+    { title: 'Outcome', viewports: 1.5 },
   ]),
 };

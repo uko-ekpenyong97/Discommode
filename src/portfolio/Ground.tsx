@@ -1,0 +1,68 @@
+import type { Project } from './blocks/types';
+
+/**
+ * THE GROUND — the opaque field the paper sits on, and the only thing in the
+ * view that never moves.
+ *
+ * Full-viewport and opaque. The grid behind it is still rendering and the scrim
+ * still tints it, so the card you opened from is where you left it, but nothing
+ * shows through: paper on glass is a contradiction, and a frosted surface is
+ * what the model this replaced spent its whole contrast budget on.
+ *
+ * Two things are on it. The GRAIN, which is a compositor-only transform loop
+ * over a tile of turbulence — a repaint per step of a full-viewport layer would
+ * cost frames under a page of type, and the whole point of the vertical run is
+ * that nothing is costing frames during it. And the LETTERHEAD, a mono strip
+ * across the top: the project, the section numbers as links, the section you
+ * are on, and a dateline. It goes UNDER the paper rather than over it — see
+ * `portfolio.css`, which is where that decision is written down.
+ *
+ * THE NUMBERS ARE THE ONLY NAVIGATION THE VIEW HAS. Clicking one is
+ * `lenis.scrollTo(start[k])` with the dial's duration — the same call a deep
+ * link resolves to, so there is one way to arrive at a section and it is used
+ * by both. The strip sits on the ground rather than on the paper, so it does
+ * not move when a sheet does and it never has to be part of a texture.
+ */
+
+const pad = (n: number): string => String(n).padStart(2, '0');
+
+interface GroundProps {
+  project: Project;
+  /** The section whose page is live. Commits at the hand-off, so this changes
+   *  once per section rather than continuously. */
+  activeIndex: number;
+  /** A number was clicked — scroll the track to that section. */
+  onSelect: (index: number) => void;
+}
+
+export function Ground({ project, activeIndex, onSelect }: GroundProps) {
+  const total = project.sections.length;
+  const current = project.sections[Math.min(activeIndex, total - 1)];
+  return (
+    <div className="pv-ground">
+      <div className="pv-grain" aria-hidden="true" />
+      <header className="pv-letterhead">
+        <span className="pv-letterhead__project">{project.title}</span>
+        <nav className="pv-letterhead__nav" aria-label="Sections">
+          {project.sections.map((section, k) => (
+            <button
+              key={k}
+              type="button"
+              className="pv-letterhead__no"
+              data-current={k === activeIndex || undefined}
+              aria-current={k === activeIndex ? 'true' : undefined}
+              onClick={() => onSelect(k)}
+            >
+              <span className="pv-sr">{section.title}</span>
+              <span aria-hidden="true">{pad(k + 1)}</span>
+            </button>
+          ))}
+        </nav>
+        <span className="pv-letterhead__section">
+          {current?.title} — {pad(activeIndex + 1)} / {pad(total)}
+        </span>
+        <span className="pv-letterhead__ref">{project.ref}</span>
+      </header>
+    </div>
+  );
+}

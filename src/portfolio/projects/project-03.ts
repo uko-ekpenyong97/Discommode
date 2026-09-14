@@ -2,10 +2,11 @@ import type { Project } from '../blocks/types';
 import { placeholderSections } from './placeholder';
 
 /**
- * ONE section. Deliberately: it is the case with no stack, no turn and a single
- * tab, and the mechanics have to reduce to it cleanly.
+ * ONE section. Deliberately: no exit, no second entrance, no turn anywhere, and
+ * the mechanics have to reduce to it cleanly — `maxPosition` is its own bottom
+ * and the track is one segment plus the entrance in front of it.
  *
- * Four viewports, not three: this is the only project with one section, so it
+ * Five viewports, not three: this is the only project with one section, so it
  * is the only place a block that comes late in the placeholder's cycle can be
  * seen at all — and `projects.test.ts` holds every project to carrying the
  * video and the Rive artboard, the two with a lifecycle worth watching.
@@ -13,5 +14,6 @@ import { placeholderSections } from './placeholder';
 export const project03: Project = {
   id: '03',
   title: 'Project 03',
-  sections: placeholderSections([{ title: 'Project 03', hue: 96, viewports: 4 }]),
+  ref: 'DISCOMMODE · 2026',
+  sections: placeholderSections('03', [{ title: 'Project 03', viewports: 5 }]),
 };

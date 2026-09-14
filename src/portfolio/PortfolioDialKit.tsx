@@ -19,7 +19,7 @@ import type { ContrastReport } from './contrastProbe';
 
 /**
  * The contrast probe's verdict, beside the dials that change it. Red and
- * specific when something is below its target, because "the glass looks fine"
+ * specific when something is below the 7:1 bar, because "the paper looks fine"
  * is exactly the judgement this exists to replace.
  */
 function ContrastReadout() {
@@ -33,11 +33,10 @@ function ContrastReadout() {
         {report.worst === null
           ? 'contrast — no text on screen (scrub the timeline in)'
           : `contrast ${report.worst}:1 worst of ${report.samples.length}`}
-        {report.skyEstimated ? ' (sky estimated)' : ''}
       </strong>
       {failures.map((s, i) => (
         <span key={i}>
-          {s.kind} {s.fontPx}px — {s.ratio}:1, needs {s.required}
+          {s.kind} on {s.surface} {s.fontPx}px — {s.ratio}:1, needs {s.required}
         </span>
       ))}
     </div>
@@ -78,13 +77,13 @@ const CLIPS = {
 /**
  * The dev-only AUTHORING dock, mounted over the real view via `#view-NN?intro`.
  * It writes the same `--pv-*` variables production does, so scrubbing any point
- * shows a true intermediate state — the glass arriving, the sheet mid-slide,
- * the pill still out at its corner — and the LOOK dials retune the page
- * geometry, the scroller's feel and the whole reveal system live, on real
- * content.
+ * shows a true intermediate state — the scrim arriving, the ground half in, the
+ * pill still out at its corner — and the LOOK dials retune the ground, the
+ * paper, the page geometry, every shader uniform, the whole choreography of an
+ * entrance and the reveal system live, on real content.
  *
  * The OPEN is the scrubbable Timeline. The CLOSE is NOT on it: it is a separate
- * storyboard (the sheet leading, the scrim trailing), so "Replay Close" plays
+ * storyboard (the pane leading, the scrim trailing), so "Replay Close" plays
  * `samplePortfolioExit` on its own rAF and hands the values back to the
  * timeline at REST when it lands.
  *
@@ -141,68 +140,83 @@ export default function PortfolioDialKit() {
     [tl, replayClose, stopClose],
   );
 
-  const geometry = useDialKit('PV STACK', {
-    glassColumnVw: [LOOK.glassColumnVw, 0, 50, 1],
-    // `rowPitch` is the trade the whole layout turns on: what is left between
-    // the two piles is the open folder's body, so a taller step shows you more
-    // of the project and less of any one part of it.
-    rowPitchPx: [LOOK.rowPitchPx, 40, 200, 1],
-    turnDistancePx: [LOOK.turnDistancePx, 200, 2000, 10],
-    sectionShadowAlpha: [LOOK.sectionShadowAlpha, 0, 1, 0.01],
-    scrimBlurPx: [LOOK.scrimBlurPx, 0, 48, 1],
+  // THE GROUND: the field the paper sits on, and the contrast readout that used
+  // to live on PV GLASS. `groundAlpha` below 1 is a debugging affordance and not
+  // a look — every figure in the readout is measured at 1.
+  const ground = useDialKit('PV GROUND', {
+    groundColor: { type: 'color', default: LOOK.groundColor },
+    groundAlpha: [LOOK.groundAlpha, 0, 1, 0.01],
+    grainOpacity: [LOOK.grainOpacity, 0, 0.3, 0.005],
+    letterheadHPx: [LOOK.letterheadHPx, 24, 160, 1],
     scrimAlpha: [LOOK.scrimAlpha, 0, 0.9, 0.01],
+    probe: { type: 'action', label: 'Re-run contrast probe' },
+  }, { id: 'pv-ground', onAction: (a) => a === 'probe' && logContrastProbe() });
+
+  // THE SHEET'S MATERIAL. Every shader uniform and both lights, together —
+  // they are not independent: the second light exists to keep the inside of the
+  // roll off black, and lowering it is what makes the curl look like a fold.
+  const paper = useDialKit('PV PAPER', {
+    paperColor: { type: 'color', default: LOOK.paperColor },
+    inkColor: { type: 'color', default: LOOK.inkColor },
+    curlTightness: [LOOK.curlTightness, 0, 1, 0.01],
+    curlOrigin: [LOOK.curlOrigin, 0.2, 1, 0.01],
+    curlOriginEdge: [LOOK.curlOriginEdge, 0, 1, 1],
+    lightA: [LOOK.lightA, 0, 3, 0.01],
+    lightAX: [LOOK.lightAX, -40, 40, 0.5],
+    lightAY: [LOOK.lightAY, -40, 40, 0.5],
+    lightAZ: [LOOK.lightAZ, 1, 60, 0.5],
+    lightB: [LOOK.lightB, 0, 3, 0.01],
+    lightBX: [LOOK.lightBX, -40, 40, 0.5],
+    lightBY: [LOOK.lightBY, -40, 40, 0.5],
+    lightBZ: [LOOK.lightBZ, 1, 60, 0.5],
+    paperRoughness: [LOOK.paperRoughness, 0, 1, 0.01],
+    paperReflect: [LOOK.paperReflect, 0, 2, 0.01],
+    edgeAlpha: [LOOK.edgeAlpha, 0, 1, 0.01],
+    mouseTiltDeg: [LOOK.mouseTiltDeg, 0, 8, 0.1],
+    mouseLerp: [LOOK.mouseLerp, 0.01, 0.5, 0.01],
   });
 
-  // The folder itself. Every length here is measured at `referenceSheetPx` and
-  // scaled by the sheet's real width, so a dial means the same proportion
-  // whatever the viewport.
-  const tabs = useDialKit('PV FOLDERS', {
-    tabHPx: [LOOK.tabHPx, 10, 120, 1],
-    // The strip is the folder's whole visible face in a pile, so it and
-    // `rowPitchPx` are the pair that decide how compact the two piles are and
-    // therefore how much sheet is left for the page. Tuned by eye, together.
-    stripHPx: [LOOK.stripHPx, 20, 200, 1],
-    tabWPx: [LOOK.tabWPx, 120, 1200, 4],
-    chamferPx: [LOOK.chamferPx, 0, 160, 1],
-    splitA: [LOOK.splitA, 20, 80, 1],
-    splitB: [LOOK.splitB, 20, 80, 1],
-    titleSizePx: [LOOK.titleSizePx, 16, 160, 1],
-    headerTitlePx: [LOOK.headerTitlePx, 40, 400, 2],
-    hoverLiftPx: [LOOK.hoverLiftPx, 0, 60, 1],
-    dimOpacity: [LOOK.dimOpacity, 0, 1, 0.01],
-  });
-
-  // THE PAGE. A page is the folder's width less an inset either side, and a
-  // twelve-column grid inside that; these are the four numbers it takes.
+  // THE PAGE. A page is the page rect less an inset either side and a
+  // twelve-column grid inside that; the rect itself is the viewport less these
+  // three margins.
   const page = useDialKit('PV PAGE', {
+    pageMarginPx: [LOOK.pageMarginPx, 0, 200, 1],
+    pageFootPx: [LOOK.pageFootPx, 0, 320, 1],
     pageInsetPx: [LOOK.pageInsetPx, 0, 200, 1],
     gridGapPx: [LOOK.gridGapPx, 0, 160, 1],
     // 0 is off — the body runs to the right inset. 90 is the alternative.
     textMeasureCh: [LOOK.textMeasureCh, 0, 140, 1],
-    headerScale: [LOOK.headerScale, 0.3, 2, 0.01],
+    letterheadTitlePx: [LOOK.letterheadTitlePx, 32, 300, 2],
   });
 
+  // THE CHOREOGRAPHY. The four entrance windows are fractions of the entrance's
+  // own progress and the ORDER is the point — see `pageTrack.sheetPose`.
   const motion = useDialKit('PV MOTION', {
-    // The settle: what stops a folder resting in mid-air. `settleLow`/`High`
-    // are the part of a turn worth finishing; outside them, nothing happens.
+    enterDistancePx: [LOOK.enterDistancePx, 200, 2400, 10],
+    exitDistancePx: [LOOK.exitDistancePx, 100, 2000, 10],
+    enterOverlap: [LOOK.enterOverlap, 0, 0.95, 0.01],
+    handoffMs: [LOOK.handoffMs, 0, 600, 10],
+    startRotationDeg: [LOOK.startRotationDeg, -180, 180, 1],
+    rotationEndAt: [LOOK.rotationEndAt, 0.02, 1, 0.01],
+    scaleBase: [LOOK.scaleBase, 0.05, 1, 0.01],
+    scaleTargetAt: [LOOK.scaleTargetAt, 0.02, 1, 0.01],
+    // The first thing to move if the hand-off starts showing: a curl still
+    // resolving at the swap is a shape the flat HTML cannot match.
+    curlOutAt: [LOOK.curlOutAt, 0.1, 1, 0.01],
+    riseFromH: [LOOK.riseFromH, -2, 2, 0.01],
+    exitScale: [LOOK.exitScale, 0.1, 1, 0.01],
+    exitRotateDeg: [LOOK.exitRotateDeg, -90, 90, 1],
+    exitRiseH: [LOOK.exitRiseH, -2, 2, 0.01],
+    exitFadeFrom: [LOOK.exitFadeFrom, 0, 1, 0.01],
+    // The settle: what stops a sheet resting in mid-air. `settleLow`/`High` are
+    // the part of a TURN worth finishing; outside them, nothing happens.
     settleLow: [LOOK.settleLow, 0, 0.5, 0.01],
     settleHigh: [LOOK.settleHigh, 0.5, 1, 0.01],
     settleMs: [LOOK.settleMs, 100, 1200, 10],
     settleIdleMs: [LOOK.settleIdleMs, 0, 600, 10],
-    easeRise: { type: 'select', options: ['linear', 'easeOut'], default: LOOK.easeRise },
     riseDelayMs: [LOOK.riseDelayMs, 0, 2000, 10],
     riseMs: [LOOK.riseMs, 100, 3000, 10],
   });
-
-  // The page glass. `pageAlpha` is the contrast lever: it is what stands
-  // between the text and whatever the grid happens to be showing through.
-  const glass = useDialKit('PV GLASS', {
-    pageSurface: { type: 'select', options: ['frosted', 'solid'], default: LOOK.pageSurface },
-    pageAlpha: [LOOK.pageAlpha, 0, 1, 0.01],
-    pageBlurPx: [LOOK.pageBlurPx, 0, 60, 1],
-    pageSaturate: [LOOK.pageSaturate, 0.5, 2, 0.05],
-    probe: { type: 'action', label: 'Re-run contrast probe' },
-  }, { id: 'pv-glass', onAction: (a) => a === 'probe' && logContrastProbe() });
 
   const pill = useDialKit('PV PILL', {
     pillDiameterPx: [LOOK.pillDiameterPx, 40, 240, 1],
@@ -220,8 +234,7 @@ export default function PortfolioDialKit() {
   const track = useDialKit('PV TRACK', {
     lenisLerp: [LOOK.lenisLerp, 0.02, 1, 0.01],
     wheelMultiplier: [LOOK.wheelMultiplier, 0.2, 3, 0.05],
-    sliverClickMs: [LOOK.sliverClickMs, 100, 2500, 10],
-    sliverReturn: { type: 'select', options: ['top', 'bottom'], default: LOOK.sliverReturn },
+    letterheadClickMs: [LOOK.letterheadClickMs, 100, 2500, 10],
   });
 
   const reveal = useDialKit('PV REVEAL', {
@@ -240,28 +253,49 @@ export default function PortfolioDialKit() {
   /** The live look, assembled from both panels — what the CSS variables and
    *  Copy are both built from. */
   const look: PortfolioLook = {
-    scrimBlurPx: geometry.scrimBlurPx,
-    scrimAlpha: geometry.scrimAlpha,
-    glassColumnVw: geometry.glassColumnVw,
+    scrimAlpha: ground.scrimAlpha,
+    groundColor: ground.groundColor,
+    groundAlpha: ground.groundAlpha,
+    grainOpacity: ground.grainOpacity,
+    letterheadHPx: ground.letterheadHPx,
+    paperColor: paper.paperColor,
+    inkColor: paper.inkColor,
+    pageMarginPx: page.pageMarginPx,
+    pageFootPx: page.pageFootPx,
     pageInsetPx: page.pageInsetPx,
     gridGapPx: page.gridGapPx,
     textMeasureCh: page.textMeasureCh,
-    headerScale: page.headerScale,
-    rowPitchPx: geometry.rowPitchPx,
-    turnDistancePx: geometry.turnDistancePx,
-    sectionShadowAlpha: geometry.sectionShadowAlpha,
-    referenceSheetPx: LOOK.referenceSheetPx,
-    tabHPx: tabs.tabHPx,
-    stripHPx: tabs.stripHPx,
-    tabWPx: tabs.tabWPx,
-    chamferPx: tabs.chamferPx,
-    splitA: tabs.splitA,
-    splitB: tabs.splitB,
-    titleSizePx: tabs.titleSizePx,
-    headerTitlePx: tabs.headerTitlePx,
-    hoverLiftPx: tabs.hoverLiftPx,
-    dimOpacity: tabs.dimOpacity,
-    easeRise: motion.easeRise as PortfolioLook['easeRise'],
+    letterheadTitlePx: page.letterheadTitlePx,
+    curlTightness: paper.curlTightness,
+    curlOrigin: paper.curlOrigin,
+    curlOriginEdge: paper.curlOriginEdge,
+    lightA: paper.lightA,
+    lightAX: paper.lightAX,
+    lightAY: paper.lightAY,
+    lightAZ: paper.lightAZ,
+    lightB: paper.lightB,
+    lightBX: paper.lightBX,
+    lightBY: paper.lightBY,
+    lightBZ: paper.lightBZ,
+    paperRoughness: paper.paperRoughness,
+    paperReflect: paper.paperReflect,
+    edgeAlpha: paper.edgeAlpha,
+    mouseTiltDeg: paper.mouseTiltDeg,
+    mouseLerp: paper.mouseLerp,
+    enterDistancePx: motion.enterDistancePx,
+    exitDistancePx: motion.exitDistancePx,
+    enterOverlap: motion.enterOverlap,
+    handoffMs: motion.handoffMs,
+    startRotationDeg: motion.startRotationDeg,
+    rotationEndAt: motion.rotationEndAt,
+    scaleBase: motion.scaleBase,
+    scaleTargetAt: motion.scaleTargetAt,
+    curlOutAt: motion.curlOutAt,
+    riseFromH: motion.riseFromH,
+    exitScale: motion.exitScale,
+    exitRotateDeg: motion.exitRotateDeg,
+    exitRiseH: motion.exitRiseH,
+    exitFadeFrom: motion.exitFadeFrom,
     settleLow: motion.settleLow,
     settleHigh: motion.settleHigh,
     settleMs: motion.settleMs,
@@ -270,12 +304,7 @@ export default function PortfolioDialKit() {
     riseMs: motion.riseMs,
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,
-    sliverClickMs: track.sliverClickMs,
-    sliverReturn: track.sliverReturn as PortfolioLook['sliverReturn'],
-    pageSurface: glass.pageSurface as PortfolioLook['pageSurface'],
-    pageAlpha: glass.pageAlpha,
-    pageBlurPx: glass.pageBlurPx,
-    pageSaturate: glass.pageSaturate,
+    letterheadClickMs: track.letterheadClickMs,
     pillDiameterPx: pill.pillDiameterPx,
     pillInsetPx: pill.pillInsetPx,
     pillOffsetPx: pill.pillOffsetPx,

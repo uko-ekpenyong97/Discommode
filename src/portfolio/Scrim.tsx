@@ -1,21 +1,18 @@
-import { useDismissOnGlass } from './useDismissOnGlass';
-
 /**
- * The glass. A full-viewport blurred scrim over EVERYTHING the app is showing —
- * the grid and the detail view both — so the card the project was opened from
- * stays where it was, visibly out of focus behind the sheet, rather than being
- * replaced by a page.
+ * The scrim: a dark tint over EVERYTHING the app is showing — the grid and the
+ * detail view both — so the card the project was opened from stays where it
+ * was, behind it.
  *
- * It is `backdrop-filter`, not a painted colour: what you see through it is the
- * live app, still rendering. Opacity is driven by `--pv-scrim` (see
- * `portfolioMotion.ts`).
+ * A TINT, and nothing else. The `backdrop-filter` went with the frosted page:
+ * the ground is opaque and full-viewport, so past the 600ms of the open there is
+ * nothing to see through the scrim, and a backdrop root maintained for the whole
+ * time the view is open is a cost with nothing on the other side of it.
  *
- * It is also the thing you click to leave. The sheet covers all of it but the
- * left column, so the only pointer events it ever gets are the ones that landed
- * on glass — which makes "click outside to close" a fact about the DOM rather
- * than a rectangle someone has to keep up to date.
+ * It is no longer the thing you click to leave. The ground is full-viewport and
+ * the scroller has to hear the wheel over all of it, so the scrim gets no
+ * pointer events at all — the dismiss moved onto the pane, where one DOM test
+ * separates the ground from the page. See `useDismissOnGround`.
  */
-export function Scrim({ onDismiss }: { onDismiss: () => void }) {
-  const dismiss = useDismissOnGlass(onDismiss);
-  return <div className="pv-scrim" {...dismiss} aria-hidden="true" />;
+export function Scrim() {
+  return <div className="pv-scrim" aria-hidden="true" />;
 }
