@@ -33,7 +33,7 @@ is why they transfer), `docs/prototypes/folder-prototype.html` and
 | `Ground.tsx` | The opaque field the paper sits on: colour, grain, letterhead. |
 | `Scroller.tsx` | The one scroller. Measures, builds the track, applies a layout every frame. |
 | `SheetCanvas.tsx` | The one fixed WebGL canvas. Mounts three.js, owns the plane, paints only during an entrance or a tear. |
-| `curlMaterial.ts` | The `ShaderMaterial` — an arc-and-flap bend in the vertex stage, two point lights and an ambient floor in the fragment stage. |
+| `curlMaterial.ts` | The `ShaderMaterial` — an arc-and-flap bend in the vertex stage, two point lights, an ambient floor and a blank back face in the fragment stage. Plus `bentPoint`, the CPU port of the bend, unit-tested in `curlMaterial.test.ts`. |
 | `fitPlaneToRect.ts` | Plane size from camera + target rect, so scale 1 lands on the page's pixels. Unit-tested. |
 | `SectionPage.tsx` | The live HTML page. The scroll container for one section's vertical run. |
 | `pageTrack.ts` | Pure geometry. The whole model, unit-tested in `pageTrack.test.ts`. |
@@ -183,10 +183,12 @@ which is what the cone was for and what a real peel does anyway.
 | `uCurlTightness` | 0.35 | The arc's radius: 0 is the widest the shader draws (0.26 page heights), 1 the tightest (0.03). **The name is older than the meaning** — it used to mix a cone's half-angle. |
 | `uCurlTaper` | 0.35 | How much the radius grows along the fold line. 0 is a cylinder. |
 | `uCurlDepth` | 0.5 | How much of the bend's lift actually leaves the plane — see below. |
+| `uCurlWrap` | 0 / 2.4 | The LEAST the peeled part must wrap, in radians; the radius tightens to meet it. The tear creases its free corner; the entrance sets 0 and keeps its wide curve. See below. |
 | `uAspect` | derived | From `fitPlaneToRect`, not from the viewport. |
 | `uMouse` / `uMouseTilt` / `uPointer` | ±1.5°, lerp 0.06 | Pointer tilt. **Scaled by the bend**, and switched off outright for the tear. Off under `prefers-reduced-motion`. |
 | `uHairline` / `uEdgeInk` / `uEdgeAlpha` | 1px, ink, 0.18 | A pixel of ink along the sheet's edge, matching the page's inset ring. |
 | `uOpacity` | 1 | The whole sheet's alpha. Only the tear's last tenth uses it. |
+| `uBackShade` / `uGrain` | 0.86, 0.08 | The BACK of the sheet: the paper colour times the shade, with a grain of its own and no texture. |
 
 **`curlDepth` is 0.5 because of the camera.** The lift is compressed into an
 ellipse rather than a circle, and the reason is arithmetic: the camera is 50
@@ -196,6 +198,55 @@ before it was added, a peel at `p` = 0.5 came out about twice the size it
 started — which reads as a zoom rather than as a sheet coming away. Flattening
 the bend keeps the silhouette, keeps the shading, and keeps the sheet the size it
 is; paper seen nearly face-on does not give the ellipse away.
+
+### The wrap floor, and why a corner lift needs one
+
+How far the free corner comes off the surface is `r · (1 − cos(frontLen / r))`.
+Read that again: it depends on the RADIUS and on how much sheet has peeled, and
+**not on how far the flap has turned** — once the corner is inside the arc its
+own angle is `frontLen / r`, and nothing past it can change that.
+
+So winding `uCurlAmount` up at the start of a peel drives the fold deeper into
+the sheet and leaves the corner exactly where it was. Measured, with the floor
+off: the corner is **17.1px** from where a flat sheet would put it at `p` = 0.10
+and **17.1px** at `p` = 0.15 — the same number, while the curl went from 0.33 to
+0.45. A unit test holds that to a millionth of a pixel, because it is the
+counter-intuitive fact the whole dial exists for.
+
+`uCurlWrap` is the fix: while the peel is short the radius tightens to whatever
+it takes for the peeled part to wrap that many radians, so the corner creases
+rather than bulging. It is what a hand does anyway — you crease a corner much
+tighter than you bend a whole sheet — and it **stops biting on its own** the
+moment `frontLen` passes `r₀ · uCurlWrap`, about a fifth of the way through the
+tear. Everything from `p` = 0.3 onward is untouched, which is why the mid-tear
+pose and both silhouette checks are unchanged.
+
+| `peelWrapMin` | corner at `p` = 0.10 | 0.15 | 0.30 |
+| --- | --- | --- | --- |
+| 0 (off) | 17.1px | 17.1px | 207.4px |
+| 2.4 (shipped) | **38.8px** | **59.3px** | 207.4px |
+| 2.8 | 41.6px | 65.8px | 209.4px ← starts moving the mid-tear |
+
+2.8 was the better-looking number on its own and 2.4 is the one that ships: at
+2.8 the floor is still biting at `p` = 0.3, which puts it inside the part of the
+tear nothing was supposed to touch.
+
+### The back of the sheet is not the front of it
+
+Paper is opaque. Fold a page over and what you see is the blank reverse, not the
+type read backwards — so the fragment stage branches on `gl_FrontFacing` and
+gives the back `paperColor × backShade` with a grain of its own and **no
+texture at all**.
+
+Sampling the same texture on both faces was the shortcut the entrance could
+afford, because an entrance never turns the sheet over. The tear does, at about
+`p` = 0.3, and from there the shortcut hands the reader a mirrored paragraph.
+
+The lighting is untouched by the branch — both faces are the same surface and
+take the same ratio — which is also why a flat sheet, every fragment of which is
+front-facing, is still exactly the texture and both hand-offs still hold. The
+grain is procedural rather than sampled, seeded on the sheet's own uv in page
+pixels so it sits ON the paper instead of swimming over it as the flap turns.
 
 **Normals are recomputed from the bent surface** (`vWorldNormal`), by putting
 two neighbouring points through the model matrix and crossing the tangents in
@@ -543,12 +594,21 @@ toward the pin.
 
 Four movements, overlapping at the joints:
 
-| `p` | What happens |
-| --- | --- |
-| 0 → 0.15 | The free corner LIFTS. `uCurlAmount` 0 → +0.45 with the fold right at the corner (`peelOriginFrom` 0.08); nothing translates and nothing turns. A peel starts as a bend, not as a move. |
-| 0.15 → 0.6 | The fold TRAVELS across the sheet (`peelTravel`), the bend peaks at +0.6 around `p` = 0.4, the sheet turns −12° about the pin and lifts 0.12·H. |
-| 0.6 → 0.8 | It comes FREE: up and back to +0.9·H, 0.85 scale, −18°, and the bend relaxes to +0.2 as paper springs. |
-| 0.8 → 1 | Off the top of the frame. `opacity` 1 → 0 over the last tenth ONLY. |
+| `p` | What happens | corner, off the page |
+| --- | --- | --- |
+| 0 → 0.15 | The free corner LIFTS. `uCurlAmount` 0 → +0.45 with the fold right at the corner (`peelOriginFrom` 0.08) and `uCurlWrap` 2.4 creasing it; nothing translates and nothing turns. A peel starts as a bend, not as a move. | 0 → **59px** |
+| 0.15 → 0.6 | The fold TRAVELS across the sheet (`peelTravel`), the bend peaks at +0.6 around `p` = 0.4, the sheet turns −12° about the pin and lifts 0.12·H. The wrap floor lets go around `p` = 0.2. | 207px at 0.3 |
+| 0.6 → 0.8 | It comes FREE: up and back to +0.9·H, 0.85 scale, −18°, and the bend relaxes to +0.2 as paper springs. | 896px at 0.5 |
+| 0.8 → 1 | Off the top of the frame. `opacity` 1 → 0 over the last tenth ONLY. | — |
+
+The corner column is measured, at 1728×996, through the shader's own geometry:
+`bentPoint` puts the vertex at uv (1, 0) through the same bend and the same
+camera the GPU does, and the figure is its distance from where a FLAT sheet
+would have put it — so the sheet's own turn, lift and scale are in both and
+cancel. At 1440×900 it is 3.8 / 33.3 / **50.6** / 169.8px at `p` = 0.05 / 0.10 /
+0.15 / 0.30. `pv-verify` holds `p` = 0.15 to 40px, because the tear's first
+movement is a corner lifting and a lift nobody can see is a beat of the
+choreography spent on nothing.
 
 **The rotation is about the PINNED CORNER**, not the centre, which is the whole
 difference between a sheet being peeled and a sheet being spun — three turns a
@@ -996,14 +1056,15 @@ are worth keeping.
 
 ```
 npm run dev          # in one shell
-npm test             # pageTrack + fitPlaneToRect, in node
+npm test             # pageTrack + fitPlaneToRect + the bend, in node
 npm run placeholders # regenerate the captures after a page change (needs the dev server)
 npm run verify:pv    # the same view, in Chrome
 ```
 
 `scripts/pv-verify.mjs` is the browser suite, and it exists because the unit
-tests cover `pageTrack` and `fitPlaneToRect` thoroughly and nothing else, while
-every bug this view has had was one only a browser could see. It runs both
+tests cover `pageTrack`, `fitPlaneToRect` and the bend's geometry thoroughly and
+nothing else, while every bug this view has had was one only a browser could
+see. It runs both
 signed-off viewports (1728×996, 1440×900) on card 02 (five sections), card 03
 (one — the section with no tear and no dwell) and card 04 (three), and checks:
 
@@ -1020,6 +1081,14 @@ signed-off viewports (1728×996, 1440×900) on card 02 (five sections), card 03
   every point before it comes free, never reaches left of the pinned corner and
   never sags below the page while it is held, is clear above the page once it is
   free, and is smaller going out than it was coming in;
+- **the corner lift** — the free corner ≥ 40px off the page by `p` = 0.15, and
+  only ever further off, measured through the shader's own geometry;
+- **the back of the sheet is blank**, asked as a controlled comparison: two
+  different sections at `p` = 0.5 of their tear are the same geometry in the
+  same rect wearing two different documents, so the flap's pixels agree to the
+  LEVEL if it is paper and differ if it is a texture. Measured at 0 levels apart
+  over 40 – 46 points; run against a build with the branch removed, 6 to 9 of
+  them differ by up to 202;
 - **the dwell paints nothing but ground** — zero pixels of paper at `p` = 0.5,
   zero canvas frames across it — and the letterhead names the section it is
   waiting for, dim;
@@ -1056,5 +1125,13 @@ smoothing runs on for most of a second after the last wheel event and a check
 that reads the position before then reads it in flight. `sheetRect()` and
 `pageRect()` are the two halves of the hand-off invariant; `enterWindow(k)` and
 `dwellWindow(k)` are how the suite steers to a segment without duplicating the
-track's arithmetic; and `canvasFrames()` is how "the canvas does nothing" is
-asked rather than assumed.
+track's arithmetic; `canvasFrames()` is how "the canvas does nothing" is asked
+rather than assumed; and `sheetPoint(u, v)` / `cornerLift()` are how a question
+about a VERTEX gets an answer, since the bend happens in a shader and the CPU
+cannot otherwise know where one ended up.
+
+**Anything that asks the canvas what it is showing has to seek and then WAIT.**
+For the 120ms of a hand-off the canvas is holding the flat sheet — that is the
+whole point of it — so a probe that lands inside the swap measures a flat sheet
+and reports, quite correctly and quite uselessly, that nothing has bent. It cost
+an hour of thinking the corner lift was zero.

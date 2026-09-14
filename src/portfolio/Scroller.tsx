@@ -11,7 +11,7 @@ import Lenis from 'lenis';
 import { animate } from 'motion';
 import { SectionPage } from './SectionPage';
 import { SheetCanvas } from './SheetCanvas';
-import type { SheetCanvasHandle } from './SheetCanvas';
+import type { CornerLift, SheetCanvasHandle } from './SheetCanvas';
 import { look, poseDials, subscribeLook } from './portfolioMotion';
 import {
   bottomOf,
@@ -132,6 +132,10 @@ export interface PortfolioProbe {
   enterWindow: (k: number) => { from: number; to: number } | null;
   /** …and the stretch of empty ground after section `k`'s tear. */
   dwellWindow: (k: number) => { from: number; to: number } | null;
+  /** The tear's free corner, against where a flat sheet would put it. */
+  cornerLift: () => CornerLift | null;
+  /** Where the shader put the vertex at `(u, v)`, in screen pixels. */
+  sheetPoint: (u: number, v: number) => { x: number; y: number } | null;
   /** Park the track at `y` and hold it there — the same lock the entrance uses,
    *  so neither the scroller nor Lenis moves it under the camera. */
   seek: (y: number) => void;
@@ -587,6 +591,8 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         trackRef.current ? layout(trackRef.current, positionRef.current, poseDials()) : null,
       armed: () => readyRef.current.armed,
       enterWindow: (k: number) => (trackRef.current ? enterWindow(trackRef.current, k) : null),
+      cornerLift: () => canvasRef.current?.cornerLift() ?? null,
+      sheetPoint: (u: number, v: number) => canvasRef.current?.sheetPoint(u, v) ?? null,
       dwellWindow: (k: number) => {
         const t = trackRef.current;
         if (!t) return null;

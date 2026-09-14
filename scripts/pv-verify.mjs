@@ -83,6 +83,12 @@ const CONTRAST = 7;
 /** How far outside the page's rect the tear may paint before it comes free —
  *  a couple of pixels for the bend's own perspective, and no more. */
 const PIN_SLACK = 3;
+/** How far the free corner must have come off the page by `p` = 0.15, in screen
+ *  pixels. The tear's first movement is a corner lifting, and a lift nobody can
+ *  see is a beat of the choreography spent on nothing. */
+const CORNER_PX = 40;
+/** Points through the corner lift it is reported at. */
+const LIFT_POINTS = [0.05, 0.1, 0.15, 0.3];
 
 let failures = 0;
 const ok = (label, extra = '') => console.log(`  ✓ ${label}${extra ? `  ${extra}` : ''}`);
@@ -130,6 +136,17 @@ const readTrack = (page) =>
 const seek = async (page, y) => {
   await page.evaluate((y) => window.__pv.seek(y), y);
   await page.waitForTimeout(50);
+};
+
+/** Seek, and wait for the crossfade at the start of a tear to finish.
+ *
+ * Anything that asks the CANVAS what it is showing has to go through this. For
+ * the 120ms of a hand-off the canvas is holding the FLAT sheet — that is the
+ * whole point of it — so a probe that lands inside the swap measures a flat
+ * sheet and reports that nothing has bent. */
+const seekSettled = async (page, y, handoffMs) => {
+  await page.evaluate((y) => window.__pv.seek(y), y);
+  await page.waitForTimeout(handoffMs + 200);
 };
 
 /** `p` through section `k`'s entrance, which is exactly its `enter` segment. */
@@ -466,6 +483,75 @@ async function run() {
       tear[tear.length - 1].count < tear[0].count,
       'the tear is smaller on the way out than it was on the way in',
       `${tear[0].count} → ${tear[tear.length - 1].count} px`,
+    );
+
+    // 3b — THE CORNER LIFT. The tear's first movement is a corner coming off
+    //      the page, and how far it has come is a question about a vertex —
+    //      so it is asked of the vertex, through the same bend and the same
+    //      camera the GPU uses, against where a flat sheet would have put it.
+    const lift = [];
+    for (const p of LIFT_POINTS) {
+      await seekSettled(page, atTear(track, 0, p), handoffMs);
+      lift.push({ p, ...(await page.evaluate(() => window.__pv.cornerLift())) });
+    }
+    check(
+      lift.find((l) => l.p === 0.15).px >= CORNER_PX,
+      `the free corner is ≥ ${CORNER_PX}px off the page by p = 0.15`,
+      lift.map((l) => `${l.p}:${round(l.px)}px`).join(' '),
+    );
+    check(
+      lift.every((l, i) => i === 0 || l.px > lift[i - 1].px),
+      '…and it only ever comes further off',
+      lift.map((l) => round(l.px)).join(' → '),
+    );
+
+    // 3c — THE BACK OF THE SHEET IS BLANK. Paper is opaque: the flap turns over
+    //      around p = 0.3, and what it hands the reader has to be the reverse
+    //      of a page rather than the page read backwards.
+    //
+    //      Asked as a CONTROLLED COMPARISON rather than by looking for type.
+    //      Two different sections at the same point of their tear are the same
+    //      geometry in the same rect wearing two different documents, so the
+    //      only thing that can differ between them is the texture: if the back
+    //      face is showing one, the flap's pixels differ; if it is paper, they
+    //      are identical. No threshold on what type looks like, and nothing a
+    //      blank corner of one capture could sneak past.
+    //
+    //      p = 0.5 and not earlier, and that is load-bearing: by then every
+    //      point of the grid has turned past vertical. At p = 0.4 part of it is
+    //      still on the arc and still FACING the reader, so it shows the
+    //      texture because it should, and the comparison means nothing there.
+    //      Run against a build with the branch removed, this reports 6 to 9
+    //      points up to 202 levels apart.
+    const grid = [];
+    for (let i = 0; i < 8; i++) {
+      for (let j = 0; j < 8; j++) grid.push([0.995 - i * 0.06, 0.005 + j * 0.06]);
+    }
+    const flapOf = async (k) => {
+      await seekSettled(page, atTear(track, k, 0.5), handoffMs);
+      const at = await page.evaluate(
+        ([grid]) => grid.map(([u, v]) => window.__pv.sheetPoint(u, v)),
+        [grid],
+      );
+      const raw = await sharp(await page.screenshot({ animations: 'disabled' }))
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      return at.map((p) => {
+        const x = Math.round(p.x);
+        const y = Math.round(p.y);
+        if (x < 1 || y < 1 || x >= raw.info.width - 1 || y >= raw.info.height - 1) return null;
+        const o = (y * raw.info.width + x) * raw.info.channels;
+        return [raw.data[o], raw.data[o + 1], raw.data[o + 2]];
+      });
+    };
+    const flapA = await flapOf(0);
+    const flapB = await flapOf(1);
+    const pairs = flapA.map((a, i) => [a, flapB[i]]).filter(([a, b]) => a && b);
+    const apart = pairs.map(([a, b]) => Math.max(...a.map((c, i) => Math.abs(c - b[i]))));
+    check(
+      pairs.length >= 30 && apart.every((d) => d <= 6),
+      'the flap shows the BACK of the sheet: two sections, the same blank paper',
+      `${pairs.length} points on screen, worst ${Math.max(...apart, 0)} levels apart`,
     );
 
     // 4 — THE DWELL. Half a screen of ground, and nothing else at all.

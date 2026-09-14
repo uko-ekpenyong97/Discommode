@@ -116,6 +116,9 @@ export interface SheetPose {
   /** `uCurlAxis`: the direction the fold TRAVELS, in degrees anticlockwise from
    *  +x with y up. 90 runs straight up the sheet, which is a horizontal fold. */
   curlAxis: number;
+  /** `uCurlWrap`: the least the peeled part must wrap, in radians. The tear
+   *  creases its free corner; the entrance sets 0 and keeps its wide curve. */
+  curlWrap: number;
   /** Offset from the page's resting centre, in page heights. Positive is up. */
   y: number;
   opacity: number;
@@ -193,6 +196,9 @@ export interface PoseDials {
   peelCurlPeak: number;
   peelCurlPeakAt: number;
   peelCurlRelax: number;
+  /** The least the peeled part must wrap, in radians — what makes the corner
+   *  lift READ rather than bulge. See the wrap floor in `curlMaterial.ts`. */
+  peelWrapMin: number;
   /** The rotation about the pinned corner, at the travel's end and at the end. */
   peelRotateMid: number;
   peelRotateEnd: number;
@@ -483,6 +489,9 @@ export function sheetPose(p: number, d: PoseDials): SheetPose {
     curl: d.enterCurl * (1 - window01(t, d.curlOutAt)),
     curlOrigin: d.enterCurlOrigin,
     curlAxis: d.enterCurlAxis,
+    // No floor: the entrance's whole point is a WIDE curve, and a floor would
+    // crease the one edge the reader is meant to be able to read across.
+    curlWrap: 0,
     y: d.riseFrom * (1 - t),
     opacity: 1,
     pointer: true,
@@ -558,6 +567,7 @@ export function tearPose(p: number, d: PoseDials): SheetPose {
     // Clockwise on screen, anticlockwise in the shader's y-up frame; and the
     // roll direction is a right angle from the fold line.
     curlAxis: 90 - d.peelAngle,
+    curlWrap: d.peelWrapMin,
     y: track01(t, [
       [0, 0],
       [lift, 0],

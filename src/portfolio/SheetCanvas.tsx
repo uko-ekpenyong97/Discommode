@@ -16,7 +16,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { applyCurlOptions, createCurlMaterial } from './curlMaterial';
+import { applyCurlOptions, bentPoint, createCurlMaterial } from './curlMaterial';
 import type { CurlMaterial, CurlMaterialOptions } from './curlMaterial';
 import { fitPlaneToRect } from './fitPlaneToRect';
 import type { PlaneFit, ScreenRect } from './fitPlaneToRect';
@@ -56,6 +56,16 @@ const SEGMENTS_Y = 96;
 /** Retina is worth it on a page of type; past 2 it is not. */
 const MAX_DPR = 2;
 
+/** The free corner, projected, with the flat sheet's own corner beside it. */
+export interface CornerLift {
+  x: number;
+  y: number;
+  flatX: number;
+  flatY: number;
+  /** The distance between the two, in CSS pixels. */
+  px: number;
+}
+
 export interface SheetCanvasHandle {
   /** Fit the plane to the page's rect, in VIEWPORT coordinates. Called from
    *  every measure, never from a frame. */
@@ -67,6 +77,11 @@ export interface SheetCanvasHandle {
   /** The flat plane's screen rect as three.js projects it, in viewport
    *  coordinates — the number the hand-off invariant is about. */
   screenRect: () => ScreenRect | null;
+  /** The free corner's screen position against where a flat sheet would put it
+   *  — how far the tear's first movement has actually come off the page. */
+  cornerLift: () => CornerLift | null;
+  /** Where the shader put the vertex at `(u, v)`, in screen pixels. */
+  sheetPoint: (u: number, v: number, flat?: boolean) => { x: number; y: number } | null;
   /** Frames painted since mount. Must not move during a vertical run. */
   frames: () => number;
 }
@@ -82,6 +97,8 @@ function curlOptions(): CurlMaterialOptions {
     roughness: look.paperRoughness,
     reflect: look.paperReflect,
     ambient: look.paperAmbient,
+    backShade: look.backShade,
+    grain: look.grainOpacity,
     mouseTiltDeg: look.mouseTiltDeg,
     edgeInk: look.inkColor,
     edgeAlpha: look.edgeAlpha,
@@ -305,6 +322,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       u.uCurlAmount.value = pose.curl;
       u.uCurlOrigin.value = pose.curlOrigin;
       u.uCurlAxis.value = (pose.curlAxis * Math.PI) / 180;
+      u.uCurlWrap.value = pose.curlWrap;
       u.uOpacity.value = pose.opacity;
 
       const w = plane.width * pose.scale;
@@ -350,6 +368,69 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
     /** Where the FLAT plane lands on screen, as three.js projects it — the
      *  number the hand-off invariant is about, asked of the renderer rather
      *  than of the arithmetic that fed it. */
+    /**
+     * WHERE THE FREE CORNER IS, and where it would be if the sheet were flat.
+     *
+     * The tear's first movement is a corner coming off the surface, and the
+     * only honest way to ask how far it has come is to put that vertex through
+     * the same bend and the same camera the GPU does. `bentPoint` is the CPU
+     * port of the shader's own geometry (see `curlMaterial.ts`); the flat
+     * reference goes through the identical transform with the bend switched
+     * off, so the answer is a displacement rather than a position and the
+     * sheet's own turn and lift cannot flatter it.
+     */
+    /**
+     * WHERE THE SHADER PUT A VERTEX, in screen pixels.
+     *
+     * The bend is computed in a vertex shader, so the CPU has no way to ask the
+     * GPU where it put one without reading a buffer back. `bentPoint` is the
+     * hand port of that geometry (see `curlMaterial.ts`) and this puts its
+     * answer through the mesh's own matrix and the same camera. `flat` runs the
+     * identical transform with the bend switched off, which is what makes a
+     * DISPLACEMENT possible: the sheet's own turn, lift and scale are in both,
+     * so they cancel and what is left is the bend.
+     */
+    const sheetPoint = (u: number, v: number, flat = false): { x: number; y: number } | null => {
+      const g = gl.current;
+      const canvas = canvasRef.current;
+      const plane = fitRef.current;
+      const last = lastRef.current;
+      if (!g || !canvas || !plane || !last) return null;
+      g.camera.updateMatrixWorld(true);
+      g.camera.updateProjectionMatrix();
+      g.mesh.updateMatrixWorld(true);
+      const box = canvas.getBoundingClientRect();
+      const [px, py, pz] = bentPoint(u, v, {
+        amount: flat ? 0 : last.pose.curl,
+        origin: last.pose.curlOrigin,
+        axis: (last.pose.curlAxis * Math.PI) / 180,
+        tightness: look.curlTightness,
+        taper: look.curlTaper,
+        depth: look.curlDepth,
+        wrap: last.pose.curlWrap,
+        aspect: plane.aspect,
+      });
+      const p = new Vector3(px, py, pz).applyMatrix4(g.mesh.matrixWorld).project(g.camera);
+      return {
+        x: ((p.x + 1) / 2) * canvas.clientWidth + box.left,
+        y: ((1 - p.y) / 2) * canvas.clientHeight + box.top,
+      };
+    };
+
+    /** The free corner — uv (1, 0) — against where a flat sheet would put it.
+     *  How far the tear's first movement has actually come off the page. */
+    const cornerLift = (): CornerLift | null => {
+      const bent = sheetPoint(1, 0);
+      const flat = sheetPoint(1, 0, true);
+      if (!bent || !flat) return null;
+      return {
+        ...bent,
+        flatX: flat.x,
+        flatY: flat.y,
+        px: Math.hypot(bent.x - flat.x, bent.y - flat.y),
+      };
+    };
+
     const screenRect = (): ScreenRect | null => {
       const g = gl.current;
       const canvas = canvasRef.current;
@@ -386,7 +467,15 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
 
     useImperativeHandle(
       ref,
-      (): SheetCanvasHandle => ({ fit, show, hide, screenRect, frames: () => framesRef.current }),
+      (): SheetCanvasHandle => ({
+        fit,
+        show,
+        hide,
+        screenRect,
+        cornerLift,
+        sheetPoint,
+        frames: () => framesRef.current,
+      }),
       // Every member closes over refs only, so the handle never has to change.
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],

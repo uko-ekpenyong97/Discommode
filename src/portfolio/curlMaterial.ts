@@ -105,6 +105,12 @@ export interface CurlUniforms {
   /** How much of the bend's lift actually leaves the plane, 0…1. Below 1 the
    *  bend is an ellipse rather than a circle — see the note in the shader. */
   uCurlDepth: IUniform<number>;
+  /**
+   * The LEAST the peeled part must wrap, in radians. Above zero the radius
+   * tightens to meet it, so a short peel creases rather than bulging. 0 is off,
+   * which is what the entrance wants.
+   */
+  uCurlWrap: IUniform<number>;
   /** `width / height` of the PLANE, from `fitPlaneToRect` — never the viewport's. */
   uAspect: IUniform<number>;
   /** Pointer position, −1…1 on each axis. */
@@ -123,6 +129,11 @@ export interface CurlUniforms {
   uLightB: IUniform<number>;
   uRoughness: IUniform<number>;
   uReflect: IUniform<number>;
+  /** What the BACK of the sheet is: the paper colour times this, with its own
+   *  grain and no texture at all. */
+  uBackShade: IUniform<number>;
+  /** The grain's amplitude on that back face, matched to the page's own. */
+  uGrain: IUniform<number>;
   /** The floor under the lighting ratio: what a face turned away from both
    *  lights still shows of the paper. */
   uAmbient: IUniform<number>;
@@ -143,6 +154,7 @@ const VERTEX = /* glsl */ `
   uniform float uCurlTightness;
   uniform float uCurlTaper;
   uniform float uCurlDepth;
+  uniform float uCurlWrap;
   uniform float uAspect;
   uniform vec2 uMouse;
   uniform float uMouseTilt;
@@ -190,6 +202,22 @@ const VERTEX = /* glsl */ `
     float along = dot(q, f) / max(extentF, 1e-4);
     float r0 = mix(RADIUS_WIDE, RADIUS_TIGHT, clamp(uCurlTightness, 0.0, 1.0));
     float r = max(r0 * (1.0 + uCurlTaper * along * 2.0), 1e-3);
+
+    // THE WRAP FLOOR, and it is what makes a corner lift read.
+    //
+    // How far the free corner comes off the surface is r (1 - cos(frontLen/r))
+    // — it depends on the RADIUS and on how much sheet has peeled, and NOT on
+    // how far the flap has turned, because once the corner is inside the arc its
+    // own angle is frontLen / r and nothing past it can change that. So
+    // winding uCurlAmount up at the start of a peel moves the fold deeper into
+    // the sheet and leaves the corner exactly where it was: a soft bulge.
+    //
+    // Tightening the radius while the peel is short is what a hand does anyway
+    // — you crease a corner much tighter than you bend a whole sheet — and it
+    // stops biting on its own the moment frontLen passes r0 · uCurlWrap,
+    // which is about a quarter of the way through the tear. Everything after
+    // that is untouched.
+    if (uCurlWrap > 1e-4) r = min(r, max(frontLen, 1e-4) / uCurlWrap);
 
     float bend = amount * MAX_BEND;
     float t = frontLen - sLen;
@@ -275,6 +303,8 @@ const FRAGMENT = /* glsl */ `
   uniform float uRoughness;
   uniform float uReflect;
   uniform float uAmbient;
+  uniform float uBackShade;
+  uniform float uGrain;
   uniform vec2 uHairline;
   uniform vec3 uEdgeInk;
   uniform float uEdgeAlpha;
@@ -291,6 +321,14 @@ const FRAGMENT = /* glsl */ `
     return uLightA * max(dot(n, la), 0.0) + uLightB * max(dot(n, lb), 0.0);
   }
 
+  /** A per-pixel value, stable under the bend: the seed is the sheet's own uv
+   *  in page pixels, so the grain sits ON the paper rather than swimming over
+   *  it as the flap turns. */
+  float grainAt(vec2 uv) {
+    vec2 px = floor(uv / max(uHairline, vec2(1e-6)));
+    return fract(sin(dot(px, vec2(127.1, 311.7))) * 43758.5453);
+  }
+
   float gloss(vec3 n, vec3 v, float shininess) {
     vec3 la = normalize(uLightAPos - vWorldPos);
     vec3 lb = normalize(uLightBPos - vWorldPos);
@@ -299,7 +337,20 @@ const FRAGMENT = /* glsl */ `
   }
 
   void main() {
-    vec3 albedo = mix(uPaper, texture2D(uMap, vUv).rgb, uHasMap);
+    // THE BACK OF THE SHEET IS NOT THE FRONT OF IT. Paper is opaque: fold a
+    // page over and what you see is the blank reverse, not the type read
+    // backwards. Sampling the same texture on both faces was the shortcut, and
+    // the tear is where it stops being invisible — the flap turns over at
+    // p = 0.3 and hands the reader a mirrored paragraph.
+    //
+    // So the back is the paper colour darkened, with a grain of its own and no
+    // texture at all. The lighting below is untouched by the branch: both faces
+    // are the same surface and take the same ratio, which is also why a flat
+    // sheet — every fragment of which is front-facing — is still exactly the
+    // texture and both hand-offs still hold.
+    vec3 albedo = gl_FrontFacing
+      ? mix(uPaper, texture2D(uMap, vUv).rgb, uHasMap)
+      : uPaper * uBackShade + vec3((grainAt(vUv) - 0.5) * uGrain);
 
     vec3 v = normalize(cameraPosition - vWorldPos);
     vec3 n = normalize(vWorldNormal);
@@ -344,6 +395,9 @@ export interface CurlMaterialOptions {
   roughness: number;
   reflect: number;
   ambient: number;
+  /** The back face: the paper colour times this, and its grain's amplitude. */
+  backShade: number;
+  grain: number;
   mouseTiltDeg: number;
   /** The hairline, matched to the page's inset ring. */
   edgeInk: string;
@@ -370,6 +424,7 @@ export function createCurlMaterial(o: CurlMaterialOptions): CurlMaterial {
       uCurlTightness: { value: o.tightness },
       uCurlTaper: { value: o.taper },
       uCurlDepth: { value: o.depth },
+      uCurlWrap: { value: 0 },
       uAspect: { value: 1 },
       uMouse: { value: new Vector2(0, 0) },
       uMouseTilt: { value: (o.mouseTiltDeg * Math.PI) / 180 },
@@ -384,6 +439,8 @@ export function createCurlMaterial(o: CurlMaterialOptions): CurlMaterial {
       uRoughness: { value: o.roughness },
       uReflect: { value: o.reflect },
       uAmbient: { value: o.ambient },
+      uBackShade: { value: o.backShade },
+      uGrain: { value: o.grain },
       uHairline: { value: new Vector2(0, 0) },
       uEdgeInk: { value: new Color(o.edgeInk) },
       uEdgeAlpha: { value: o.edgeAlpha },
@@ -408,6 +465,86 @@ export function applyCurlOptions(material: CurlMaterial, o: CurlMaterialOptions)
   u.uRoughness.value = o.roughness;
   u.uReflect.value = o.reflect;
   u.uAmbient.value = o.ambient;
+  u.uBackShade.value = o.backShade;
+  u.uGrain.value = o.grain;
   u.uEdgeInk.value.set(o.edgeInk);
   u.uEdgeAlpha.value = o.edgeAlpha;
+}
+
+/* ── the bend, on the CPU ─────────────────────────────────────────────────── */
+
+/** Everything `bent()` reads, for the one caller that has to evaluate it here. */
+export interface BendParams {
+  amount: number;
+  origin: number;
+  /** Radians, the shader's own frame. */
+  axis: number;
+  tightness: number;
+  taper: number;
+  depth: number;
+  wrap: number;
+  aspect: number;
+}
+
+/**
+ * ONE POINT of the bent surface, in the mesh's own units — a hand port of
+ * `bent()` above, minus the pointer tilt, which the tear does not use.
+ *
+ * It exists because "how far off the page has the corner come" is a question
+ * about a vertex, and the vertex is computed in a shader: the CPU has no way to
+ * ask the GPU where it put one without reading a buffer back. `pv-verify` needs
+ * the answer every run, so the answer is here.
+ *
+ * IT IS A DUPLICATE, and the only thing that keeps it honest is that it lives
+ * in the same file as the thing it duplicates — edit the shader and this is on
+ * the screen next to it. `curlMaterial.test.ts` holds it to the properties the
+ * shader's own geometry has to have (flat at zero, tangent at the fold, lift
+ * rising with the wrap), which is what would catch a port that drifted.
+ */
+export function bentPoint(u: number, v: number, p: BendParams): [number, number, number] {
+  const qx = (u - 0.5) * p.aspect;
+  const qy = v - 0.5;
+
+  const amount = Math.abs(p.amount);
+  const dir = p.amount < 0 ? -1 : 1;
+  const dx = Math.cos(p.axis);
+  const dy = Math.sin(p.axis);
+  const fx = -dy;
+  const fy = dx;
+
+  const extentD = Math.abs(dx) * p.aspect + Math.abs(dy);
+  const extentF = Math.abs(fx) * p.aspect + Math.abs(fy);
+
+  const sLen = qx * dx + qy * dy + extentD * 0.5;
+  const frontLen = p.origin * extentD;
+
+  const along = (qx * fx + qy * fy) / Math.max(extentF, 1e-4);
+  const r0 = RADIUS_WIDE + (RADIUS_TIGHT - RADIUS_WIDE) * Math.min(Math.max(p.tightness, 0), 1);
+  let r = Math.max(r0 * (1 + p.taper * along * 2), 1e-3);
+  if (p.wrap > 1e-4) r = Math.min(r, Math.max(frontLen, 1e-4) / p.wrap);
+
+  const bend = amount * MAX_BEND;
+  const t = frontLen - sLen;
+
+  let x = qx;
+  let y = qy;
+  let z = 0;
+  if (bend > 1e-4 && t > 0) {
+    const arc = r * bend;
+    let moved: number;
+    let lift: number;
+    if (t <= arc) {
+      const phi = t / r;
+      moved = frontLen - r * Math.sin(phi);
+      lift = r * (1 - Math.cos(phi));
+    } else {
+      const rest = t - arc;
+      moved = frontLen - r * Math.sin(bend) - rest * Math.cos(bend);
+      lift = r * (1 - Math.cos(bend)) + rest * Math.sin(bend);
+    }
+    x = qx + (moved - sLen) * dx;
+    y = qy + (moved - sLen) * dy;
+    z = dir * lift * p.depth;
+  }
+  return [x / Math.max(p.aspect, 1e-4), y, z];
 }

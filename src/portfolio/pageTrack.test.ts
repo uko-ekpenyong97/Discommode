@@ -50,6 +50,7 @@ const DIALS: PoseDials = {
   peelCurlPeak: 0.6,
   peelCurlPeakAt: 0.4,
   peelCurlRelax: 0.2,
+  peelWrapMin: 2.4,
   peelRotateMid: -12,
   peelRotateEnd: -18,
   peelLiftMid: 0.12,
@@ -277,6 +278,9 @@ describe('sheetPose — the soft entrance', () => {
     for (const p of [0, 0.3, 0.59, 1]) {
       expect(sheetPose(p, DIALS).curlOrigin).toBe(0.15);
       expect(sheetPose(p, DIALS).curlAxis).toBe(270);
+      // No wrap floor: the entrance's curve has to stay wide enough to read a
+      // line of type across, which is the one thing a floor would take away.
+      expect(sheetPose(p, DIALS).curlWrap).toBe(0);
     }
     expect(sheetPose(0, DIALS).curl).toBeCloseTo(-0.55, 6);
     expect(sheetPose(0.3, DIALS).curl).toBeCloseTo(-0.275, 6);
@@ -393,6 +397,10 @@ describe('tearPose — the sticky-note peel', () => {
 
   it('ignores the pointer throughout', () => {
     for (const p of [0, 0.5, 1]) expect(at(p).pointer).toBe(false);
+  });
+
+  it('creases the free corner rather than bulging it', () => {
+    for (const p of [0, 0.15, 0.5, 1]) expect(at(p).curlWrap).toBe(2.4);
   });
 
   it('is smooth at every joint — no corner in the scroll mapping', () => {

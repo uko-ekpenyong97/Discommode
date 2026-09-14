@@ -167,6 +167,12 @@ export interface PortfolioLook {
    *  flap does exactly that as it folds back, and the reference's two-light rig
    *  has nothing to say about the back of a sheet. */
   paperAmbient: number;
+  /**
+   * THE BACK OF THE SHEET: the paper colour times this, with its own grain and
+   * no texture. Paper is opaque — fold a page over and what you see is the
+   * blank reverse, not the type read backwards.
+   */
+  backShade: number;
   /** The hairline along the sheet's edge, and the page's inset ring — ONE dial,
    *  because an edge that only one of them has is an edge the hand-off's
    *  crossfade would have to hide. */
@@ -225,6 +231,13 @@ export interface PortfolioLook {
   peelCurlPeak: number;
   peelCurlPeakAt: number;
   peelCurlRelax: number;
+  /**
+   * The least the peeled part of a TEAR must wrap, in radians — the radius
+   * tightens to meet it while the peel is short, so the free corner creases and
+   * comes off the surface instead of bulging. 0 is off, which is what the
+   * entrance wants: see `curlMaterial.ts`.
+   */
+  peelWrapMin: number;
   /** The turn about the pinned corner, at the travel's end and at the end. */
   peelRotateDeg: number;
   peelRotateEndDeg: number;
@@ -335,6 +348,7 @@ export const LOOK: PortfolioLook = {
   paperRoughness: 0.25,
   paperReflect: 0.37,
   paperAmbient: 0.34,
+  backShade: 0.86,
   edgeAlpha: 0.18,
   mouseTiltDeg: 1.5,
   mouseLerp: 0.06,
@@ -363,6 +377,7 @@ export const LOOK: PortfolioLook = {
   peelCurlPeak: 0.6,
   peelCurlPeakAt: 0.4,
   peelCurlRelax: 0.2,
+  peelWrapMin: 2.4,
   peelRotateDeg: -12,
   peelRotateEndDeg: -18,
   peelLiftH: 0.12,
@@ -423,6 +438,7 @@ export function poseDials(from: PortfolioLook = look): PoseDials {
     peelCurlPeak: from.peelCurlPeak,
     peelCurlPeakAt: from.peelCurlPeakAt,
     peelCurlRelax: from.peelCurlRelax,
+    peelWrapMin: from.peelWrapMin,
     peelRotateMid: from.peelRotateDeg,
     peelRotateEnd: from.peelRotateEndDeg,
     peelLiftMid: from.peelLiftH,
