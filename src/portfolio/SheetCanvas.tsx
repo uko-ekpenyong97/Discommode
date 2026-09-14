@@ -21,7 +21,7 @@ import type { CurlMaterial, CurlMaterialOptions } from './curlMaterial';
 import { fitPlaneToRect } from './fitPlaneToRect';
 import type { PlaneFit, ScreenRect } from './fitPlaneToRect';
 import { look, subscribeLook } from './portfolioMotion';
-import type { SheetPose } from './pageTrack';
+import type { SheetKind, SheetPose } from './pageTrack';
 import type { SheetTexture } from './blocks/types';
 
 /**
@@ -74,13 +74,14 @@ export interface SheetCanvasHandle {
 function curlOptions(): CurlMaterialOptions {
   return {
     tightness: look.curlTightness,
-    origin: look.curlOrigin,
-    originEdge: look.curlOriginEdge,
+    taper: look.curlTaper,
+    depth: look.curlDepth,
     paper: look.paperColor,
     lightA: { x: look.lightAX, y: look.lightAY, z: look.lightAZ, intensity: look.lightA },
     lightB: { x: look.lightBX, y: look.lightBY, z: look.lightBZ, intensity: look.lightB },
     roughness: look.paperRoughness,
     reflect: look.paperReflect,
+    ambient: look.paperAmbient,
     mouseTiltDeg: look.mouseTiltDeg,
     edgeInk: look.inkColor,
     edgeAlpha: look.edgeAlpha,
@@ -95,7 +96,14 @@ function blankTexture(): DataTexture {
   return tex;
 }
 
-export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SheetTexture[][] }>(
+/** One section's two captures, at every signed-off width: the first viewport of
+ *  its page, and the last. */
+export interface SectionCaptures {
+  sheet: SheetTexture[];
+  tail: SheetTexture[];
+}
+
+export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCaptures[] }>(
   function SheetCanvas({ captures }, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const gl = useRef<{
@@ -202,8 +210,8 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SheetTextur
      * size and its measure is not, so a capture taken at another width is a
      * different document rather than the same one at another scale.
      */
-    const captureFor = (k: number): SheetTexture | null => {
-      const list = capturesRef.current[k];
+    const captureFor = (k: number, kind: SheetKind): SheetTexture | null => {
+      const list = capturesRef.current[k]?.[kind];
       if (!list || list.length === 0) return null;
       const want = pageWidthRef.current;
       return list.reduce((best, next) =>
@@ -215,8 +223,8 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SheetTextur
      *  Never awaited: the entrance renders with whatever has decoded, and for
      *  the first 60% of it the sheet is a tube with very little texture to
      *  show. */
-    const textureFor = (k: number): Texture | null => {
-      const entry = captureFor(k);
+    const textureFor = (k: number, kind: SheetKind): Texture | null => {
+      const entry = captureFor(k, kind);
       if (!entry) return null;
       const have = loaded.current.get(entry.src);
       if (have) return have;
@@ -227,7 +235,9 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SheetTextur
         if (!gl.current || boundSrcRef.current !== entry.src) return;
         gl.current.material.uniforms.uHasMap.value = 1;
         const last = lastRef.current;
-        if (last && last.index === k) showRef.current(last.index, last.pose);
+        if (last && last.index === k && last.pose.kind === kind) {
+          showRef.current(last.index, last.pose);
+        }
       });
       tex.colorSpace = NoColorSpace;
       // NO MIPMAPS. There is one capture per signed-off viewport, so the
@@ -278,27 +288,52 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SheetTextur
       const canvas = canvasRef.current;
       if (!g || !plane || !canvas) return;
 
-      const capture = captureFor(index);
+      const capture = captureFor(index, pose.kind);
       if (boundSrcRef.current !== (capture?.src ?? '')) {
         boundSrcRef.current = capture?.src ?? '';
-        const tex = textureFor(index);
+        const tex = textureFor(index, pose.kind);
         g.material.uniforms.uMap.value = tex ?? g.blank;
         g.material.uniforms.uHasMap.value = tex?.image ? 1 : 0;
       }
 
+      const u = g.material.uniforms;
       const m = mouse.current;
       m.x += (m.tx - m.x) * look.mouseLerp;
       m.y += (m.ty - m.y) * look.mouseLerp;
-      g.material.uniforms.uMouse.value.set(m.x, m.y);
-      g.material.uniforms.uCurlAmount.value = pose.curl;
+      u.uMouse.value.set(m.x, m.y);
+      u.uPointer.value = pose.pointer ? 1 : 0;
+      u.uCurlAmount.value = pose.curl;
+      u.uCurlOrigin.value = pose.curlOrigin;
+      u.uCurlAxis.value = (pose.curlAxis * Math.PI) / 180;
+      u.uOpacity.value = pose.opacity;
 
-      g.mesh.scale.set(
-        plane.width * pose.scale,
-        plane.height * pose.scale,
-        plane.height * pose.scale,
+      const w = plane.width * pose.scale;
+      const h = plane.height * pose.scale;
+      g.mesh.scale.set(w, h, h);
+      // EVERY ANGLE IN THIS VIEW IS MEASURED THE WAY A CSS ROTATION IS —
+      // clockwise from horizontal — and three's is the other way round, so the
+      // sign flips exactly here and nowhere else. It is worth the one negation:
+      // `peelAngle`, the tear's turn and the entrance's tilt are all read off
+      // the same protractor, and a tear that lifts its free corner is a
+      // negative number in the dock the way it would be in a stylesheet.
+      const a = -(pose.rotationZ * Math.PI) / 180;
+      g.mesh.rotation.z = a;
+
+      // THE PIVOT. three turns a mesh about its own centre, and the tear turns
+      // about the corner the sheet is stuck at — which is the whole difference
+      // between a sheet being peeled and a sheet being spun. So the centre is
+      // placed wherever it has to be for the pivot to land back on the point it
+      // occupies at rest: take the pivot's offset from the centre at the pose's
+      // scale, turn it, and subtract.
+      const restX = pose.pivotX * plane.width;
+      const restY = pose.pivotY * plane.height;
+      const turnedX = pose.pivotX * w * Math.cos(a) - pose.pivotY * h * Math.sin(a);
+      const turnedY = pose.pivotX * w * Math.sin(a) + pose.pivotY * h * Math.cos(a);
+      g.mesh.position.set(
+        plane.x + restX - turnedX,
+        plane.y + pose.y * plane.height + restY - turnedY,
+        0,
       );
-      g.mesh.position.set(plane.x, plane.y + pose.y * plane.height, 0);
-      g.mesh.rotation.z = (pose.rotationZ * Math.PI) / 180;
 
       canvas.style.visibility = '';
       g.renderer.render(g.scene, g.camera);

@@ -3,44 +3,59 @@ import {
   SEGMENT_EPSILON,
   bottomOf,
   buildTrack,
+  dwellStart,
   enterWindow,
-  exitPose,
   layout,
   maxPosition,
   minPosition,
   positionAt,
   positionOf,
   resolve,
-  settleTarget,
+  settleAt,
   sheetPose,
-  turnAt,
+  tearPose,
 } from './pageTrack';
 import type { PoseDials, Track } from './pageTrack';
 
 /**
  * The whole model, in node. `pageTrack` is the one file in the view with no
- * DOM in it, which is what makes the three segments testable at all — and the
- * segments are where every ambiguity lives: a boundary, an overlap, and a
- * position that has to survive a rebuild.
+ * DOM in it, which is what makes the four segments testable at all — and the
+ * segments are where every ambiguity lives: a boundary, a beat of nothing, and
+ * a position that has to survive a rebuild.
  */
 
 const PAGE_HEIGHT = 800;
 const ENTER = 900;
-const EXIT = 600;
-const OVERLAP = 0.35;
+const EXIT = 700;
+const DWELL = 500;
 
 /** The shipped dials, so the poses are tested against the numbers that ship. */
 const DIALS: PoseDials = {
-  startRotation: -45,
+  enterCurl: -0.55,
+  enterCurlOrigin: 0.15,
+  enterCurlAxis: 270,
+  startRotation: -28,
   rotationEndAt: 0.16,
   scaleBase: 0.41,
   scaleTargetAt: 0.22,
   curlOutAt: 0.6,
   riseFrom: -0.51,
-  exitScale: 0.58,
-  exitRotate: 16,
-  exitRise: -0.3,
-  exitFadeFrom: 0.7,
+  peelAngle: -35,
+  peelLiftAt: 0.15,
+  peelTravelAt: 0.6,
+  peelFreeAt: 0.8,
+  peelOriginFrom: 0.08,
+  peelOriginTo: 0.53,
+  peelCurlLift: 0.45,
+  peelCurlPeak: 0.6,
+  peelCurlPeakAt: 0.4,
+  peelCurlRelax: 0.2,
+  peelRotateMid: -12,
+  peelRotateEnd: -18,
+  peelLiftMid: 0.12,
+  peelRiseEnd: 0.9,
+  peelScaleEnd: 0.85,
+  peelFadeFrom: 0.9,
 };
 
 function track(heights: number[], pageHeight = PAGE_HEIGHT): Track {
@@ -49,7 +64,7 @@ function track(heights: number[], pageHeight = PAGE_HEIGHT): Track {
     pageHeight,
     enterDistance: ENTER,
     exitDistance: EXIT,
-    enterOverlap: OVERLAP,
+    dwellDistance: DWELL,
   });
 }
 
@@ -59,30 +74,30 @@ const THREE = () => track([2000, 500, 1400]);
 
 describe('buildTrack', () => {
   it('measures each section against the page, and floors at zero', () => {
-    const t = THREE();
-    expect(t.pageScroll).toEqual([1200, 0, 600]);
+    expect(THREE().pageScroll).toEqual([1200, 0, 600]);
   });
 
-  it('spaces the starts by an entrance, the run and an exit', () => {
+  it('spaces the starts by an entrance, the run, a tear and a dwell', () => {
     const t = THREE();
     expect(t.start[0]).toBe(0);
-    expect(t.start[1]).toBe(ENTER + 1200 + EXIT);
-    expect(t.start[2]).toBe(t.start[1] + ENTER + 0 + EXIT);
+    expect(t.start[1]).toBe(ENTER + 1200 + EXIT + DWELL);
+    expect(t.start[2]).toBe(t.start[1] + ENTER + 0 + EXIT + DWELL);
   });
 
   it('starts one entrance before zero and ends at the last run’s bottom', () => {
     const t = THREE();
     // The scroller cannot go negative; the intro tween drives the entrance and
-    // hands over at 0.
+    // hands over at 0. The last section has neither a tear nor a dwell: there
+    // is nothing behind it to bring on.
     expect(minPosition(t)).toBe(-ENTER);
     expect(maxPosition(t)).toBe(t.start[2] + 600);
   });
 
-  it('answers for a one-section project — no exit, no turn anywhere', () => {
+  it('answers for a one-section project — no tear, no dwell, no settle', () => {
     const t = track([2000]);
     expect(t.start).toEqual([0]);
     expect(maxPosition(t)).toBe(1200);
-    expect(turnAt(t, 600)).toBeNull();
+    expect(settleAt(t, 600)).toBeNull();
   });
 
   it('never leaves a section without a start, even given nothing', () => {
@@ -92,43 +107,41 @@ describe('buildTrack', () => {
   });
 });
 
-describe('positionAt — the three segments partition the track', () => {
+describe('positionAt — the four segments partition the track', () => {
   const t = THREE();
 
-  it('reads an entrance, a run and an exit', () => {
+  it('reads an entrance, a run, a tear and a dwell', () => {
     expect(positionAt(t, -450)).toMatchObject({ section: 0, segment: 'enter', p: 0.5 });
     expect(positionAt(t, 600)).toMatchObject({ section: 0, segment: 'page', offset: 600 });
-    expect(positionAt(t, 1200 + 300)).toMatchObject({ section: 0, segment: 'exit', p: 0.5 });
+    expect(positionAt(t, 1200 + 350)).toMatchObject({ section: 0, segment: 'exit', p: 0.5 });
+    expect(positionAt(t, 1200 + 700 + 250)).toMatchObject({ section: 0, segment: 'dwell', p: 0.5 });
   });
 
-  it('hands over from one section’s exit to the next section’s entrance', () => {
+  it('hands over from one section’s dwell to the next section’s entrance', () => {
     const boundary = t.start[1] - ENTER;
-    expect(positionAt(t, boundary - 1).section).toBe(0);
-    expect(positionAt(t, boundary - 1).segment).toBe('exit');
-    expect(positionAt(t, boundary).section).toBe(1);
-    expect(positionAt(t, boundary).segment).toBe('enter');
+    expect(positionAt(t, boundary - 1)).toMatchObject({ section: 0, segment: 'dwell' });
+    expect(positionAt(t, boundary)).toMatchObject({ section: 1, segment: 'enter', p: 0 });
   });
 
   it('covers every position with exactly one segment', () => {
     for (let y = minPosition(t); y <= maxPosition(t); y += 37) {
       const at = positionAt(t, y);
       expect(at.section).toBeGreaterThanOrEqual(0);
-      expect(['enter', 'page', 'exit']).toContain(at.segment);
+      expect(['enter', 'page', 'exit', 'dwell']).toContain(at.segment);
     }
   });
 
   it('gives a section with no vertical run a page segment of its own', () => {
     // Section 1 is shorter than the frame, so `start[1]` is both the top and
     // the bottom of its run — and it is still a page, not a seam.
-    const at = positionAt(t, t.start[1]);
-    expect(at).toMatchObject({ section: 1, segment: 'page', offset: 0 });
+    expect(positionAt(t, t.start[1])).toMatchObject({ section: 1, segment: 'page', offset: 0 });
   });
 });
 
-describe('the two half-pixel guards', () => {
+describe('the half-pixel guards', () => {
   const t = THREE();
 
-  it('holds a scroll settling on a run’s bottom out of the exit', () => {
+  it('holds a scroll settling on a run’s bottom out of the tear', () => {
     const bottom = bottomOf(t, 0);
     expect(positionAt(t, bottom + SEGMENT_EPSILON * 0.9).segment).toBe('page');
     expect(positionAt(t, bottom + SEGMENT_EPSILON * 1.1).segment).toBe('exit');
@@ -141,116 +154,113 @@ describe('the two half-pixel guards', () => {
     expect(positionAt(t, t.start[2] - SEGMENT_EPSILON * 0.9).segment).toBe('page');
     expect(positionAt(t, t.start[2] - SEGMENT_EPSILON * 1.1).segment).toBe('enter');
   });
+
+  it('guards the end of a tear, which the settle lands on', () => {
+    const end = dwellStart(t, 0);
+    expect(positionAt(t, end + SEGMENT_EPSILON * 0.9).segment).toBe('exit');
+    expect(positionAt(t, end + SEGMENT_EPSILON * 1.1).segment).toBe('dwell');
+  });
 });
 
 describe('semantic position across a rebuild', () => {
   it('round-trips every segment against its own track', () => {
     const t = THREE();
-    for (const y of [-450, 0, 600, 1200, 1500, t.start[1], t.start[2] - 200, maxPosition(t)]) {
-      expect(resolve(t, positionAt(t, y))).toBeCloseTo(y, 6);
-    }
+    const points = [-450, 0, 600, 1200, 1500, dwellStart(t, 0) + 200, t.start[1], maxPosition(t)];
+    for (const y of points) expect(resolve(t, positionAt(t, y))).toBeCloseTo(y, 6);
   });
 
   it('keeps the reader where they were when a section behind them grows', () => {
     const before = THREE();
-    const y = before.start[2] + 300;
-    const held = positionAt(before, y);
+    const held = positionAt(before, before.start[2] + 300);
     // Section 0 gets 400px taller: every start behind it moves, so the same
     // pixel position is a different place.
     const after = track([2400, 500, 1400]);
     expect(resolve(after, held)).toBe(after.start[2] + 300);
-    expect(positionAt(after, resolve(after, held))).toMatchObject({ section: 2, offset: 300 });
   });
 
   it('puts a reader past the end of a shrunken section at its bottom', () => {
-    const before = THREE();
-    const held = positionAt(before, 1000); // 1000px down section 0
-    const after = track([1100, 500, 1400]); // …which is now only 300 long
-    expect(resolve(after, held)).toBe(300);
+    const held = positionAt(THREE(), 1000); // 1000px down section 0
+    expect(resolve(track([1100, 500, 1400]), held)).toBe(300); // …now only 300 long
   });
 
-  it('carries a part-done exit across, from the new bottom', () => {
+  it('carries a part-done tear and a part-done dwell across', () => {
     const before = THREE();
-    const held = positionAt(before, bottomOf(before, 0) + EXIT * 0.4);
-    expect(held).toMatchObject({ section: 0, segment: 'exit' });
+    const tear = positionAt(before, bottomOf(before, 0) + EXIT * 0.4);
+    const dwell = positionAt(before, dwellStart(before, 0) + DWELL * 0.4);
+    expect(tear).toMatchObject({ section: 0, segment: 'exit' });
+    expect(dwell).toMatchObject({ section: 0, segment: 'dwell' });
     const after = track([2400, 500, 1400]);
-    expect(resolve(after, held)).toBeCloseTo(bottomOf(after, 0) + EXIT * 0.4, 6);
+    expect(resolve(after, tear)).toBeCloseTo(bottomOf(after, 0) + EXIT * 0.4, 6);
+    expect(resolve(after, dwell)).toBeCloseTo(dwellStart(after, 0) + DWELL * 0.4, 6);
   });
 });
 
-describe('enterWindow — the overlap', () => {
-  const t = THREE();
-
-  it('gives section 0 an entrance of its own length, and nothing in front', () => {
-    expect(enterWindow(t, 0)).toEqual({ from: -ENTER, to: 0 });
+describe('enterWindow — nothing overlaps any more', () => {
+  it('is exactly the enter segment, for every section', () => {
+    const t = THREE();
+    for (let k = 0; k < 3; k++) {
+      expect(enterWindow(t, k)).toEqual({ from: t.start[k] - ENTER, to: t.start[k] });
+    }
   });
 
-  it('starts every other sheet part-way through the previous page’s exit', () => {
-    const w = enterWindow(t, 1);
-    expect(w.from).toBe(bottomOf(t, 0) + OVERLAP * EXIT);
-    expect(w.to).toBe(t.start[1]);
-    // Longer than `enterDistance`, and by exactly the part of the exit it
-    // reaches back into.
-    expect(w.to - w.from).toBeCloseTo(ENTER + (1 - OVERLAP) * EXIT, 6);
+  it('starts only once the dwell before it has finished', () => {
+    const t = THREE();
+    expect(enterWindow(t, 1).from).toBe(dwellStart(t, 0) + DWELL);
   });
 });
 
-describe('layout — what is on screen', () => {
+describe('layout — one thing at a time', () => {
   const t = THREE();
   const at = (y: number) => layout(t, y, DIALS);
 
   it('shows one page and nothing else on a vertical run', () => {
     const l = at(600);
     expect(l.page).toMatchObject({ index: 0 });
-    expect(l.page?.pose).toMatchObject({ scrollTop: 600, scale: 1, opacity: 1 });
+    expect(l.page?.pose).toMatchObject({ scrollTop: 600, opacity: 1 });
     expect(l.sheet).toBeNull();
   });
 
-  it('shows the leaving page alone before the overlap starts', () => {
-    const l = at(bottomOf(t, 0) + EXIT * 0.2);
-    expect(l.page?.index).toBe(0);
-    expect(l.sheet).toBeNull();
-  });
-
-  it('shows both once the overlap starts — the new sheet behind the old page', () => {
+  it('shows the peeling sheet and no page through a tear', () => {
     const l = at(bottomOf(t, 0) + EXIT * 0.5);
-    expect(l.page?.index).toBe(0);
-    expect(l.sheet?.index).toBe(1);
-    expect(l.sheet?.pose.p).toBeGreaterThan(0);
+    expect(l.page).toBeNull();
+    expect(l.sheet).toMatchObject({ index: 0 });
+    expect(l.sheet?.pose.kind).toBe('tail');
   });
 
-  it('shows the sheet alone once the exit is over', () => {
+  it('shows NOTHING through a dwell', () => {
+    const l = at(dwellStart(t, 0) + DWELL * 0.5);
+    expect(l.page).toBeNull();
+    expect(l.sheet).toBeNull();
+  });
+
+  it('shows the unrolling sheet and no page through an entrance', () => {
     const l = at(t.start[1] - ENTER * 0.5);
     expect(l.page).toBeNull();
-    expect(l.sheet?.index).toBe(1);
+    expect(l.sheet).toMatchObject({ index: 1 });
+    expect(l.sheet?.pose.kind).toBe('sheet');
   });
 
-  it('never puts two live pages on screen', () => {
+  it('never puts a page and a sheet on screen at once', () => {
     for (let y = minPosition(t); y <= maxPosition(t); y += 13) {
       const l = at(y);
-      if (l.page && l.sheet) expect(l.sheet.index).toBe(l.page.index + 1);
+      expect(l.page === null || l.sheet === null).toBe(true);
     }
   });
 
-  it('commits the active section at the hand-off, not before', () => {
+  it('commits the active section at the hand-off, and names the pending one', () => {
     // All the way through section 1's entrance you are still reading 0.
-    expect(at(t.start[1] - 1).activeIndex).toBe(0);
-    expect(at(t.start[1]).activeIndex).toBe(1);
-    // …and it stays 1 for the whole of 1's exit.
-    expect(at(bottomOf(t, 1) + EXIT * 0.9).activeIndex).toBe(1);
-  });
-
-  it('has no exit to fall into at the end of the last section', () => {
-    const l = at(maxPosition(t));
-    expect(l.page?.index).toBe(2);
-    expect(l.segment).toBe('page');
+    expect(at(t.start[1] - 1)).toMatchObject({ activeIndex: 0, pendingIndex: 1 });
+    expect(at(t.start[1])).toMatchObject({ activeIndex: 1, pendingIndex: null });
+    // A tear is still the section that is leaving; a dwell already names the
+    // one it is waiting for.
+    expect(at(bottomOf(t, 0) + 10)).toMatchObject({ activeIndex: 0, pendingIndex: null });
+    expect(at(dwellStart(t, 0) + 10)).toMatchObject({ activeIndex: 0, pendingIndex: 1 });
   });
 });
 
-describe('sheetPose — the staggered windows', () => {
-  it('stops tumbling first', () => {
-    expect(sheetPose(0, DIALS).rotationZ).toBe(-45);
-    expect(sheetPose(0.08, DIALS).rotationZ).toBeCloseTo(-22.5, 6);
+describe('sheetPose — the soft entrance', () => {
+  it('stops tumbling first, from a gentler angle than the roll did', () => {
+    expect(sheetPose(0, DIALS).rotationZ).toBe(-28);
     expect(sheetPose(0.16, DIALS).rotationZ).toBeCloseTo(0, 9);
     expect(sheetPose(0.9, DIALS).rotationZ).toBeCloseTo(0, 9);
   });
@@ -258,105 +268,203 @@ describe('sheetPose — the staggered windows', () => {
   it('reaches full size second', () => {
     expect(sheetPose(0, DIALS).scale).toBeCloseTo(0.41, 6);
     expect(sheetPose(0.22, DIALS).scale).toBeCloseTo(1, 6);
-    expect(sheetPose(1, DIALS).scale).toBeCloseTo(1, 6);
+  });
+
+  it('arrives as a wide bend at one edge, not as a tube', () => {
+    // The fold does not move: it sits a sixth of the way in from the TOP edge
+    // — the leading one as the sheet rises — for the whole entrance, so the
+    // rest of the sheet is flat and a line of type stays readable across it.
+    for (const p of [0, 0.3, 0.59, 1]) {
+      expect(sheetPose(p, DIALS).curlOrigin).toBe(0.15);
+      expect(sheetPose(p, DIALS).curlAxis).toBe(270);
+    }
+    expect(sheetPose(0, DIALS).curl).toBeCloseTo(-0.55, 6);
+    expect(sheetPose(0.3, DIALS).curl).toBeCloseTo(-0.275, 6);
   });
 
   it('is flat well before the hand-off, and stays flat', () => {
-    // THE constraint: a curl still resolving at the swap is a shape the flat
+    // THE constraint: a bend still resolving at the swap is a shape the flat
     // HTML cannot match, so the crossfade would have to hide it and cannot.
-    expect(sheetPose(0, DIALS).curl).toBe(-1);
-    expect(sheetPose(0.3, DIALS).curl).toBeCloseTo(-0.5, 6);
     for (let p = 0.6; p <= 1.0001; p += 0.05) {
       expect(sheetPose(p, DIALS).curl).toBeCloseTo(0, 9);
     }
   });
 
-  it('keeps the curl SIGNED — it is a direction, not a magnitude', () => {
+  it('keeps the bend SIGNED — it is a direction, not a magnitude', () => {
     for (let p = 0; p < 0.6; p += 0.05) expect(sheetPose(p, DIALS).curl).toBeLessThan(0);
   });
 
-  it('is still rising when everything else has settled', () => {
-    expect(sheetPose(0, DIALS).y).toBeCloseTo(-0.51, 6);
-    expect(sheetPose(0.5, DIALS).y).toBeCloseTo(-0.255, 6);
-    expect(sheetPose(1, DIALS).y).toBeCloseTo(0, 9);
-  });
-
-  it('lands exactly on the page: scale 1, no rotation, no curl, no offset', () => {
+  it('lands exactly on the page, about its own centre', () => {
     const end = sheetPose(1, DIALS);
-    expect(end.rotationZ).toBeCloseTo(0, 9);
     expect(end.scale).toBeCloseTo(1, 9);
+    expect(end.rotationZ).toBeCloseTo(0, 9);
     expect(end.curl).toBeCloseTo(0, 9);
     expect(end.y).toBeCloseTo(0, 9);
+    expect(end.opacity).toBe(1);
+    expect([end.pivotX, end.pivotY]).toEqual([0, 0]);
+  });
+
+  it('follows the pointer, which the tear does not', () => {
+    expect(sheetPose(0.5, DIALS).pointer).toBe(true);
   });
 });
 
-describe('exitPose — the page tilts away', () => {
-  it('starts as the page and ends small, turned and gone', () => {
-    const start = exitPose(0, 0, DIALS);
-    expect(start.scale).toBeCloseTo(1, 9);
-    expect(start.rotateZ).toBeCloseTo(0, 9);
-    expect(start.translateY).toBeCloseTo(0, 9);
+describe('tearPose — the sticky-note peel', () => {
+  const at = (p: number) => tearPose(p, DIALS);
+
+  it('starts EXACTLY where the page is: flat, full size, unmoved', () => {
+    // The reverse hand-off is a crossfade against the live page, so the first
+    // frame of a tear has to be the page's own rect to the pixel.
+    const start = at(0);
+    expect(start.curl).toBe(0);
+    expect(start.scale).toBe(1);
+    expect(start.rotationZ).toBe(0);
+    expect(start.y).toBe(0);
     expect(start.opacity).toBe(1);
-    const end = exitPose(1, 0, DIALS);
-    expect(end.scale).toBeCloseTo(0.58, 6);
-    expect(end.rotateZ).toBeCloseTo(16, 6);
-    expect(end.translateY).toBeCloseTo(-0.3, 6);
-    expect(end.opacity).toBe(0);
+    expect(start.kind).toBe('tail');
   });
 
-  it('holds the page solid until the last thirty per cent', () => {
-    // Fading it from the start turns a sheet being taken away into a layer
-    // being switched off.
-    expect(exitPose(0.69, 0, DIALS).opacity).toBe(1);
-    expect(exitPose(0.85, 0, DIALS).opacity).toBeCloseTo(0.5, 6);
+  it('lifts the free corner before anything translates', () => {
+    // A peel starts as a bend, not as a move: the pinned corner is holding.
+    const lift = at(0.15);
+    expect(lift.curl).toBeCloseTo(0.45, 6);
+    expect(lift.curlOrigin).toBeCloseTo(0.08, 6);
+    expect(lift.rotationZ).toBe(0);
+    expect(lift.y).toBe(0);
+    expect(lift.scale).toBe(1);
   });
 
-  it('holds the page at its own bottom while it leaves', () => {
-    expect(exitPose(0.5, 1200, DIALS).scrollTop).toBe(1200);
+  it('bends TOWARD the viewer, which the entrance does not', () => {
+    for (const p of [0.2, 0.4, 0.6, 0.9]) expect(at(p).curl).toBeGreaterThan(0);
+  });
+
+  it('travels the fold across the sheet toward the pinned corner', () => {
+    expect(at(0.15).curlOrigin).toBeCloseTo(0.08, 6);
+    expect(at(0.6).curlOrigin).toBeCloseTo(0.53, 6);
+    expect(at(1).curlOrigin).toBeCloseTo(0.53, 6);
+    // Monotonic: a fold that went backwards would be the sheet re-sticking
+    // halfway through coming off.
+    let last = -1;
+    for (let p = 0; p <= 1.0001; p += 0.02) {
+      const o = at(p).curlOrigin;
+      expect(o).toBeGreaterThanOrEqual(last - 1e-9);
+      last = o;
+    }
+  });
+
+  it('peaks the bend mid-travel and lets it spring back when it comes free', () => {
+    expect(at(0.4).curl).toBeCloseTo(0.6, 6);
+    expect(at(0.6).curl).toBeCloseTo(0.6, 6);
+    expect(at(0.8).curl).toBeCloseTo(0.2, 6);
+    expect(at(1).curl).toBeCloseTo(0.2, 6);
+  });
+
+  it('turns about the PINNED corner, and keeps that pivot after it lets go', () => {
+    for (const p of [0, 0.3, 0.6, 1]) {
+      expect([at(p).pivotX, at(p).pivotY]).toEqual([-0.5, 0.5]);
+    }
+    expect(at(0.6).rotationZ).toBeCloseTo(-12, 6);
+    expect(at(0.8).rotationZ).toBeCloseTo(-18, 6);
+  });
+
+  it('lifts a little while it is held and a lot once it is not', () => {
+    expect(at(0.15).y).toBe(0);
+    expect(at(0.6).y).toBeCloseTo(0.12, 6);
+    expect(at(0.8).y).toBeCloseTo(0.9, 6);
+    expect(at(0.6).scale).toBe(1);
+    expect(at(0.8).scale).toBeCloseTo(0.85, 6);
+  });
+
+  it('fades over the last tenth ONLY — it is off the frame before it goes', () => {
+    for (let p = 0; p <= 0.9; p += 0.05) expect(at(p).opacity).toBe(1);
+    expect(at(0.95).opacity).toBeCloseTo(0.5, 6);
+    expect(at(1).opacity).toBe(0);
+  });
+
+  it('rolls at a right angle to the fold line, toward the pinned corner', () => {
+    // `peelAngle` is measured the way a CSS rotation is — clockwise from
+    // horizontal — so −35° on screen is a fold running up to the right, and the
+    // peel travels up and to the LEFT across it.
+    const axis = (at(0.5).curlAxis * Math.PI) / 180;
+    expect(Math.cos(axis)).toBeLessThan(0);
+    expect(Math.sin(axis)).toBeGreaterThan(0);
+    expect(at(0.5).curlAxis).toBeCloseTo(125, 6);
+  });
+
+  it('ignores the pointer throughout', () => {
+    for (const p of [0, 0.5, 1]) expect(at(p).pointer).toBe(false);
+  });
+
+  it('is smooth at every joint — no corner in the scroll mapping', () => {
+    // Each window is eased in and out, so the four movements read as one
+    // gesture. A jump in the first difference is a jolt under the wheel.
+    const step = 0.002;
+    const d = (f: (p: number) => number, p: number) => (f(p + step) - f(p - step)) / (2 * step);
+    for (const p of [DIALS.peelLiftAt, DIALS.peelTravelAt, DIALS.peelFreeAt]) {
+      expect(Math.abs(d((q) => at(q).curlOrigin, p))).toBeLessThan(4);
+      expect(Math.abs(d((q) => at(q).y, p))).toBeLessThan(8);
+      expect(Math.abs(d((q) => at(q).rotationZ, p))).toBeLessThan(80);
+    }
   });
 });
 
-describe('the settle works on a TURN, not on a segment', () => {
+describe('the settle', () => {
   const t = THREE();
 
   it('says nothing on a vertical run', () => {
-    expect(turnAt(t, 600)).toBeNull();
+    expect(settleAt(t, 600)).toBeNull();
   });
 
-  it('measures an exit and the entrance after it as one move', () => {
+  it('finishes a half-done TEAR to its nearer end', () => {
     const from = bottomOf(t, 0);
-    // A hair past the bottom, because the bottom itself is still the PAGE —
-    // that is the half-pixel guard doing its job.
-    expect(turnAt(t, from + 1)).toMatchObject({ index: 0 });
-    expect(turnAt(t, from + 1)?.p).toBeCloseTo(1 / (EXIT + ENTER), 6);
-    expect(turnAt(t, from + (EXIT + ENTER) / 2)?.p).toBeCloseTo(0.5, 6);
-    // …and a hair short of the far end, for the same reason at the other side.
-    expect(turnAt(t, t.start[1] - 1)?.p).toBeCloseTo(1 - 1 / (EXIT + ENTER), 6);
-    expect(turnAt(t, t.start[1])).toBeNull();
+    const to = dwellStart(t, 0);
+    expect(settleAt(t, from + EXIT * 0.25)).toMatchObject({ target: from, reversible: true });
+    expect(settleAt(t, from + EXIT * 0.75)).toMatchObject({ target: to, reversible: true });
+    expect(settleAt(t, from + EXIT * 0.5)?.p).toBeCloseTo(0.5, 6);
   });
 
-  it('lands on a page at either end — never on the seam between the two', () => {
-    const from = bottomOf(t, 0);
-    // The boundary between the exit and the entrance is the one position with
-    // nothing on screen but ground. Settling to "the nearer end of the exit"
-    // would park the reader exactly there.
-    const seam = t.start[1] - ENTER;
-    const turn = turnAt(t, seam)!;
-    expect(layout(t, seam, DIALS).page).toBeNull();
-    expect(settleTarget(t, turn)).toBe(turn.p < 0.5 ? from : t.start[1]);
-    expect(layout(t, settleTarget(t, turn), DIALS).page).not.toBeNull();
+  it('lands a tear on a page or on empty ground, never mid-peel', () => {
+    const plan = settleAt(t, bottomOf(t, 0) + EXIT * 0.75)!;
+    expect(layout(t, plan.target, DIALS).sheet).toBeNull();
   });
 
-  it('runs back before halfway and on after it', () => {
-    expect(settleTarget(t, { index: 0, p: 0.2 })).toBe(bottomOf(t, 0));
-    expect(settleTarget(t, { index: 0, p: 0.8 })).toBe(positionOf(t, 1));
+  it('always runs a DWELL forward, to the next page', () => {
+    // Empty ground is a beat you pass through rather than a place to sit, and
+    // the only thing on the far side of it is the next page. "Back to the start
+    // of the dwell" would leave the reader staring at nothing; "on to the start
+    // of the next entrance" would leave them looking at a rolled sheet.
+    for (const q of [0.25, 0.5, 0.75]) {
+      const plan = settleAt(t, dwellStart(t, 0) + DWELL * q)!;
+      expect(plan.target).toBe(t.start[1]);
+      expect(plan.reversible).toBe(false);
+    }
   });
 
-  it('treats the view’s own entrance as a half-turn with nothing behind it', () => {
-    const turn = turnAt(t, -ENTER / 2)!;
-    expect(turn.index).toBe(-1);
-    expect(turn.p).toBeCloseTo(0.5, 6);
-    expect(settleTarget(t, turn)).toBe(0);
+  it('treats the dwell and the entrance after it as ONE move', () => {
+    const from = dwellStart(t, 0);
+    const to = t.start[1];
+    // A hair past the boundary at either end: the last half-pixel of the tear
+    // belongs to the tear, and the first of the next page to the page.
+    expect(settleAt(t, from + 1)?.p).toBeCloseTo(1 / (DWELL + ENTER), 6);
+    expect(settleAt(t, to - 1)?.p).toBeCloseTo(1 - 1 / (DWELL + ENTER), 6);
+    expect(settleAt(t, from + (DWELL + ENTER) / 2)?.p).toBeCloseTo(0.5, 6);
+  });
+
+  it('gives the view’s own entrance nothing behind it to go back to', () => {
+    const plan = settleAt(t, -ENTER / 2)!;
+    expect(plan.p).toBeCloseTo(0.5, 6);
+    expect(plan.target).toBe(0);
+  });
+
+  it('never lands anywhere with a sheet in mid-air', () => {
+    // The whole point of the thing: every target is either a page or the empty
+    // ground a tear finishes on, and neither has a sheet part-way through a
+    // move on it.
+    for (let y = minPosition(t); y <= maxPosition(t); y += 23) {
+      const plan = settleAt(t, y);
+      if (!plan) continue;
+      expect(layout(t, plan.target, DIALS).sheet).toBeNull();
+    }
   });
 });
 

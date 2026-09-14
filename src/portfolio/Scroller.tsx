@@ -14,7 +14,9 @@ import { SheetCanvas } from './SheetCanvas';
 import type { SheetCanvasHandle } from './SheetCanvas';
 import { look, poseDials, subscribeLook } from './portfolioMotion';
 import {
+  bottomOf,
   buildTrack,
+  dwellStart,
   enterWindow,
   layout,
   maxPosition,
@@ -22,11 +24,11 @@ import {
   positionAt,
   positionOf,
   resolve,
-  restingPose,
-  settleTarget,
-  turnAt,
+  settleAt,
+  sheetPose,
+  tearPose,
 } from './pageTrack';
-import type { PagePose, Track, TrackLayout, TrackPosition } from './pageTrack';
+import type { SheetKind, Track, TrackLayout, TrackPosition } from './pageTrack';
 import type { ScreenRect } from './fitPlaneToRect';
 import { ScrollerContext } from './scrollerContext';
 import { useReveal } from './useReveal';
@@ -79,8 +81,17 @@ import type { Project } from './blocks/types';
  *  rewind arrives slowly. */
 const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 
-/** The flat sheet: what the canvas holds while the page fades in over it. */
-const FLAT = { p: 1, rotationZ: 0, scale: 1, curl: 0, y: 0 };
+/**
+ * THE TWO FLAT STATES, which are what each hand-off crossfades against.
+ *
+ * An entrance ends with the sheet flat at the page's rect showing the section's
+ * FIRST viewport; a tear begins with it flat at the same rect showing the
+ * section's LAST. Both are poses the choreography already passes through — the
+ * end of `sheetPose` and the start of `tearPose` — so they are taken from there
+ * rather than written out again, and neither can drift from the frame beside it.
+ */
+const flatOf = (kind: SheetKind) =>
+  kind === 'tail' ? tearPose(0, poseDials()) : sheetPose(1, poseDials());
 
 /**
  * Round to the device's pixel grid.
@@ -96,6 +107,8 @@ const FLAT = { p: 1, rotationZ: 0, scale: 1, curl: 0, y: 0 };
  * and nobody is reading it.
  */
 const snap = (v: number, dpr: number): number => Math.round(v * dpr) / dpr;
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
  * DEV: the handle `scripts/pv-verify.mjs` drives the view through.
@@ -114,9 +127,11 @@ export interface PortfolioProbe {
   position: () => number;
   layout: () => TrackLayout | null;
   armed: () => boolean;
-  /** The stretch of track over which section `k`'s sheet is unrolling — NOT the
-   *  same as its `enter` segment, because of the overlap. */
+  /** The stretch of track section `k`'s sheet unrolls over, which is exactly its
+   *  `enter` segment now that nothing overlaps. */
   enterWindow: (k: number) => { from: number; to: number } | null;
+  /** …and the stretch of empty ground after section `k`'s tear. */
+  dwellWindow: (k: number) => { from: number; to: number } | null;
   /** Park the track at `y` and hold it there — the same lock the entrance uses,
    *  so neither the scroller nor Lenis moves it under the camera. */
   seek: (y: number) => void;
@@ -156,10 +171,13 @@ interface ScrollerProps {
   initialSection: number;
   /** The section being read changed — the hash and the letterhead follow it. */
   onSectionChange: (index: number) => void;
+  /** The section on its way changed: the one the letterhead names dim while the
+   *  ground is empty and while its sheet unrolls. Null once it has arrived. */
+  onPendingChange: (index: number | null) => void;
 }
 
 export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scroller(
-  { project, initialSection, onSectionChange },
+  { project, initialSection, onSectionChange, onPendingChange },
   handleRef,
 ) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -186,13 +204,25 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   // carried across from the previous track (see `measure`).
   const initialRef = useRef(initialSection);
   const reducedRef = useRef(false);
-  /** The 120ms crossfade at the end of an entrance: which page, and how far in.
-   *  Null when no swap is running. */
-  const handoffRef = useRef<{ index: number; alpha: number; raf: number } | null>(null);
-  /** Which page the last frame showed, so the hand-off fires once when it
-   *  changes. `-1` is "none — a sheet is unrolling"; `-2` is "nothing has been
-   *  painted yet", which must not count as a change. */
-  const lastRef = useRef(-2);
+  /**
+   * The 120ms crossfade at either end of a vertical run: which page, which way
+   * round, which capture the sheet under it is wearing, and how far in. Null
+   * when no swap is running.
+   */
+  const handoffRef = useRef<{
+    index: number;
+    into: 'page' | 'sheet';
+    kind: SheetKind;
+    scrollTop: number;
+    alpha: number;
+    raf: number;
+  } | null>(null);
+  /** What the last frame showed, so a hand-off fires once when it changes.
+   *  `shown: -1` is "none — a sheet has it"; `-2` is "nothing has been painted
+   *  yet", which must not count as a change. */
+  const lastRef = useRef<{ shown: number; segment: string }>({ shown: -2, segment: 'page' });
+  /** The section the letterhead is naming as pending, so it changes once. */
+  const pendingRef = useRef<number | null>(null);
 
   const [armed, setArmed] = useState(false);
   // The scroller as a render input: the reveal observer and every block's
@@ -205,8 +235,10 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   }, []);
 
   const changeRef = useRef(onSectionChange);
+  const pendingChangeRef = useRef(onPendingChange);
   useEffect(() => {
     changeRef.current = onSectionChange;
+    pendingChangeRef.current = onPendingChange;
     initialRef.current = initialSection;
   });
 
@@ -229,41 +261,31 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
    * for `handoffMs` and the exit overlap.
    */
   const paint = useCallback(
-    (showIndex: number, pose: PagePose | null, alpha: number, exiting: boolean) => {
+    (showIndex: number, scrollTop: number, opacity: number, exiting: boolean) => {
       const pages = pagesRef.current;
       const parts = partsRef.current;
-      const rect = pageRectRef.current;
       for (let k = 0; k < pages.length; k++) {
         const el = pages[k];
-        const live = k === showIndex && pose !== null;
+        const live = k === showIndex && opacity > 0;
         const wasShown = el.style.visibility !== 'hidden';
         const wasExiting = el.hasAttribute('data-exiting');
-        if (live && pose) {
+        if (live) {
           el.style.visibility = '';
-          el.style.opacity = String(pose.opacity * alpha);
-          el.style.transform =
-            pose.scale === 1 && pose.rotateZ === 0 && pose.translateY === 0
-              ? ''
-              : `translate3d(0, ${(pose.translateY * (rect?.height ?? 0)).toFixed(2)}px, 0)` +
-                ` rotate(${pose.rotateZ.toFixed(3)}deg) scale(${pose.scale.toFixed(4)})`;
+          el.style.opacity = opacity >= 1 ? '' : String(opacity);
           el.toggleAttribute('data-exiting', exiting);
           const scroll = parts[k]?.scroll;
-          if (scroll && scroll.scrollTop !== pose.scrollTop) scroll.scrollTop = pose.scrollTop;
+          if (scroll && scroll.scrollTop !== scrollTop) scroll.scrollTop = scrollTop;
         } else if (wasShown) {
           el.style.visibility = 'hidden';
-          el.toggleAttribute('data-exiting', false);
-          // Put the pose back as well as hiding it. A page left in its exit
-          // pose is a page whose box is 58% of the rect and turned 16°, and
-          // every page is laid out whether or not it paints — so anything that
-          // measures one (the track's own rebuild included) would measure that.
-          el.style.transform = '';
           el.style.opacity = '';
+          el.toggleAttribute('data-exiting', false);
         }
         // A page that is out of the paint order is not out of an
         // IntersectionObserver's reckoning — `visibility` is not something it
         // notices — so a video under a sheet would keep decoding. Videos and
-        // Rive listen for this and stop; they stop on the exit too, the moment
-        // the page starts leaving.
+        // Rive listen for this and stop, and they stop at `p = 0` of a tear:
+        // the page is still on screen for the 120ms of the swap, but nobody is
+        // reading it.
         if (live !== wasShown || (live && exiting !== wasExiting)) {
           el.dispatchEvent(new CustomEvent('pv:shown', { bubbles: false }));
           if (!live || exiting) for (const v of el.querySelectorAll('video')) v.pause();
@@ -288,31 +310,54 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
 
       if (reducedRef.current) {
         // Reduced motion lands every section FLAT and keeps only the opacity of
-        // the hand-off. There is no unroll, no tilt and no per-scroll fade: a
-        // turn swaps the page at its midpoint and the 120ms crossfade is all
-        // that covers the swap. Fading the two halves of a turn in and out
-        // instead leaves the seam between them showing bare ground, which is a
-        // worse thing to do to someone who asked for less movement.
-        const turn = turnAt(track, position);
+        // the hand-off. No unroll, no peel, no dwell to speak of: the stretch
+        // between one page and the next swaps at its midpoint and the 120ms
+        // crossfade is all that covers the swap. Fading the two halves in and
+        // out instead leaves the seam between them showing bare ground, which
+        // is a worse thing to do to someone who asked for less movement.
         const at = positionAt(track, position);
-        const from = Math.max(0, turn ? turn.index : at.section);
-        shown =
-          turn === null
-            ? at.section
-            : turn.p < 0.5
-              ? from
-              : Math.min(from + 1, track.start.length - 1);
-        const scrollTop =
-          turn === null ? at.offset : shown === from ? track.pageScroll[from] : 0;
-        paint(shown, restingPose(scrollTop), handoff ? handoff.alpha : 1, false);
+        let scrollTop = at.offset;
+        if (at.segment === 'page') {
+          shown = at.section;
+        } else if (at.segment === 'enter' && at.section === 0) {
+          shown = 0;
+          scrollTop = 0;
+        } else {
+          const from = at.segment === 'enter' ? at.section - 1 : at.section;
+          const to = Math.min(from + 1, track.start.length - 1);
+          const a = bottomOf(track, from);
+          const b = track.start[to];
+          const q = b > a ? clamp01((position - a) / (b - a)) : 1;
+          shown = q < 0.5 ? from : to;
+          scrollTop = shown === from ? track.pageScroll[from] : 0;
+        }
+        paint(shown, scrollTop, handoff ? handoff.alpha : 1, false);
         canvas?.hide();
       } else {
         shown = l.page ? l.page.index : -1;
-        paint(shown, l.page ? l.page.pose : null, handoff ? handoff.alpha : 1, l.segment === 'exit');
-        // The canvas holds the FLAT sheet under the page for the length of the
-        // crossfade, because the crossfade is the whole trick: two surfaces
-        // showing the same pixels, one replacing the other.
-        if (handoff) canvas?.show(handoff.index, FLAT);
+        let scrollTop = l.page ? l.page.pose.scrollTop : 0;
+        let opacity = l.page ? l.page.pose.opacity : 0;
+        let exiting = false;
+
+        if (handoff) {
+          if (handoff.into === 'page') {
+            // The ENTRANCE's swap: the page arrives over a flat sheet.
+            opacity = handoff.alpha;
+          } else {
+            // The TEAR's swap, and the entrance's run backwards: the page
+            // leaves over a flat sheet showing the same pixels. It is the
+            // forward swap with the alpha the other way up, which is the only
+            // honest way to reverse a crossfade — fading BOTH surfaces would
+            // let the ground through between them.
+            shown = handoff.index;
+            scrollTop = handoff.scrollTop;
+            opacity = 1 - handoff.alpha;
+            exiting = true;
+          }
+        }
+        paint(shown, scrollTop, opacity, exiting);
+
+        if (handoff) canvas?.show(handoff.index, flatOf(handoff.kind));
         else if (l.sheet) canvas?.show(l.sheet.index, l.sheet.pose);
         else canvas?.hide();
       }
@@ -321,26 +366,46 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         activeRef.current = l.activeIndex;
         changeRef.current(l.activeIndex);
       }
+      if (l.pendingIndex !== pendingRef.current) {
+        pendingRef.current = l.pendingIndex;
+        pendingChangeRef.current(l.pendingIndex);
+      }
 
-      // The hand-off fires when the page being shown CHANGES — which, going
-      // forward, is the moment an entrance ends, and going back is the moment a
-      // rewind brings the previous page out of its exit pose. The first paint of
+      // THE TWO HAND-OFFS fire when the page being shown changes. Going
+      // forward that is the moment an entrance ends and the moment a tear
+      // begins; going back it is both of those in reverse. The first paint of
       // all is not a change.
       const last = lastRef.current;
-      lastRef.current = shown;
-      if (shown >= 0 && shown !== last && last !== -2) startHandoffRef.current(shown);
+      const nowShown = handoff ? last.shown : shown;
+      if (!handoff && last.shown !== -2 && nowShown !== last.shown) {
+        const kind: SheetKind = (l.segment === 'exit' || last.segment === 'exit') ? 'tail' : 'sheet';
+        if (nowShown >= 0) startHandoffRef.current(nowShown, 'page', kind, 0);
+        else if (last.shown >= 0) {
+          startHandoffRef.current(last.shown, 'sheet', kind, track.pageScroll[last.shown]);
+        }
+      }
+      if (!handoff) lastRef.current = { shown, segment: l.segment };
     },
     [paint],
   );
 
   /**
-   * THE HAND-OFF. The one trick the whole view rests on.
+   * THE HAND-OFFS. The one trick the whole view rests on, and there are two of
+   * them now — one at either end of a vertical run.
    *
-   * At the end of an entrance the HTML page fades in over the sheet across
-   * `handoffMs` at the identical rect, and the canvas stops. It is the same
-   * plate-crossfade the reader uses for a page turn, and it works for the same
-   * reason: two surfaces showing the same pixels, one replacing the other, with
-   * no geometry in between.
+   * FORWARD, at the end of an entrance: the HTML page fades in over the sheet
+   * across `handoffMs` at the identical rect. REVERSE, at the start of a tear:
+   * the same page fades out over a sheet wearing the section's LAST viewport,
+   * and the peel takes over from there. Rewinding runs each of them the other
+   * way. All four are the same plate-crossfade the reader uses for a page turn,
+   * and they work for the same reason: two surfaces showing the same pixels,
+   * one replacing the other, with no geometry in between.
+   *
+   * ONLY THE PAGE'S ALPHA MOVES. It would be tidier to describe this as "the
+   * page fades out while the sheet fades in", and it would be wrong: two
+   * surfaces at half alpha over a ground let a quarter of the ground through
+   * between them, which is a flash of blue in the middle of the swap. The sheet
+   * sits underneath at full alpha and the page dissolves off it.
    *
    * Which means the invariant has to hold BEFORE the fade starts. If the two
    * rects disagree the swap shows as a jump, and it shows at the corners, where
@@ -349,16 +414,12 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
    * in the view.
    */
   const startHandoff = useCallback(
-    (index: number) => {
+    (index: number, into: 'page' | 'sheet', kind: SheetKind, scrollTop: number) => {
       const canvas = canvasRef.current;
       if (handoffRef.current) cancelAnimationFrame(handoffRef.current.raf);
 
       const el = pagesRef.current[index];
-      // The rect check only means anything when the page is AT REST. A rewind
-      // brings a page back out of its exit pose, which is a box at 58% of the
-      // rect turned 16°, and comparing the flat plane against that would report
-      // a five-hundred-pixel disagreement every time somebody scrolled up.
-      if (import.meta.env.DEV && el && el.style.transform === '') {
+      if (import.meta.env.DEV && el) {
         const sheet = canvas?.screenRect();
         const page = el.getBoundingClientRect();
         if (sheet && page) {
@@ -379,7 +440,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
 
       const ms = Math.max(1, look.handoffMs);
       const t0 = performance.now();
-      const state = { index, alpha: 0, raf: 0 };
+      const state = { index, into, kind, scrollTop, alpha: 0, raf: 0 };
       handoffRef.current = state;
       const frame = (now: number): void => {
         state.alpha = Math.min(1, (now - t0) / ms);
@@ -396,7 +457,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     },
     [apply],
   );
-  // `apply` starts the hand-off and the hand-off drives `apply`; one of the two
+  // `apply` starts a hand-off and the hand-off drives `apply`; one of the two
   // has to reach the other through a ref.
   const startHandoffRef = useRef(startHandoff);
   startHandoffRef.current = startHandoff;
@@ -459,7 +520,10 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       pageHeight: rect.height,
       enterDistance: look.enterDistancePx,
       exitDistance: look.exitDistancePx,
-      enterOverlap: look.enterOverlap,
+      // Half a screen of empty ground, and the screen is the SCROLLER's, not
+      // the page's: the dwell is a beat in the viewport's terms rather than a
+      // proportion of whatever rect the page happens to have been given.
+      dwellDistance: look.dwellVh * box.height,
     });
     trackRef.current = track;
 
@@ -523,6 +587,12 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         trackRef.current ? layout(trackRef.current, positionRef.current, poseDials()) : null,
       armed: () => readyRef.current.armed,
       enterWindow: (k: number) => (trackRef.current ? enterWindow(trackRef.current, k) : null),
+      dwellWindow: (k: number) => {
+        const t = trackRef.current;
+        if (!t) return null;
+        const from = dwellStart(t, k);
+        return { from, to: from + t.dwellDistance };
+      },
       seek: (y: number) => {
         if (!trackRef.current) return;
         introRef.current = true;
@@ -556,18 +626,17 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   /**
    * THE SETTLE. A sheet must never come to rest in mid-air.
    *
-   * The entrance is 1:1 with the scroll and linear, which is the whole point —
-   * the sheet is exactly where the wheel put it — but it means the wheel can
-   * leave it anywhere, including halfway out of its roll, which is not a state
-   * the view has. So when the scroll has been quiet for `settleIdleMs` with a
-   * TURN part done, the track tweens to the nearer end of it.
+   * The position is 1:1 with the scroll, which is the whole point — the sheet
+   * is exactly where the wheel put it — but it means the wheel can leave it
+   * anywhere, including halfway off the ground with a fold across it, which is
+   * not a state the view has. So when the scroll has been quiet for
+   * `settleIdleMs`, `settleAt` says what move is part done and where it should
+   * finish, and the track tweens there.
    *
-   * A turn, not a segment: the exit and the entrance that overlaps it are one
-   * move, and the boundary between them is the one position with nothing on
-   * screen but ground. Settling to the nearer end of the EXIT would park the
-   * reader exactly there. See `turnAt`.
-   *
-   * A rewind is a turn run backwards, so this catches those too, at no cost.
+   * WHICH END depends on the move, and `settleAt` is where that is decided: a
+   * tear goes to its nearer end, a dwell and the entrance after it always go
+   * forward. A rewind is the same mapping run backwards, so this catches those
+   * too, at no cost.
    *
    * FOUR THINGS IT MUST NOT DO. It must not fire while the reader is still
    * scrolling — the idle timer is armed from the scroll itself, and Lenis emits
@@ -588,11 +657,11 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     if (lenis.isScrolling) return;
     if ((lenis.userData as { pv?: string } | undefined)?.pv === 'letterhead') return;
 
-    const turn = turnAt(track, positionRef.current);
-    if (!turn || turn.index < 0) return;
-    if (turn.p <= look.settleLow || turn.p >= look.settleHigh) return;
+    const plan = settleAt(track, positionRef.current);
+    if (!plan) return;
+    if (plan.p <= look.settleLow || plan.p >= look.settleHigh) return;
 
-    lenis.scrollTo(Math.min(settleTarget(track, turn), maxPosition(track)), {
+    lenis.scrollTo(Math.min(plan.target, maxPosition(track)), {
       duration: look.settleMs / 1000,
       easing: easeOutCubic,
       userData: { pv: 'settle' },
@@ -671,7 +740,8 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     activeRef.current = initialRef.current;
     positionRef.current = 0;
     introRef.current = false;
-    lastRef.current = -2;
+    lastRef.current = { shown: -2, segment: 'page' };
+    pendingRef.current = null;
     readyRef.current = { fonts: false, measured: new Set(), armed: false, at: performance.now() };
     measure(); // provisional: lays the pages out, but the scroller stays locked
 
@@ -791,7 +861,10 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       {/* Before the scroller in the DOM, so the page paints OVER it: at the
           hand-off the page fades in on top of the sheet, and a canvas above it
           would hide the very thing arriving. */}
-      <SheetCanvas ref={canvasRef} captures={project.sections.map((s) => s.sheets)} />
+      <SheetCanvas
+        ref={canvasRef}
+        captures={project.sections.map((s) => ({ sheet: s.sheets, tail: s.tails }))}
+      />
       <div className="pv-scroller" ref={attachScroller} data-locked={armed ? undefined : ''}>
         <ScrollerContext.Provider value={scroller}>
           <div className="pv-content" ref={contentRef}>

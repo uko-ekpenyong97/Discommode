@@ -126,20 +126,33 @@ export interface Section {
   title: string;
   blocks: Block[];
   /**
-   * ONE CAPTURE PER SIGNED-OFF VIEWPORT, widest first.
+   * THE SECTION'S FIRST VIEWPORT, one capture per signed-off viewport, widest
+   * first. This is what the entrance unrolls into the page.
    *
-   * It would be tidier for one capture to serve both, and it does not work.
-   * The page's type is a fixed number of pixels and its measure is not, so a
-   * page at 1632 wraps its lines somewhere a page at 1344 does not — the two
-   * are different documents, not the same document at two scales, and no amount
-   * of resampling turns one into the other. Measured: a single capture put the
-   * hand-off diff at 8–16% of the page's pixels at the viewport it was not
-   * taken at, against a 2% budget. With one each it is under 2% at both.
+   * It would be tidier for one capture to serve both viewports, and it does not
+   * work. The page's type is a fixed number of pixels and its measure is not,
+   * so a page at 1632 wraps its lines somewhere a page at 1344 does not — the
+   * two are different documents, not the same document at two scales, and no
+   * amount of resampling turns one into the other. Measured: a single capture
+   * put the hand-off diff at 8–16% of the page's pixels at the viewport it was
+   * not taken at, against a 2% budget. With one each it is under 2% at both.
    *
    * `SheetCanvas` picks the one whose `width` is nearest the live page's rect,
    * so a project that ships one capture still works — at one viewport.
    */
   sheets: SheetTexture[];
+  /**
+   * THE SECTION'S LAST VIEWPORT, the same way. This is what the tear peels off
+   * the ground.
+   *
+   * A tear always begins with the page scrolled to its bottom — that is what
+   * the end of a vertical run IS — so the frame it starts from is as
+   * deterministic as the one an entrance ends on, and it can be captured the
+   * same way. Without it the peel would have to start from the section's first
+   * viewport, which is a different page, and the reverse hand-off would be a
+   * cut rather than a crossfade.
+   */
+  tails: SheetTexture[];
 }
 
 export interface Project {

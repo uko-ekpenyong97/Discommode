@@ -129,12 +129,28 @@ export interface PortfolioLook {
   letterheadTitlePx: number;
 
   /* ── the sheet's material (PV PAPER) ───────────────────────────────────── */
-  /** Mixes the cone's half-angle away from π/2 — see `curlMaterial.ts`. */
+  /**
+   * THE BEND'S RADIUS: 0 is the widest the shader will draw, 1 the tightest.
+   *
+   * It used to mix a cone's half-angle, which is a different thing with the same
+   * name — the bend is an arc with a straight flap behind it now, and the only
+   * number that says how it looks is how tight the arc is. See
+   * `curlMaterial.ts`.
+   */
   curlTightness: number;
-  /** How much of the sheet the roll reaches when fully rolled, and which edge
-   *  it runs from (0 the bottom, 1 the top). */
-  curlOrigin: number;
-  curlOriginEdge: number;
+  /** How much the radius grows along the FOLD LINE, so the bend is wider at the
+   *  free corner than at the pinned one. 0 is a cylinder; this is what the cone
+   *  was for. */
+  curlTaper: number;
+  /**
+   * How much of the bend's lift leaves the plane, 0…1.
+   *
+   * Below 1 the bend is an ellipse rather than a circle, and it is below 1
+   * because of the camera: at fov 20 from 50 units away, a bend that lifts a
+   * whole page height comes a third of the way to the lens and takes the
+   * projection up by half. A peel that balloons as it lifts reads as a zoom.
+   */
+  curlDepth: number;
   /** The two point lights, in the reference's world units. */
   lightA: number;
   lightAX: number;
@@ -147,6 +163,10 @@ export interface PortfolioLook {
   /** Matte, with a small reflective term. */
   paperRoughness: number;
   paperReflect: number;
+  /** What a face turned away from both lights still shows of the paper. The
+   *  flap does exactly that as it folds back, and the reference's two-light rig
+   *  has nothing to say about the back of a sheet. */
+  paperAmbient: number;
   /** The hairline along the sheet's edge, and the page's inset ring — ONE dial,
    *  because an edge that only one of them has is an edge the hand-off's
    *  crossfade would have to hide. */
@@ -156,15 +176,31 @@ export interface PortfolioLook {
   mouseTiltDeg: number;
   mouseLerp: number;
 
-  /* ── the track, and the shape of an entrance and an exit (PV MOTION) ────── */
-  /** Scroll spent on one entrance and one exit (px). A feel, not a length. */
+  /* ── the track, and the shape of an entrance and a tear (PV MOTION) ─────── */
+  /** Scroll spent on one entrance and one tear (px). A feel, not a length. */
   enterDistancePx: number;
   exitDistancePx: number;
-  /** How far through an exit the next sheet starts unrolling. */
-  enterOverlap: number;
-  /** The crossfade at the hand-off (ms). */
+  /** Scroll spent on empty ground after a tear, as a fraction of the VIEWPORT's
+   *  height. Half a screen: the beat that makes a tear read as a thing that
+   *  finished rather than as a cut. */
+  dwellVh: number;
+  /** The crossfade at each hand-off (ms). There are two now, one at either end
+   *  of a vertical run. */
   handoffMs: number;
-  /** The entrance, as four staggered windows of its own progress. */
+  /** THE ENTRANCE, as staggered windows of its own progress. The bend it
+   *  arrives with, and where that bend sits — near the bottom edge, so the rest
+   *  of the sheet is flat and a line of type is readable across the curve. */
+  enterCurl: number;
+  enterCurlOrigin: number;
+  /**
+   * Which edge the entrance's curve is on, as the direction the fold TRAVELS —
+   * 270° runs down the sheet from the TOP edge, 90° up from the bottom.
+   *
+   * The top, and it has to be: the sheet rises into place from below
+   * (`riseFromH`), so its bottom edge is off the frame for the whole entrance
+   * and a curve there is a curve nobody sees. The top edge is the leading one.
+   */
+  enterCurlAxisDeg: number;
   startRotationDeg: number;
   rotationEndAt: number;
   scaleBase: number;
@@ -172,12 +208,32 @@ export interface PortfolioLook {
   curlOutAt: number;
   /** Where the sheet rises from, in page heights. Negative is below. */
   riseFromH: number;
-  /** The exit, as CSS 3D on the live page. */
-  exitScale: number;
-  exitRotateDeg: number;
-  exitRiseH: number;
-  /** Where in the exit the opacity starts to go. Late, on purpose. */
-  exitFadeFrom: number;
+
+  /** THE TEAR. The fold line's angle, clockwise from horizontal the way a CSS
+   *  rotation is; the peel travels at right angles to it. */
+  peelAngleDeg: number;
+  /** The three joints: the corner has lifted, the fold has crossed the sheet,
+   *  the pin has let go. */
+  peelLiftAt: number;
+  peelTravelAt: number;
+  peelFreeAt: number;
+  /** Where the fold starts, and how far it travels, along the roll direction. */
+  peelOriginFrom: number;
+  peelTravel: number;
+  /** The bend: at the lift, at its peak, and what it springs back to. */
+  peelCurlLift: number;
+  peelCurlPeak: number;
+  peelCurlPeakAt: number;
+  peelCurlRelax: number;
+  /** The turn about the pinned corner, at the travel's end and at the end. */
+  peelRotateDeg: number;
+  peelRotateEndDeg: number;
+  /** The lift, in page heights, at the travel's end and at the end. */
+  peelLiftH: number;
+  peelRiseH: number;
+  /** How far it recedes once it is free, and where its opacity starts to go. */
+  peelScaleEnd: number;
+  peelFadeFrom: number;
 
   /**
    * THE SETTLE. A sheet must never come to rest in mid-air, so when the scroll
@@ -260,9 +316,12 @@ export const LOOK: PortfolioLook = {
   textMeasureCh: 0,
   letterheadTitlePx: 96,
 
-  curlTightness: 0.62,
-  curlOrigin: 1,
-  curlOriginEdge: 0,
+  // A wide, soft arc. At 1 this is a tube; at 0.35 it is a sheet held in a
+  // hand, which is what the reference's paper does and what leaves a line of
+  // type readable across the bend.
+  curlTightness: 0.35,
+  curlTaper: 0.35,
+  curlDepth: 0.5,
   // The reference's constants, in the reference's world units. They transfer
   // because the camera does — see `curlMaterial.ts`.
   lightA: 1.14,
@@ -275,24 +334,41 @@ export const LOOK: PortfolioLook = {
   lightBZ: 10,
   paperRoughness: 0.25,
   paperReflect: 0.37,
+  paperAmbient: 0.34,
   edgeAlpha: 0.18,
   mouseTiltDeg: 1.5,
   mouseLerp: 0.06,
 
   enterDistancePx: 900,
-  exitDistancePx: 600,
-  enterOverlap: 0.35,
+  exitDistancePx: 700,
+  dwellVh: 0.5,
   handoffMs: 120,
-  startRotationDeg: -45,
+  enterCurl: -0.55,
+  enterCurlOrigin: 0.15,
+  enterCurlAxisDeg: 270,
+  startRotationDeg: -28,
   rotationEndAt: 0.16,
   scaleBase: 0.41,
   scaleTargetAt: 0.22,
   curlOutAt: 0.6,
   riseFromH: -0.51,
-  exitScale: 0.58,
-  exitRotateDeg: 16,
-  exitRiseH: -0.3,
-  exitFadeFrom: 0.7,
+
+  peelAngleDeg: -35,
+  peelLiftAt: 0.15,
+  peelTravelAt: 0.6,
+  peelFreeAt: 0.8,
+  peelOriginFrom: 0.08,
+  peelTravel: 0.45,
+  peelCurlLift: 0.45,
+  peelCurlPeak: 0.6,
+  peelCurlPeakAt: 0.4,
+  peelCurlRelax: 0.2,
+  peelRotateDeg: -12,
+  peelRotateEndDeg: -18,
+  peelLiftH: 0.12,
+  peelRiseH: 0.9,
+  peelScaleEnd: 0.85,
+  peelFadeFrom: 0.9,
 
   settleLow: 0.15,
   settleHigh: 0.85,
@@ -328,16 +404,31 @@ export const LOOK: PortfolioLook = {
 /** The pose dials the track needs, pulled out of whatever look is live. */
 export function poseDials(from: PortfolioLook = look): PoseDials {
   return {
+    enterCurl: from.enterCurl,
+    enterCurlOrigin: from.enterCurlOrigin,
+    enterCurlAxis: from.enterCurlAxisDeg,
     startRotation: from.startRotationDeg,
     rotationEndAt: from.rotationEndAt,
     scaleBase: from.scaleBase,
     scaleTargetAt: from.scaleTargetAt,
     curlOutAt: from.curlOutAt,
     riseFrom: from.riseFromH,
-    exitScale: from.exitScale,
-    exitRotate: from.exitRotateDeg,
-    exitRise: from.exitRiseH,
-    exitFadeFrom: from.exitFadeFrom,
+    peelAngle: from.peelAngleDeg,
+    peelLiftAt: from.peelLiftAt,
+    peelTravelAt: from.peelTravelAt,
+    peelFreeAt: from.peelFreeAt,
+    peelOriginFrom: from.peelOriginFrom,
+    peelOriginTo: from.peelOriginFrom + from.peelTravel,
+    peelCurlLift: from.peelCurlLift,
+    peelCurlPeak: from.peelCurlPeak,
+    peelCurlPeakAt: from.peelCurlPeakAt,
+    peelCurlRelax: from.peelCurlRelax,
+    peelRotateMid: from.peelRotateDeg,
+    peelRotateEnd: from.peelRotateEndDeg,
+    peelLiftMid: from.peelLiftH,
+    peelRiseEnd: from.peelRiseH,
+    peelScaleEnd: from.peelScaleEnd,
+    peelFadeFrom: from.peelFadeFrom,
   };
 }
 

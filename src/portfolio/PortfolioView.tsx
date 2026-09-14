@@ -38,10 +38,12 @@ interface PortfolioViewProps {
  * variables: `usePortfolioMotion` (production open + close) or
  * `PortfolioDialKit` (dev authoring). Same arrangement as the reader's doorway.
  *
- * The one piece of state here is the SECTION, which the ground's letterhead
- * needs and the hash follows. It commits at the hand-off, so it changes once
- * per section rather than once per frame — a render per scroll tick is exactly
- * what the rest of this directory is arranged to avoid.
+ * The two pieces of state here are the SECTION and the one PENDING behind it,
+ * which the ground's letterhead needs and which the hash follows. Both commit
+ * at a boundary — the section at its hand-off, the pending one when the ground
+ * empties — so they change once per section rather than once per frame. A
+ * render per scroll tick is exactly what the rest of this directory is arranged
+ * to avoid.
  */
 export default function PortfolioView({ project, section, intro = false }: PortfolioViewProps) {
   const authoring = import.meta.env.DEV && intro && PortfolioDialKit !== null;
@@ -50,6 +52,9 @@ export default function PortfolioView({ project, section, intro = false }: Portf
   const current = projectById(project) ?? PROJECTS[0];
   const scrollerRef = useRef<ScrollerHandle>(null);
   const [active, setActive] = useState(section);
+  // The section on its way, named dim in the letterhead while the ground is
+  // empty and while its sheet unrolls. Null once it has arrived.
+  const [pending, setPending] = useState<number | null>(null);
 
   // The dock is lazy — publish the look and pin REST synchronously so the layer
   // never paints a fully-open view for a frame before the dock takes over.
@@ -117,7 +122,12 @@ export default function PortfolioView({ project, section, intro = false }: Portf
           regardless (z-index). */}
       <ClosePill onClose={close} />
       <div className="pv-pane" {...dismiss}>
-        <Ground project={current} activeIndex={active} onSelect={selectSection} />
+        <Ground
+          project={current}
+          activeIndex={active}
+          pendingIndex={pending}
+          onSelect={selectSection}
+        />
         <Scroller
           // A different project is a different track: remount rather than try
           // to carry a scroll position between two unrelated section lists.
@@ -126,6 +136,7 @@ export default function PortfolioView({ project, section, intro = false }: Portf
           project={current}
           initialSection={section}
           onSectionChange={onSectionChange}
+          onPendingChange={setPending}
         />
       </div>
       {authoring && PortfolioDialKit && (

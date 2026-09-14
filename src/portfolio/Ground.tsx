@@ -17,6 +17,12 @@ import type { Project } from './blocks/types';
  * are on, and a dateline. It goes UNDER the paper rather than over it — see
  * `portfolio.css`, which is where that decision is written down.
  *
+ * The number of the section ON ITS WAY is marked pending — dim, and named in
+ * the strip beside the numbers — from the moment the ground empties to the
+ * moment that section's page arrives. Through a dwell it is the only thing on
+ * screen, and without it half a screen of bare blue reads as the view having
+ * stopped rather than as a beat between two sheets.
+ *
  * THE NUMBERS ARE THE ONLY NAVIGATION THE VIEW HAS. Clicking one is
  * `lenis.scrollTo(start[k])` with the dial's duration — the same call a deep
  * link resolves to, so there is one way to arrive at a section and it is used
@@ -31,13 +37,17 @@ interface GroundProps {
   /** The section whose page is live. Commits at the hand-off, so this changes
    *  once per section rather than continuously. */
   activeIndex: number;
+  /** The section on its way — from the moment the ground empties to the moment
+   *  its page arrives. Null the rest of the time. */
+  pendingIndex: number | null;
   /** A number was clicked — scroll the track to that section. */
   onSelect: (index: number) => void;
 }
 
-export function Ground({ project, activeIndex, onSelect }: GroundProps) {
+export function Ground({ project, activeIndex, pendingIndex, onSelect }: GroundProps) {
   const total = project.sections.length;
   const current = project.sections[Math.min(activeIndex, total - 1)];
+  const pending = pendingIndex === null ? null : project.sections[pendingIndex];
   return (
     <div className="pv-ground">
       <div className="pv-grain" aria-hidden="true" />
@@ -50,6 +60,7 @@ export function Ground({ project, activeIndex, onSelect }: GroundProps) {
               type="button"
               className="pv-letterhead__no"
               data-current={k === activeIndex || undefined}
+              data-pending={k === pendingIndex || undefined}
               aria-current={k === activeIndex ? 'true' : undefined}
               onClick={() => onSelect(k)}
             >
@@ -58,8 +69,14 @@ export function Ground({ project, activeIndex, onSelect }: GroundProps) {
             </button>
           ))}
         </nav>
-        <span className="pv-letterhead__section">
-          {current?.title} — {pad(activeIndex + 1)} / {pad(total)}
+        {/* While the ground is empty and while the next sheet unrolls, the
+            strip names what is COMING rather than what has gone — dim, because
+            it is not there yet. It is the only thing on screen during a dwell
+            that says the view has not simply stopped. */}
+        <span className="pv-letterhead__section" data-pending={pending ? '' : undefined}>
+          {pending
+            ? `${pending.title} — ${pad(pendingIndex! + 1)} / ${pad(total)}`
+            : `${current?.title} — ${pad(activeIndex + 1)} / ${pad(total)}`}
         </span>
         <span className="pv-letterhead__ref">{project.ref}</span>
       </header>

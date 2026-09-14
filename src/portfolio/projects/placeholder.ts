@@ -250,13 +250,18 @@ export const SHEET_SIZES = [
 ];
 
 /**
- * Where a section's capture lives. One per section per viewport, written by
- * `npm run placeholders` from the live page and committed like every other
- * WebP — see `docs/portfolio-view.md` on why this is a placeholder pipeline
- * rather than a content one.
+ * Where a section's captures live: TWO per section per viewport, the first
+ * viewport of its page and the last. Written by `npm run placeholders` from the
+ * live page and committed like every other WebP — see `docs/portfolio-view.md`
+ * on why this is a placeholder pipeline rather than a content one.
  */
-export function sheetSrc(project: string, index: number, width: number): string {
-  return `/projects/${project}/sheet-${String(index + 1).padStart(2, '0')}-${width}.webp`;
+export function sheetSrc(
+  project: string,
+  index: number,
+  width: number,
+  kind: 'sheet' | 'tail',
+): string {
+  return `/projects/${project}/${kind}-${String(index + 1).padStart(2, '0')}-${width}.webp`;
 }
 
 export function placeholderSection(
@@ -323,7 +328,8 @@ export function placeholderSection(
   return {
     title,
     blocks,
-    sheets: SHEET_SIZES.map((size) => ({ src: sheetSrc(project, index, size.width), ...size })),
+    sheets: SHEET_SIZES.map((size) => ({ src: sheetSrc(project, index, size.width, 'sheet'), ...size })),
+    tails: SHEET_SIZES.map((size) => ({ src: sheetSrc(project, index, size.width, 'tail'), ...size })),
   };
 }
 

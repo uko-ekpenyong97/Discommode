@@ -13,7 +13,8 @@
  * height that changes moves every page start behind it.
  *
  *   public/projects/0N/card.webp      grid + detail art, 2000x2600 (10:13 hero)
- *   public/projects/0N/sheet-NN.webp  one capture per section — see below
+ *   public/projects/0N/sheet-NN-W.webp  a section's FIRST viewport — see below
+ *   public/projects/0N/tail-NN-W.webp   …and its LAST
  *   public/projects/placeholder/*     the block media the placeholder project uses
  *
  *   npm run dev                       # in another shell, for the captures
@@ -21,10 +22,14 @@
  *   npm run placeholders -- --force   # rewrite files that already exist
  *
  * THE SHEET CAPTURES are the odd one out: they are not synthesised, they are
- * SCREENSHOTS OF THE LIVE PAGE. A section's sheet is that section's first
- * viewport at 1440×900 — paper colour, grain, the letterhead block, the first
- * blocks — because the whole model is that the sheet and the page are the same
- * pixels, and the only way to be sure of that is to take one from the other.
+ * SCREENSHOTS OF THE LIVE PAGE — because the whole model is that the sheet and
+ * the page are the same pixels, and the only way to be sure of that is to take
+ * one from the other.
+ *
+ * TWO PER SECTION, because there are two hand-offs. An entrance ends on the
+ * section's FIRST viewport and a tear begins on its LAST, and both moments are
+ * as deterministic as each other: a tear always starts with the page scrolled
+ * to its bottom, which is what the end of a vertical run is.
  *
  * Which makes this a PLACEHOLDER pipeline and not a content one. Nothing fails
  * if a section's first viewport changes and its capture does not; the hand-off
@@ -200,6 +205,15 @@ async function writeVideo() {
  * picture of section 0. `window.__pv.seek` is the only way to say which page is
  * the one painting.
  */
+/** Every capture a project of `count` sections needs, in the order that takes
+ *  the fewest seeks: down the sections, both frames of each. */
+function* frames(count) {
+  for (let k = 0; k < count; k++) {
+    yield [k, 'sheet'];
+    yield [k, 'tail'];
+  }
+}
+
 async function captureSheets(browser, id, viewport) {
   const context = await browser.newContext({ deviceScaleFactor: 1 });
   const page = await context.newPage();
@@ -213,15 +227,18 @@ async function captureSheets(browser, id, viewport) {
     () => Math.round(document.querySelector('.pv-page').getBoundingClientRect().width),
   );
 
-  for (let k = 0; k < count; k++) {
-    const rel = `${id}/sheet-${String(k + 1).padStart(2, '0')}-${pageWidth}.webp`;
+  for (const [k, kind] of frames(count)) {
+    const rel = `${id}/${kind}-${String(k + 1).padStart(2, '0')}-${pageWidth}.webp`;
     const out = join(OUTPUT_DIR, rel);
     if (!force && (await exists(out))) {
       console.log(`  skip   ${rel} (exists)`);
       continue;
     }
-    const clip = await page.evaluate(async (k) => {
-      window.__pv.seek(window.__pv.track().start[k]);
+    const clip = await page.evaluate(async ([k, kind]) => {
+      const t = window.__pv.track();
+      // The first viewport of the section, or its last — which is the bottom of
+      // its vertical run, and the frame every tear starts from.
+      window.__pv.seek(kind === 'tail' ? t.start[k] + t.pageScroll[k] : t.start[k]);
       // The media has to be decoded and every reveal on the first viewport
       // finished: a block caught mid-reveal would bake a half-faded paragraph
       // into the texture, and the hand-off would then have to hide it.
@@ -242,7 +259,7 @@ async function captureSheets(browser, id, viewport) {
         width: Math.round(r.width),
         height: Math.round(r.height),
       };
-    }, k);
+    }, [k, kind]);
     const png = await page.screenshot({ clip, animations: 'disabled' });
     await mkdir(dirname(out), { recursive: true });
     const buf = await sharp(png).webp({ quality: SHEET_QUALITY }).toBuffer();
