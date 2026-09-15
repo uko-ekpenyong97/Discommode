@@ -39,8 +39,17 @@ export function CardOverlay({ item, onOpen }: CardOverlayProps) {
 
   return (
     <div className="card-overlay" style={{ animationDuration: `${cfg.overlayFadeMs}ms` }}>
-      <div className="card-overlay__headline" style={depth(cfg.overlayDepthHeadline)}>
-        {item.title}
+      {/* The NAME if the card has one, the number if it does not — and the one
+          line under it, on the same depth plane so the two read as one label
+          rather than as two things floating apart as the card turns. */}
+      <div
+        className={
+          item.description ? 'card-overlay__headline is-described' : 'card-overlay__headline'
+        }
+        style={depth(cfg.overlayDepthHeadline)}
+      >
+        <span className="card-overlay__name">{item.name ?? item.title}</span>
+        {item.description && <span className="card-overlay__desc">{item.description}</span>}
       </div>
 
       <div className="card-overlay__captions" style={depth(cfg.overlayDepthCaptions)}>

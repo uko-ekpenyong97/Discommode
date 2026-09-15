@@ -20,7 +20,7 @@ is why they transfer), `docs/prototypes/folder-prototype.html` and
 
 > **On the numbers in this file.** Architecture and dials are as shipped.
 > Anything reported as a *measurement* names the run that produced it — almost
-> all of them come from `npm run verify:pv` on 2026-09-14, at both signed-off
+> all of them come from `npm run verify:pv` on 2026-09-15, at both signed-off
 > viewports and **both device pixel ratios**. Where a figure is a threshold
 > rather than a result, it says "budget" or "target".
 
@@ -46,7 +46,7 @@ is why they transfer), `docs/prototypes/folder-prototype.html` and
 | `PortfolioDialKit.tsx` | Dev dock (`#view-NN?intro`). |
 | `contrastProbe.ts` | Dev-only WCAG probe. Tree-shaken from production — verified. |
 | `blocks/` | The content model: one block type per kind of thing a project says. |
-| `projects/` | Placeholder content. Replacing it is a data change and nothing else. |
+| `projects/` | The content. `rive-site.ts` (card 02) and `nosey.ts` (card 04) are real; `placeholder.ts` still fills card 03. Replacing a placeholder is a data change and nothing else — twice over now, at two different section counts. Media comes from `npm run projects`, which writes `<slug>-assets.json` beside each module. |
 
 ## Anatomy
 
@@ -523,12 +523,15 @@ against a budget is the worst WINDOW and not two per section:
 | --- | --- | --- | --- | --- | --- |
 | 02 | 5 | 52.5 MB | 210.2 MB | **31.5 MB** | **126.1 MB** |
 | 03 | 1 | 10.5 MB | 42.0 MB | 10.5 MB | 42.0 MB |
-| 04 | 3 | 31.5 MB | 126.1 MB | 31.5 MB | 126.1 MB |
+| 04 | 5 | 52.5 MB | 210.2 MB | **31.5 MB** | **126.1 MB** |
 
 "Held" is what the same read-through used to end up holding, and it is in the
 table because the difference between the two right-hand columns and the two
-beside them is the whole point: card 02 has five sections and card 04 has three,
-and they now cost the same.
+beside them is the whole point: **card 04 went from three sections to five and
+the two right-hand columns did not move.** They are the reader's window, and a
+window is three sections wide however long the project is. The two on the left
+are what the same read-through cost before the eviction landed, and they went up
+by two sections' worth, which is what "grows with the project" looks like.
 
 `pv-verify` prints both every run. It **asserts the count** — six captures, on
 every section of every card, walked forward and rewound — and **reports the
@@ -688,6 +691,17 @@ and gives every block a grid area without a wrapper.
 | `linkPill` | 12 | Inline inside it. |
 
 A block can override with `span`; `spanOf` in `Blocks.tsx` holds the defaults.
+
+**A media caption is set like the prose beside it, wherever the media is.** A
+single `image`/`video` caption used to be 11px mono with 0.1em of tracking while
+a two-up's was 14px sans, so the same sentence was set two different ways
+depending on which block it happened to be in — two rules written at different
+times, not a distinction anybody chose. They share one now. **Mono is the
+letterhead's voice in this view**: the strip on the ground, the block's eyebrow
+and reference line, and the `caption` BLOCK, which is a dateline or a credit and
+is a different thing from a caption on a picture. Moving the figure captions
+moved them in the contrast table too — off the 11px mono row and onto the 14px
+one, where they measure the same 9.01:1 the two-up's text does.
 
 **The composite blocks lay the twelve out again inside themselves** rather than
 taking a share of the outer grid. It looks redundant and is not: seven twelfths
@@ -1405,9 +1419,10 @@ Measured, worst of each kind, sampled down a whole section at both viewports:
 | run | on | px | ratio |
 | --- | --- | --- | --- |
 | `pv-letterhead__no`, `__ref`, `__back` | ground | 11 | **7.64** |
-| `pv-letterhead-block__no`, `__ref`, `pv-figcaption` | paper | 11 | 8.47 |
+| `pv-letterhead-block__no`, `__ref` | paper | 11 | 8.47 |
 | `pv-letterhead__section` | ground | 11 | 8.87 |
 | `pv-body` | paper | 16 | 9.01 |
+| `pv-twoup__text`, `pv-figcaption` | paper | 14 | 9.01 |
 | `pv-linkpill` | paper | 12 | 9.86 |
 | `pv-letterhead__project` | ground | 11 | 10.94 |
 | `pv-letterhead-block__title`, `pv-heading` | paper | 96, 22 | 14.06 |
@@ -1485,7 +1500,10 @@ active section — that is THE bug this path exists to prevent.
 `hue` is gone with the folders: sections were told apart by the colour of their
 glass, and there is no glass.
 
-Placeholders: card 02 is five sections, card 03 is one, card 04 is three. A
+Placeholders: card 03 is the only one left, and it is one section. Cards 02 and
+04 are real projects and their section counts are their copy's — five each,
+split at the headings their source documents already had. What follows is how a
+PLACEHOLDER section gets its length, and it applies to card 03 alone. A
 section's length is authored in **page heights** and filled to it — take beats
 from a fixed nine-block cycle while the next one gets you nearer the target than
 it overshoots it, then top up with paragraphs, which are a sixth of a page each
@@ -1697,6 +1715,29 @@ observation about it.
 > reveal-state settles are in and the suite is green, but the symptom persists
 > on a real wheel — not yet diagnosed.
 
+> **Known: the letterhead sometimes exits instead of scrolling.** Clicking a
+> section number after scrolling WITHIN a section occasionally leaves the view
+> for the grid — the hash lands on `#item-NN` — rather than rolling to that
+> section. Seen twice in about eight clicks, on cards 02 and 04, in headed
+> Chrome. Not reproducible on demand, and the suite does not see it: `pv-verify`
+> clicks with `element.click()`, which dispatches a bare `click` and no pointer
+> events at all, so every path that depends on a real press is invisible to it.
+>
+> That is the same blind spot that hid the last bug in this exact place — a real
+> pointer click on a section number used to scroll AND close, because the
+> letterhead IS ground as far as `useDismissOnGround` is concerned, and the fix
+> was to stop the control's own pointer events (see
+> [Pointer targets](#pointer-targets)). The intermittency is what makes this a
+> different bug rather than a regression of that one: `stopPropagation` on a
+> control either runs or it does not. **Where to look first** is the hook's
+> drag rule — a press that moves more than 4px is not a click, both ends have to
+> land on the ground, and a letterhead click that arrives while Lenis is still
+> smoothing is a press whose `pointerup` may be over a different element than
+> its `pointerdown` was. A capture-phase log of `pointerdown`/`pointerup`
+> targets and the `closest('.pv-page')` answer at each, left running until it
+> happens again, is the cheapest way to find out. Do not treat a green suite as
+> evidence here.
+
 > **A note on what has just been fixed, because it is the kind of thing that
 > comes back.** The entrance lost its roll for a release without a single check
 > failing. The tear's PR replaced the cone wrap with an arc fold and gave the
@@ -1707,6 +1748,16 @@ observation about it.
 > [the entrance](#entrance--p-through-enterdistance). The general form: when two
 > formulas share a vocabulary, no amount of testing the vocabulary tests the
 > formula.
+
+> **A note on what card 04 just proved, because it is the claim this whole file
+> rests on.** Nosey replaced card 04's three placeholder sections with five, and
+> the diff outside `projects/` is four lines: the registry, the section count in
+> `projects.test.ts`, and two comments naming what each card is. Nothing in
+> `Scroller`, `SheetCanvas` or `pageTrack` was touched, and cards 02 and 03 did
+> not move — their captures are byte for byte the ones that shipped last week.
+> The first real project proved a project could be dropped in; the second proved
+> it could be dropped in at a different LENGTH, which is the half that was still
+> an assertion.
 
 > **A note on what has just gone off this list, for the same reason.** Eviction
 > is in: the GPU holds the section being read and its two neighbours and lets go
@@ -1746,12 +1797,68 @@ observation about it.
    that, and `curlDepth` flattens what is left. A flap that DROOPED — a second,
    much larger radius past the first — would take the constraint off, and is the
    obvious next thing to try if the tear ever wants to run further.
+6. **Card 03 is the last placeholder**, and it is now the only thing holding
+   `placeholder.ts` in the repo — the nine-block cycle, `BLOCK_VP`, the
+   viewports-per-section arithmetic, all of it. It is also the only card with a
+   Rive block on it, which is why `projects.test.ts` asks for the artboard of
+   the SET rather than of each project: the lazy-mount path has exactly one
+   exerciser left. A real project at 03 takes the placeholder out and takes that
+   coverage with it, and the artboard would have to come back on a real page or
+   the check has nothing to stand on.
+7. **Two cards, two kinds of face.** Card 04's is real — a frame of its own
+   pitch site, cut by `CARD_FACES` in `optimize-projects.mjs` — and cards 02 and
+   03 are still the flat plates `make-placeholders` draws. Card 02 is the odd
+   one: a real project wearing a placeholder plate, which now reads as a gap
+   rather than as a card waiting its turn. It has clips in its folder and the
+   machinery to crop one is two lines of table.
+8. **The card face's frame is a number typed by eye.** `at` and `focus` were
+   picked by cutting a dozen candidates out of the clip and looking at them, and
+   nothing re-checks them: re-encode the clip a second shorter and the face
+   becomes whatever is at 110s now. The frame is the thing a reader sees first
+   on the grid, so it is worth more than a comment — a committed contact sheet,
+   or the frame's own hash, would make a face that has quietly moved visible.
+9. **`name` and `description` exist on one card.** They are what the grid tile
+   and the detail panel say a card IS, and they are optional because the two
+   placeholders have nothing to say yet. Every card that becomes real wants
+   both, and the overlay's fallback to the card NUMBER is a fallback rather than
+   a design — a grid where three cards name themselves and one says "03" is
+   worse than either of the two consistent states.
 
 ## Running the checks
+
+**Two prerequisites, and neither is installed by cloning.**
+
+```
+npm ci               # a Conductor worktree starts with NO node_modules
+brew install ffmpeg  # must be a VP9-capable build
+```
+
+`npm ci` first: a worktree is an isolated checkout and `node_modules` is not
+copied into it, so the first `npm run projects` in a fresh one fails on
+`Cannot find package 'sharp'` rather than on anything to do with media.
+
+**ffmpeg is NOT a project dependency** — `optimize-projects` and
+`make-placeholders` both look for `$FFMPEG` and then for one on `PATH`, and skip
+their video steps with a note when there is none. What they need is a build with
+**`libvpx-vp9` and `libx264`**, because a clip ships as both encodes; Homebrew's
+has had both for years. Check before trusting one that is already there:
+
+```
+ffmpeg -hide_banner -encoders | grep -E 'libx264|libvpx-vp9'
+```
+
+A binary can be on the disk and still be no use. The one this machine had was
+an ffmpeg 0.10.2 from 2012 bundled inside an unrelated app, with no VP9 encoder
+at all — it was not on `PATH`, so nothing was silently wrong, but a build old
+enough to answer `ffmpeg -version` and young enough to look fine is exactly the
+thing to check the encoder list of rather than the version of.
+
+Then:
 
 ```
 npm run dev          # in one shell
 npm test             # pageTrack + fitPlaneToRect + both shapes, in node
+npm run projects     # re-encode a project's media from ~/Discommode-pages (needs ffmpeg)
 npm run placeholders # regenerate the captures after a page change (needs the dev server)
 npm run verify:pv    # the same view, in Chrome, at both viewports and both DPRs
 npm run verify:gpu   # 20 open/close cycles, watching the GPU process
@@ -1762,7 +1869,7 @@ tests cover `pageTrack`, `fitPlaneToRect` and both shapes' geometry thoroughly a
 nothing else, while every bug this view has had was one only a browser could
 see. It runs both signed-off viewports (1728×996, 1440×900) **at both device
 pixel ratios** on card 02 (five sections), card 03 (one — the section with no
-tear and no dwell) and card 04 (three), and checks:
+tear and no dwell) and card 04 (five), and checks:
 
 - **the rect match, both ways** — the sheet's flat screen rect, as three.js
   projects it, against the page's rect, ≤ 1px on both axes, at both hand-offs of

@@ -65,14 +65,20 @@ describe('project registry', () => {
     }
   });
 
-  it('covers the one-section case (03) and the five-section spread (02)', () => {
+  it('covers the one-section case (03) and the five-section spread (02, 04)', () => {
     // One section: no exit, no second entrance, no turn anywhere.
     expect(projectById('03')!.sections).toHaveLength(1);
     // Five, of uneven length: the short ones go straight from an entrance into
     // an exit, and the long one is long enough to forget there is a sheet.
     expect(projectById('02')!.sections).toHaveLength(5);
-    // Three: the smallest count with a middle section.
-    expect(projectById('04')!.sections).toHaveLength(3);
+    // Card 04 was three — the smallest count with a MIDDLE section — for as
+    // long as it was a placeholder whose length was a number somebody typed.
+    // Nosey is five, because that is where its copy's own headings fall, and a
+    // section break is a content decision rather than a coverage one. The
+    // middle-section case is covered by both five-section cards; what is gone
+    // is the exact-three case, which was never a case the track has a branch
+    // for — `pageTrack` knows first, middle and last.
+    expect(projectById('04')!.sections).toHaveLength(5);
   });
 
   it('puts a video in every project, and the Rive artboard somewhere', () => {

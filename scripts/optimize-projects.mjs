@@ -15,6 +15,10 @@
  *   public/projects/<slug>/<name>.webp        for a png/jpg source
  *   public/projects/<slug>/<name>.riv         copied byte for byte
  *
+ * plus the card face, which is named by the CARD and not by the slug:
+ *
+ *   public/projects/<NN>/card.webp            a 10:13 crop of one frame
+ *
  * plus the one thing that is not an asset:
  *
  *   src/portfolio/projects/<slug>-assets.json  the INTRINSIC SIZE of each
@@ -108,6 +112,48 @@ const QUALITY = 82;
 const NOT_SHIPPED = {
   'rive-site': ['loop.riv'],
 };
+
+/**
+ * THE CARD FACE — the 2000x2600 the grid tile and the detail panel wear.
+ *
+ * `make-placeholders` synthesises one flat plate per portfolio card, and that
+ * is the right thing for a card with nothing behind it. Once a project is real
+ * its face should be a picture of the project — and this pipeline is already
+ * holding the project's own footage, so the face is a FRAME OF IT.
+ *
+ * It is named by the CARD (`04`) rather than by the slug, because
+ * `public/projects/<NN>/card.webp` is what `content.ts` points at and `#view-NN`
+ * is what the card opens.
+ *
+ * A card taken over by an entry here has to come OUT of the plates in `CARDS`
+ * in `make-placeholders.mjs`, or the next `npm run placeholders -- --force`
+ * writes the flat plate back over it.
+ *
+ *   from    the clip's stem, in this slug
+ *   at      seconds into the ENCODED mp4 — the frame, chosen by eye. Read off
+ *           the encode rather than the master so the face is the pixels the
+ *           page ships, at the size and the CRF it ships them at
+ *   focus   where the 10:13 window sits in the frame's slack: 0 flush left,
+ *           0.5 centred, 1 flush right. A crop this deep has a subject in it
+ *           or it has nothing, and the subject is rarely in the middle
+ *
+ * 10:13 out of 16:9 is a deep crop and there is no way around it: the frame is
+ * 900 tall and the card is 2600, so a full-bleed face is the same ~2.9x upscale
+ * whichever slice it takes. It is authored at 2000x2600 and read at a few
+ * hundred, which is where that goes unseen — see `layout/hero.ts`.
+ */
+const CARD_FACES = {
+  // The closing scene: Nosey's face, large, on the white of the page it lives
+  // on, with the site's sky and grass left as bands top and bottom. `focus`
+  // 0.66 is what puts the face on the card's centre line rather than off its
+  // right edge, which is where a centred crop leaves it.
+  nosey: { card: '04', from: '01-site-scroll', at: 110, focus: 0.66 },
+};
+
+/** The hero rect's ratio (see `layout/hero.ts`) — card art is authored at 10:13,
+ *  the same size `make-placeholders` draws its plates at. */
+const CARD_W = 2000;
+const CARD_H = 2600;
 
 const VIDEO_RE = /\.(mp4|mov)$/i;
 const IMAGE_RE = /\.(png|jpe?g)$/i;
@@ -305,6 +351,59 @@ async function copyRive(slug, name) {
   console.log(`  ${name.padEnd(20)} ${kb(srcStat.size)}  copied`);
 }
 
+/**
+ * …and the crop itself.
+ *
+ * `extract` at an explicit left edge rather than `fit: 'cover'`, because cover
+ * only takes a named anchor and the three it offers here — left, centre, right —
+ * are not where the subject is. The window is as tall as the frame and as wide
+ * as 10:13 allows, and `focus` slides it across the pixels cover would have
+ * thrown away.
+ */
+async function writeCardFace(ffmpeg, slug, { card, from, at, focus }) {
+  const mp4 = join(OUTPUT_DIR, slug, `${from}.mp4`);
+  const out = join(OUTPUT_DIR, card, 'card.webp');
+  const srcStat = await statOrNull(mp4);
+  if (!srcStat) {
+    warnings.push(`${card}/card.webp not written: ${slug}/${from}.mp4 does not exist`);
+    return;
+  }
+  if (!ffmpeg) {
+    warnings.push(`${card}/card.webp not written: no ffmpeg (set FFMPEG=/path/to/ffmpeg)`);
+    return;
+  }
+  const outStat = await statOrNull(out);
+  if (!force && outStat && outStat.mtimeMs > srcStat.mtimeMs) {
+    skipped += 1;
+    console.log(`  ${`${card}/card.webp`.padEnd(20)} ${CARD_W}x${CARD_H}  (up to date)`);
+    return;
+  }
+
+  const tmp = join(tmpdir(), `pv-card-${process.pid}-${card}.png`);
+  // `-ss` BEFORE `-i` seeks the container and decodes from the nearest keyframe,
+  // which is the fast form and is exact enough: the face is a still, not a
+  // measurement, and the clip is a slow scroll.
+  await run(ffmpeg, ['-y', '-ss', String(at), '-i', mp4, '-frames:v', '1', '-f', 'image2', tmp]);
+
+  const frame = sharp(tmp);
+  const { width, height } = await frame.metadata();
+  const cropW = Math.min(width, Math.round((height * CARD_W) / CARD_H));
+  const left = Math.round((width - cropW) * Math.min(1, Math.max(0, focus)));
+  const buf = await frame
+    .extract({ left, top: 0, width: cropW, height })
+    .resize({ width: CARD_W, height: CARD_H })
+    .webp({ quality: QUALITY })
+    .toBuffer();
+  await mkdir(join(OUTPUT_DIR, card), { recursive: true });
+  await writeFile(out, buf);
+  await unlink(tmp).catch(() => {});
+  written += 1;
+  console.log(
+    `  ${`${card}/card.webp`.padEnd(20)} ${CARD_W}x${CARD_H}  ` +
+      `from ${from}.mp4 @${at}s, ${cropW}x${height} at x=${left}  ${kb(buf.length)}`,
+  );
+}
+
 async function listSlugs() {
   const entries = await readdir(SOURCE_DIR, { withFileTypes: true });
   return entries
@@ -360,6 +459,9 @@ for (const slug of slugs) {
   const json = join(ASSETS_DIR, `${slug}-assets.json`);
   await writeFile(json, `${JSON.stringify({ media: sorted }, null, 2)}\n`);
   console.log(`  → src/portfolio/projects/${slug}-assets.json  (${Object.keys(sorted).length} entries)`);
+  // The card face, last: it is cut from a poster this run may have just
+  // written, so it cannot be taken before the clips are.
+  if (CARD_FACES[slug]) await writeCardFace(ffmpeg, slug, CARD_FACES[slug]);
 }
 
 console.log(`\n${written} written, ${skipped} up to date`);
