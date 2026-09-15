@@ -58,13 +58,16 @@ const PAPER_SELECTORS = [
   '.pv-figcaption',
 ] as const;
 
-/** …and on the GROUND. The letterhead carries the view's whole navigation, so
- *  it is as much a readability question as the prose is. */
+/** …and on the GROUND. The letterhead carries the view's whole navigation AND
+ *  its way out now, so it is as much a readability question as the prose is —
+ *  more so for the way out, which is the one thing on screen a reader has to be
+ *  able to find without having been told it is there. */
 const GROUND_SELECTORS = [
   '.pv-letterhead__project',
   '.pv-letterhead__no',
   '.pv-letterhead__section',
   '.pv-letterhead__ref',
+  '.pv-letterhead__back',
 ] as const;
 
 export interface ContrastSample {

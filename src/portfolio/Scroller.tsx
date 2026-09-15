@@ -12,7 +12,7 @@ import { animate } from 'motion';
 import { SectionPage } from './SectionPage';
 import { SheetCanvas } from './SheetCanvas';
 import type { CornerLift, SheetCanvasHandle } from './SheetCanvas';
-import { look, poseDials, subscribeLook } from './portfolioMotion';
+import { EASE, look, openFrame, poseDials, subscribeLook } from './portfolioMotion';
 import {
   bottomOf,
   buildTrack,
@@ -21,6 +21,7 @@ import {
   layout,
   maxPosition,
   minPosition,
+  openExtraDepth,
   positionAt,
   positionOf,
   resolve,
@@ -28,8 +29,14 @@ import {
   sheetPose,
   tearPose,
 } from './pageTrack';
-import type { SheetKind, Track, TrackLayout, TrackPosition } from './pageTrack';
+import type { PoseDials, SheetKind, Track, TrackLayout, TrackPosition } from './pageTrack';
 import type { ScreenRect } from './fitPlaneToRect';
+import {
+  nearPageEnd,
+  settleAllReveals,
+  settleRevealsInView,
+  settleRevealsNearEnd,
+} from './revealState';
 import { ScrollerContext } from './scrollerContext';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
@@ -134,8 +141,10 @@ export interface PortfolioProbe {
   dwellWindow: (k: number) => { from: number; to: number } | null;
   /** The tear's free corner, against where a flat sheet would put it. */
   cornerLift: () => CornerLift | null;
-  /** Where the shader put the vertex at `(u, v)`, in screen pixels. */
-  sheetPoint: (u: number, v: number) => { x: number; y: number } | null;
+  /** Where the shader put the vertex at `(u, v)`, in screen pixels — and where
+   *  a FLAT sheet would have put it, which is what makes a displacement
+   *  askable: the sheet's own turn, lift and scale are in both and cancel. */
+  sheetPoint: (u: number, v: number, flat?: boolean) => { x: number; y: number } | null;
   /** Park the track at `y` and hold it there — the same lock the entrance uses,
    *  so neither the scroller nor Lenis moves it under the camera. */
   seek: (y: number) => void;
@@ -152,6 +161,10 @@ export interface PortfolioProbe {
   /** THE HAND-OFF INVARIANT: the flat plane's screen rect as three.js projects
    *  it, and the live page's own rect. They must agree to a pixel. */
   sheetRect: () => ScreenRect | null;
+  /** The capture the sheet is wearing, and whether it has decoded. A check that
+   *  photographs the sheet before its texture has landed measures blank paper
+   *  and reports it as a hand-off that shows. */
+  sheetTexture: () => { src: string; ready: boolean } | null;
   pageRect: () => ScreenRect | null;
   /** Frames the canvas has painted. Must not move during a vertical run. */
   canvasFrames: () => number;
@@ -201,6 +214,58 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
    *  it negative while the scroller sits at 0. */
   const positionRef = useRef(0);
   const introRef = useRef(false);
+  /** Whether THIS mount is a fresh open — the one case that runs the open tween
+   *  and so the one case whose first paint has to be the rolled sheet rather
+   *  than section 0's page. A deep link and `prefers-reduced-motion` both land
+   *  flat, and both want the page from the first frame. */
+  const openingRef = useRef(false);
+  /**
+   * WHO OWNS THE POSITION. True from the first layout of a fresh open until the
+   * tween hands over, and true for a `seek`.
+   *
+   * `introRef` alone used to say this, and it could not say it early enough:
+   * it is set in `arm`, which is a few hundred milliseconds of fonts and layout
+   * after the first paint. In that gap the position is already the entrance's —
+   * one whole `enterDistance` BELOW zero — while the scroller sits at 0, so the
+   * re-measure below would try to sync the scroller to a negative offset, get 0
+   * back (a scroller cannot go negative), and the scroll event would paint
+   * section 0's page. Measured: the page arrived at full alpha 473ms after the
+   * click and was crossfaded away again 130ms later, which is exactly the flash
+   * this open is not supposed to have.
+   */
+  const positionIsOurs = () => introRef.current || openingRef.current;
+  /**
+   * THE OPEN'S EXTRA DEPTH, and how much of it is still owed.
+   *
+   * `depth` is page heights BELOW whatever `riseFrom` already gives — computed
+   * from the live page rect in `measure`, so it survives a resize — and `lift`
+   * is the tween's own 1 → 0 over its first phase. Their product is what the
+   * open adds to the pose's `y`, and only while the open owns the position: no
+   * scroll-driven entrance is ever given either.
+   *
+   * `lift` starts at 1 so the provisional measure — which paints before the
+   * tween is armed — already holds the sheet below the frame.
+   */
+  const openDepthRef = useRef(0);
+  const openLiftRef = useRef(1);
+  /** The dials the last painted frame used — see `apply`. */
+  const dialsRef = useRef<PoseDials | null>(null);
+  /**
+   * THE OPEN, RUN FAST — set while the open tween is live, null the rest of the
+   * time, and cleared by whichever of the two ends it first.
+   *
+   * The reader cannot scroll THROUGH the open: every position it holds is one
+   * whole `enterDistance` below zero, and a scroller cannot go negative, so
+   * there is no value to hand a wheel mid-tween that is not a jump of the entire
+   * entrance. What there is instead is the rest of the tween, run in
+   * `openSkipMs`. Nothing about the sheet's path changes — same `OPEN_TRACK`,
+   * resumed from exactly the progress the interrupted tween had reached — so
+   * the tube finishes its unroll and docks, and the only discontinuity is in
+   * the clock.
+   */
+  const skipOpenRef = useRef<(() => void) | null>(null);
+  /** The live open tween, so an unmount can stop it. */
+  const openClockRef = useRef<{ stop: () => void } | null>(null);
   const pageRectRef = useRef<ScreenRect | null>(null);
   /** The first-layout gate (rule 1 above). `armed` unlocks the scroller. */
   const readyRef = useRef({ fonts: false, measured: new Set<Element>(), armed: false, at: 0 });
@@ -227,6 +292,9 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   const lastRef = useRef<{ shown: number; segment: string }>({ shown: -2, segment: 'page' });
   /** The section the letterhead is naming as pending, so it changes once. */
   const pendingRef = useRef<number | null>(null);
+  /** The section whose LAST viewport has already been settled — see the 80%
+   *  rule in `apply`. One integer compare per frame rather than a DOM sweep. */
+  const tailRevealedRef = useRef<number | null>(null);
 
   const [armed, setArmed] = useState(false);
   // The scroller as a render input: the reveal observer and every block's
@@ -274,11 +342,29 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         const wasShown = el.style.visibility !== 'hidden';
         const wasExiting = el.hasAttribute('data-exiting');
         if (live) {
+          const scroll = parts[k]?.scroll;
+          if (scroll && scroll.scrollTop !== scrollTop) scroll.scrollTop = scrollTop;
+          // A HAND-OFF NEVER HAPPENS MID-REVEAL. The first time a page is put
+          // on screen it is about to be crossfaded onto a sheet wearing a
+          // capture of it SETTLED, so whatever is in its window is put into the
+          // finished state first and put there with no animation.
+          //
+          // The scroll position is written above this rather than below, and
+          // that ordering is the whole of it: "what is in the window" is a
+          // question about where the page is scrolled to, and at a forward
+          // hand-off that is the top while at a rewind it is the bottom. Both
+          // are the same line of code once the scroller has been told.
+          //
+          // It is once per page, on an attribute rather than on `wasShown` —
+          // the first paint of all has no inline `visibility` to compare
+          // against, which is exactly the frame a deep link lands on.
+          if (!el.hasAttribute('data-revealed')) {
+            el.setAttribute('data-revealed', '');
+            settleRevealsInView(el);
+          }
           el.style.visibility = '';
           el.style.opacity = opacity >= 1 ? '' : String(opacity);
           el.toggleAttribute('data-exiting', exiting);
-          const scroll = parts[k]?.scroll;
-          if (scroll && scroll.scrollTop !== scrollTop) scroll.scrollTop = scrollTop;
         } else if (wasShown) {
           el.style.visibility = 'hidden';
           el.style.opacity = '';
@@ -307,7 +393,17 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       if (!track || pagesRef.current.length === 0) return;
       positionRef.current = position;
 
-      const d = poseDials();
+      // The open, and only the open, is given an extra depth to climb out of.
+      // Everything else — every scroll-driven entrance, every tear, every
+      // rewind — reads the shared table exactly as it is.
+      const base = poseDials();
+      const sink = openingRef.current ? openDepthRef.current * openLiftRef.current : 0;
+      const d = sink > 0 ? { ...base, riseFrom: base.riseFrom - sink } : base;
+      // Kept so the dev probe can answer with the dials that actually drew the
+      // frame. Reading `poseDials()` there instead reports the shared table and
+      // silently loses the open's extra depth, which is the one thing about the
+      // open a probe is likely to be asked.
+      dialsRef.current = d;
       const l = layout(track, position, d);
       const handoff = handoffRef.current;
       let shown: number;
@@ -343,6 +439,36 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         let opacity = l.page ? l.page.pose.opacity : 0;
         let exiting = false;
 
+        // PAST 80% OF A RUN, THE REST OF IT IS SETTLED — without animation, a
+        // viewport ahead of where the reader has got to.
+        //
+        // The reveal is 800ms and the last fifth of a run is not 800ms under a
+        // fast scroll: the blocks at the bottom of a section are exactly the
+        // ones a reader flicks past to get to the next one, and the tear is
+        // what is on the other side of them. Without this the reverse hand-off
+        // crossfades a page whose last screen is still fading up onto a capture
+        // where it has finished — which is a real difference, correctly
+        // reported, that nothing can do anything about by then.
+        //
+        // Once per section per visit, because it is a DOM sweep and the guard
+        // is a single integer compare.
+        if (l.page && tailRevealedRef.current !== l.page.index) {
+          const at = positionAt(track, position);
+          if (nearPageEnd(at.offset, track.pageScroll[l.page.index])) {
+            tailRevealedRef.current = l.page.index;
+            const el = pagesRef.current[l.page.index];
+            if (el) {
+              // Two bands, and they answer two questions. What the READER can
+              // see, so nothing visible snaps as it is settled; and what the
+              // TEAR will see — the last screen of the run, which is what the
+              // tail capture is a picture of — whether or not it has been
+              // scrolled to yet.
+              settleRevealsInView(el, track.pageHeight);
+              settleRevealsNearEnd(el, track.pageHeight);
+            }
+          }
+        }
+
         if (handoff) {
           if (handoff.into === 'page') {
             // The ENTRANCE's swap: the page arrives over a flat sheet.
@@ -369,6 +495,13 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       if (l.activeIndex !== activeRef.current) {
         activeRef.current = l.activeIndex;
         changeRef.current(l.activeIndex);
+        // THE NEXT TWO CAPTURES, asked for while the reader is reading. A
+        // texture is otherwise fetched at the moment it is first bound, and for
+        // a tail that moment is `p` = 0 of the tear — the frame the reverse
+        // hand-off crossfades onto, where a capture that has not arrived is
+        // blank paper. From here they have a whole vertical run to arrive in.
+        canvas?.warm(l.activeIndex, 'tail');
+        canvas?.warm(l.activeIndex + 1, 'sheet');
       }
       if (l.pendingIndex !== pendingRef.current) {
         pendingRef.current = l.pendingIndex;
@@ -385,6 +518,13 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         const kind: SheetKind = (l.segment === 'exit' || last.segment === 'exit') ? 'tail' : 'sheet';
         if (nowShown >= 0) startHandoffRef.current(nowShown, 'page', kind, 0);
         else if (last.shown >= 0) {
+          // THE PAGE IS SETTLED BEFORE THE SHEET COMES UNDER IT, and all of it,
+          // not just what is in the window: the tail capture is a screenshot of
+          // the whole page at this scroll, so the whole page has to match it.
+          // Synchronously, in the same frame the swap is started — a settle a
+          // frame late is a frame of the crossfade spent hiding a reveal.
+          const leaving = pagesRef.current[last.shown];
+          if (leaving) settleAllReveals(leaving);
           startHandoffRef.current(last.shown, 'sheet', kind, track.pageScroll[last.shown]);
         }
       }
@@ -485,20 +625,35 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
 
     const previous = trackRef.current;
     const wasY = positionRef.current;
+    // THE FIRST PAINT OF A FRESH OPEN IS THE ROLLED SHEET, not the page.
+    //
+    // The provisional measure runs before the tween is armed, and it used to
+    // hold `{ page, offset 0 }` — which is section 0's page at its top, live and
+    // at full alpha. The pane fades up over 600ms, so what the open actually
+    // showed was the flat page arriving under the tint and then being replaced
+    // by a tube. Holding the ENTRANCE at p = 0 instead is the same position the
+    // tween starts from, so the canvas is the first thing in the paint order
+    // and the page stays hidden until the hand-off has it.
     const held: TrackPosition = previous
       ? positionAt(previous, wasY)
-      : { section: initialRef.current, segment: 'page', offset: 0, p: 0 };
+      : openingRef.current
+        ? { section: 0, segment: 'enter', offset: 0, p: 0 }
+        : { section: initialRef.current, segment: 'page', offset: 0, p: 0 };
 
-    // THE PAGE RECT: the viewport, less a margin on the sides, the letterhead
-    // and a margin at the top, and a deeper FOOT at the bottom — the band the
-    // close pill lives in. Both edges land on the device pixel grid.
+    // THE PAGE RECT: the viewport, less ONE MARGIN on every side, plus the
+    // letterhead's height at the top. Every edge lands on the device pixel
+    // grid.
+    //
+    // The bottom used to be a deeper `pageFootPx` (144) — a band reserved so a
+    // page never ran under the close pill. There is no pill, so there is no
+    // band, and the page is 96px taller at both signed-off viewports.
     const dpr = window.devicePixelRatio || 1;
     const box = sc.getBoundingClientRect();
     const top = look.letterheadHPx + look.pageMarginPx;
     const left = snap(look.pageMarginPx, dpr);
     const right = snap(box.width - look.pageMarginPx, dpr);
     const head = snap(top, dpr);
-    const foot = snap(box.height - look.pageFootPx, dpr);
+    const foot = snap(box.height - look.pageMarginPx, dpr);
     const rect: ScreenRect = {
       left,
       top: head,
@@ -506,6 +661,10 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       height: Math.max(1, foot - head),
     };
     pageRectRef.current = rect;
+    // What the OPEN has to climb, against the rect it is actually climbing
+    // into. Recomputed on every measure, so a resize mid-open still starts the
+    // sheet below the frame rather than below where the frame used to be.
+    openDepthRef.current = openExtraDepth(rect, box.height, poseDials(), look.openStartBelowPx);
     stage.style.setProperty('--pv-page-x', `${rect.left}px`);
     stage.style.setProperty('--pv-page-y', `${rect.top}px`);
     stage.style.setProperty('--pv-page-w', `${rect.width}px`);
@@ -542,7 +701,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     lenis?.resize();
     // Never touch the scroller while the entrance owns the position: it is at 0
     // and the track is somewhere behind it.
-    if (!introRef.current && Math.abs(sc.scrollTop - position) > 0.5) {
+    if (!positionIsOurs() && Math.abs(sc.scrollTop - position) > 0.5) {
       // Only when it actually moved: an unconditional `scrollTo` would kill the
       // in-flight smooth scroll on every no-op re-measure.
       if (lenis) lenis.scrollTo(position, { immediate: true, force: true });
@@ -588,11 +747,14 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       track: () => trackRef.current,
       position: () => positionRef.current,
       layout: () =>
-        trackRef.current ? layout(trackRef.current, positionRef.current, poseDials()) : null,
+        trackRef.current
+          ? layout(trackRef.current, positionRef.current, dialsRef.current ?? poseDials())
+          : null,
       armed: () => readyRef.current.armed,
       enterWindow: (k: number) => (trackRef.current ? enterWindow(trackRef.current, k) : null),
       cornerLift: () => canvasRef.current?.cornerLift() ?? null,
-      sheetPoint: (u: number, v: number) => canvasRef.current?.sheetPoint(u, v) ?? null,
+      sheetPoint: (u: number, v: number, flat?: boolean) =>
+        canvasRef.current?.sheetPoint(u, v, flat) ?? null,
       dwellWindow: (k: number) => {
         const t = trackRef.current;
         if (!t) return null;
@@ -616,6 +778,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         if (readyRef.current.armed) lenisRef.current?.start();
       },
       sheetRect: () => canvasRef.current?.screenRect() ?? null,
+      sheetTexture: () => canvasRef.current?.texture() ?? null,
       pageRect: () => {
         const live = pagesRef.current.find((el) => el.style.visibility !== 'hidden');
         if (!live) return null;
@@ -684,6 +847,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   /** Hand the position over to the scroller and let the wheel move it. */
   const unlock = useCallback(() => {
     introRef.current = false;
+    openingRef.current = false;
     readyRef.current.armed = true;
     setArmed(true);
     lenisRef.current?.start();
@@ -720,14 +884,66 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       return;
     }
     introRef.current = true;
+    openLiftRef.current = 1;
     apply(minPosition(track));
-    animate(minPosition(track), 0, {
-      duration: look.riseMs / 1000,
-      delay: look.riseDelayMs / 1000,
-      ease: [0, 0, 0.2, 1],
-      onUpdate: apply,
-      onComplete: unlock,
+    // THE TWEEN RUNS ITS OWN CLOCK, 0 → 1, and `openFrame` turns each tick into
+    // the two numbers a frame needs: where on the track, and how much of the
+    // extra depth is still owed. It is linear here because every curve is in
+    // there — see `portfolioMotion.ts` on why the rise cannot be the track.
+    const from = minPosition(track);
+    // THE DELAY IS FROM THE CLICK, not from here.
+    //
+    // `arm` runs after fonts and the first layout, which is 250–400ms on this
+    // project — so a delay measured from this line put every moment of the open
+    // that much later than the dial says, and the sheet was still below the
+    // frame at 0.6s when it was meant to be entering. What the dial means is
+    // "how long after the click before anything moves", and the click is when
+    // this component mounted (`readyRef.at`, set in the layout effect a frame
+    // after the hash changed). Arming longer than the delay simply spends it.
+    const spent = performance.now() - ready.at;
+
+    /** One frame of the open, whichever clock is driving it. The progress it is
+     *  handed is kept, because a retarget has to resume from it. */
+    let at = 0;
+    const drive = (progress: number): void => {
+      at = progress;
+      const frame = openFrame(progress);
+      openLiftRef.current = frame.lift;
+      apply(from + frame.track * track.enterDistance);
+    };
+    const finish = (): void => {
+      openLiftRef.current = 0;
+      skipOpenRef.current = null;
+      openClockRef.current = null;
+      unlock();
+    };
+
+    openClockRef.current = animate(0, 1, {
+      duration: look.openRiseMs / 1000,
+      delay: Math.max(0, look.openDelayMs - spent) / 1000,
+      ease: 'linear',
+      onUpdate: drive,
+      onComplete: finish,
     });
+
+    // THE WHEEL'S WAY OUT. Once only — the second wheel of a gesture must not
+    // restart the retarget and stretch the ending it is trying to reach.
+    skipOpenRef.current = () => {
+      skipOpenRef.current = null;
+      openClockRef.current?.stop();
+      // A wheel in the last frames, or during the delay with nothing yet drawn:
+      // there is no run left worth easing, so just land.
+      if (at >= 1) {
+        finish();
+        return;
+      }
+      openClockRef.current = animate(at, 1, {
+        duration: look.openSkipMs / 1000,
+        ease: EASE.openSkip,
+        onUpdate: drive,
+        onComplete: finish,
+      });
+    };
   }, [apply, measure, unlock]);
 
   // Collect the page elements and keep them measured. Re-runs when the project
@@ -736,6 +952,9 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     const stage = stageRef.current;
     if (!stage) return;
     reducedRef.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Decided here and not in `arm`, because the provisional measure below is
+    // already a paint and it has to know. Same condition `arm` tests.
+    openingRef.current = initialRef.current === 0 && !reducedRef.current;
     const pages = Array.from(stage.querySelectorAll<HTMLElement>('.pv-page'));
     pagesRef.current = pages;
     partsRef.current = pages.map((page) => ({
@@ -748,6 +967,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     introRef.current = false;
     lastRef.current = { shown: -2, segment: 'page' };
     pendingRef.current = null;
+    tailRevealedRef.current = null;
     readyRef.current = { fonts: false, measured: new Set(), armed: false, at: performance.now() };
     measure(); // provisional: lays the pages out, but the scroller stays locked
 
@@ -776,6 +996,12 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     window.addEventListener('resize', measure);
     return () => {
       window.clearTimeout(fallback);
+      // The open is the one tween that outlives its own effect if nobody stops
+      // it: it is started from `arm`, not from a subscription, so a project
+      // swapped mid-open would leave it writing to a track that has gone.
+      openClockRef.current?.stop();
+      openClockRef.current = null;
+      skipOpenRef.current = null;
       if (handoffRef.current) cancelAnimationFrame(handoffRef.current.raf);
       handoffRef.current = null;
       ro.disconnect();
@@ -793,14 +1019,24 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     if (!sc || !content) return;
 
     const onScroll = () => {
-      if (!introRef.current) apply(sc.scrollTop);
+      if (!positionIsOurs()) apply(sc.scrollTop);
       armSettle();
     };
     sc.addEventListener('scroll', onScroll, { passive: true });
     // A gesture that moves nothing — the wheel at either end of the track, a
     // trackpad's dying momentum — is still the reader's hand on the controls.
-    sc.addEventListener('wheel', armSettle, { passive: true });
-    sc.addEventListener('touchmove', armSettle, { passive: true });
+    // A hand on the controls: it arms the settle, and — if the open is still
+    // running — it is also the thing that asks the open to hurry up. Lenis is
+    // stopped until the hand-off, so this gesture itself never scrolls
+    // anything; the first one that moves the track is the one after the
+    // position has been handed over.
+    const onInput = (): void => {
+      skipOpenRef.current?.();
+      armSettle();
+    };
+    sc.addEventListener('wheel', onInput, { passive: true });
+    sc.addEventListener('touchstart', onInput, { passive: true });
+    sc.addEventListener('touchmove', onInput, { passive: true });
     sc.addEventListener('keydown', armSettle);
 
     const lenis = new Lenis({
@@ -823,8 +1059,9 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       lenisRef.current = null;
       window.clearTimeout(settleTimerRef.current);
       sc.removeEventListener('scroll', onScroll);
-      sc.removeEventListener('wheel', armSettle);
-      sc.removeEventListener('touchmove', armSettle);
+      sc.removeEventListener('wheel', onInput);
+      sc.removeEventListener('touchstart', onInput);
+      sc.removeEventListener('touchmove', onInput);
       sc.removeEventListener('keydown', armSettle);
     };
   }, [apply, armSettle, smoothing]);

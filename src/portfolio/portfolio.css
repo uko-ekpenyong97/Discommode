@@ -240,6 +240,35 @@
   color: rgba(255, 255, 255, 0.8);
 }
 
+/* THE WAY OUT. Last on screen and first in the DOM (see `Ground.tsx`) — `order`
+   is what puts it back on the right, so Tab reaches it before the project's
+   whole contents and the eye finds it where a footnote goes.
+
+   It is the strip's own type at the strip's own size: it is not a button
+   drawn over the view, it is a line of the letterhead that happens to be
+   clickable. Same 0.80 floor the numbers sit at, for the same reason — the 7:1
+   bar against a grain that is source-over. */
+.pv-letterhead__back {
+  order: 1;
+  flex: none;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: color 180ms ease;
+}
+.pv-letterhead__back:hover,
+.pv-letterhead__back:focus-visible {
+  color: #fff;
+}
+.pv-letterhead__back:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
 /* THE SHEET'S CANVAS. Over the ground and under the page — the page has to fade
    in ON TOP of the sheet at the hand-off, and a canvas above it would hide the
    very thing arriving.
@@ -385,65 +414,15 @@
 
 /* ── chrome ────────────────────────────────────────────────────────────── */
 
-/* Bottom-left of the viewport, in the page's foot — the one band of ground the
-   paper never reaches, so the pill competes with nothing for it and a corner is
-   where a way out belongs when the rest of the screen is a document.
+/* THERE IS NO CHROME OVER THE PAPER. What was here — a 96px hairline ring in
+   the bottom-left corner, with a tint, a backdrop blur, a hover transition and
+   seven dials — is gone, and with it the 144px band of ground the page was kept
+   out of so the ring had somewhere to sit. The page rect is the viewport less
+   the letterhead and one margin now, on every side.
 
-   The OUTER button is the entrance only: `--pv-pill` is written per frame by
-   the motion driver, so nothing here may have a transition on `transform`. */
-.pv-close {
-  position: absolute;
-  left: var(--pv-pill-inset, 40px);
-  bottom: var(--pv-pill-inset, 40px);
-  z-index: 3;
-  width: var(--pv-pill-d, 96px);
-  height: var(--pv-pill-d, 96px);
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  opacity: var(--pv-pill, 0);
-  transform: translate(
-    calc(var(--pv-pill-offset, 73px) * (var(--pv-pill, 0) - 1)),
-    calc(var(--pv-pill-offset, 73px) * (1 - var(--pv-pill, 0)))
-  );
-  will-change: transform, opacity;
-}
-
-/* The INNER disc is the ring, the tint and the hover — its own transform, so
-   the 0.25s hover transition never fights the driver's per-frame writes. Ring
-   and glyph share `currentColor`, so they brighten together. */
-.pv-close__disc {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  border: 0.5px solid currentColor;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(var(--pv-pill-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--pv-pill-blur, 8px));
-  color: rgba(255, 255, 255, var(--pv-pill-ink, 0.35));
-  transition:
-    color 250ms ease,
-    background 250ms ease,
-    transform 250ms ease;
-}
-
-.pv-close:hover .pv-close__disc,
-.pv-close:focus-visible .pv-close__disc {
-  color: rgba(255, 255, 255, var(--pv-pill-ink-hover, 1));
-  background: rgba(0, 0, 0, 0.45);
-  transform: scale(var(--pv-pill-hover-scale, 0.92));
-}
-
-.pv-close:focus-visible {
-  outline: none; /* the ring IS the focus state (see the rule above) */
-}
-
-.pv-close__x {
-  display: block;
-}
+   The way out is a word at the right end of the letterhead. It is in the strip,
+   so it is measured by the contrast probe with everything else in the strip,
+   and it goes under the paper with the rest of the band. */
 
 /* Dev only: the contrast probe's verdict, pinned under the dock. */
 .pv-contrast {
@@ -480,16 +459,7 @@
     animation: none;
   }
   .pv-scrim,
-  .pv-pane,
-  .pv-close {
+  .pv-pane {
     opacity: 1;
-  }
-  .pv-close {
-    transform: none;
-  }
-  .pv-close__disc {
-    transition:
-      color 250ms ease,
-      background 250ms ease;
   }
 }

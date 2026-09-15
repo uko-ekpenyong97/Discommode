@@ -16,8 +16,8 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { applyCurlOptions, bentPoint, createCurlMaterial } from './curlMaterial';
-import type { CurlMaterial, CurlMaterialOptions } from './curlMaterial';
+import { applyCurlOptions, bentPoint, createCurlMaterials } from './curlMaterial';
+import type { CurlMaterials, CurlMaterialOptions } from './curlMaterial';
 import { fitPlaneToRect } from './fitPlaneToRect';
 import type { PlaneFit, ScreenRect } from './fitPlaneToRect';
 import { look, subscribeLook } from './portfolioMotion';
@@ -72,6 +72,12 @@ export interface SheetCanvasHandle {
   fit: (rect: ScreenRect) => void;
   /** Paint one frame of section `index`'s entrance. */
   show: (index: number, pose: SheetPose) => void;
+  /** Start fetching a capture without binding or painting it — the two textures
+   *  a reader is about to need, while they are reading. */
+  warm: (index: number, kind: SheetKind) => void;
+  /** The capture currently bound, and whether it has actually decoded. A sheet
+   *  wearing nothing is blank paper, which is what a hand-off must not be. */
+  texture: () => { src: string; ready: boolean } | null;
   /** Stop painting and leave the paint order. */
   hide: () => void;
   /** The flat plane's screen rect as three.js projects it, in viewport
@@ -88,7 +94,6 @@ export interface SheetCanvasHandle {
 
 function curlOptions(): CurlMaterialOptions {
   return {
-    tightness: look.curlTightness,
     taper: look.curlTaper,
     depth: look.curlDepth,
     paper: look.paperColor,
@@ -128,7 +133,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       scene: Scene;
       camera: PerspectiveCamera;
       mesh: Mesh;
-      material: CurlMaterial;
+      materials: CurlMaterials;
       blank: DataTexture;
       probe: Object3D;
     } | null>(null);
@@ -171,10 +176,13 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       const camera = new PerspectiveCamera(FOV, 1, 0.1, 1000);
       camera.position.z = CAMERA_Z;
 
-      const material = createCurlMaterial(curlOptions());
+      // TWO PROGRAMS, one uniforms object: the entrance's cone wrap and the
+      // tear's arc. `show` puts the right one on the mesh — see `curlMaterial`
+      // on why this is a program and not a branch inside one.
+      const materials = createCurlMaterials(curlOptions());
       const blank = blankTexture();
-      material.uniforms.uMap.value = blank;
-      const mesh = new Mesh(new PlaneGeometry(1, 1, SEGMENTS_X, SEGMENTS_Y), material);
+      materials.uniforms.uMap.value = blank;
+      const mesh = new Mesh(new PlaneGeometry(1, 1, SEGMENTS_X, SEGMENTS_Y), materials.roll);
       scene.add(mesh);
 
       // A stand-in for the FLAT plane, kept out of the scene: `screenRect` has
@@ -182,8 +190,27 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       // mesh is mid-entrance and neither.
       const probe = new Object3D();
 
-      gl.current = { renderer, scene, camera, mesh, material, blank, probe };
+      gl.current = { renderer, scene, camera, mesh, materials, blank, probe };
 
+      // BOTH PROGRAMS COMPILED BEFORE EITHER IS WANTED. three compiles on first
+      // use, so the fold would otherwise pay for itself on the first frame of
+      // the first tear — a spike in the one segment that is all WebGL. Two
+      // compiles at mount is the same work moved to where nothing is moving.
+      mesh.material = materials.fold;
+      renderer.compile(scene, camera);
+      mesh.material = materials.roll;
+      renderer.compile(scene, camera);
+
+      /**
+       * THE BACKING STORE, at the display's own scale.
+       *
+       * `setPixelRatio` is what sizes it: `setSize(w, h, false)` then writes a
+       * canvas `width` of `w × ratio` while CSS holds the element at `w`. On a
+       * 2x display that is a 3456 x 1992 framebuffer behind a 1728 x 996
+       * element, which is the resolution the HTML page's own type is drawn at —
+       * and the capture the sheet wears has to match it or the swap is a change
+       * of sharpness. See `captureFor`.
+       */
       const resize = (): void => {
         const w = canvas.clientWidth;
         const h = canvas.clientHeight;
@@ -196,6 +223,32 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       resize();
       window.addEventListener('resize', resize);
 
+      /**
+       * …and again when the DEVICE PIXEL RATIO moves under it, which a resize
+       * event does not reliably report: dragging the window to a display of
+       * another density changes the ratio at the same viewport size. A media
+       * query on the current `dppx` fires once, on the way out of the value it
+       * was written for, so each listener arms the next.
+       *
+       * It re-renders the last pose as well as re-sizing. The canvas only paints
+       * when the scroll asks it to, so a reader stopped mid-entrance would
+       * otherwise be left looking at the old framebuffer — and at the capture
+       * picked for the old scale.
+       */
+      let dprQuery: MediaQueryList | null = null;
+      const onDprChange = (): void => {
+        watchDpr();
+        resize();
+        const last = lastRef.current;
+        if (last) showRef.current(last.index, last.pose);
+      };
+      const watchDpr = (): void => {
+        dprQuery?.removeEventListener('change', onDprChange);
+        dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+        dprQuery.addEventListener('change', onDprChange);
+      };
+      watchDpr();
+
       // The pointer is read from the WINDOW, not from the canvas: the canvas is
       // never a pointer target (see `portfolio.css`), so it would never hear.
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -205,14 +258,15 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       };
       if (!reduced) window.addEventListener('pointermove', onMove, { passive: true });
 
-      const off = subscribeLook(() => applyCurlOptions(material, curlOptions()));
+      const off = subscribeLook(() => applyCurlOptions(materials, curlOptions()));
 
       return () => {
         off();
+        dprQuery?.removeEventListener('change', onDprChange);
         window.removeEventListener('resize', resize);
         window.removeEventListener('pointermove', onMove);
         mesh.geometry.dispose();
-        material.dispose();
+        materials.dispose();
         blank.dispose();
         for (const t of textures.values()) t.dispose();
         textures.clear();
@@ -222,18 +276,31 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
     }, []);
 
     /**
-     * The capture for section `k` at the width the page is actually at — the
-     * nearest of the ones the section ships, because a page's type is a fixed
-     * size and its measure is not, so a capture taken at another width is a
-     * different document rather than the same one at another scale.
+     * The capture for section `k` at the width AND the scale the page is
+     * actually at.
+     *
+     * The width first, and it is not negotiable: a page's type is a fixed size
+     * and its measure is not, so a capture taken at another width is a
+     * different document rather than the same one at another scale, and no
+     * resampling turns one into the other.
+     *
+     * The SCALE second, and it is the one the renderer is actually using rather
+     * than `devicePixelRatio` — `setPixelRatio` clamps at {@link MAX_DPR}, and
+     * the number that matters is the framebuffer's. A 1x capture in a 2x buffer
+     * is every glyph magnified two to one, next to an HTML page drawn at 2x;
+     * a 2x capture in a 1x buffer is the same mismatch the other way round, and
+     * with no mipmaps (see below) that one aliases rather than blurring.
      */
     const captureFor = (k: number, kind: SheetKind): SheetTexture | null => {
       const list = capturesRef.current[k]?.[kind];
       if (!list || list.length === 0) return null;
       const want = pageWidthRef.current;
-      return list.reduce((best, next) =>
-        Math.abs(next.width - want) < Math.abs(best.width - want) ? next : best,
-      );
+      const wantScale = gl.current?.renderer.getPixelRatio() ?? 1;
+      const worse = (a: SheetTexture, b: SheetTexture): boolean => {
+        const dw = Math.abs(a.width - want) - Math.abs(b.width - want);
+        return dw !== 0 ? dw > 0 : Math.abs(a.scale - wantScale) > Math.abs(b.scale - wantScale);
+      };
+      return list.reduce((best, next) => (worse(best, next) ? next : best));
     };
 
     /** The texture for a capture, kicked off the first time it is asked for.
@@ -250,17 +317,19 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         // next scroll tick: a reader who has stopped mid-entrance would be
         // looking at blank paper until they moved again.
         if (!gl.current || boundSrcRef.current !== entry.src) return;
-        gl.current.material.uniforms.uHasMap.value = 1;
+        gl.current.materials.uniforms.uHasMap.value = 1;
         const last = lastRef.current;
         if (last && last.index === k && last.pose.kind === kind) {
           showRef.current(last.index, last.pose);
         }
       });
       tex.colorSpace = NoColorSpace;
-      // NO MIPMAPS. There is one capture per signed-off viewport, so the
-      // texture is never minified — it is sampled one texel to one pixel — and
-      // a mipmap chain under that is a levels-of-detail calculation that can
-      // come back a hair above zero and blur every glyph on the page for it.
+      // NO MIPMAPS. There is one capture per signed-off viewport PER SCALE, so
+      // the texture is never minified — it is sampled one texel to one pixel of
+      // the framebuffer — and a mipmap chain under that is a levels-of-detail
+      // calculation that can come back a hair above zero and blur every glyph on
+      // the page for it. Anisotropy below is at the renderer's own maximum, for
+      // the frames where the sheet is bent and the mapping is not 1:1.
       tex.generateMipmaps = false;
       tex.minFilter = LinearFilter;
       tex.magFilter = LinearFilter;
@@ -287,11 +356,11 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       );
       fitRef.current = plane;
       pageWidthRef.current = local.width;
-      g.material.uniforms.uAspect.value = plane.aspect;
+      g.materials.uniforms.uAspect.value = plane.aspect;
       // One CSS pixel of the PAGE, in the plane's uv. The hairline has to be
       // the same width as the page's inset ring, not the same fraction of a
       // plane that changes size with the viewport.
-      g.material.uniforms.uHairline.value.set(1 / local.width, 1 / local.height);
+      g.materials.uniforms.uHairline.value.set(1 / local.width, 1 / local.height);
       g.probe.position.set(plane.x, plane.y, 0);
       g.probe.scale.set(plane.width, plane.height, plane.height);
       g.probe.rotation.set(0, 0, 0);
@@ -309,19 +378,29 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       if (boundSrcRef.current !== (capture?.src ?? '')) {
         boundSrcRef.current = capture?.src ?? '';
         const tex = textureFor(index, pose.kind);
-        g.material.uniforms.uMap.value = tex ?? g.blank;
-        g.material.uniforms.uHasMap.value = tex?.image ? 1 : 0;
+        g.materials.uniforms.uMap.value = tex ?? g.blank;
+        g.materials.uniforms.uHasMap.value = tex?.image ? 1 : 0;
       }
 
-      const u = g.material.uniforms;
+      // WHICH SHAPE, first: an entrance ROLLS and a tear FOLDS. It is a whole
+      // program rather than a uniform, because a branch inside one program
+      // moved the tear by a level on a handful of pixels — see `curlMaterial`.
+      g.mesh.material = pose.curlMode === 0 ? g.materials.roll : g.materials.fold;
+
+      const u = g.materials.uniforms;
       const m = mouse.current;
       m.x += (m.tx - m.x) * look.mouseLerp;
       m.y += (m.ty - m.y) * look.mouseLerp;
       u.uMouse.value.set(m.x, m.y);
       u.uPointer.value = pose.pointer ? 1 : 0;
+      // The rest of these mean different things in the two shapes, and every
+      // one of them is written on every frame — so nothing a tear left behind
+      // can reach a roll through the uniforms the two programs share.
       u.uCurlAmount.value = pose.curl;
       u.uCurlOrigin.value = pose.curlOrigin;
+      u.uCurlOriginEdge.value = pose.curlOriginEdge;
       u.uCurlAxis.value = (pose.curlAxis * Math.PI) / 180;
+      u.uCurlTightness.value = pose.tightness;
       u.uCurlWrap.value = pose.curlWrap;
       u.uOpacity.value = pose.opacity;
 
@@ -358,6 +437,28 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       framesRef.current++;
     };
     showRef.current = show;
+
+    /**
+     * THE NEXT TWO CAPTURES, fetched while the reader is reading.
+     *
+     * A texture is otherwise requested at the moment it is first BOUND, which
+     * for a tail is `p` = 0 of the tear — the frame the reverse hand-off
+     * crossfades onto. A capture that has not arrived is blank paper, and blank
+     * paper at a swap is the one thing the crossfade exists to prevent; at 2x
+     * the files are four times the pixels, which turned an unlikely race into a
+     * measurable one (`pv-verify`, 1440×900 @2x: 74% of the page differing).
+     *
+     * So when the reader lands on a page, the two captures they are next going
+     * to need — this section's tail, at its tear, and the next section's sheet,
+     * at its entrance — are asked for. It is a fetch and a decode, nothing is
+     * bound and no frame is painted, and it happens long after the first-open
+     * lock has armed, so the argument for keeping captures off the critical
+     * path is untouched.
+     */
+    const warm = (index: number, kind: SheetKind): void => {
+      if (!gl.current || index < 0 || index >= capturesRef.current.length) return;
+      textureFor(index, kind);
+    };
 
     const hide = (): void => {
       lastRef.current = null;
@@ -401,10 +502,12 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       g.mesh.updateMatrixWorld(true);
       const box = canvas.getBoundingClientRect();
       const [px, py, pz] = bentPoint(u, v, {
+        mode: last.pose.curlMode,
         amount: flat ? 0 : last.pose.curl,
         origin: last.pose.curlOrigin,
+        originEdge: last.pose.curlOriginEdge,
         axis: (last.pose.curlAxis * Math.PI) / 180,
-        tightness: look.curlTightness,
+        tightness: last.pose.tightness,
         taper: look.curlTaper,
         depth: look.curlDepth,
         wrap: last.pose.curlWrap,
@@ -465,11 +568,21 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       return { left, top, width: right - left, height: bottom - top };
     };
 
+    /** The bound capture, and whether it has decoded — `image` is only set once
+     *  the loader has one. */
+    const texture = (): { src: string; ready: boolean } | null => {
+      const src = boundSrcRef.current;
+      if (!src) return null;
+      return { src, ready: Boolean(loaded.current.get(src)?.image) };
+    };
+
     useImperativeHandle(
       ref,
       (): SheetCanvasHandle => ({
         fit,
         show,
+        warm,
+        texture,
         hide,
         screenRect,
         cornerLift,

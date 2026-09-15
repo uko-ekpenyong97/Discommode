@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PORTFOLIO } from '../../content';
 import { PROJECTS, projectById } from './index';
-import { SHEET_SIZES } from './placeholder';
+import { SHEET_SCALES, SHEET_SIZES } from './placeholder';
 
 describe('project registry', () => {
   it('has exactly one project per portfolio card in the manifest', () => {
@@ -14,29 +14,36 @@ describe('project registry', () => {
     expect(projectById('99')).toBeNull();
   });
 
-  it('gives every section a title, a sized capture per viewport and blocks', () => {
+  it('gives every section a title, a capture per viewport per scale, and blocks', () => {
     for (const project of PROJECTS) {
       expect(project.sections.length).toBeGreaterThan(0);
       for (const section of project.sections) {
         expect(section.title).toBeTruthy();
         expect(section.blocks.length).toBeGreaterThan(0);
-        expect(section.sheets.length).toBe(SHEET_SIZES.length);
+        expect(section.sheets.length).toBe(SHEET_SIZES.length * SHEET_SCALES.length);
         for (const sheet of section.sheets) {
           // The size is carried for the same reason every other piece of media
           // carries one — it is the table the generator writes the file from —
           // and here it is also how the right capture is chosen.
-          expect(sheet.src).toMatch(/^\/projects\/\d+\/sheet-\d+-\d+\.webp$/);
+          expect(sheet.src).toMatch(/^\/projects\/\d+\/sheet-\d+-\d+(@\dx)?\.webp$/);
           expect(sheet.width).toBeGreaterThan(0);
           expect(sheet.height).toBeGreaterThan(0);
+          expect(SHEET_SCALES).toContain(sheet.scale);
+          // THE CSS SIZE AND THE SCALE ARE SEPARATE, and the name says both: a
+          // 2x capture of a 1632px page is not a 1x capture of a 3264px one.
+          expect(sheet.src).toContain(`-${sheet.width}${sheet.scale > 1 ? `@${sheet.scale}x` : ''}.`);
         }
-        expect(section.sheets.map((s) => s.width)).toEqual(SHEET_SIZES.map((s) => s.width));
+        // Every width, at every scale, and each exactly once.
+        expect(section.sheets.map((s) => `${s.width}@${s.scale}`).sort()).toEqual(
+          SHEET_SIZES.flatMap((size) => SHEET_SCALES.map((k) => `${size.width}@${k}`)).sort(),
+        );
       }
     }
   });
 
-  it('gives every section and every viewport its own capture', () => {
+  it('gives every section, viewport and scale its own capture', () => {
     for (const project of PROJECTS) {
-      const srcs = project.sections.flatMap((s) => s.sheets.map((sheet) => sheet.src));
+      const srcs = project.sections.flatMap((s) => [...s.sheets, ...s.tails]).map((t) => t.src);
       expect(new Set(srcs).size).toBe(srcs.length);
     }
   });

@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { DialRoot, DialTimeline, useDialKit, useDialTimeline } from 'dialkit';
+import { DialRoot, DialTimeline, useDialKit, useDialKitController, useDialTimeline } from 'dialkit';
 import type { TimelineConfig } from 'dialkit';
 import 'dialkit/styles.css';
 import {
   EASE,
   ENTER_MS,
+  ENTRANCE_BENDS,
   EXIT_MS,
   LOOK,
   TIMING,
   applyPortfolioLook,
   applyPortfolioValues,
+  entranceBendOf,
   resetPortfolioValues,
   samplePortfolioExit,
 } from './portfolioMotion';
-import type { PortfolioLook } from './portfolioMotion';
+import type { EntranceBend, PortfolioLook } from './portfolioMotion';
 import { logContrastProbe, subscribeContrast } from './contrastProbe';
 import type { ContrastReport } from './contrastProbe';
 
@@ -64,13 +66,6 @@ const CLIPS = {
     from: { v: 0 },
     to: { v: 1 },
     transition: { type: 'easing', duration: s(TIMING.enter.pane.dur), ease: EASE.pane },
-  },
-  pill: {
-    at: s(TIMING.enter.pill.at),
-    duration: s(TIMING.enter.pill.dur),
-    from: { v: 0 },
-    to: { v: 1 },
-    transition: { type: 'easing', duration: s(TIMING.enter.pill.dur), ease: EASE.pill },
   },
 } satisfies TimelineConfig;
 
@@ -155,12 +150,26 @@ export default function PortfolioDialKit() {
   // THE SHEET'S MATERIAL. Every shader uniform and both lights, together —
   // they are not independent: the second light exists to keep the inside of the
   // roll off black, and lowering it is what makes the curl look like a fold.
-  const paper = useDialKit('PV PAPER', {
+  const paperDials = useDialKitController('PV PAPER', {
     paperColor: { type: 'color', default: LOOK.paperColor },
     inkColor: { type: 'color', default: LOOK.inkColor },
-    // The bend's RADIUS, not a cone's half-angle: 0 is the widest arc the
-    // shader draws and 1 a tube. 0.35 is a sheet held in a hand.
-    curlTightness: [LOOK.curlTightness, 0, 1, 0.01],
+    /**
+     * THE ENTRANCE, as one of two — a preset rather than a slider, because it
+     * is four dials that only mean anything together.
+     *
+     * `roll` ships: the sheet arrives as a tube at its top edge. `held` is the
+     * softer bend that replaced it for a release — a wide arc a line of type
+     * stays readable across. Choosing one writes `enterCurl`,
+     * `enterCurlTightness`, `startRotationDeg` and `curlOutAt` onto PV MOTION,
+     * where the sliders stay live underneath: move any of them and this reads
+     * `custom` until they are a preset again.
+     *
+     * The RADIUS is not on this panel any more and that is the point of the
+     * whole change. It is a property of the gesture, not of the paper: while it
+     * was a material dial, winding the entrance up to a tube also took the
+     * tear's arc to 0.03 page heights and creased the whole peel.
+     */
+    entranceBend: { type: 'select', options: ['roll', 'held', 'custom'], default: 'roll' },
     curlTaper: [LOOK.curlTaper, -1, 1, 0.01],
     curlDepth: [LOOK.curlDepth, 0.1, 1, 0.01],
     lightA: [LOOK.lightA, 0, 3, 0.01],
@@ -179,13 +188,13 @@ export default function PortfolioDialKit() {
     mouseTiltDeg: [LOOK.mouseTiltDeg, 0, 8, 0.1],
     mouseLerp: [LOOK.mouseLerp, 0.01, 0.5, 0.01],
   });
+  const paper = paperDials.values;
 
   // THE PAGE. A page is the page rect less an inset either side and a
   // twelve-column grid inside that; the rect itself is the viewport less these
   // three margins.
   const page = useDialKit('PV PAGE', {
     pageMarginPx: [LOOK.pageMarginPx, 0, 200, 1],
-    pageFootPx: [LOOK.pageFootPx, 0, 320, 1],
     pageInsetPx: [LOOK.pageInsetPx, 0, 200, 1],
     gridGapPx: [LOOK.gridGapPx, 0, 160, 1],
     // 0 is off — the body runs to the right inset. 90 is the alternative.
@@ -195,14 +204,19 @@ export default function PortfolioDialKit() {
 
   // THE CHOREOGRAPHY. The four entrance windows are fractions of the entrance's
   // own progress and the ORDER is the point — see `pageTrack.sheetPose`.
-  const motion = useDialKit('PV MOTION', {
+  const motionDials = useDialKitController('PV MOTION', {
     enterDistancePx: [LOOK.enterDistancePx, 200, 2400, 10],
     exitDistancePx: [LOOK.exitDistancePx, 100, 2000, 10],
     dwellVh: [LOOK.dwellVh, 0.35, 0.7, 0.01],
     handoffMs: [LOOK.handoffMs, 0, 600, 10],
+    // THE ENTRANCE IS A ROLL (curl mode 0), and these are the cone wrap's own
+    // dials — not the tear's, which read the same names to mean other things.
     enterCurl: [LOOK.enterCurl, -1, 0, 0.01],
-    enterCurlOrigin: [LOOK.enterCurlOrigin, 0.02, 1, 0.01],
-    enterCurlAxisDeg: [LOOK.enterCurlAxisDeg, 0, 360, 5],
+    enterRollReach: [LOOK.enterRollReach, 0.05, 1, 0.01],
+    enterRollEdge: { type: 'select', options: ['bottom', 'top'], default: 'bottom' },
+    // The tube's TAPER, not its size: the radius is derived from a fixed number
+    // of turns, so at any value of this the entrance is a tube.
+    enterCurlTightness: [LOOK.enterCurlTightness, 0, 1, 0.01],
     startRotationDeg: [LOOK.startRotationDeg, -180, 180, 1],
     rotationEndAt: [LOOK.rotationEndAt, 0.02, 1, 0.01],
     scaleBase: [LOOK.scaleBase, 0.05, 1, 0.01],
@@ -217,9 +231,16 @@ export default function PortfolioDialKit() {
     settleHigh: [LOOK.settleHigh, 0.5, 1, 0.01],
     settleMs: [LOOK.settleMs, 100, 1200, 10],
     settleIdleMs: [LOOK.settleIdleMs, 0, 600, 10],
-    riseDelayMs: [LOOK.riseDelayMs, 0, 2000, 10],
-    riseMs: [LOOK.riseMs, 100, 3000, 10],
+    // THE OPEN TWEEN, and only it: every other entrance is the reader's wheel.
+    openDelayMs: [LOOK.openDelayMs, 0, 2000, 10],
+    openRiseMs: [LOOK.openRiseMs, 100, 5000, 50],
+    // How far under the frame the sheet starts. The DEPTH is computed from the
+    // live page rect; this is the clearance it is computed to.
+    openStartBelowPx: [LOOK.openStartBelowPx, 0, 400, 5],
+    // What a wheel during the open buys: the rest of it, this fast.
+    openSkipMs: [LOOK.openSkipMs, 100, 1200, 10],
   });
+  const motion = motionDials.values;
 
   // THE TEAR. A sticky note coming off a surface: pinned at the top-left,
   // peeled from the bottom-right. The three `…At` dials are the joints of the
@@ -235,6 +256,9 @@ export default function PortfolioDialKit() {
     peelCurlPeak: [LOOK.peelCurlPeak, 0, 1, 0.01],
     peelCurlPeakAt: [LOOK.peelCurlPeakAt, 0.05, 0.95, 0.01],
     peelCurlRelax: [LOOK.peelCurlRelax, 0, 1, 0.01],
+    // The peel's own radius. A wide arc: at the entrance's 1 the fold is a
+    // crease travelling across the sheet rather than a sheet coming away.
+    peelCurlTightness: [LOOK.peelCurlTightness, 0, 1, 0.01],
     peelWrapMin: [LOOK.peelWrapMin, 0, 4, 0.05],
     peelRotateDeg: [LOOK.peelRotateDeg, -90, 90, 1],
     peelRotateEndDeg: [LOOK.peelRotateEndDeg, -90, 90, 1],
@@ -242,16 +266,6 @@ export default function PortfolioDialKit() {
     peelRiseH: [LOOK.peelRiseH, 0, 3, 0.01],
     peelScaleEnd: [LOOK.peelScaleEnd, 0.3, 1.5, 0.01],
     peelFadeFrom: [LOOK.peelFadeFrom, 0, 1, 0.01],
-  });
-
-  const pill = useDialKit('PV PILL', {
-    pillDiameterPx: [LOOK.pillDiameterPx, 40, 240, 1],
-    pillInsetPx: [LOOK.pillInsetPx, 0, 160, 1],
-    pillOffsetPx: [LOOK.pillOffsetPx, 0, 160, 1],
-    pillBlurPx: [LOOK.pillBlurPx, 0, 32, 1],
-    pillInkRest: [LOOK.pillInkRest, 0, 1, 0.01],
-    pillInkHover: [LOOK.pillInkHover, 0, 1, 0.01],
-    pillHoverScale: [LOOK.pillHoverScale, 0.7, 1.2, 0.01],
   });
 
   // The scroller's own feel. `lenisLerp` and `wheelMultiplier` are the two
@@ -287,12 +301,10 @@ export default function PortfolioDialKit() {
     paperColor: paper.paperColor,
     inkColor: paper.inkColor,
     pageMarginPx: page.pageMarginPx,
-    pageFootPx: page.pageFootPx,
     pageInsetPx: page.pageInsetPx,
     gridGapPx: page.gridGapPx,
     textMeasureCh: page.textMeasureCh,
     letterheadTitlePx: page.letterheadTitlePx,
-    curlTightness: paper.curlTightness,
     curlTaper: paper.curlTaper,
     curlDepth: paper.curlDepth,
     lightA: paper.lightA,
@@ -315,8 +327,9 @@ export default function PortfolioDialKit() {
     dwellVh: motion.dwellVh,
     handoffMs: motion.handoffMs,
     enterCurl: motion.enterCurl,
-    enterCurlOrigin: motion.enterCurlOrigin,
-    enterCurlAxisDeg: motion.enterCurlAxisDeg,
+    enterRollReach: motion.enterRollReach,
+    enterRollEdge: motion.enterRollEdge === 'top' ? 1 : 0,
+    enterCurlTightness: motion.enterCurlTightness,
     startRotationDeg: motion.startRotationDeg,
     rotationEndAt: motion.rotationEndAt,
     scaleBase: motion.scaleBase,
@@ -333,6 +346,7 @@ export default function PortfolioDialKit() {
     peelCurlPeak: peel.peelCurlPeak,
     peelCurlPeakAt: peel.peelCurlPeakAt,
     peelCurlRelax: peel.peelCurlRelax,
+    peelCurlTightness: peel.peelCurlTightness,
     peelWrapMin: peel.peelWrapMin,
     peelRotateDeg: peel.peelRotateDeg,
     peelRotateEndDeg: peel.peelRotateEndDeg,
@@ -344,18 +358,13 @@ export default function PortfolioDialKit() {
     settleHigh: motion.settleHigh,
     settleMs: motion.settleMs,
     settleIdleMs: motion.settleIdleMs,
-    riseDelayMs: motion.riseDelayMs,
-    riseMs: motion.riseMs,
+    openDelayMs: motion.openDelayMs,
+    openRiseMs: motion.openRiseMs,
+    openStartBelowPx: motion.openStartBelowPx,
+    openSkipMs: motion.openSkipMs,
     lenisLerp: track.lenisLerp,
     wheelMultiplier: track.wheelMultiplier,
     letterheadClickMs: track.letterheadClickMs,
-    pillDiameterPx: pill.pillDiameterPx,
-    pillInsetPx: pill.pillInsetPx,
-    pillOffsetPx: pill.pillOffsetPx,
-    pillBlurPx: pill.pillBlurPx,
-    pillInkRest: pill.pillInkRest,
-    pillInkHover: pill.pillInkHover,
-    pillHoverScale: pill.pillHoverScale,
     revealMs: reveal.revealMs,
     revealBlurPx: reveal.revealBlurPx,
     revealOffsetPx: reveal.revealOffsetPx,
@@ -367,6 +376,32 @@ export default function PortfolioDialKit() {
     flipMs: reveal.flipMs,
     flipDelayMs: reveal.flipDelayMs,
   };
+
+  /**
+   * THE PRESET, wired both ways.
+   *
+   * Choosing one writes its four numbers onto PV MOTION — so the sliders are
+   * what is live and the select is a shortcut to a set of them, rather than a
+   * second source of truth that would have to win an argument with them. Moving
+   * any of the four afterwards puts the select back on `custom`, which is what
+   * makes it readable: it always says what the dials actually are.
+   */
+  const chosenRef = useRef<string>(paper.entranceBend);
+  const bend = entranceBendOf(look);
+  useEffect(() => {
+    const chosen = paper.entranceBend;
+    if (chosen === chosenRef.current) return;
+    chosenRef.current = chosen;
+    if (chosen !== 'custom') motionDials.setValues(ENTRANCE_BENDS[chosen as EntranceBend]);
+  }, [paper.entranceBend, motionDials]);
+  const shownRef = useRef<string | null>(null);
+  useEffect(() => {
+    const shows = bend ?? 'custom';
+    if (shows === shownRef.current) return;
+    shownRef.current = shows;
+    chosenRef.current = shows;
+    if (shows !== paper.entranceBend) paperDials.setValue('entranceBend', shows);
+  }, [bend, paper.entranceBend, paperDials]);
 
   // Look dials → CSS variables, live. The dock re-renders on every playhead
   // tick, so the effect compares before writing: retuning must not itself cost
@@ -396,7 +431,6 @@ export default function PortfolioDialKit() {
           `enter: {\n` +
           `  scrim: ${clip(tl.scrim)},\n` +
           `  pane: ${clip(tl.pane)},\n` +
-          `  pill: ${clip(tl.pill)},\n` +
           `}\n\n{\n${body}\n}`;
         navigator.clipboard?.writeText(snippet).catch(() => {});
         console.log(snippet);
@@ -404,7 +438,7 @@ export default function PortfolioDialKit() {
         onTransport(action);
       }
     },
-    [onTransport, tl.scrim, tl.pane, tl.pill],
+    [onTransport, tl.scrim, tl.pane],
   );
 
   useDialKit(
@@ -435,9 +469,8 @@ export default function PortfolioDialKit() {
     applyPortfolioValues({
       scrim: tl.scrim.current.v,
       pane: tl.pane.current.v,
-      pill: tl.pill.current.v,
     });
-  }, [time, tl.scrim, tl.pane, tl.pill]);
+  }, [time, tl.scrim, tl.pane]);
 
   return (
     <>

@@ -1,8 +1,9 @@
 /**
  * The page track — the pure geometry behind the project's sheets of paper.
  *
- * A SECTION IS A SHEET. It unrolls flat toward you and becomes the page you
- * read; at the end of its run it PEELS off the ground like a sticky note —
+ * A SECTION IS A SHEET. It arrives ROLLED — a tube — and unrolls flat toward you
+ * to become the page you read; at the end of its run it PEELS off the ground
+ * like a sticky note —
  * lifted at its bottom-right corner, bent across itself, and taken up and back
  * out of the frame — and then there is half a screen of empty ground before the
  * next sheet arrives.
@@ -94,30 +95,48 @@ export interface TrackPosition {
  * THE SHEET'S POSE. Angles in degrees; `y` in PAGE HEIGHTS; `pivot` in plane
  * units, where (0, 0) is the centre and (−0.5, 0.5) the top-left corner.
  *
- * One shape covers the entrance and the tear, because the shader's bend does:
- * `curl` is how far the flap has turned and `curlOrigin` is where the fold is.
- * The entrance holds the fold still near the bottom edge and relaxes the bend;
- * the tear drives the fold across the sheet and lets the bend peak.
+ * TWO SHAPES, and `curlMode` says which. The entrance ROLLS — the sheet is
+ * wrapped onto a cone and unrolls as it rises — and the tear FOLDS, an arc with
+ * a flat flap behind it travelling across the sheet. They were one shape for a
+ * release and the entrance lost its tube to it: the two share parameter NAMES
+ * and not parameter MEANINGS, so the roll's numbers in the fold's formula make
+ * a flat sheet tilting in. See `curlMaterial.ts`.
+ *
+ * Which fields a pose has to fill therefore depends on its mode, and the ones
+ * the other mode reads are set to something harmless rather than left out —
+ * every uniform is written on every frame, and a pose that could omit a field
+ * would be a pose that could carry the last gesture's value into this one.
  */
 export interface SheetPose {
   /** 0…1 through the segment that owns the sheet. */
   p: number;
   kind: SheetKind;
+  /** `uCurlMode`: 0 the ROLL (an entrance), 1 the FOLD (a tear). */
+  curlMode: 0 | 1;
   /** Degrees CLOCKWISE, the way a CSS rotation is measured — which is the
    *  convention every angle in this view uses, `curlAxis` excepted. */
   rotationZ: number;
   pivotX: number;
   pivotY: number;
   scale: number;
-  /** `uCurlAmount`: −1 … 1, SIGNED. Positive bends toward the viewer. */
+  /** `uCurlAmount`: −1 … 1, SIGNED. In mode 1 positive bends toward the viewer;
+   *  in mode 0 it is how rolled the sheet is, −1 fully and 0 flat. */
   curl: number;
-  /** `uCurlOrigin`: where the fold sits along the roll direction, 0…1. */
+  /** `uCurlOrigin`. MODE 1: where the fold sits along the roll direction, 0…1.
+   *  MODE 0: how much of the sheet the roll reaches at full amount. */
   curlOrigin: number;
-  /** `uCurlAxis`: the direction the fold TRAVELS, in degrees anticlockwise from
-   *  +x with y up. 90 runs straight up the sheet, which is a horizontal fold. */
+  /** `uCurlOriginEdge`. MODE 0 ONLY: which edge the roll starts from, 0 the
+   *  bottom and 1 the top. */
+  curlOriginEdge: number;
+  /** `uCurlAxis`. MODE 1 ONLY: the direction the fold TRAVELS, in degrees
+   *  anticlockwise from +x with y up. */
   curlAxis: number;
-  /** `uCurlWrap`: the least the peeled part must wrap, in radians. The tear
-   *  creases its free corner; the entrance sets 0 and keeps its wide curve. */
+  /** `uCurlTightness`. MODE 1: the arc's RADIUS, 0 widest and 1 tightest.
+   *  MODE 0: how far the cone's half-angle mixes off π/2 — the taper, not the
+   *  tube. On the pose in either case, because it belongs to the gesture. */
+  tightness: number;
+  /** `uCurlWrap`. MODE 1 ONLY: the least the peeled part must wrap, in
+   *  radians. */
   curlWrap: number;
   /** Offset from the page's resting centre, in page heights. Positive is up. */
   y: number;
@@ -162,14 +181,16 @@ export interface TrackLayout {
 /** Every number the two poses are shaped by. All of it comes off `LOOK`; the
  *  track holds none of it. */
 export interface PoseDials {
-  /* ── the entrance ──────────────────────────────────────────────────────── */
-  /** The bend it arrives with, and where that bend sits. Negative bends away
-   *  from the viewer; near the bottom edge, so the rest of the sheet is flat
-   *  and a line of type stays readable across the curve. */
+  /* ── the entrance, which is a ROLL (curl mode 0) ───────────────────────── */
+  /** How rolled it arrives: −1 is a full tube, 0 is flat. */
   enterCurl: number;
-  enterCurlOrigin: number;
-  /** Which edge the curve is on, as the direction the fold travels. */
-  enterCurlAxis: number;
+  /** How much of the sheet the roll reaches at full amount. 1 is all of it. */
+  enterRollReach: number;
+  /** Which edge it rolls from: 0 the bottom, 1 the top. */
+  enterRollEdge: number;
+  /** How hard the tube TAPERS along its length — the cone's half-angle mixing
+   *  off π/2. Not what makes it a tube: that is the derived radius. */
+  enterCurlTightness: number;
   startRotation: number;
   rotationEndAt: number;
   scaleBase: number;
@@ -178,7 +199,7 @@ export interface PoseDials {
   /** Where the sheet rises from, in page heights. */
   riseFrom: number;
 
-  /* ── the tear ──────────────────────────────────────────────────────────── */
+  /* ── the tear, which is a FOLD (curl mode 1) ───────────────────────────── */
   /** The fold line's angle in degrees, measured CLOCKWISE from horizontal the
    *  way a CSS rotation is. The peel travels at right angles to it, from the
    *  bottom-right corner toward the pinned top-left one. */
@@ -196,6 +217,9 @@ export interface PoseDials {
   peelCurlPeak: number;
   peelCurlPeakAt: number;
   peelCurlRelax: number;
+  /** The bend's RADIUS through the peel — a wide arc, and the number the
+   *  entrance's roll used to be tied to. */
+  peelCurlTightness: number;
   /** The least the peeled part must wrap, in radians — what makes the corner
    *  lift READ rather than bulge. See the wrap floor in `curlMaterial.ts`. */
   peelWrapMin: number;
@@ -463,15 +487,17 @@ export function settleAt(track: Track, position: number): SettlePlan | null {
  * last third read as a sheet being laid down rather than as a finished graphic
  * waiting for its cue.
  *
- * THE FOLD DOES NOT MOVE. It sits a sixth of the way in from the sheet's TOP
- * edge and only the bend relaxes. That is what makes this a sheet held in a
- * hand rather than a scroll being unrolled: a wide curve at one edge, the rest
- * of it flat, and the type readable across the curve the whole way in.
+ * IT IS A ROLL, not a bend — curl mode 0, the cone wrap. At `enterCurl` −1 with
+ * `enterRollReach` 1 the WHOLE sheet is wound into a tube, and what the
+ * entrance animates is how much of it is still wound: the front is
+ * `amount × reach`, so the tube eats its way out of the sheet and the radius,
+ * derived from a fixed number of turns, shrinks to nothing with it. That is
+ * what a scroll does, and it is why the tube vanishes at zero rather than
+ * collapsing through a discontinuity.
  *
- * The top edge and not the bottom, because the sheet rises into place from
- * below: its bottom edge is off the frame for the whole entrance, so a curve
- * there is a curve nobody sees. The top is the leading edge. See
- * `enterCurlAxis`.
+ * `enterCurlTightness` is the cone's TAPER and not the tube's size — at any
+ * value of it this is a tube. The softer, partial roll is the `held` preset in
+ * `portfolioMotion.ts`; both are mode 0.
  *
  * Every channel is LINEAR inside its window, because the scroll is the clock
  * and Lenis is the only smoothing there is.
@@ -481,16 +507,19 @@ export function sheetPose(p: number, d: PoseDials): SheetPose {
   return {
     p: t,
     kind: 'sheet',
+    curlMode: 0,
     rotationZ: d.startRotation * (1 - window01(t, d.rotationEndAt)),
     pivotX: 0,
     pivotY: 0,
     scale: d.scaleBase + (1 - d.scaleBase) * window01(t, d.scaleTargetAt),
-    // Signed, and it stays signed: the sign is which way it bends.
+    // Signed, and it stays signed: the sign is which way it rolls.
     curl: d.enterCurl * (1 - window01(t, d.curlOutAt)),
-    curlOrigin: d.enterCurlOrigin,
-    curlAxis: d.enterCurlAxis,
-    // No floor: the entrance's whole point is a WIDE curve, and a floor would
-    // crease the one edge the reader is meant to be able to read across.
+    curlOrigin: d.enterRollReach,
+    curlOriginEdge: d.enterRollEdge,
+    tightness: d.enterCurlTightness,
+    // The fold's three, which mode 0 does not read. Written anyway and written
+    // to nothing, so a uniform can never carry the tear's value into a roll.
+    curlAxis: 0,
     curlWrap: 0,
     y: d.riseFrom * (1 - t),
     opacity: 1,
@@ -534,6 +563,9 @@ export function tearPose(p: number, d: PoseDials): SheetPose {
   return {
     p: t,
     kind: 'tail',
+    curlMode: 1,
+    // Mode 1 does not read it; it is here because every field is always set.
+    curlOriginEdge: 0,
     rotationZ: track01(t, [
       [0, 0],
       [lift, 0],
@@ -567,6 +599,7 @@ export function tearPose(p: number, d: PoseDials): SheetPose {
     // Clockwise on screen, anticlockwise in the shader's y-up frame; and the
     // roll direction is a right angle from the fold line.
     curlAxis: 90 - d.peelAngle,
+    tightness: d.peelCurlTightness,
     curlWrap: d.peelWrapMin,
     y: track01(t, [
       [0, 0],
@@ -579,6 +612,57 @@ export function tearPose(p: number, d: PoseDials): SheetPose {
     // A sheet being pulled off a surface does not follow the cursor.
     pointer: false,
   };
+}
+
+/**
+ * HOW FAR BELOW ITS RESTING CENTRE THE OPEN'S SHEET HAS TO START, in page
+ * heights, for its top edge to sit `belowPx` under the bottom of the frame.
+ *
+ * The open is the one entrance that arrives from OUTSIDE the frame. A
+ * scroll-driven entrance follows a dwell — the ground is already empty and the
+ * reader is already moving — so it can start half in shot and read correctly.
+ * The open has nothing before it, and a sheet that is simply THERE when the
+ * ground arrives has no arrival; it has to come from somewhere.
+ *
+ * `riseFrom` alone cannot say this, because it is a fraction of the page height
+ * and the page is not the viewport: −0.51 is the reference's number and it puts
+ * the sheet's centre about half a page down, which at our rect leaves most of
+ * the tube on screen from the first frame. What is wanted is a POSITION
+ * relative to the frame, so it is computed from the frame.
+ *
+ * The bound is the FLAT plane's bounding box at the start pose — its scale and
+ * its 45° turn — and not the tube's, which is a good deal smaller. That is
+ * deliberate: the tube's silhouette is shader geometry and this is not the
+ * place to duplicate it, and being too low costs nothing (the sheet is off
+ * screen either way) while being too high costs the whole effect.
+ */
+export function openStartDepth(
+  rect: { top: number; width: number; height: number },
+  viewportHeight: number,
+  d: PoseDials,
+  belowPx: number,
+): number {
+  const a = Math.abs((d.startRotation * Math.PI) / 180);
+  const s = d.scaleBase;
+  const halfHeight =
+    (s * rect.width * Math.abs(Math.sin(a)) + s * rect.height * Math.abs(Math.cos(a))) / 2;
+  const restCentre = rect.top + rect.height / 2;
+  const wantCentre = viewportHeight + belowPx + halfHeight;
+  return Math.max(0, (wantCentre - restCentre) / rect.height);
+}
+
+/**
+ * …and how much of that the pose is not already providing. This is what the
+ * open ADDS to `riseFrom`, so the shared table keeps its own value and every
+ * scroll-driven entrance keeps starting where it always did.
+ */
+export function openExtraDepth(
+  rect: { top: number; width: number; height: number },
+  viewportHeight: number,
+  d: PoseDials,
+  belowPx: number,
+): number {
+  return Math.max(0, openStartDepth(rect, viewportHeight, d, belowPx) + d.riseFrom);
 }
 
 /** The page at rest: its own scroll, and nothing else. */

@@ -6,9 +6,10 @@
  *    0ms  stage 1  SCRIM   the dark tint fades up over the whole page — the
  *                          hero card stays where it was, behind it
  *    0ms  stage 2  PANE    the ground and the sheet region fade in over it
- *  150ms  stage 3  PILL    the close pill drops in from its corner offset
- *  600ms  stage 4  READING handoff to the scroller, which runs section 0's
- *                          entrance from the negative track
+ *  600ms  stage 3  READING handoff to the scroller, which runs section 0's
+ *                          entrance from the negative track — on its own tween
+ *                          and its own curve, `openDelayMs` after the track is
+ *                          built and `openRiseMs` long. See `OPEN_TRACK`.
  *
  * CLOSE — NOT the open played backwards. The pane LEADS (it is the thing
  * leaving) and the scrim TRAILS it by 100ms, so the grid re-sharpens last and
@@ -22,7 +23,7 @@
  * dock's Copy output is pasted back.
  *
  * The three animated channels are published as CSS variables on `:root`
- * (`--pv-scrim`, `--pv-pane`, `--pv-pill`), so per-frame work is three custom
+ * (`--pv-scrim`, `--pv-pane`), so per-frame work is two custom
  * property writes and no React state changes at all. The LOOK values below are
  * published the same way — plus a mutable `look` singleton for the handful of
  * them that CSS can't consume (the scroller's smoothing, every shader uniform)
@@ -36,14 +37,19 @@
 
 import type { PoseDials } from './pageTrack';
 
-/** The three channels the open/close is expressed in. All 0 at REST. */
+/**
+  * The two channels the open/close is expressed in. All 0 at REST.
+  *
+  * It was three. The third was the close pill's drop-in, and it went with the
+  * pill — a channel that drives nothing is worse than no channel, because the
+  * next person to read the storyboard has to work out which of its stages is
+  * still on screen.
+  */
 export interface PortfolioValues {
   /** 0→1 the dark scrim over the page. → `--pv-scrim` */
   scrim: number;
   /** 0→1 the ground and the sheet region fading in. → `--pv-pane` */
   pane: number;
-  /** 0→1 the close pill's drop-in from its corner offset. → `--pv-pill` */
-  pill: number;
 }
 
 /** Clip start (`at`) and length (`dur`) in ms — the storyboard, as data. */
@@ -51,12 +57,10 @@ export const TIMING = {
   enter: {
     scrim: { at: 0, dur: 350 },
     pane: { at: 0, dur: 600 },
-    pill: { at: 150, dur: 250 },
   },
   exit: {
     // The pane leads; the scrim trails it by 100ms (see the header).
     pane: { at: 0, dur: 600 },
-    pill: { at: 0, dur: 250 },
     scrim: { at: 100, dur: 350 },
   },
 } as const;
@@ -72,7 +76,40 @@ export const EASE = {
   scrim: [0, 0, 0.58, 1] as [number, number, number, number],
   /** The pane's own curve: a hard start, a long settle. */
   pane: [0.4, 0, 0.1, 1] as [number, number, number, number],
-  pill: [0, 0, 0.58, 1] as [number, number, number, number],
+  /**
+   * THE OPEN TWEEN's rhythm: a soft start and a long settle. It is the tween's
+   * TIME curve; what that time is spent on is {@link OPEN_TRACK}.
+   *
+   * MEASURED, and the measurement is why it is not the (0.22, 0.6, 0.2, 1) it
+   * was specified as. That curve leaves the origin at a slope of 2.7 — a fast
+   * start, not a soft one — and the tube is gone 0.87s after the click. This
+   * one leaves at 1.17 and the tube is unrolling until 1.06s, against the ~1.3s
+   * that was wanted. It cannot go much further: the sheet has to be MOSTLY FLAT
+   * by 1.0s, which is the next thing down the same list, and the two meet here.
+   */
+  open: [0.3, 0.35, 0.2, 1] as [number, number, number, number],
+  /**
+   * …and the curve the open finishes on when a wheel arrives during it.
+   *
+   * IT LEAVES THE ORIGIN AT ZERO SLOPE, and it is an ease-IN-out for that
+   * reason rather than the ease-out it was asked to be.
+   *
+   * A retarget joins a tween that is already running, and at the join the open
+   * is barely moving in TRACK terms — the rise is carried by its own channel, so
+   * phase 1 spends only 0.04 of the track and the position is doing 2px a
+   * frame. An ease-out has its maximum velocity at the start by definition, so
+   * whatever else it is, it is a step: measured, `(0, 0, 0.2, 1)` puts **147px
+   * into the first frame** and 337px in practice. Accelerating out of the join
+   * and settling into the dock costs nothing and reads as one move — modelled
+   * across six candidates, this is the only one under 100px at its peak.
+   *
+   * | curve | first frame | worst frame |
+   * | --- | --- | --- |
+   * | `(0, 0, 0.2, 1)` ease-out | 147px | 147px |
+   * | `(0.65, 0, 0.35, 1)` easeInOutCubic | 2px | 118px |
+   * | `(0.4, 0, 0.6, 1)` **shipped** | **4px** | **69px** |
+   */
+  openSkip: [0.4, 0, 0.6, 1] as [number, number, number, number],
 };
 
 /**
@@ -107,11 +144,16 @@ export interface PortfolioLook {
   paperColor: string;
   /** The ink, as a colour the alphas below are taken of. */
   inkColor: string;
-  /** The page rect: a margin on the sides, and a deeper FOOT — the band the
-   *  close pill lives in, which is the one piece of chrome the view has. The
-   *  top is the letterhead's height plus `pageMarginPx`. */
+  /**
+   * The page rect: ONE MARGIN, on all four sides — the top is the letterhead's
+   * height plus this, and the other three are this.
+   *
+   * There used to be a deeper `pageFootPx` (144) at the bottom, reserving a
+   * band for the close pill so a page never ran under it. The pill is gone and
+   * so is the band: the page is 96px taller at 1728×996 and 96px taller at
+   * 1440×900, which is a viewport's worth of prose over a long section.
+   */
   pageMarginPx: number;
-  pageFootPx: number;
   /**
    * A page is the page rect less an inset each side; the twelve columns of its
    * grid divide what is left. `pageInsetPx` is a margin on a page and margins
@@ -129,15 +171,6 @@ export interface PortfolioLook {
   letterheadTitlePx: number;
 
   /* ── the sheet's material (PV PAPER) ───────────────────────────────────── */
-  /**
-   * THE BEND'S RADIUS: 0 is the widest the shader will draw, 1 the tightest.
-   *
-   * It used to mix a cone's half-angle, which is a different thing with the same
-   * name — the bend is an arc with a straight flap behind it now, and the only
-   * number that says how it looks is how tight the arc is. See
-   * `curlMaterial.ts`.
-   */
-  curlTightness: number;
   /** How much the radius grows along the FOLD LINE, so the bend is wider at the
    *  free corner than at the pinned one. 0 is a cylinder; this is what the cone
    *  was for. */
@@ -193,20 +226,36 @@ export interface PortfolioLook {
   /** The crossfade at each hand-off (ms). There are two now, one at either end
    *  of a vertical run. */
   handoffMs: number;
-  /** THE ENTRANCE, as staggered windows of its own progress. The bend it
-   *  arrives with, and where that bend sits — near the bottom edge, so the rest
-   *  of the sheet is flat and a line of type is readable across the curve. */
-  enterCurl: number;
-  enterCurlOrigin: number;
   /**
-   * Which edge the entrance's curve is on, as the direction the fold TRAVELS —
-   * 270° runs down the sheet from the TOP edge, 90° up from the bottom.
-   *
-   * The top, and it has to be: the sheet rises into place from below
-   * (`riseFromH`), so its bottom edge is off the frame for the whole entrance
-   * and a curve there is a curve nobody sees. The top edge is the leading one.
+   * THE ENTRANCE, as staggered windows of its own progress. It is a ROLL — curl
+   * mode 0, the cone wrap — and `enterCurl` is how rolled it arrives: −1 a full
+   * tube, 0 flat.
    */
-  enterCurlAxisDeg: number;
+  enterCurl: number;
+  /** How much of the sheet the roll reaches AT FULL AMOUNT. 1 is all of it, and
+   *  1 is what a tube means. The front is `amount × reach`, so the roll lets go
+   *  of the sheet as the amount comes off. */
+  enterRollReach: number;
+  /**
+   * Which edge it rolls from: 0 the BOTTOM, 1 the top.
+   *
+   * The bottom, as the first release had it. At reach 1 the whole sheet is in
+   * the tube either way, so this is which end of it is the free one — and the
+   * free end wants to be the leading edge as the sheet rises into place.
+   */
+  enterRollEdge: number;
+  /**
+   * HOW HARD THE TUBE TAPERS: the cone's half-angle mixing from π/2 — a
+   * cylinder — toward its tight end. **It is not what makes the roll a tube.**
+   * The tube's radius is derived from a fixed number of turns, so at any value
+   * of this the entrance is a tube; this only says whether it coils evenly or
+   * tapers along its length.
+   *
+   * It lives here and not on `PV PAPER` because it belongs to the GESTURE: one
+   * dial for both shapes is how a tube became a crease across the whole peel,
+   * and then how it became no tube at all. See `curlMaterial.ts`.
+   */
+  enterCurlTightness: number;
   startRotationDeg: number;
   rotationEndAt: number;
   scaleBase: number;
@@ -231,6 +280,9 @@ export interface PortfolioLook {
   peelCurlPeak: number;
   peelCurlPeakAt: number;
   peelCurlRelax: number;
+  /** The bend's RADIUS through the peel: a wide arc, so the flap reads as a
+   *  sheet coming away rather than as a crease travelling across one. */
+  peelCurlTightness: number;
   /**
    * The least the peeled part of a TEAR must wrap, in radians — the radius
    * tightens to meet it while the peel is short, so the free corner creases and
@@ -263,10 +315,44 @@ export interface PortfolioLook {
   settleHigh: number;
   settleMs: number;
   settleIdleMs: number;
-  /** The entrance TO THE VIEW: how long after the pane arrives section 0's
-   *  sheet starts unrolling, and how long it takes. */
-  riseDelayMs: number;
-  riseMs: number;
+  /**
+   * THE OPEN TWEEN — the entrance TO THE VIEW: how long after the click
+   * section 0's sheet starts unrolling, and how long it then takes.
+   *
+   * It is long on purpose. The unroll is the one gesture that says what a
+   * section IS in this view, and at the 1.4s it used to run the tube was gone
+   * before the eye had found it. The delay covers the storyboard's pane fade,
+   * so the first thing that moves under it is the sheet.
+   *
+   * These are the OPEN's alone. Every other entrance is scroll-driven and takes
+   * exactly as long as the reader's wheel takes.
+   */
+  openDelayMs: number;
+  openRiseMs: number;
+  /**
+   * HOW FAR BELOW THE FRAME the open's sheet starts, in px — the gap between
+   * the bottom of the viewport and the top edge of the rolled sheet at rest
+   * before the tween moves.
+   *
+   * The depth itself is COMPUTED, not dialled: it is whatever puts the sheet's
+   * start pose this far under the frame at the live page rect, so it survives a
+   * resize and it survived the page getting 96px taller when the close pill
+   * went. See `openStartDepth` in `pageTrack.ts`. This is the one number in it
+   * that is a taste.
+   */
+  openStartBelowPx: number;
+  /**
+   * HOW LONG THE OPEN TAKES ONCE THE READER HAS ASKED IT TO HURRY.
+   *
+   * The open is nearly three seconds and the reader cannot scroll through it —
+   * every position it holds is below the scroller's floor, so there is nothing
+   * to hand a wheel to mid-tween. What there IS is the rest of the tween, run
+   * fast: the first wheel or touch retargets it to finish in this, on the same
+   * `OPEN_TRACK` mapping from wherever it had got to. The tube completes its
+   * unroll and docks; nothing jumps, because nothing has moved except the
+   * clock.
+   */
+  openSkipMs: number;
 
   /* ── the scroller ──────────────────────────────────────────────────────── */
   /** Lenis: smoothing factor on the scroller, and the wheel gain. */
@@ -274,18 +360,6 @@ export interface PortfolioLook {
   wheelMultiplier: number;
   /** How long a letterhead number takes to scroll the track to its section. */
   letterheadClickMs: number;
-
-  /* ── chrome ────────────────────────────────────────────────────────────── */
-  /** Close pill: diameter, its inset from the bottom-left corner, the offset it
-   *  enters from, its own backdrop blur, and the ink alpha at rest vs hover
-   *  (the ring and the X share one colour). */
-  pillDiameterPx: number;
-  pillInsetPx: number;
-  pillOffsetPx: number;
-  pillBlurPx: number;
-  pillInkRest: number;
-  pillInkHover: number;
-  pillHoverScale: number;
 
   /* ── the reveal system ─────────────────────────────────────────────────── */
   /** `.reveal`: duration, starting blur, starting offset, per-sibling stagger. */
@@ -321,18 +395,11 @@ export const LOOK: PortfolioLook = {
   paperColor: '#f4efe6',
   inkColor: '#14120f',
   pageMarginPx: 48,
-  // Deeper than the sides, and not for taste: the close pill is 96px at a 40px
-  // inset, and a page that ran under it would put chrome over content.
-  pageFootPx: 144,
   pageInsetPx: 40,
   gridGapPx: 52,
   textMeasureCh: 0,
   letterheadTitlePx: 96,
 
-  // A wide, soft arc. At 1 this is a tube; at 0.35 it is a sheet held in a
-  // hand, which is what the reference's paper does and what leaves a line of
-  // type readable across the bend.
-  curlTightness: 0.35,
   curlTaper: 0.35,
   curlDepth: 0.5,
   // The reference's constants, in the reference's world units. They transfer
@@ -357,10 +424,14 @@ export const LOOK: PortfolioLook = {
   exitDistancePx: 700,
   dwellVh: 0.5,
   handoffMs: 120,
-  enterCurl: -0.55,
-  enterCurlOrigin: 0.15,
-  enterCurlAxisDeg: 270,
-  startRotationDeg: -28,
+  // THE ROLL: the tube the sheet arrives as, and the first release's numbers.
+  // `enterCurl`, `enterCurlTightness`, `startRotationDeg` and `curlOutAt` are
+  // `ENTRANCE_BENDS.roll` below; the softer, partial roll is `held` beside it.
+  enterCurl: -1,
+  enterRollReach: 1,
+  enterRollEdge: 0,
+  enterCurlTightness: 1,
+  startRotationDeg: -45,
   rotationEndAt: 0.16,
   scaleBase: 0.41,
   scaleTargetAt: 0.22,
@@ -377,6 +448,9 @@ export const LOOK: PortfolioLook = {
   peelCurlPeak: 0.6,
   peelCurlPeakAt: 0.4,
   peelCurlRelax: 0.2,
+  // A wide, soft arc — a sheet coming away, rather than a crease travelling
+  // across one. The entrance is a different shape entirely and has its own.
+  peelCurlTightness: 0.35,
   peelWrapMin: 2.4,
   peelRotateDeg: -12,
   peelRotateEndDeg: -18,
@@ -389,20 +463,16 @@ export const LOOK: PortfolioLook = {
   settleHigh: 0.85,
   settleMs: 450,
   settleIdleMs: 120,
-  riseDelayMs: 500,
-  riseMs: 900,
+  openDelayMs: 400,
+  // 2600 rather than 2200: the sheet now climbs the better part of a viewport
+  // before it starts to open, and the extra travel has to be paid for.
+  openRiseMs: 2600,
+  openStartBelowPx: 40,
+  openSkipMs: 350,
 
   lenisLerp: 0.1,
   wheelMultiplier: 1,
   letterheadClickMs: 1100,
-
-  pillDiameterPx: 96,
-  pillInsetPx: 40,
-  pillOffsetPx: 73,
-  pillBlurPx: 8,
-  pillInkRest: 0.35,
-  pillInkHover: 1,
-  pillHoverScale: 0.92,
 
   revealMs: 800,
   revealBlurPx: 10,
@@ -416,12 +486,55 @@ export const LOOK: PortfolioLook = {
   flipDelayMs: 300,
 };
 
+/**
+ * THE TWO ENTRANCES, as presets — the four dials that say which one it is.
+ *
+ * BOTH ARE THE ROLL (curl mode 0). They differ in how much of the sheet is
+ * wound and how hard the tube tapers, not in what shape it is: `roll` ships the
+ * first release's full tube, and `held` is a looser, partial one — the sheet
+ * curled at its leading edge rather than wound end to end.
+ *
+ * `held` is NOT the arc the entrance briefly used. That shape is the tear's and
+ * stays the tear's; putting the entrance back on it is what took the tube away.
+ *
+ * `curlOutAt` is the same in both and is here anyway: it is the constraint the
+ * entrance has, not a taste, and a preset that left it out would look like one
+ * more number free to move. The roll has to be OUT before the hand-off, because
+ * a shape still resolving at the swap is a shape the flat HTML cannot match.
+ *
+ * `PV PAPER` offers them as a select; the dock writes the four dials on
+ * `PV MOTION` from whichever is chosen, so the sliders stay live underneath.
+ */
+export const ENTRANCE_BENDS = {
+  roll: { enterCurl: -1, enterCurlTightness: 1, startRotationDeg: -45, curlOutAt: 0.6 },
+  held: { enterCurl: -0.55, enterCurlTightness: 0.35, startRotationDeg: -28, curlOutAt: 0.6 },
+} as const satisfies Record<string, Pick<
+  PortfolioLook,
+  'enterCurl' | 'enterCurlTightness' | 'startRotationDeg' | 'curlOutAt'
+>>;
+
+export type EntranceBend = keyof typeof ENTRANCE_BENDS;
+
+/** Which preset a look's four entrance dials are, or `null` for a hand-tuned
+ *  set that is neither. What the dock's select shows when the sliders move. */
+export function entranceBendOf(from: PortfolioLook): EntranceBend | null {
+  const names = Object.keys(ENTRANCE_BENDS) as EntranceBend[];
+  return (
+    names.find((name) =>
+      (Object.entries(ENTRANCE_BENDS[name]) as [keyof PortfolioLook, number][]).every(
+        ([k, v]) => from[k] === v,
+      ),
+    ) ?? null
+  );
+}
+
 /** The pose dials the track needs, pulled out of whatever look is live. */
 export function poseDials(from: PortfolioLook = look): PoseDials {
   return {
     enterCurl: from.enterCurl,
-    enterCurlOrigin: from.enterCurlOrigin,
-    enterCurlAxis: from.enterCurlAxisDeg,
+    enterRollReach: from.enterRollReach,
+    enterRollEdge: from.enterRollEdge,
+    enterCurlTightness: from.enterCurlTightness,
     startRotation: from.startRotationDeg,
     rotationEndAt: from.rotationEndAt,
     scaleBase: from.scaleBase,
@@ -438,6 +551,7 @@ export function poseDials(from: PortfolioLook = look): PoseDials {
     peelCurlPeak: from.peelCurlPeak,
     peelCurlPeakAt: from.peelCurlPeakAt,
     peelCurlRelax: from.peelCurlRelax,
+    peelCurlTightness: from.peelCurlTightness,
     peelWrapMin: from.peelWrapMin,
     peelRotateMid: from.peelRotateDeg,
     peelRotateEnd: from.peelRotateEndDeg,
@@ -489,7 +603,104 @@ function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x: number
 
 const easeScrim = cubicBezier(...EASE.scrim);
 const easePane = cubicBezier(...EASE.pane);
-const easePill = cubicBezier(...EASE.pill);
+const easeOpen = cubicBezier(...EASE.open);
+
+/* ── the open tween's curve ──────────────────────────────────────────────── */
+
+/**
+ * WHAT THE OPEN SPENDS ITS TIME ON: eased tween progress → how far through
+ * section 0's ENTRANCE the track has come, 0…1.
+ *
+ * The open is the one entrance that is not the reader's wheel, so it is the one
+ * place the view chooses the pace, and left to itself the pace was wrong: the
+ * entrance's channels are staggered for a scroll, where the reader controls how
+ * long they look at each part. Run on a clock, that stagger puts the tube —
+ * which is the whole idea of the thing — into the first few frames and the flat
+ * sheet into most of the tween.
+ *
+ * So the clock is re-mapped, in three phases:
+ *
+ *   0 → 0.30   THE RISE, AND THE HOLD. The sheet climbs into frame from below
+ *              it while the track barely moves — so `uCurlAmount` stays within
+ *              a few per cent of −1 and what travels up the screen is
+ *              unmistakably a TUBE, at its full −45°.
+ *   → 0.75     THE UNROLL. The track runs to `curlOutAt`, which is where the
+ *              entrance's own table has the bend fully out. The un-tilt and the
+ *              growth to full size happen at the head of this, which is what
+ *              makes the tube square up just before it opens.
+ *   → 1        THE SETTLE. A flat sheet rising the last of the way into the
+ *              page's rect, where the hand-off takes it.
+ *
+ * THE RISE IS NOT THE TRACK, and it cannot be. `y` and `curl` are both driven
+ * by the entrance's own progress in a table this must not touch, and they are
+ * driven at different rates: by the time `y` has carried the sheet a viewport
+ * upward, `curl` is long since 0. A tube cannot travel while holding its shape
+ * if the only thing moving is the track position. So the rise is a SECOND
+ * channel — an extra depth, below whatever `riseFrom` already gives, paid off
+ * over phase 1 — and it exists only while the open owns the position. The
+ * track's own arithmetic never sees it.
+ *
+ * WHAT IS RE-MAPPED IS TIME, and nothing here is a second pose table. The
+ * entrance's poses are shared with every scroll-driven entrance between
+ * sections; changing them to pace the open would have paced all of those too.
+ * This changes which track position a given millisecond of the OPEN lands on,
+ * and adds a depth no other entrance is given.
+ */
+export const OPEN_TRACK: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [0.3, 0.04],
+  [0.75, 0.6],
+  [1, 1],
+];
+
+/** Where phase 1 ends — the rise is paid off across `[0, this]` of eased
+ *  progress. Read off {@link OPEN_TRACK} so the two cannot drift. */
+const OPEN_RISE_END = OPEN_TRACK[1][0];
+
+/** Walk {@link OPEN_TRACK}. Linear inside each phase: the rhythm is already in
+ *  {@link EASE.open}, and easing each phase as well would put a dead spot at
+ *  every joint — an unroll that stops twice on its way out. */
+function openTrack(progress: number): number {
+  const p = clamp01(progress);
+  for (let i = 0; i + 1 < OPEN_TRACK.length; i++) {
+    const [xa, ya] = OPEN_TRACK[i];
+    const [xb, yb] = OPEN_TRACK[i + 1];
+    if (p <= xb) return ya + ((yb - ya) * (p - xa)) / (xb - xa);
+  }
+  return 1;
+}
+
+/** One frame of the open: where on the track, and how much of the extra depth
+ *  is still owed. */
+export interface OpenFrame {
+  /** 0…1 through section 0's entrance. */
+  track: number;
+  /** 1 at the start, 0 once the sheet has climbed into frame — a multiplier on
+   *  the extra depth `openExtraDepth` computed from the page rect. */
+  lift: number;
+}
+
+/**
+ * THE OPEN TWEEN, end to end: linear tween time → the two numbers a frame of it
+ * needs.
+ *
+ * Time is eased FIRST and then spent, in that order: {@link EASE.open} says how
+ * the 2.6s is paid out, {@link OPEN_TRACK} says what it buys, and the lift
+ * decays across phase 1 of the same eased clock — so the rise decelerates into
+ * the unroll rather than gliding to a stop at a constant speed.
+ */
+export function openFrame(progress: number): OpenFrame {
+  const eased = easeOpen(clamp01(progress));
+  return {
+    track: openTrack(eased),
+    lift: 1 - clamp01(eased / OPEN_RISE_END),
+  };
+}
+
+/** The track half of {@link openFrame}, for the callers that only want it. */
+export function openEase(progress: number): number {
+  return openFrame(progress).track;
+}
 
 /** Eased 0→1 progress of one clip at time `ms`. */
 function channel(
@@ -505,7 +716,6 @@ export function samplePortfolioEnter(ms: number): PortfolioValues {
   return {
     scrim: channel(ms, TIMING.enter.scrim, easeScrim),
     pane: channel(ms, TIMING.enter.pane, easePane),
-    pill: channel(ms, TIMING.enter.pill, easePill),
   };
 }
 
@@ -514,30 +724,27 @@ export function samplePortfolioExit(ms: number): PortfolioValues {
   return {
     scrim: 1 - channel(ms, TIMING.exit.scrim, easeScrim),
     pane: 1 - channel(ms, TIMING.exit.pane, easePane),
-    pill: 1 - channel(ms, TIMING.exit.pill, easePill),
   };
 }
 
 /* ── applying values ─────────────────────────────────────────────────────── */
 
 /** The live channel values. Defaults are REST — nothing over the page. */
-export const portfolio: PortfolioValues = { scrim: 0, pane: 0, pill: 0 };
+export const portfolio: PortfolioValues = { scrim: 0, pane: 0 };
 
 /** Write the three channels to `:root` and mirror them into the singleton. */
 export function applyPortfolioValues(v: PortfolioValues): void {
   const s = document.documentElement.style;
   s.setProperty('--pv-scrim', v.scrim.toFixed(4));
   s.setProperty('--pv-pane', v.pane.toFixed(4));
-  s.setProperty('--pv-pill', v.pill.toFixed(4));
   portfolio.scrim = v.scrim;
   portfolio.pane = v.pane;
-  portfolio.pill = v.pill;
 }
 
 /** Pin every channel to REST. Set before a driver takes over so a lazy-loaded
  *  dock never flashes a fully-open view over the page. */
 export function applyPortfolioRest(): void {
-  applyPortfolioValues({ scrim: 0, pane: 0, pill: 0 });
+  applyPortfolioValues({ scrim: 0, pane: 0 });
 }
 
 /**
@@ -583,13 +790,6 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-measure', look.textMeasureCh > 0 ? `${look.textMeasureCh}ch` : 'none');
   s.setProperty('--pv-letterhead-title', `${look.letterheadTitlePx}px`);
   s.setProperty('--pv-handoff-ms', `${look.handoffMs}ms`);
-  s.setProperty('--pv-pill-d', `${look.pillDiameterPx}px`);
-  s.setProperty('--pv-pill-inset', `${look.pillInsetPx}px`);
-  s.setProperty('--pv-pill-offset', `${look.pillOffsetPx}px`);
-  s.setProperty('--pv-pill-blur', `${look.pillBlurPx}px`);
-  s.setProperty('--pv-pill-ink', String(look.pillInkRest));
-  s.setProperty('--pv-pill-ink-hover', String(look.pillInkHover));
-  s.setProperty('--pv-pill-hover-scale', String(look.pillHoverScale));
   s.setProperty('--pv-reveal-ms', `${look.revealMs}ms`);
   s.setProperty('--pv-reveal-blur', `${look.revealBlurPx}px`);
   s.setProperty('--pv-reveal-offset', `${look.revealOffsetPx}px`);
@@ -605,7 +805,6 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
 const VARS = [
   '--pv-scrim',
   '--pv-pane',
-  '--pv-pill',
   '--pv-scrim-alpha',
   '--pv-ground',
   '--pv-ground-alpha',
@@ -624,13 +823,6 @@ const VARS = [
   '--pv-page-y',
   '--pv-page-w',
   '--pv-page-h',
-  '--pv-pill-d',
-  '--pv-pill-inset',
-  '--pv-pill-ink',
-  '--pv-pill-ink-hover',
-  '--pv-pill-hover-scale',
-  '--pv-pill-offset',
-  '--pv-pill-blur',
   '--pv-reveal-ms',
   '--pv-reveal-blur',
   '--pv-reveal-offset',
@@ -650,7 +842,6 @@ export function resetPortfolioValues(): void {
   Object.assign(look, LOOK); // a dev tuning session must not outlive the view
   portfolio.scrim = 0;
   portfolio.pane = 0;
-  portfolio.pill = 0;
 }
 
 /**

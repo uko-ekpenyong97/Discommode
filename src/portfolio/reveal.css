@@ -105,6 +105,46 @@
   transform: scaleX(1);
 }
 
+/* ── settled, and never animated ───────────────────────────────────────── */
+
+/* `is-instant` is a reveal that was put into its finished state rather than
+   played into it — see `revealState.ts`. It is what makes the rule "a hand-off
+   never happens mid-reveal" true: at every moment a page is about to swap with
+   a sheet wearing a capture of that same page SETTLED, whatever is on screen is
+   put where the capture has it, with no animation to be caught half way
+   through.
+
+   Every declaration below is the `to` of the keyframe beside it, written out.
+   Not `transform: none` — these have to be the same computed values the
+   animation would have ended on, or a settled block and a played one would be
+   two different pixels and the diff would simply move. */
+
+.pv-page .reveal.is-in.is-instant {
+  animation: none;
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+
+.pv-page .reveal-flip.is-in.is-instant {
+  animation: none;
+  opacity: 1;
+  transform: perspective(1000px) translateZ(0) rotateY(0deg);
+}
+
+/* The characters transition rather than animate, and they are not the element
+   carrying the class — so this reaches down to them. */
+.pv-page .reveal-chars.is-instant .reveal-char {
+  transition: none;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pv-run.is-in.is-instant::before {
+  transition: none;
+  transform: scaleX(1);
+}
+
 /* Reduced motion: everything is simply present. */
 @media (prefers-reduced-motion: reduce) {
   .pv-page .reveal,

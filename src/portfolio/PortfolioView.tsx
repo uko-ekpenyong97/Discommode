@@ -1,6 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONTENT, indexForProject } from '../content';
-import { ClosePill } from './ClosePill';
 import { Ground } from './Ground';
 import { Scrim } from './Scrim';
 import { Scroller } from './Scroller';
@@ -28,8 +27,15 @@ interface PortfolioViewProps {
 }
 
 /**
- * The project view: the `Scrim`, the `Ground` the paper sits on, the `Scroller`
- * that drives the track, and the `ClosePill`.
+ * The project view: the `Scrim`, the `Ground` the paper sits on, and the
+ * `Scroller` that drives the track.
+ *
+ * THERE IS NO CHROME ON THE PAPER'S SIDE OF IT any more. The close pill — a
+ * 96px ring in the bottom-left corner, over a band of page the paper was not
+ * allowed to use — is gone, and the ways out are the three that were always
+ * there underneath it: Escape, a click on the ground, and Back. The letterhead
+ * names the first two at its right end, in the strip's own mono, which is where
+ * the view already says what it is and how to move through it.
  *
  * One project, its sections, and the way out — nothing else. The other projects
  * are never reachable from in here: you close the view and use the grid.
@@ -116,17 +122,13 @@ export default function PortfolioView({ project, section, intro = false }: Portf
   return (
     <div className="pv">
       <Scrim />
-      {/* Before the paper in the DOM, not after: this is a modal, and the way
-          out should be the first thing Tab reaches rather than something you
-          arrive at after every link in the project. It paints above the paper
-          regardless (z-index). */}
-      <ClosePill onClose={close} />
       <div className="pv-pane" {...dismiss}>
         <Ground
           project={current}
           activeIndex={active}
           pendingIndex={pending}
           onSelect={selectSection}
+          onClose={close}
         />
         <Scroller
           // A different project is a different track: remount rather than try

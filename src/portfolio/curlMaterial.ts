@@ -2,13 +2,55 @@ import { Color, DoubleSide, ShaderMaterial, Vector2, Vector3 } from 'three';
 import type { IUniform, Texture } from 'three';
 
 /**
- * THE SHEET'S MATERIAL — a bend in the vertex stage, two point lights in the
- * fragment stage.
+ * THE SHEET'S MATERIAL — a deformation in the vertex stage, two point lights in
+ * the fragment stage.
  *
- * ── the bend ──────────────────────────────────────────────────────────────
+ * ── TWO SHAPES, and TWO PROGRAMS ──────────────────────────────────────────
  *
- * ONE SHAPE serves the entrance and the tear, and it is the shape a sheet of
- * paper actually makes when you lift an edge of it off a surface:
+ * There are two gestures in this view and they are not the same shape, so they
+ * are not the same function:
+ *
+ *   curlMode 0    THE ROLL — the ENTRANCE. The sheet is wrapped onto a CONE
+ *                 whose half-angle mixes from π/2 (the degenerate case, a
+ *                 cylinder) toward a tight value. A tube, which unrolls.
+ *   curlMode 1    THE FOLD — the TEAR. A flat part, an ARC of fixed radius, and
+ *                 a straight flap tangent to it. A sticky note coming off.
+ *
+ * THE SWITCH IS THE PROGRAM, NOT A UNIFORM, and that is measured rather than
+ * preferred. Both shapes as one program with `uCurlMode < 0.5 ? … : …` in it
+ * compiles and runs and looks right — and it moves the TEAR. Captured at three
+ * points of the peel, at both device pixel ratios, against the frames the
+ * previous build produced: with the two functions in one program and no branch,
+ * every frame was byte-for-byte identical; with the branch, 12 to 113 pixels of
+ * 1.7M–6.9M came back one level different. The driver schedules the fold's
+ * arithmetic differently when it sits inside a select.
+ *
+ * One level on a thousandth of a per cent of the frame is invisible and is
+ * inside every threshold this view has. It is still a change to a surface that
+ * was signed off, made by a release that is not about it, and the way not to
+ * make it is not to ask the GPU to choose. So there are two programs from one
+ * pair of functions, sharing ONE uniforms object — so there is nothing to keep
+ * in step — and the fold's is the program that shipped, to the instruction.
+ *
+ * They were one function for one release and it was a mistake, which is worth
+ * writing down because the failure was silent. The fold's parameters have the
+ * same NAMES as the roll's and different MEANINGS — `uCurlTightness` is a
+ * cone's half-angle mix in one and an arc's radius in the other — so setting
+ * the roll's numbers into the fold's formula compiles, runs, breaks nothing the
+ * suite was looking at, and produces a flat sheet tilting in. Measured on the
+ * shipped build: at 0.25s after the open the entrance was a flat rectangle at
+ * −45°, with a fold at one corner and no tube anywhere.
+ *
+ * So each shape keeps its own function, its own constants and its own reading
+ * of the shared uniforms, and they meet nowhere. Nothing the tear does can move
+ * the entrance and nothing the entrance does can move the tear: that is the
+ * whole point of the split, and there is a test on the tear's pose table and a
+ * set of committed frames that say so.
+ *
+ * ── the fold (mode 1), which the TEAR uses ────────────────────────────────
+ *
+ * The shape a sheet of paper actually makes when you lift an edge of it off a
+ * surface:
  *
  *      ────────────────────╮
  *      the stuck part      ╰──╮   an arc of fixed radius
@@ -21,25 +63,49 @@ import type { IUniform, Texture } from 'three';
  * RADIUS, from wide at 0 to tight at 1. Everything before the front is
  * untouched; the next `radius × bend` of sheet is the arc; the rest is straight.
  *
- * This replaces wrapping the plane onto a cone, and the reason is the tear. A
- * cone wrap curls EVERYTHING behind the front, so a front travelling across the
- * sheet coils more and more of it into a tube — which is a scroll being rolled
- * up, not a sticky note being peeled off. A peel is a local fold that travels
- * and leaves a flat flap behind it, and the flap has to stay flat or it reads
- * as a window blind.
+ * ALL THREE COME OFF THE POSE, which is what lets the two modes hold different
+ * values of the same uniform on consecutive frames.
  *
- * The taper is still there, as `uCurlTaper`: the radius grows along the fold
- * line, so the bend is wider at the free corner and tighter at the pinned one,
- * which is what the cone was for and what a real peel does anyway.
+ * WHY THIS IS NOT THE ROLL. A cone wrap curls EVERYTHING behind the front, so a
+ * front travelling across the sheet coils more and more of it into a tube —
+ * which is a scroll being rolled up, not a sticky note being peeled off. A peel
+ * is a local fold that travels and leaves a flat flap behind it, and the flap
+ * has to stay flat or it reads as a window blind. That is why the tear needed a
+ * new shape; it is not why the entrance should have lost its old one.
+ *
+ * The cone's taper survives here as `uCurlTaper`: the radius grows along the
+ * fold line, so the bend is wider at the free corner and tighter at the pinned
+ * one, which is what the cone was for and what a real peel does anyway.
  *
  * THE FOLD LINE CAN RUN AT ANY ANGLE (`uCurlAxis`), which is what lets the tear
- * peel diagonally from a corner. At 0 the roll direction is straight up the
- * sheet and the fold is horizontal, which is the entrance.
+ * peel diagonally from a corner.
  *
- * NORMALS ARE RECOMPUTED from the bent surface, by evaluating it at two
- * neighbouring points and crossing the tangents. Without that the bend is a
- * silhouette — the right shape with no shading inside it, which reads as a bent
- * picture of paper rather than as paper.
+ * ── the roll (mode 0), which the ENTRANCE uses ────────────────────────────
+ *
+ * Recovered from the first paper release, unchanged. The plane is wrapped onto
+ * a CONE whose half-angle mixes from π/2 — the degenerate case, a cylinder —
+ * toward {@link CONE_TIGHT} as `uCurlTightness` rises. A cone rather than a
+ * cylinder is what makes the roll taper the way a real sheet's does: one end of
+ * the tube coils tighter than the other, so the roll has a direction rather
+ * than being a piece of extruded pipe.
+ *
+ * THE TUBE'S RADIUS IS DERIVED, NOT DIALLED, and that is the part worth not
+ * losing: the rolled length always makes the same number of {@link TURNS}, so
+ * the tube shrinks as the sheet unrolls and vanishes at zero instead of
+ * collapsing through a discontinuity. That is also what a scroll does — and it
+ * is why `uCurlTightness` is NOT what makes this a tube. At any tightness the
+ * roll is a tube; tightness only says how hard it tapers along its length.
+ *
+ * `uCurlOrigin` is how much of the sheet the roll reaches at full amount and
+ * `uCurlOriginEdge` is which edge it rolls from (0 the bottom, 1 the top).
+ * Neither is read in mode 1, and mode 0 reads neither `uCurlTaper`,
+ * `uCurlDepth` nor `uCurlWrap`.
+ *
+ * NORMALS ARE RECOMPUTED from the deformed surface, by evaluating it at two
+ * neighbouring points and crossing the tangents — the same way in both modes,
+ * because both versions did it the same way. Without it the shape is a
+ * silhouette: the right outline with no shading inside it, which reads as a
+ * bent picture of paper rather than as paper.
  *
  * ── the lighting, and why it is a RATIO ───────────────────────────────────
  *
@@ -72,6 +138,19 @@ import type { IUniform, Texture } from 'three';
  * are these two surfaces the same pixels.
  */
 
+/* ── mode 0, the roll ─────────────────────────────────────────────────────── */
+
+/** Turns the rolled part of the sheet makes, whatever is left to roll. The
+ *  tube's radius is derived from this, which is why it shrinks to nothing as
+ *  the sheet unrolls instead of collapsing through a discontinuity. */
+const TURNS = 2.35;
+
+/** The tight end of the cone's half-angle range, in radians. π/2 is a cylinder;
+ *  this is what `uCurlTightness: 1` mixes toward. */
+const CONE_TIGHT = 1.19;
+
+/* ── mode 1, the fold ─────────────────────────────────────────────────────── */
+
 /** How far the flap turns at `|uCurlAmount| = 1`, in radians — a little past a
  *  right angle and a little short of folded flat back on itself. */
 const MAX_BEND = 3.4;
@@ -86,29 +165,57 @@ export interface CurlUniforms {
   // The index signature is what `ShaderMaterial` declares; the named members
   // are what this shader actually has, so a typo in a `uniforms.uFoo.value`
   // write is a compile error rather than a uniform that silently does nothing.
+  // WHICH SHAPE is not in here: it picks the PROGRAM (see the header), and a
+  // uniform nothing reads would be a dial that looked live and was not.
   [uniform: string]: IUniform;
-  /** −1 … 1. How far the flap has turned, as a fraction of {@link MAX_BEND}.
-   *  SIGNED, and the sign is which way it bends: POSITIVE is toward the viewer.
-   *  Never clamp it to a magnitude. */
+  /** −1 … 1. SIGNED, and the sign is which way it deforms. In mode 1, how far
+   *  the flap has turned as a fraction of {@link MAX_BEND}, positive toward the
+   *  viewer. In mode 0, how ROLLED the sheet is: −1 fully, 0 flat. Never clamp
+   *  it to a magnitude. */
   uCurlAmount: IUniform<number>;
-  /** 0 … 1. Where the fold front sits along the roll direction, measured from
-   *  the free corner. Everything past it is untouched. */
+  /**
+   * 0 … 1, and the two modes read it differently.
+   *
+   * MODE 1: where the fold front sits along the roll direction, measured from
+   * the free corner. Everything past it is untouched.
+   *
+   * MODE 0: how much of the sheet the roll reaches AT FULL AMOUNT — the front
+   * is `amount × origin`, so the roll eats into the sheet as the amount rises
+   * and lets go of it as the sheet unrolls. 1 rolls the whole sheet.
+   */
   uCurlOrigin: IUniform<number>;
+  /** MODE 0 ONLY. Which edge the roll starts from: 0 the bottom, 1 the top. */
+  uCurlOriginEdge: IUniform<number>;
   /** The ROLL DIRECTION, in radians, y-up. The fold line is perpendicular to
    *  it. 0 is straight up the sheet from the bottom edge — the entrance. */
   uCurlAxis: IUniform<number>;
-  /** The arc's radius: 0 is {@link RADIUS_WIDE}, 1 is {@link RADIUS_TIGHT}. */
+  /**
+   * ONE NAME, TWO MEANINGS, and that is the trap this shader has already fallen
+   * into once — see the header.
+   *
+   * MODE 1: the ARC'S RADIUS, from {@link RADIUS_WIDE} at 0 to
+   * {@link RADIUS_TIGHT} at 1. The tear bends at 0.35.
+   *
+   * MODE 0: how far the cone's half-angle mixes from π/2 (a cylinder) toward
+   * {@link CONE_TIGHT}. It is NOT what makes the roll a tube — the tube's
+   * radius is derived from {@link TURNS} — it is only how hard the tube tapers
+   * along its length. The entrance rolls at 1.
+   *
+   * It comes off the POSE, not off the material, because it belongs to the
+   * gesture: one dial for both is how a tube became a crease.
+   */
   uCurlTightness: IUniform<number>;
-  /** How much the radius grows along the FOLD LINE, so the bend is wider at one
-   *  end than the other. 0 is a cylinder. */
+  /** MODE 1 ONLY. How much the radius grows along the FOLD LINE, so the bend is
+   *  wider at one end than the other. 0 is a cylinder. */
   uCurlTaper: IUniform<number>;
-  /** How much of the bend's lift actually leaves the plane, 0…1. Below 1 the
-   *  bend is an ellipse rather than a circle — see the note in the shader. */
+  /** MODE 1 ONLY. How much of the bend's lift actually leaves the plane, 0…1.
+   *  Below 1 the bend is an ellipse rather than a circle — see the note in the
+   *  shader. The roll is a true circle, as it always was. */
   uCurlDepth: IUniform<number>;
   /**
-   * The LEAST the peeled part must wrap, in radians. Above zero the radius
-   * tightens to meet it, so a short peel creases rather than bulging. 0 is off,
-   * which is what the entrance wants.
+   * MODE 1 ONLY. The LEAST the peeled part must wrap, in radians. Above zero
+   * the radius tightens to meet it, so a short peel creases rather than
+   * bulging. 0 is off.
    */
   uCurlWrap: IUniform<number>;
   /** `width / height` of the PLANE, from `fitPlaneToRect` — never the viewport's. */
@@ -147,9 +254,17 @@ export interface CurlUniforms {
   uOpacity: IUniform<number>;
 }
 
-const VERTEX = /* glsl */ `
+/**
+ * Everything both programs are built from: the uniforms, the constants, and the
+ * two deformations. Each program adds one `main` that calls one of them, and
+ * they are otherwise the same text — which is deliberate. Carrying the other
+ * shape's function as dead code costs nothing and was measured costing nothing;
+ * carrying a BRANCH does not (see the header).
+ */
+const VERTEX_COMMON = /* glsl */ `
   uniform float uCurlAmount;
   uniform float uCurlOrigin;
+  uniform float uCurlOriginEdge;
   uniform float uCurlAxis;
   uniform float uCurlTightness;
   uniform float uCurlTaper;
@@ -165,12 +280,72 @@ const VERTEX = /* glsl */ `
   varying vec3 vWorldNormal;
   varying vec3 vFlatNormal;
 
+  const float PI = 3.141592653589793;
+  const float TURNS = ${TURNS.toFixed(4)};
+  const float CONE_TIGHT = ${CONE_TIGHT.toFixed(4)};
   const float MAX_BEND = ${MAX_BEND.toFixed(4)};
   const float RADIUS_WIDE = ${RADIUS_WIDE.toFixed(4)};
   const float RADIUS_TIGHT = ${RADIUS_TIGHT.toFixed(4)};
 
   /**
-   * The bent surface at (u, v) on the flat sheet.
+   * MODE 0 — THE ROLL, recovered from the first paper release and unchanged.
+   *
+   * The curled surface at (u, v) on the flat sheet, in the plane's own unit
+   * box: x and y in [-0.5, 0.5], z toward the camera. The mesh's scale is
+   * (planeWidth, planeHeight, planeHeight), so y and z stay isotropic and the
+   * tube is round rather than elliptical.
+   *
+   * It works in the unit box and NOT in the aspect-stretched frame the fold
+   * uses, which is the other half of why these are two functions rather than
+   * one with a branch in it: they do not even agree about what x means.
+   */
+  vec3 rolled(vec2 uv) {
+    float amount = abs(uCurlAmount);
+    float dir = uCurlAmount < 0.0 ? 1.0 : -1.0;
+
+    // Distance from the ROLLING edge, 0 at that edge and 1 at the fixed one.
+    float s = mix(uv.y, 1.0 - uv.y, uCurlOriginEdge);
+    // The plane's own y, which runs the other way when the roll is flipped.
+    float ySign = mix(1.0, -1.0, uCurlOriginEdge);
+    float x = uv.x - 0.5;
+
+    float front = amount * uCurlOrigin;
+    vec3 local = vec3(x, ySign * (s - 0.5), 0.0);
+
+    if (front > 1e-4 && s < front) {
+      // The CONE. At a half-angle of π/2 the cosine is zero and the radius is
+      // constant — a cylinder. As tightness rises the radius grows along x, so
+      // the far end of the tube coils loosely and the near end tightly.
+      float cone = mix(PI * 0.5, CONE_TIGHT, clamp(uCurlTightness, 0.0, 1.0));
+      // DERIVED, not dialled: the rolled length always makes TURNS turns, so
+      // the tube shrinks as the sheet unrolls and vanishes at zero.
+      float radius = front / (TURNS * 2.0 * PI);
+      float r = max(radius * (1.0 + x * uAspect * cos(cone)), 1e-4);
+
+      float theta = (front - s) / r;
+      float rolledS = front - r * sin(theta);
+      local = vec3(x, ySign * (rolledS - 0.5), dir * r * (1.0 - cos(theta)));
+    }
+
+    // The pointer tilt rides on the CURL, not on the sheet: at amount 0 it is
+    // zero, so a flat sheet is exactly flat and its screen rect is exactly the
+    // page's. A degree and a half of tilt on a flat plane would move the
+    // corners by eight pixels, which is eight times the hand-off's budget.
+    //
+    // The uPointer factor is the one thing here the first release did not have
+    // — it postdates it, and it is 1 on every frame of an entrance, so this is
+    // the original expression at the only value it ever sees. (No backticks in
+    // this comment: the whole shader is a template literal.)
+    float tilt = uMouseTilt * amount * uPointer;
+    float ax = -uMouse.y * tilt;
+    float ay = uMouse.x * tilt;
+    float cx = cos(ax), sx = sin(ax), cy = cos(ay), sy = sin(ay);
+    vec3 t = vec3(local.x, local.y * cx - local.z * sx, local.y * sx + local.z * cx);
+    return vec3(t.x * cy + t.z * sy, t.y, -t.x * sy + t.z * cy);
+  }
+
+  /**
+   * MODE 1 — THE FOLD. The bent surface at (u, v) on the flat sheet.
    *
    * IT WORKS IN PAGE HEIGHTS and returns the mesh's own units, and the
    * difference matters: the mesh's scale is (planeWidth, planeHeight,
@@ -267,20 +442,32 @@ const VERTEX = /* glsl */ `
     return vec3(out3.x / max(uAspect, 1e-4), out3.y, out3.z);
   }
 
+`;
+
+/**
+ * The rest of the vertex stage, given the name of the deformation this program
+ * is for. The ONLY difference between the two programs is that name.
+ */
+const vertexMain = (deform: string): string => /* glsl */ `
   void main() {
     vUv = uv;
-    vec4 world = modelMatrix * vec4(bent(uv), 1.0);
+    vec4 world = modelMatrix * vec4(${deform}(uv), 1.0);
     vWorldPos = world.xyz;
 
-    // The normal is recomputed from the BENT surface, never carried through
+    // The normal is recomputed from the DEFORMED surface, never carried through
     // from the flat geometry — and it is crossed in WORLD space, from two
     // neighbouring points put through the same matrix. three's normalMatrix
     // would have given a VIEW-space normal, and the lights are in world space;
     // doing it this way also survives the mesh's anisotropic scale without a
     // second matrix to keep in step.
+    //
+    // It is the same arithmetic in both modes because BOTH versions used the
+    // same arithmetic — the same epsilon, the same two neighbours, the same
+    // cross in world space. Each mode gets its normals from its own surface;
+    // what they share is only the method.
     float e = 0.002;
-    vec3 du = (modelMatrix * vec4(bent(uv + vec2(e, 0.0)), 1.0)).xyz - vWorldPos;
-    vec3 dv = (modelMatrix * vec4(bent(uv + vec2(0.0, e)), 1.0)).xyz - vWorldPos;
+    vec3 du = (modelMatrix * vec4(${deform}(uv + vec2(e, 0.0)), 1.0)).xyz - vWorldPos;
+    vec3 dv = (modelMatrix * vec4(${deform}(uv + vec2(0.0, e)), 1.0)).xyz - vWorldPos;
     vWorldNormal = normalize(cross(du, dv));
     // The FLAT sheet's normal, which the fragment stage divides by. Carried
     // rather than recomputed there: modelMatrix is a vertex-stage uniform.
@@ -291,6 +478,13 @@ const VERTEX = /* glsl */ `
     gl_Position = projectionMatrix * viewMatrix * world;
   }
 `;
+
+/** THE ENTRANCE's program: the cone wrap. */
+const ROLL_VERTEX = VERTEX_COMMON + vertexMain('rolled');
+/** THE TEAR's program: the arc and its flap, and the same text it has always
+ *  had — which is what makes "the exit did not move" checkable rather than
+ *  asserted. See the header. */
+const FOLD_VERTEX = VERTEX_COMMON + vertexMain('bent');
 
 const FRAGMENT = /* glsl */ `
   uniform sampler2D uMap;
@@ -386,7 +580,6 @@ const FRAGMENT = /* glsl */ `
 `;
 
 export interface CurlMaterialOptions {
-  tightness: number;
   taper: number;
   depth: number;
   paper: string;
@@ -408,52 +601,87 @@ export interface CurlMaterial extends ShaderMaterial {
   uniforms: CurlUniforms;
 }
 
-export function createCurlMaterial(o: CurlMaterialOptions): CurlMaterial {
-  const material = new ShaderMaterial({
-    vertexShader: VERTEX,
-    fragmentShader: FRAGMENT,
-    // Both sides: the flap's underside is as much of the sheet as its face.
-    side: DoubleSide,
-    // The tear fades over its last tenth, so the sheet has to be able to. At
-    // alpha 1 — which is every frame but those — this composites identically.
-    transparent: true,
-    uniforms: {
-      uCurlAmount: { value: 0 },
-      uCurlOrigin: { value: 0 },
-      uCurlAxis: { value: 0 },
-      uCurlTightness: { value: o.tightness },
-      uCurlTaper: { value: o.taper },
-      uCurlDepth: { value: o.depth },
-      uCurlWrap: { value: 0 },
-      uAspect: { value: 1 },
-      uMouse: { value: new Vector2(0, 0) },
-      uMouseTilt: { value: (o.mouseTiltDeg * Math.PI) / 180 },
-      uPointer: { value: 1 },
-      uMap: { value: null },
-      uHasMap: { value: 0 },
-      uPaper: { value: new Color(o.paper) },
-      uLightAPos: { value: new Vector3(o.lightA.x, o.lightA.y, o.lightA.z) },
-      uLightBPos: { value: new Vector3(o.lightB.x, o.lightB.y, o.lightB.z) },
-      uLightA: { value: o.lightA.intensity },
-      uLightB: { value: o.lightB.intensity },
-      uRoughness: { value: o.roughness },
-      uReflect: { value: o.reflect },
-      uAmbient: { value: o.ambient },
-      uBackShade: { value: o.backShade },
-      uGrain: { value: o.grain },
-      uHairline: { value: new Vector2(0, 0) },
-      uEdgeInk: { value: new Color(o.edgeInk) },
-      uEdgeAlpha: { value: o.edgeAlpha },
-      uOpacity: { value: 1 },
-    } satisfies CurlUniforms,
-  });
-  return material as unknown as CurlMaterial;
+/**
+ * THE TWO PROGRAMS, and the one set of uniforms they both read.
+ *
+ * Sharing the uniforms object is not a saving, it is the safety: there is no
+ * "copy the values across" step to forget, so the two programs cannot drift
+ * apart on anything but the one line that differs between them. Writing a
+ * uniform writes it for both; only one of them is on the mesh at a time.
+ */
+export interface CurlMaterials {
+  /** The ENTRANCE's — `curlMode` 0. */
+  roll: CurlMaterial;
+  /** The TEAR's — `curlMode` 1. */
+  fold: CurlMaterial;
+  /** Shared. Written by `SheetCanvas` on every frame the sheet paints. */
+  uniforms: CurlUniforms;
+  dispose: () => void;
 }
 
-/** Retune a live material from the dock, without rebuilding it. */
-export function applyCurlOptions(material: CurlMaterial, o: CurlMaterialOptions): void {
-  const u = material.uniforms;
-  u.uCurlTightness.value = o.tightness;
+export function createCurlMaterials(o: CurlMaterialOptions): CurlMaterials {
+  const shared: CurlUniforms = {
+    uCurlAmount: { value: 0 },
+    uCurlOrigin: { value: 0 },
+    uCurlOriginEdge: { value: 0 },
+    uCurlAxis: { value: 0 },
+    // Written from the POSE on every frame the sheet paints, like the amount,
+    // the origin and the wrap. Nothing renders before the first `show`.
+    uCurlTightness: { value: 0 },
+    uCurlTaper: { value: o.taper },
+    uCurlDepth: { value: o.depth },
+    uCurlWrap: { value: 0 },
+    uAspect: { value: 1 },
+    uMouse: { value: new Vector2(0, 0) },
+    uMouseTilt: { value: (o.mouseTiltDeg * Math.PI) / 180 },
+    uPointer: { value: 1 },
+    uMap: { value: null },
+    uHasMap: { value: 0 },
+    uPaper: { value: new Color(o.paper) },
+    uLightAPos: { value: new Vector3(o.lightA.x, o.lightA.y, o.lightA.z) },
+    uLightBPos: { value: new Vector3(o.lightB.x, o.lightB.y, o.lightB.z) },
+    uLightA: { value: o.lightA.intensity },
+    uLightB: { value: o.lightB.intensity },
+    uRoughness: { value: o.roughness },
+    uReflect: { value: o.reflect },
+    uAmbient: { value: o.ambient },
+    uBackShade: { value: o.backShade },
+    uGrain: { value: o.grain },
+    uHairline: { value: new Vector2(0, 0) },
+    uEdgeInk: { value: new Color(o.edgeInk) },
+    uEdgeAlpha: { value: o.edgeAlpha },
+    uOpacity: { value: 1 },
+  };
+
+  const program = (vertexShader: string): CurlMaterial =>
+    new ShaderMaterial({
+      vertexShader,
+      fragmentShader: FRAGMENT,
+      // Both sides: the flap's underside is as much of the sheet as its face.
+      side: DoubleSide,
+      // The tear fades over its last tenth, so the sheet has to be able to. At
+      // alpha 1 — which is every frame but those — this composites identically.
+      transparent: true,
+      uniforms: shared,
+    }) as unknown as CurlMaterial;
+
+  const roll = program(ROLL_VERTEX);
+  const fold = program(FOLD_VERTEX);
+  return {
+    roll,
+    fold,
+    uniforms: shared,
+    dispose: () => {
+      roll.dispose();
+      fold.dispose();
+    },
+  };
+}
+
+/** Retune the live material from the dock, without rebuilding it. One write
+ *  reaches both programs: they share the uniforms object. */
+export function applyCurlOptions(materials: CurlMaterials, o: CurlMaterialOptions): void {
+  const u = materials.uniforms;
   u.uCurlTaper.value = o.taper;
   u.uCurlDepth.value = o.depth;
   u.uMouseTilt.value = (o.mouseTiltDeg * Math.PI) / 180;
@@ -473,11 +701,17 @@ export function applyCurlOptions(material: CurlMaterial, o: CurlMaterialOptions)
 
 /* ── the bend, on the CPU ─────────────────────────────────────────────────── */
 
-/** Everything `bent()` reads, for the one caller that has to evaluate it here. */
+/** Everything the vertex stage reads, for the one caller that has to evaluate
+ *  it here. The mode picks which of the two shapes the rest describes. */
 export interface BendParams {
+  /** 0 the ROLL, 1 the FOLD. {@link bentPoint} switches on it exactly as the
+   *  shader's `deform` does. */
+  mode: 0 | 1;
   amount: number;
   origin: number;
-  /** Radians, the shader's own frame. */
+  /** MODE 0. Which edge the roll starts from: 0 the bottom, 1 the top. */
+  originEdge: number;
+  /** MODE 1. Radians, the shader's own frame. */
   axis: number;
   tightness: number;
   taper: number;
@@ -487,8 +721,8 @@ export interface BendParams {
 }
 
 /**
- * ONE POINT of the bent surface, in the mesh's own units — a hand port of
- * `bent()` above, minus the pointer tilt, which the tear does not use.
+ * ONE POINT of the deformed surface, in the mesh's own units — a hand port of
+ * `deform()` above, minus the pointer tilt, which the tear does not use.
  *
  * It exists because "how far off the page has the corner come" is a question
  * about a vertex, and the vertex is computed in a shader: the CPU has no way to
@@ -500,8 +734,14 @@ export interface BendParams {
  * the screen next to it. `curlMaterial.test.ts` holds it to the properties the
  * shader's own geometry has to have (flat at zero, tangent at the fold, lift
  * rising with the wrap), which is what would catch a port that drifted.
+ *
+ * It switches on the mode for the same reason the shader does. The corner-lift
+ * measurement is about the TEAR, so mode 1 is the path that has to match the
+ * GPU to a pixel; mode 0 is here so that asking where a vertex of the ROLL went
+ * gets an answer rather than a fold's answer to a different question.
  */
 export function bentPoint(u: number, v: number, p: BendParams): [number, number, number] {
+  if (p.mode === 0) return rolledPoint(u, v, p);
   const qx = (u - 0.5) * p.aspect;
   const qy = v - 0.5;
 
@@ -547,4 +787,29 @@ export function bentPoint(u: number, v: number, p: BendParams): [number, number,
     z = dir * lift * p.depth;
   }
   return [x / Math.max(p.aspect, 1e-4), y, z];
+}
+
+/**
+ * MODE 0 on the CPU — the hand port of `rolled()`, same relationship and same
+ * risk. It works in the unit box, not in the aspect-stretched frame the fold
+ * uses, because that is what the shader's roll does.
+ */
+function rolledPoint(u: number, v: number, p: BendParams): [number, number, number] {
+  const amount = Math.abs(p.amount);
+  const dir = p.amount < 0 ? 1 : -1;
+
+  const s = p.originEdge > 0.5 ? 1 - v : v;
+  const ySign = p.originEdge > 0.5 ? -1 : 1;
+  const x = u - 0.5;
+
+  const front = amount * p.origin;
+  if (front <= 1e-4 || s >= front) return [x, ySign * (s - 0.5), 0];
+
+  const cone = Math.PI * 0.5 + (CONE_TIGHT - Math.PI * 0.5) * Math.min(Math.max(p.tightness, 0), 1);
+  const radius = front / (TURNS * 2 * Math.PI);
+  const r = Math.max(radius * (1 + x * p.aspect * Math.cos(cone)), 1e-4);
+
+  const theta = (front - s) / r;
+  const rolledS = front - r * Math.sin(theta);
+  return [x, ySign * (rolledS - 0.5), dir * r * (1 - Math.cos(theta))];
 }

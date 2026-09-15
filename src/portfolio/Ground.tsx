@@ -1,3 +1,4 @@
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Project } from './blocks/types';
 
 /**
@@ -28,9 +29,38 @@ import type { Project } from './blocks/types';
  * link resolves to, so there is one way to arrive at a section and it is used
  * by both. The strip sits on the ground rather than on the paper, so it does
  * not move when a sheet does and it never has to be part of a texture.
+ *
+ * AND THE WAY OUT, at the right end. It replaced a 96px ring in the bottom-left
+ * corner, which cost the page a 144px band it was not allowed to use — a piece
+ * of chrome with its own colour, its own blur and seven dials, to say a thing
+ * the keyboard already did. It is a word in the strip's own mono now: the two
+ * ways out that are not a browser button, named where the view already names
+ * itself.
+ *
+ * IT IS FIRST IN THE DOM AND LAST ON SCREEN, and that is deliberate. This is a
+ * modal: the way out should be the first thing Tab reaches, not something you
+ * arrive at after every section number and every link in the project — which is
+ * the arrangement the pill had, for the same reason. `order` puts it back on
+ * the right where it reads as a footnote to the strip rather than as the first
+ * thing in it.
+ *
+ * EVERY BUTTON IN HERE STOPS ITS POINTER EVENTS. The strip is ground, and
+ * clicking the ground leaves the view (`useDismissOnGround`) — so without this
+ * a click on a section number scrolls to that section AND closes the view on
+ * the way. That was already true before this item existed and nothing caught
+ * it: the suite clicks with `element.click()`, which dispatches a bare `click`
+ * and no pointer events at all. The dead parts of the strip still dismiss,
+ * which is what the hook is for.
  */
 
 const pad = (n: number): string => String(n).padStart(2, '0');
+
+/** Pointer events on a control inside the strip are the control's, not the
+ *  ground's — see the note above. */
+const keepPointer = {
+  onPointerDown: (e: ReactPointerEvent) => e.stopPropagation(),
+  onPointerUp: (e: ReactPointerEvent) => e.stopPropagation(),
+};
 
 interface GroundProps {
   project: Project;
@@ -42,9 +72,13 @@ interface GroundProps {
   pendingIndex: number | null;
   /** A number was clicked — scroll the track to that section. */
   onSelect: (index: number) => void;
+  /** Leave the view: the same close the Escape key and the ground both run, so
+   *  there is one exit and it plays the same storyboard however it was asked
+   *  for. It ends in `history.back()` when the view was opened from an item. */
+  onClose: () => void;
 }
 
-export function Ground({ project, activeIndex, pendingIndex, onSelect }: GroundProps) {
+export function Ground({ project, activeIndex, pendingIndex, onSelect, onClose }: GroundProps) {
   const total = project.sections.length;
   const current = project.sections[Math.min(activeIndex, total - 1)];
   const pending = pendingIndex === null ? null : project.sections[pendingIndex];
@@ -52,6 +86,16 @@ export function Ground({ project, activeIndex, pendingIndex, onSelect }: GroundP
     <div className="pv-ground">
       <div className="pv-grain" aria-hidden="true" />
       <header className="pv-letterhead">
+        {/* First in the DOM, last on screen. A button, so Enter and Space
+            close it without a line of code. */}
+        <button
+          type="button"
+          className="pv-letterhead__back"
+          onClick={onClose}
+          {...keepPointer}
+        >
+          ESC / &larr; BACK
+        </button>
         <span className="pv-letterhead__project">{project.title}</span>
         <nav className="pv-letterhead__nav" aria-label="Sections">
           {project.sections.map((section, k) => (
@@ -63,6 +107,7 @@ export function Ground({ project, activeIndex, pendingIndex, onSelect }: GroundP
               data-pending={k === pendingIndex || undefined}
               aria-current={k === activeIndex ? 'true' : undefined}
               onClick={() => onSelect(k)}
+              {...keepPointer}
             >
               <span className="pv-sr">{section.title}</span>
               <span aria-hidden="true">{pad(k + 1)}</span>

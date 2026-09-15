@@ -31,10 +31,11 @@ const DWELL = 500;
 
 /** The shipped dials, so the poses are tested against the numbers that ship. */
 const DIALS: PoseDials = {
-  enterCurl: -0.55,
-  enterCurlOrigin: 0.15,
-  enterCurlAxis: 270,
-  startRotation: -28,
+  enterCurl: -1,
+  enterRollReach: 1,
+  enterRollEdge: 0,
+  enterCurlTightness: 1,
+  startRotation: -45,
   rotationEndAt: 0.16,
   scaleBase: 0.41,
   scaleTargetAt: 0.22,
@@ -50,6 +51,7 @@ const DIALS: PoseDials = {
   peelCurlPeak: 0.6,
   peelCurlPeakAt: 0.4,
   peelCurlRelax: 0.2,
+  peelCurlTightness: 0.35,
   peelWrapMin: 2.4,
   peelRotateMid: -12,
   peelRotateEnd: -18,
@@ -259,9 +261,9 @@ describe('layout — one thing at a time', () => {
   });
 });
 
-describe('sheetPose — the soft entrance', () => {
-  it('stops tumbling first, from a gentler angle than the roll did', () => {
-    expect(sheetPose(0, DIALS).rotationZ).toBe(-28);
+describe('sheetPose — the entrance rolls', () => {
+  it('stops tumbling first', () => {
+    expect(sheetPose(0, DIALS).rotationZ).toBe(-45);
     expect(sheetPose(0.16, DIALS).rotationZ).toBeCloseTo(0, 9);
     expect(sheetPose(0.9, DIALS).rotationZ).toBeCloseTo(0, 9);
   });
@@ -271,20 +273,47 @@ describe('sheetPose — the soft entrance', () => {
     expect(sheetPose(0.22, DIALS).scale).toBeCloseTo(1, 6);
   });
 
-  it('arrives as a wide bend at one edge, not as a tube', () => {
-    // The fold does not move: it sits a sixth of the way in from the TOP edge
-    // — the leading one as the sheet rises — for the whole entrance, so the
-    // rest of the sheet is flat and a line of type stays readable across it.
+  it('is the ROLL and not the fold — curl mode 0, end to end', () => {
+    // THE WHOLE POINT OF THE MODE. The two shapes read the same uniform names
+    // to mean different things, so an entrance that came out on mode 1 would
+    // compile, run, and be a flat sheet tilting in. It is asked at every point
+    // of the entrance, because a mode that were only right at p = 0 would be a
+    // shape that changed halfway through one.
+    for (const p of [0, 0.3, 0.59, 0.6, 1]) {
+      expect(sheetPose(p, DIALS).curlMode).toBe(0);
+    }
+    expect(tearPose(0.5, DIALS).curlMode).toBe(1);
+  });
+
+  it('winds the WHOLE sheet, from the bottom edge, and only unwinds it', () => {
     for (const p of [0, 0.3, 0.59, 1]) {
-      expect(sheetPose(p, DIALS).curlOrigin).toBe(0.15);
-      expect(sheetPose(p, DIALS).curlAxis).toBe(270);
-      // No wrap floor: the entrance's curve has to stay wide enough to read a
-      // line of type across, which is the one thing a floor would take away.
+      // Reach 1: the roll takes all of the sheet at full amount, which is what
+      // makes it a tube rather than a curled edge.
+      expect(sheetPose(p, DIALS).curlOrigin).toBe(1);
+      expect(sheetPose(p, DIALS).curlOriginEdge).toBe(0);
+      // The cone's TAPER, held for the whole entrance: what unrolls is the
+      // amount, never the taper and never the radius — which is derived from a
+      // fixed number of turns and shrinks with the amount on its own.
+      expect(sheetPose(p, DIALS).tightness).toBe(1);
+    }
+    expect(sheetPose(0, DIALS).curl).toBeCloseTo(-1, 6);
+    expect(sheetPose(0.3, DIALS).curl).toBeCloseTo(-0.5, 6);
+  });
+
+  it('leaves the FOLD’s dials at nothing, since mode 0 cannot read them', () => {
+    // Written to a no-op rather than left over from the last pose: every
+    // uniform is set on every frame, so a tear's axis must not survive into an
+    // entrance even though this mode would ignore it.
+    for (const p of [0, 0.3, 1]) {
+      expect(sheetPose(p, DIALS).curlAxis).toBe(0);
       expect(sheetPose(p, DIALS).curlWrap).toBe(0);
     }
-    expect(sheetPose(0, DIALS).curl).toBeCloseTo(-0.55, 6);
-    expect(sheetPose(0.3, DIALS).curl).toBeCloseTo(-0.275, 6);
+    // …and the tear's are its own, on the other side of the switch.
+    expect(tearPose(0.5, DIALS).curlAxis).toBe(125);
+    expect(tearPose(0.5, DIALS).curlWrap).toBe(2.4);
+    expect(tearPose(0.5, DIALS).tightness).toBe(0.35);
   });
+
 
   it('is flat well before the hand-off, and stays flat', () => {
     // THE constraint: a bend still resolving at the swap is a shape the flat

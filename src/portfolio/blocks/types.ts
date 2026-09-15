@@ -106,11 +106,23 @@ export type Block = BlockBody & {
  * the generator writes the file from, a texture whose size is a guess is a
  * texture nobody can tell has gone stale — and here it is also how the right
  * capture is CHOSEN. See {@link Section.sheets}.
+ *
+ * THE CSS SIZE AND THE SCALE ARE DECLARED SEPARATELY, the way an `srcset`
+ * descriptor is and for the same reason. `width`/`height` are the page rect the
+ * capture was taken of, in CSS pixels, and they are what a capture is picked by
+ * — two captures at the same width are the same document. `scale` is how many
+ * device pixels the file has per CSS pixel: the file itself is
+ * `width × scale` by `height × scale`. Folding the two into one number would
+ * make a 2x capture of a 1632px page indistinguishable from a 1x capture of a
+ * 3264px one, which is a different document.
  */
 export interface SheetTexture {
   src: string;
+  /** The page rect it was taken of, in CSS pixels. */
   width: number;
   height: number;
+  /** Device pixels per CSS pixel: 1 or 2. The file is `width × scale` wide. */
+  scale: number;
 }
 
 /**
@@ -126,8 +138,8 @@ export interface Section {
   title: string;
   blocks: Block[];
   /**
-   * THE SECTION'S FIRST VIEWPORT, one capture per signed-off viewport, widest
-   * first. This is what the entrance unrolls into the page.
+   * THE SECTION'S FIRST VIEWPORT, one capture per signed-off viewport PER
+   * SCALE, widest first. This is what the entrance unrolls into the page.
    *
    * It would be tidier for one capture to serve both viewports, and it does not
    * work. The page's type is a fixed number of pixels and its measure is not,
@@ -137,8 +149,15 @@ export interface Section {
    * put the hand-off diff at 8–16% of the page's pixels at the viewport it was
    * not taken at, against a 2% budget. With one each it is under 2% at both.
    *
-   * `SheetCanvas` picks the one whose `width` is nearest the live page's rect,
-   * so a project that ships one capture still works — at one viewport.
+   * ONE MORE PER SCALE, and that one IS the same document at two scales — which
+   * is exactly why it has to ship rather than be resampled: the renderer's
+   * framebuffer is at the display's pixel ratio, so a 1x capture on a 2x display
+   * is every glyph magnified two to one next to an HTML page drawn at 2x, at the
+   * one moment the two surfaces swap.
+   *
+   * `SheetCanvas` picks the one whose `width` is nearest the live page's rect
+   * and then the `scale` nearest the renderer's, so a project that ships one
+   * capture still works — at one viewport, on one kind of display.
    */
   sheets: SheetTexture[];
   /**

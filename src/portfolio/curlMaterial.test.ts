@@ -15,10 +15,12 @@ import type { BendParams } from './curlMaterial';
  * from different sides of the driver and have to agree about the same peel.
  */
 
-/** The tear's shipped shape, at the page's aspect. */
+/** The tear's shipped shape, at the page's aspect. THE FOLD — mode 1. */
 const TEAR: BendParams = {
+  mode: 1,
   amount: 0.45,
   origin: 0.08,
+  originEdge: 0,
   axis: (125 * Math.PI) / 180,
   tightness: 0.35,
   taper: 0.35,
@@ -27,13 +29,23 @@ const TEAR: BendParams = {
   aspect: 1632 / 748,
 };
 
-/** The entrance's, which wants a wide curve and no floor under it. */
+/**
+ * The entrance's, which is THE ROLL — mode 0, the cone wrap, and a different
+ * function reading the same field names.
+ *
+ * `origin` 1 is how much of the sheet the roll reaches at full amount, not
+ * where a fold sits; `tightness` 1 is how hard the cone tapers, not a radius.
+ * That is the whole hazard these two constants exist to keep visible: put this
+ * object through the fold and it is a flat sheet with a crease in one corner,
+ * which is exactly what shipped for a release.
+ */
 const ENTER: BendParams = {
   ...TEAR,
-  amount: -0.55,
-  origin: 0.15,
-  axis: (270 * Math.PI) / 180,
-  wrap: 0,
+  mode: 0,
+  amount: -1,
+  origin: 1,
+  originEdge: 0,
+  tightness: 1,
 };
 
 /** uv (1, 0) is the plane's bottom-right corner: the one a tear lifts. */
@@ -140,24 +152,123 @@ describe('bentPoint — the surface is smooth where it leaves the plane', () => 
   });
 });
 
-describe('bentPoint — the entrance keeps its wide curve', () => {
-  it('bends AWAY from the viewer, along the top edge, and only there', () => {
-    // The fold sits a sixth of the way in from the top edge and the rest of the
-    // sheet is flat, which is what leaves a line of type readable across it.
-    expect(bentPoint(0.5, 0.98, ENTER)[2]).toBeLessThan(0);
-    expect(bentPoint(0.5, 0.5, ENTER)[2]).toBe(0);
-    expect(bentPoint(0.5, 0.02, ENTER)[2]).toBe(0);
-  });
+describe('bentPoint — the entrance is a ROLL, and a roll is not a bend', () => {
+  /** The z of the surface down the sheet's CENTRE LINE, sampled along v. */
+  const spine = (params: BendParams, n = 400): number[] =>
+    Array.from({ length: n + 1 }, (_, i) => bentPoint(0.5, i / n, params)[2]);
 
-  it('takes no floor, so the curve stays as wide as the dial says', () => {
-    const wide = bentPoint(0.5, 1, ENTER);
-    const creased = bentPoint(0.5, 1, { ...ENTER, wrap: 2.4 });
-    expect(Math.abs(creased[2])).toBeGreaterThan(Math.abs(wide[2]));
-  });
-
-  it('straightens to exactly flat by the hand-off', () => {
-    for (const v of [0, 0.5, 0.9, 1]) {
-      expect(bentPoint(0.5, v, { ...ENTER, amount: 0 })[2]).toBe(0);
+  /** Local maxima of |z| along that line, endpoints included — the crests of
+   *  the roll. ONE is a bend; more than one is a tube, and that is the whole
+   *  distinction between the two shapes. */
+  const crests = (z: number[]): number => {
+    const a = z.map(Math.abs);
+    let n = 0;
+    for (let i = 0; i < a.length; i++) {
+      const up = i === 0 || a[i] > a[i - 1];
+      const down = i === a.length - 1 || a[i] >= a[i + 1];
+      if (up && down && a[i] > 1e-4) n++;
     }
+    return n;
+  };
+
+  it('winds the sheet round MORE THAN ONCE, which a fold cannot do', () => {
+    // THE TEST THAT WOULD HAVE CAUGHT IT. A fold has one crest however hard it
+    // is driven — an arc and a straight flap, and the flap does not come back.
+    // The roll makes 2.35 turns whatever is left to roll, so its centre line
+    // crosses over itself twice on the way up.
+    expect(crests(spine(ENTER))).toBeGreaterThan(1);
+    // …and the fold, driven as hard as it ever is, has exactly one.
+    expect(crests(spine({ ...TEAR, amount: 0.6, origin: 0.53 }))).toBe(1);
+  });
+
+  it('collapses the whole sheet into the tube at full amount', () => {
+    // Fully rolled is fully rolled: at reach 1 every point of the sheet is
+    // wound, so its extent along y is the tube's diameter rather than a page.
+    // A flat sheet tilting in has an extent of 1 — which is what the release
+    // this fixes actually put on screen.
+    const ys = Array.from({ length: 401 }, (_, i) => bentPoint(0.5, i / 400, ENTER)[1]);
+    const extent = Math.max(...ys) - Math.min(...ys);
+    expect(extent).toBeLessThan(0.2);
+    // The tube stands at the far edge, where a rolled-up scroll ends up.
+    expect(Math.min(...ys)).toBeGreaterThan(0.35);
+  });
+
+  it('has a radius DERIVED from the amount, so it shrinks to nothing', () => {
+    // The tube always makes the same number of turns, so its RADIUS is what
+    // gives: it thins as the sheet unrolls and vanishes at zero rather than
+    // collapsing through a discontinuity. That is also what a scroll does, and
+    // it is the property `tightness` was mistaken for.
+    const thickness = (amount: number): number =>
+      // A fine grid, because the crest is being found by sampling and the
+      // claim is about a ratio to four places.
+      Math.max(...spine({ ...ENTER, amount }, 20000).map(Math.abs));
+    const full = thickness(-1);
+    expect(thickness(-0.5) / full).toBeCloseTo(0.5, 4);
+    expect(thickness(-0.25) / full).toBeCloseTo(0.25, 4);
+    expect(thickness(0)).toBe(0);
+  });
+
+  it('rolls TOWARD the viewer at a negative amount — the fold does not', () => {
+    // THE TWO MODES DISAGREE ABOUT THE SIGN, and they always did: the roll
+    // reads `amount < 0` as "rolled" and lifts toward the lens, the fold reads
+    // negative as "away". One number, two conventions, which is one more reason
+    // these are two functions rather than one with a flag in it.
+    expect(Math.min(...spine(ENTER))).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...spine(ENTER))).toBeGreaterThan(0);
+    expect(bentPoint(0.5, 0.98, { ...TEAR, amount: -0.55, origin: 0.15, axis: (270 * Math.PI) / 180, wrap: 0 })[2]).toBeLessThan(0);
+  });
+
+  it('is exactly flat once it is out', () => {
+    // THE HAND-OFF INVARIANT at the geometry's own level: at amount 0 there is
+    // no tube and no offset, so the plane is the page's rect exactly.
+    for (const v of [0, 0.5, 0.9, 1]) {
+      const flat = bentPoint(0.5, v, { ...ENTER, amount: 0 });
+      expect(flat[1]).toBeCloseTo(v - 0.5, 12);
+      expect(flat[2]).toBe(0);
+    }
+  });
+
+  it('takes `tightness` as a TAPER, which is not what makes it a tube', () => {
+    // The cone's half-angle scales the radius by `1 + x·aspect·cos(cone)`, and
+    // on the centre line x is 0 — so down the middle the tube is the same tube
+    // at every tightness. It is the dial the last release mistook for the one
+    // that produces a roll, and this is the arithmetic that says it is not.
+    const middle = spine({ ...ENTER, tightness: 0 });
+    for (const tightness of [0.35, 0.62, 1]) {
+      expect(spine({ ...ENTER, tightness })).toEqual(middle);
+    }
+    // Off the centre line it does bite, or the dial would be dead.
+    const edge = (tightness: number) => bentPoint(0.95, 0.5, { ...ENTER, tightness })[2];
+    expect(edge(1)).not.toBeCloseTo(edge(0), 6);
+  });
+
+  it('ignores every dial that belongs to the fold', () => {
+    // `taper`, `depth` and `wrap` are mode 1's. A roll that moved when one of
+    // them did would be a roll the tear could reach — which is the coupling the
+    // mode exists to break.
+    const rolled = spine(ENTER);
+    for (const other of [{ taper: -1 }, { depth: 1 }, { wrap: 2.4 }, { axis: 0 }]) {
+      expect(spine({ ...ENTER, ...other })).toEqual(rolled);
+    }
+  });
+
+  it('rolls from the edge it is told to, and only that changes', () => {
+    // The free end is the leading edge as the sheet rises. Flipping the dial
+    // mirrors the shape about the middle and does nothing else.
+    const bottom = spine(ENTER);
+    const top = spine({ ...ENTER, originEdge: 1 }).reverse();
+    for (let i = 0; i < bottom.length; i++) expect(top[i]).toBeCloseTo(bottom[i], 12);
+  });
+
+  it('is a partial roll under the `held` preset, not a different shape', () => {
+    // `held` is mode 0 too: fewer turns' worth of sheet taken up, at a smaller
+    // radius, with the rest of it flat behind. It is NOT the fold — putting the
+    // entrance on the fold is the bug this file is the guard for.
+    const HELD: BendParams = { ...ENTER, amount: -0.55, tightness: 0.35 };
+    expect(crests(spine(HELD))).toBeGreaterThan(1);
+    // The part the roll has not reached is untouched, which the full one has
+    // none of: at reach 1 and amount −0.55 the front is 0.55 up the sheet.
+    expect(bentPoint(0.5, 0.9, HELD)[2]).toBe(0);
+    expect(bentPoint(0.5, 0.9, ENTER)[2]).toBeGreaterThan(0);
   });
 });
