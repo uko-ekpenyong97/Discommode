@@ -46,9 +46,8 @@ const ORIGIN = process.argv.includes('--url')
   ? process.argv[process.argv.indexOf('--url') + 1]
   : 'http://localhost:5173';
 
-/** Card 02 is five sections of uneven length; 03 is ONE, the case with no tear,
- *  no dwell and nothing to settle; 04 is three, the smallest count with a
- *  middle one. */
+/** Cards 02 and 04 are five sections of uneven length; 03 is ONE, the case with
+ *  no tear, no dwell and nothing to settle. */
 const PROJECT = '02';
 const PROJECTS = ['02', '03', '04'];
 

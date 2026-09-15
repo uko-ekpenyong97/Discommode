@@ -115,11 +115,19 @@ const CAPTURES = [
  */
 const SCALES = [1, 2];
 
-/** One placeholder card per portfolio project: flat colour + a large label. */
+/**
+ * One placeholder card per portfolio project: flat colour + a large label.
+ *
+ * `bg`/`ink` are a PLATE, and a card with a real face has none — card 04 wears
+ * a crop of Nosey's own pitch site, cut from a poster by `optimize-projects`,
+ * so a plate here would be written straight over it on the next `--force`. It
+ * still needs its CAPTURES taken, which is every other thing in this list, so
+ * it stays in the list without a plate rather than dropping out of it.
+ */
 const CARDS = [
   { id: '02', bg: '#2b3a4a', ink: '#e8eef4' },
   { id: '03', bg: '#3f3348', ink: '#f1e9f6' },
-  { id: '04', bg: '#2f4239', ink: '#e6f2ea' },
+  { id: '04' },
 ];
 
 /** The block media the placeholder project points at, all solid colour. */
@@ -323,6 +331,11 @@ async function captureSheets(browser, id, viewport, scale) {
 
 console.log('portfolio placeholders →', OUTPUT_DIR);
 for (const card of CARDS) {
+  // A card whose face is a real picture has no plate — see `CARDS`.
+  if (!card.bg) {
+    console.log(`  keep   ${card.id}/card.webp (real art, written by \`npm run projects\`)`);
+    continue;
+  }
   await writePlate(`${card.id}/card.webp`, {
     w: CARD_W,
     h: CARD_H,
