@@ -374,14 +374,31 @@ const parkMediaNow = (page) =>
       v.pause();
       v.currentTime = 0;
     }
+    // The no-wait form: a plain pause. The full park below has already run
+    // before the seek, and nothing ever resumes an artboard — so this only has
+    // to catch one that mounted in between, and must not spend eight frames
+    // here, where the whole point is that nothing has been given time to settle.
+    window.__pvRive?.(false);
   });
 
+/**
+ * …AND EVERY RIVE ARTBOARD, which is the same problem on a surface a screenshot
+ * flag cannot reach.
+ *
+ * `animations: 'disabled'` pins the CSS animations, and while card 02 was a
+ * placeholder that was enough: there was no `.riv` to load, so every Rive block
+ * fell back to its CSS stand-in. A real artboard draws to a canvas off its own
+ * rAF loop, and a capture taken at one frame of it against a live page at
+ * another is a difference the diff cannot tell from a real one — the same
+ * argument as the video above, and `__pvRive` is the same handle for it.
+ */
 const parkMedia = (page) =>
   page.evaluate(async () => {
     for (const v of document.querySelectorAll('video')) {
       v.pause();
       v.currentTime = 0;
     }
+    await window.__pvRive?.();
     await new Promise((r) => setTimeout(r, 200));
   });
 
@@ -511,12 +528,41 @@ const rectDrift = (page) =>
  * over a canvas still showing the sheet, so a diff there would compare the
  * sheet with itself and pass on anything.
  */
+/**
+ * THE FORWARD HAND-OFF, measured on the frame it actually happens on.
+ *
+ * The sampling point is the app's, not the suite's: `__pv.handoffFrame(k)` is
+ * derived from the same `SEGMENT_EPSILON` that `positionAt` decides the segment
+ * boundary with, so if that boundary ever moves this measurement moves with it.
+ *
+ * It used to be `atEnter(track, k, 0.999)`, which is a number rather than a
+ * mechanism — 0.9px short of the boundary at the shipped `enterDistance`, and a
+ * different distance short of it at any other. That gap is not free, because
+ * the entrance eases in and the last of the easing is where all of it is: the
+ * same diff reads 32% at `p` = 0.6, 7.3% at 0.99, 2.1% at 0.999 and 1.0% on the
+ * frame the hand-off is on. A page of real prose is what made the difference
+ * legible — every glyph edge in a full measure of type resamples through the
+ * last sub-pixel of the approach, where the placeholder's flat plates and short
+ * paragraphs had almost no edges to show it on.
+ *
+ * THE RESIDUAL IS STILL REPORTED. `residual` is the same comparison taken at
+ * 0.999, carried out and printed but never failed on, so the cost of the
+ * approach stays a visible number rather than becoming one nobody measures
+ * again the moment the check stops tripping over it.
+ */
 async function handoffIn(page, track, k, clip, handoffMs) {
-  await seek(page, atEnter(track, k, 0.999));
+  const at = await page.evaluate((k) => window.__pv.handoffFrame(k), k);
+  await seek(page, at);
   const drift = await rectDrift(page);
   const wearing = await textureReady(page);
   await parkMedia(page);
   const sheet = await page.screenshot({ clip, animations: 'disabled' });
+
+  // …and the approach residual, one frame's worth of easing earlier.
+  await seek(page, atEnter(track, k, 0.999));
+  await page.waitForTimeout(handoffMs);
+  await parkMedia(page);
+  const approach = await page.screenshot({ clip, animations: 'disabled' });
 
   await seek(page, track.start[k]);
   // The first frame after the swap, and no settling: the page is put into its
@@ -541,7 +587,8 @@ async function handoffIn(page, track, k, clip, handoffMs) {
   await grainOff(page);
   const reanimated = (await differing(early, late)).pct;
 
-  return { drift, wearing, reanimated, moving, ...(await differing(sheet, live)), sheet };
+  const residual = (await differing(approach, live)).pct;
+  return { drift, wearing, reanimated, moving, residual, ...(await differing(sheet, live)), sheet };
 }
 
 /**
@@ -609,6 +656,8 @@ async function run() {
         };
         const worst = {
           inDrift: 0, inDiff: 0, outDrift: 0, outDiff: 0, mean: 0, reanim: 0, moving: 0, tearMoving: 0,
+          // REPORTED, NEVER ASSERTED — see `handoffIn`.
+          residual: 0,
         };
         let control = null;
         const last = track.start.length - 1;
@@ -620,6 +669,7 @@ async function run() {
           worst.mean = Math.max(worst.mean, into.mean);
           worst.reanim = Math.max(worst.reanim, into.reanimated);
           worst.moving = Math.max(worst.moving, into.moving.moving);
+          worst.residual = Math.max(worst.residual, into.residual);
           if (into.drift > RECT_PX) bad(`card ${id} section ${k} in — rect`, `${round(into.drift)}px`);
           if (into.pct > DIFF_PCT) {
             bad(`card ${id} section ${k} in — diff`, `${pct(into.pct)} wearing ${wore(into)}`);
@@ -665,12 +715,18 @@ async function run() {
           in: worst.inDiff,
           out: worst.outDiff,
           mean: worst.mean,
+          residual: worst.residual,
         });
         check(
           Math.max(worst.inDiff, worst.outDiff) <= DIFF_PCT,
           `card ${id}: neither hand-off shows`,
           `in ${pct(worst.inDiff)}, out ${pct(worst.outDiff)} of ${DIFF_PCT}%, mean ${round(worst.mean)} levels`,
         );
+        // Not a check. The cost of the last sub-pixel of the entrance's easing,
+        // measured at `p` = 0.999 — where this suite used to take the hand-off
+        // shot, and where it is a property of the approach rather than of the
+        // swap. Printed so the number stays in the run's output.
+        console.log(`      · approach residual at p = 0.999: ${pct(worst.residual)}`);
         if (control !== null) {
           check(
             control > 10,
@@ -1420,12 +1476,12 @@ async function run() {
   // into, which is the whole failure this release is about and is not something
   // a per-run pass/fail says out loud.
   console.log('\n── the hand-off diffs, 1x against 2x ────────────────────────');
-  console.log('      scale  viewport   card   rect      forward    reverse   mean');
+  console.log('      scale  viewport   card   rect      forward    reverse   mean   residual');
   for (const h of handoffs) {
     console.log(
       `      ${String(h.dsf).padStart(2)}x    ${h.viewport.padEnd(10)} ${h.card}    ` +
         `${`${round(h.drift)}px`.padEnd(8)} ${pct(h.in).padEnd(10)} ${pct(h.out).padEnd(9)} ` +
-        `${round(h.mean)}`,
+        `${String(round(h.mean)).padEnd(6)} ${pct(h.residual)}`,
     );
   }
   for (const dsf of DPRS) {
@@ -1466,7 +1522,18 @@ async function run() {
       await new Promise((r) => setTimeout(r, TEXTURE_MS));
       await route.continue();
     });
-    await held.route('**/projects/placeholder/**', async (route) => {
+    // CARD 02'S BLOCK MEDIA, wherever it lives. It was `/projects/placeholder/`
+    // for as long as card 02 was a placeholder; the real project's media is
+    // under its SLUG (`/projects/rive-site/`), while its captures stay under
+    // the project ID and are held back by the route above. Matching on the
+    // media's own extensions rather than on the folder is what keeps the two
+    // apart: a glob over `/projects/**` would swallow the captures too, and —
+    // because Playwright checks the most recently registered route first — it
+    // would quietly replace their 3s hold-back with this 1.5s one and the
+    // stronger of the two claims would stop being made at all.
+    const MEDIA_GLOB = '**/projects/*/*.{webp,mp4,webm,riv}';
+    await held.route(MEDIA_GLOB, async (route) => {
+      if (CAPTURE_RE.test(route.request().url())) return route.continue();
       await new Promise((r) => setTimeout(r, MEDIA_MS));
       await route.continue();
     });
@@ -1486,10 +1553,23 @@ async function run() {
     await held.waitForFunction(() => window.__pv?.track() != null, null, { timeout: 20000 });
     const gateAt = Date.now() - t0;
     const heights = () => held.evaluate(() => window.__pv.track().heights.map(Math.round));
+    // IMAGES AND CLIPS, because card 02 is now a page of clips and counting
+    // `document.images` alone would have come back 0 of 0 — and `0 > 0` is a
+    // check that fails while reporting nothing about what it was watching.
+    // A video's poster is not an `<img>`, so the video's own readiness is what
+    // stands in for "the media has landed": `HAVE_METADATA` is the first state
+    // that needed bytes off the wire.
     const decoded = () =>
       held.evaluate(() => {
-        const mine = [...document.images].filter((i) => i.src.includes('/projects/placeholder/'));
-        return { of: mine.length, done: mine.filter((i) => i.complete).length };
+        const isMine = (url) => /\/projects\/[^/]+\//.test(url) && !/(sheet|tail)-\d+-\d+/.test(url);
+        const imgs = [...document.images].filter((i) => isMine(i.currentSrc || i.src));
+        const vids = [...document.querySelectorAll('video')].filter((v) =>
+          isMine(v.currentSrc || v.src || ''),
+        );
+        return {
+          of: imgs.length + vids.length,
+          done: imgs.filter((i) => i.complete).length + vids.filter((v) => v.readyState >= 1).length,
+        };
       });
     const before = await heights();
     const atGate = await decoded();
@@ -1624,6 +1704,193 @@ async function run() {
     } else {
       ok(`every window of captures fits ${TEXTURE_MB} MB of texture`);
     }
+  }
+
+  // ── the last section, and the clips ────────────────────────────────────────
+  //
+  // BOTH OF THESE ARE LIVE-PAGE CHECKS, and neither could have been caught by
+  // anything above. Every other check in this suite steers with `__pv.seek`,
+  // which writes the position straight into the driver — so it never asks the
+  // scroller whether a reader could have got there, and never waits for a clip
+  // the way a reader's browser does.
+  console.log('\n── the last section lands ───────────────────────────────────');
+  {
+    const ctx2 = await browser.newContext({ deviceScaleFactor: 1 });
+    for (const id of PROJECTS) {
+      // 1 — THE SCROLLER CAN ACTUALLY REACH THE END OF THE TRACK.
+      //
+      // The position IS the scrollTop, so a spacer of exactly `maxPosition`
+      // stops one viewport short and the whole last section — entrance, page
+      // and all — is unreachable. It cost the last sheet of every multi-section
+      // card, and `seek` walked straight past it.
+      const p1 = await openView(ctx2, VIEWPORTS[0], `#view-${id}`);
+      const reach = await p1.evaluate(() => {
+        const sc = document.querySelector('.pv-scroller');
+        const t = window.__pv.track();
+        const max = t.start[t.start.length - 1] + t.pageScroll[t.start.length - 1];
+        return { max, reachable: sc.scrollHeight - sc.clientHeight };
+      });
+      check(
+        reach.reachable >= reach.max - 1,
+        `card ${id}: the scroller can reach the end of the track`,
+        `furthest ${Math.round(reach.reachable)} of ${Math.round(reach.max)}`,
+      );
+
+      // 2 — …AND A REAL SCROLL TO THE LAST SECTION LANDS ON IT. `park` is a
+      //     real scroll that lets go, so this is the reader's own path.
+      const lastK = await p1.evaluate(() => window.__pv.track().start.length - 1);
+      await p1.evaluate((k) => window.__pv.park(window.__pv.track().start[k]), lastK);
+      let landed = null;
+      for (let i = 0; i < 40; i++) {
+        await p1.waitForTimeout(150);
+        landed = await p1.evaluate((k) => {
+          const t = window.__pv.track();
+          const l = window.__pv.layout();
+          return {
+            y: window.__pv.position(),
+            want: t.start[k],
+            segment: l?.segment ?? null,
+            shown: [...document.querySelectorAll('.pv-page')].findIndex(
+              (p) => p.style.visibility !== 'hidden',
+            ),
+          };
+        }, lastK);
+        if (landed.segment === 'page' && Math.abs(landed.y - landed.want) < 2) break;
+      }
+      check(
+        landed.segment === 'page' && Math.abs(landed.y - landed.want) < 2 && landed.shown === lastK,
+        `card ${id}: a real scroll to the last section lands on it`,
+        `y ${Math.round(landed.y)} of ${Math.round(landed.want)}, segment ${landed.segment}, showing ${landed.shown}`,
+      );
+      await p1.close();
+
+      // 3 — …AND SO DOES A DEEP LINK STRAIGHT TO IT, which is a different path
+      //     into the same place: no entrance, no scroll, and the position set
+      //     before the reader has touched anything.
+      const p2 = await ctx2.newPage();
+      await p2.setViewportSize({ width: VIEWPORTS[0].width, height: VIEWPORTS[0].height });
+      await p2.goto(`${ORIGIN}/#view-${id}/${lastK + 1}`, { waitUntil: 'load' });
+      await p2.waitForFunction(() => window.__pv?.track() != null, null, { timeout: 20000 });
+      let deepLast = null;
+      for (let i = 0; i < 40; i++) {
+        await p2.waitForTimeout(150);
+        deepLast = await p2.evaluate((k) => {
+          const t = window.__pv.track();
+          const l = window.__pv.layout();
+          return {
+            y: window.__pv.position(),
+            want: t.start[k],
+            segment: l?.segment ?? null,
+            hash: location.hash,
+            shown: [...document.querySelectorAll('.pv-page')].findIndex(
+              (p) => p.style.visibility !== 'hidden',
+            ),
+          };
+        }, lastK);
+        if (deepLast.segment === 'page' && Math.abs(deepLast.y - deepLast.want) < 2) break;
+      }
+      check(
+        deepLast.segment === 'page' &&
+          Math.abs(deepLast.y - deepLast.want) < 2 &&
+          deepLast.shown === lastK &&
+          deepLast.hash === `#view-${id}/${lastK + 1}`,
+        `card ${id}: …and a deep link to the last section lands on it`,
+        `y ${Math.round(deepLast.y)} of ${Math.round(deepLast.want)}, segment ${deepLast.segment}, hash ${deepLast.hash}`,
+      );
+      await p2.close();
+    }
+    await ctx2.close();
+  }
+
+  // ── the clips actually run ─────────────────────────────────────────────────
+  //
+  // A clip is `opacity: 0` until it is marked loaded, over a frame that has its
+  // own tint — so a clip that never starts is not a still frame, it is an empty
+  // grey box. That is live-page behaviour end to end: the capture pipeline
+  // parks every video on its first frame before it shoots, so the textures look
+  // perfect whatever the live element is doing.
+  console.log('\n── the clips ────────────────────────────────────────────────');
+  {
+    const ctx3 = await browser.newContext({ deviceScaleFactor: 1 });
+    for (const id of PROJECTS) {
+      const p = await openView(ctx3, VIEWPORTS[0], `#view-${id}`);
+      const n = await p.evaluate(() => window.__pv.track().start.length);
+      let checked = 0;
+      const faults = [];
+      for (let k = 0; k < n; k++) {
+        // THE POSTER, BEFORE ANYTHING HAS PLAYED. Asked at the hand-off, which
+        // is the first moment the section is on screen: every clip on the page
+        // carries one, and is visible wearing it.
+        await p.evaluate((k) => window.__pv.park(window.__pv.track().start[k]), k);
+        await p.waitForTimeout(600);
+        const posters = await p.evaluate((k) => {
+          const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+          return [...pg.querySelectorAll('video')].map((v) => ({
+            src: (v.getAttribute('src') || v.querySelector('source')?.src || '').split('/').pop(),
+            poster: Boolean(v.poster),
+            muted: v.muted && v.hasAttribute('muted'),
+          }));
+        }, k);
+        for (const v of posters) {
+          if (!v.poster) faults.push(`${id}/${k} ${v.src}: no poster`);
+          // Muted has to be an ATTRIBUTE as well as a property, or Chrome's
+          // autoplay gate can reject every play the clip ever makes.
+          if (!v.muted) faults.push(`${id}/${k} ${v.src}: not muted as an attribute`);
+        }
+
+        // …AND THEN IT RUNS. Walk the section's own vertical run so every clip
+        // on the page comes into view — one below the fold is PAUSED on
+        // purpose, and asking it to play where the reader cannot see it would
+        // be asking for the bug this pauses to avoid.
+        for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+          await p.evaluate(
+            ([k, f]) => {
+              const t = window.__pv.track();
+              window.__pv.park(t.start[k] + t.pageScroll[k] * f);
+            },
+            [k, f],
+          );
+          // Within 2s of arriving, every clip IN VIEW is decoded and running.
+          let state = [];
+          for (let i = 0; i < 10; i++) {
+            await p.waitForTimeout(200);
+            state = await p.evaluate((k) => {
+              const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+              const box = pg.querySelector('.pv-page__scroll').getBoundingClientRect();
+              return [...pg.querySelectorAll('video')]
+                .map((v) => {
+                  const r = v.getBoundingClientRect();
+                  const seen = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top);
+                  return {
+                    src: (v.currentSrc || '').split('/').pop(),
+                    inView: seen > r.height * 0.25,
+                    ready: v.readyState,
+                    playing: !v.paused,
+                    shown: v.classList.contains('is-loaded'),
+                  };
+                })
+                .filter((v) => v.inView);
+            }, k);
+            if (state.length > 0 && state.every((v) => v.ready >= 2 && v.playing && v.shown)) break;
+          }
+          for (const v of state) {
+            checked++;
+            if (v.ready < 2 || !v.playing || !v.shown) {
+              faults.push(
+                `${id}/${k}@${f} ${v.src}: readyState ${v.ready}, ${v.playing ? 'playing' : 'PAUSED'}, ${v.shown ? 'shown' : 'INVISIBLE'}`,
+              );
+            }
+          }
+        }
+      }
+      check(
+        faults.length === 0,
+        `card ${id}: every clip in view is decoded, running and visible`,
+        faults.length === 0 ? `${checked} sightings` : faults.slice(0, 4).join(' | '),
+      );
+      await p.close();
+    }
+    await ctx3.close();
   }
 
   // ── the ways in and out ────────────────────────────────────────────────────

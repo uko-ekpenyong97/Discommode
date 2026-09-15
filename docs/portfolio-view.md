@@ -696,6 +696,31 @@ nested grid on the same gutter lands on exactly the outer grid's lines. It also
 keeps a two-up one block rather than two, which the reveal and the run's stagger
 both depend on.
 
+**THE HEADER'S AIR IS THREE DIALS**, and the sizes in it are not. The letterhead
+block is a masthead rather than prose — it is the first thing in every capture,
+and the space in it is doing as much of the work as the type — so the three gaps
+are tunable live like everything else in `PV PAGE`:
+
+| dial | what it opens | was | is |
+| --- | --- | --- | --- |
+| `headEyebrowGapPx` | `SECTION NN` → the title | 10 | **15** |
+| `headTitleGapPx` | the title → the reference line | 10 | **15** |
+| `headRuleGapPx` | the air on EACH side of the hairline | 24 above, 28 below | **36** |
+
+The first two were one 10px flex `gap`, which is why they could not differ: one
+gap cannot tell the eyebrow-to-title distance from the title-to-reference one.
+The rule had less air above it than below, because the space below was the block
+grid's own 28px margin and nothing had chosen it; it is the same on both sides
+now.
+
+![The page header at 1728×996](header-spacing.png)
+
+Moving these changes the height of every page on every card, so the captures are
+retaken when they move — `BLOCK_VP.letterhead` in `placeholder.ts` is the
+measured cost of the block and is deliberately NOT updated with them: it decides
+how many blocks a placeholder section emits, and holding it still keeps cards 03
+and 04 the same documents they were, half a block taller.
+
 **`textMeasureCh` is off by default**, so a paragraph runs the full measure —
 which at 16px is a long line. The dial is the lever if that reads too long: 90
 is the figure to try. It caps the words without reintroducing a column.
@@ -734,20 +759,51 @@ view.
 The measurable version is the **diff**: screenshot one surface, screenshot the
 other, and count the pixels inside the page rect that differ.
 
-| | forward, worst | reverse, worst | mean absolute difference |
-| --- | --- | --- | --- |
-| 1728×996, 1× | **1.478%** (card 02, the all-prose section) | **0%** | 2.2 levels |
-| 1440×900, 1× | **1.738%** (same section) | **0%** | 2.4 levels |
-| 1728×996, 2× | **1.48%** (same section) | **0%** | 2.3 levels |
-| 1440×900, 2× | **1.705%** (same section) | **0%** | 2.4 levels |
-| budget | 2% | 2% | — |
+**IT IS TAKEN ON THE FRAME THE HAND-OFF HAPPENS ON, and that is load-bearing.**
+`positionAt` turns the segment to `page` at `start[k] - SEGMENT_EPSILON`, so the
+sheet is on screen up to but not including that line; the suite asks the app for
+that frame (`__pv.handoffFrame(k)`) rather than carrying its own copy of the
+number, and a boundary that moves takes the measurement with it.
 
-**2× costs nothing — it is a wash.** The forward diff is 1.48% at 2× against
-1.478% at 1728×996 and 1.705% against 1.738% at 1440×900, and the
-reason is the same one that makes the whole release worth doing: at 1× the
-disagreement is dominated by how two rasterisers antialias a glyph edge, and at
-2× each of those edges is drawn with four times the samples on both sides of the
-comparison. The reverse diff is a flat zero at both scales and both viewports.
+It used to sample `p` = 0.999 of the entrance — a number rather than a
+mechanism, and 0.9px short of the boundary at the shipped `enterDistance`. The
+gap is not free, because the entrance eases in and the last of the easing is
+where all of it is. Measured down the tail of one entrance at 1728×996:
+
+| `p` | 0.6 | 0.8 | 0.9 | 0.95 | 0.99 | 0.999 | the hand-off frame |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| forward diff | 32.4% | 22.9% | 16.6% | 13.1% | 7.3% | 2.1% | **1.0%** |
+
+**Real prose is what made it legible.** Nothing about the approach changed; what
+changed is the page. A full measure of body type has glyph edges everywhere, and
+every one of them resamples through whatever sub-pixel of the approach is left —
+where the placeholder's flat colour plates and short paragraphs had almost no
+edges to show it on, and sat under budget by accident rather than by being
+right. Cards 03 and 04 are still placeholders and still improved, from ~0.7% to
+~0.45%, which is how you can tell this is the mechanism rather than a fix for
+one card.
+
+| | forward, worst | reverse, worst | mean | residual at `p` = 0.999 |
+| --- | --- | --- | --- | --- |
+| 1728×996, 1× | **0.994%** (card 02) | 0.029% | 1.9 levels | 1.949% |
+| 1440×900, 1× | **0.904%** (card 02) | 0.04% | 1.9 levels | 1.943% |
+| 1728×996, 2× | **1.102%** (card 02) | 0.003% | 1.9 levels | 1.877% |
+| 1440×900, 2× | **1.125%** (card 02) | 0.002% | 1.9 levels | 1.906% |
+| cards 03 / 04 | 0.361 – 0.501% | **0%** | 1.2 – 1.3 levels | 0.634 – 0.869% |
+| budget | 2% | 2% | — | not asserted |
+
+**The residual is reported and never asserted.** It is the same comparison taken
+at `p` = 0.999, printed on every run so the cost of the last sub-pixel of the
+easing stays a number somebody can see — rather than one nobody measures again
+the moment the check stops tripping over it. Card 02 is 1.95 – 2.10% of the page
+there, which is the figure that used to be the hand-off's own and used to fail.
+
+**2× costs a little, and it is the type.** Forward runs 1.102 / 1.125% at 2×
+against 0.994 / 0.904% at 1×: four times the samples per glyph edge resolve more
+of the disagreement rather than less of it, on both sides of the comparison. The
+reverse diff is a flat zero on the two placeholder cards; card 02's 0.018 –
+0.04% is its clips, which are parked on their first frame but decoded by two
+different code paths at the two ends of the swap.
 
 What the table cannot show is the state it replaces: before the 2× captures
 existed, this measurement at `deviceScaleFactor: 2` would have been a 1× texture
@@ -1718,7 +1774,10 @@ tear and no dwell) and card 04 (three), and checks:
   with `animations: 'disabled'` fast-forwards the very thing being looked for;
 - **both hand-off diffs** — the last frame of an entrance against the settled
   page, and the settled page against the first frame of a tear, ≤ 2% of pixels
-  differing inside the page rect. Plus the **control** (the same measurement
+  differing inside the page rect. "The last frame" is the app's own
+  (`__pv.handoffFrame`, derived from `SEGMENT_EPSILON`) rather than a `p` the
+  suite picked, and the **approach residual** at `p` = 0.999 is printed beside
+  it without being asserted — see [the hand-offs](#the-hand-offs). Plus the **control** (the same measurement
   against the wrong section's page, which must be large) and a guard that the
   reverse one is photographing the sheet at all;
 - **the tear, in pixels**, with the ground repainted flat magenta and the chrome
@@ -1778,6 +1837,16 @@ tear and no dwell) and card 04 (three), and checks:
   dwell, and an entrance. Outside the dials nothing moves, the ground a tear
   finishes on is left alone, a letterhead click is not grabbed, and a real wheel
   gesture stopped mid-tear finishes;
+- **the last section is reachable at all**, which is a question about the
+  SCROLLER rather than about the track: the position IS the scrollTop, so the
+  spacer has to be the forward extent plus one viewport or the last viewport of
+  track cannot be scrolled to. Asked three ways per card — the furthest
+  reachable scrollTop against `maxPosition`, a real `park` scroll onto the last
+  section, and a cold deep link straight to it;
+- **the clips run**, walking each section's own vertical run so every clip comes
+  into view: within 2s of arriving, every clip IN VIEW is decoded
+  (`readyState` ≥ 2), playing, and visible — plus every clip on the page carries
+  a poster and is muted as an ATTRIBUTE, not merely as a property;
 - deep link (`#view-02/4` lands flat on section 3 with no entrance replay and no
   canvas frame), resize (the reader keeps their section AND the plane re-fits),
   `inert`, Escape, and the reader still opening.
@@ -1797,6 +1866,28 @@ about a VERTEX gets an answer, since the bend happens in a shader and the CPU
 cannot otherwise know where one ended up; and `textures()` is the resident set —
 every capture the GPU is holding and what it costs, which is the one claim about
 memory that can be asked rather than inferred.
+
+**THE TWO THINGS `seek` CANNOT SEE.** Every check above steers the track with
+`__pv.seek`, which writes the position straight into the driver. That is what
+makes a mid-tear frame holdable at all — but it means the suite never asks the
+SCROLLER whether a reader could have reached a position, and never waits on a
+media element the way a reader's browser does. Both of the bugs a live walk
+found on the first real project were in that blind spot:
+
+- the spacer was `maxPosition` rather than `maxPosition + one viewport`, so the
+  furthest reachable scrollTop was a whole viewport short and the entire last
+  section of every multi-section card was unreachable — measured at 1456×839 on
+  card 02: `maxPosition` 12285, furthest 11446, `start[4]` 11766. Seeking went
+  there happily;
+- a clip was `opacity: 0` until `is-loaded`, and `is-loaded` arrived only with
+  `loadeddata` — which under `preload="metadata"` means after a successful
+  `play()`. So a clip's visibility was gated on it having PLAYED, and anything
+  that rejects a play left an empty grey box wearing `.pv-frame`'s tint, with
+  the poster hidden by the same rule. The capture pipeline parks every video on
+  its first frame before it shoots, so the textures looked perfect throughout.
+
+The two check families above exist because of them, and both fail against the
+state that shipped them.
 
 **`verify:gpu` is a separate run, and it asks the question `verify:pv` cannot.**
 That one holds the view open and counts what is resident inside it, and a map

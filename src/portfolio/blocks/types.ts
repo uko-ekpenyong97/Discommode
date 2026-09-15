@@ -22,7 +22,7 @@ export interface Sized {
 /** A piece of media inside a composite block. */
 export type Media =
   | ({ kind: 'image'; src: string; alt?: string } & Sized)
-  | ({ kind: 'video'; src: string; poster: string } & Sized);
+  | ({ kind: 'video'; src: string; webm?: string; poster: string } & Sized);
 
 export type BlockBody =
   /**
@@ -40,8 +40,13 @@ export type BlockBody =
   | { type: 'title'; text: string }
   /** A thin one-liner — a dateline, a role, a year. */
   | { type: 'caption'; text: string }
-  /** A subheading and its paragraphs. */
-  | { type: 'text'; heading: string; body: string[] }
+  /** A subheading and its paragraphs — or just the paragraphs.
+   *
+   *  The heading is OPTIONAL because real copy has runs of prose that carry on
+   *  under the heading above them. Forcing one would mean inventing a
+   *  subheading the writing does not have, which is a worse thing to put on a
+   *  page than no subheading at all. */
+  | { type: 'text'; heading?: string; body: string[] }
   /** Two columns, each media + paragraph. Six grid columns each. */
   | { type: 'twoUp'; columns: [TwoUpColumn, TwoUpColumn] }
   /**
@@ -57,8 +62,19 @@ export type BlockBody =
   | { type: 'statGrid'; stats: Stat[] }
   /** An outlined pill with an icon, linking out. */
   | { type: 'linkPill'; label: string; href: string }
-  /** Muted, looping, plays only while in view. */
-  | ({ type: 'video'; src: string; poster: string; bleed?: boolean; caption?: string } & Sized)
+  /** Muted, looping, plays only while in view.
+   *
+   *  `src` is the mp4 — the one that always plays — and `webm` is the smaller
+   *  encode offered ahead of it. Both come out of `npm run projects`; a block
+   *  that names only `src` is still a whole video block. */
+  | ({
+      type: 'video';
+      src: string;
+      webm?: string;
+      poster: string;
+      bleed?: boolean;
+      caption?: string;
+    } & Sized)
   /** Lazy-mounted Rive artboard; never runs once the view is closed. `w`/`h` are
    *  the ARTBOARD's ratio — the box is reserved at it, so the lazy mount never
    *  reflows the page. */
@@ -67,8 +83,30 @@ export type BlockBody =
       src: string;
       artboard?: string;
       stateMachine?: string;
+      /**
+       * A named ANIMATION to play instead of a state machine.
+       *
+       * A state machine is the better entry point when there is a usable one —
+       * it is what the file's author wired the behaviour into. This is the
+       * escape hatch for when there is not: see `rive-site.ts`, where the only
+       * state machine on the artboard paints the editor's selection handles
+       * over the character.
+       */
+      animation?: string;
       label?: string;
       bleed?: boolean;
+      /**
+       * WHAT THE ARTBOARD IS PRINTED ON. Paper by default, like every other
+       * block on the page.
+       *
+       * `ink` is for a file drawn for a dark surface, which is most files drawn
+       * for a product UI: the Loop character is a light ring and a light face
+       * with nothing behind it, and on this page's warm off-white it is very
+       * nearly invisible. A plate is the honest fix — the alternative is
+       * recolouring somebody's artboard from the outside, which is a thing a
+       * content file should not be doing.
+       */
+      surface?: 'paper' | 'ink';
     } & Sized);
 
 export interface TwoUpColumn {

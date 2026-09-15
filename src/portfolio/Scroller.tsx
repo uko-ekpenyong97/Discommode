@@ -25,6 +25,7 @@ import {
   positionAt,
   positionOf,
   resolve,
+  SEGMENT_EPSILON,
   settleAt,
   sheetPose,
   tearPose,
@@ -166,6 +167,17 @@ function residentWindow(canvas: SheetCanvasHandle | null, center: number): void 
  * `import.meta.env.DEV` is a literal, so the whole block leaves a production
  * build with the rest of the dead branch.
  */
+/**
+ * How far below the segment boundary {@link PortfolioProbe.handoffFrame} sits.
+ *
+ * Small enough that it is the same frame the reader sees hand over, large
+ * enough to survive the float arithmetic between here and `positionAt` — which
+ * compares against `start[k] - SEGMENT_EPSILON` with a strict `<`. Landing
+ * exactly ON the boundary would resolve to `page` and photograph no sheet at
+ * all.
+ */
+const HANDOFF_PROBE_STEP = 0.01;
+
 export interface PortfolioProbe {
   track: () => Track | null;
   position: () => number;
@@ -176,6 +188,24 @@ export interface PortfolioProbe {
   enterWindow: (k: number) => { from: number; to: number } | null;
   /** …and the stretch of empty ground after section `k`'s tear. */
   dwellWindow: (k: number) => { from: number; to: number } | null;
+  /**
+   * THE LAST FRAME SECTION `k`'S SHEET EXISTS ON — which is the frame its
+   * forward hand-off actually happens on, and therefore the only honest place
+   * to measure one.
+   *
+   * `positionAt` turns the segment to `page` at `start[k] - SEGMENT_EPSILON`,
+   * so the sheet is on screen up to but not including that line. This returns
+   * one probe step below it, DERIVED from the same constant rather than from a
+   * number typed into the suite: move the boundary and the measurement moves
+   * with it.
+   *
+   * Sampling anywhere short of this measures the easing rather than the
+   * hand-off. The approach is steep right to the end — at the widest viewport
+   * the same diff reads 32% at `p` = 0.6, 7.3% at 0.99 and 2.1% at 0.999 — so a
+   * frame chosen for being "near the end" is a frame chosen arbitrarily, and
+   * the arbitrariness is worth about a percent of the budget.
+   */
+  handoffFrame: (k: number) => number | null;
   /** The tear's free corner, against where a flat sheet would put it. */
   cornerLift: () => CornerLift | null;
   /** Where the shader put the vertex at `(u, v)`, in screen pixels — and where
@@ -737,9 +767,27 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     });
     trackRef.current = track;
 
-    // The spacer is the only reason the scroller has anywhere to go: the whole
-    // forward extent, since the sticky stage already occupies one viewport.
-    spacer.style.height = `${Math.max(0, maxPosition(track))}px`;
+    // THE SPACER IS THE ONLY REASON THE SCROLLER HAS ANYWHERE TO GO, and it has
+    // to be the forward extent PLUS ONE VIEWPORT.
+    //
+    // The position IS the scrollTop, and a scroller stops at
+    // `scrollHeight - clientHeight`. So a spacer of exactly `maxPosition` can
+    // only ever be scrolled to `maxPosition - box.height` — it makes the last
+    // viewport of the track unreachable, which is the whole of the last
+    // section: its entrance, its page and everything after. Measured at
+    // 1456×839 on card 02: `maxPosition` 12285, furthest reachable 11446,
+    // `start[4]` 11766. The last sheet stalled mid-roll and never landed,
+    // whether it was scrolled to, clicked on in the letterhead, or deep linked.
+    //
+    // This used to say the sticky stage already occupies one viewport. It does
+    // not: the stage is out of flow, the spacer is the scroller's ONLY child,
+    // and so `scrollHeight` was the spacer's height and nothing else.
+    //
+    // `pv-verify` could not see it. Every check in that suite steers with
+    // `__pv.seek`, which writes the position directly and never asks the
+    // scroller whether it could have got there — so the one thing this breaks
+    // is the one thing seeking bypasses.
+    spacer.style.height = `${Math.max(0, maxPosition(track) + box.height)}px`;
 
     // Back into pixels against the NEW track, synchronously — there must be no
     // frame that paints the new starts against the old position.
@@ -807,6 +855,11 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         if (!t) return null;
         const from = dwellStart(t, k);
         return { from, to: from + t.dwellDistance };
+      },
+      handoffFrame: (k: number) => {
+        const t = trackRef.current;
+        if (!t) return null;
+        return t.start[k] - SEGMENT_EPSILON - HANDOFF_PROBE_STEP;
       },
       seek: (y: number) => {
         if (!trackRef.current) return;

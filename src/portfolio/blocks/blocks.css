@@ -60,12 +60,27 @@
    the top of the page is what the rolled sheet is showing. A crop of a
    scrolling list would read as a screenshot; a number, a title and a reference
    line read as paper. */
+/* The three gaps are dials (`headEyebrowGapPx`, `headTitleGapPx`,
+   `headRuleGapPx` in `portfolioMotion.ts`), so the air in the masthead can be
+   moved with the page in front of you. No `gap` here on purpose: one flex gap
+   cannot tell the eyebrow-to-title distance from the title-to-reference one,
+   and those two want different amounts. */
 .pv-letterhead-block {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 24px;
+  padding-bottom: var(--pv-head-rule-gap, 36px);
   border-bottom: 1px solid rgba(20, 18, 15, 0.2);
+}
+
+/* …and the same air BELOW the rule as above it. The letterhead's wrapper takes
+   the page grid's own 28px bottom margin like every other block, which left the
+   hairline sitting closer to the title above it than to the block below. */
+.pv-block[data-block='letterhead'] {
+  margin-bottom: var(--pv-head-rule-gap, 36px);
+}
+
+.pv-letterhead-block__ref {
+  margin-top: var(--pv-head-title-gap, 15px);
 }
 
 .pv-letterhead-block__no,
@@ -78,7 +93,7 @@
 }
 
 .pv-letterhead-block__title {
-  margin: 0;
+  margin: var(--pv-head-eyebrow-gap, 15px) 0 0;
   font-size: var(--pv-letterhead-title, 96px);
   line-height: 0.94;
   letter-spacing: -0.03em;
@@ -293,6 +308,12 @@
   border-radius: 2px;
   overflow: hidden;
   background: rgba(20, 18, 15, 0.07);
+}
+
+/* A file drawn for a dark product UI, printed on one. See the `surface` note
+   in `types.ts`: the plate is what makes a light artboard legible on paper. */
+.pv-rive[data-surface='ink'] {
+  background: #14120f;
 }
 
 .pv-rive__canvas {

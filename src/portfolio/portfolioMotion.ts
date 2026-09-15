@@ -169,6 +169,24 @@ export interface PortfolioLook {
   textMeasureCh: number;
   /** The page's own letterhead block: the size of the title on it. */
   letterheadTitlePx: number;
+  /**
+   * THE THREE GAPS IN THE PAGE'S HEADER, which is the block every section opens
+   * with and therefore the first thing in every capture.
+   *
+   * They are dials rather than constants because the header is the one piece of
+   * the page that is read as a MASTHEAD rather than as prose — the air in it is
+   * doing the same job the type is, and the right amount of it is a thing you
+   * find by moving it with the page in front of you. Sizes are not here on
+   * purpose: `letterheadTitlePx` is the only type dial, and these move the
+   * spacing around it without touching it.
+   *
+   * `headEyebrowGapPx` is SECTION NN to the title; `headTitleGapPx` is the
+   * title to the reference line; `headRuleGapPx` is the air on EACH side of the
+   * hairline that closes the header off from the first block.
+   */
+  headEyebrowGapPx: number;
+  headTitleGapPx: number;
+  headRuleGapPx: number;
 
   /* ── the sheet's material (PV PAPER) ───────────────────────────────────── */
   /** How much the radius grows along the FOLD LINE, so the bend is wider at the
@@ -399,6 +417,12 @@ export const LOOK: PortfolioLook = {
   gridGapPx: 52,
   textMeasureCh: 0,
   letterheadTitlePx: 96,
+  // Was one 10px flex gap doing both of the first two, 24px before the rule and
+  // the block grid's own 28px after it. Roughly 1.5x, and the rule now has the
+  // same air on both sides rather than less above than below.
+  headEyebrowGapPx: 15,
+  headTitleGapPx: 15,
+  headRuleGapPx: 36,
 
   curlTaper: 0.35,
   curlDepth: 0.5,
@@ -789,6 +813,9 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   // paragraph on the page rather than uncap it.
   s.setProperty('--pv-measure', look.textMeasureCh > 0 ? `${look.textMeasureCh}ch` : 'none');
   s.setProperty('--pv-letterhead-title', `${look.letterheadTitlePx}px`);
+  s.setProperty('--pv-head-eyebrow-gap', `${look.headEyebrowGapPx}px`);
+  s.setProperty('--pv-head-title-gap', `${look.headTitleGapPx}px`);
+  s.setProperty('--pv-head-rule-gap', `${look.headRuleGapPx}px`);
   s.setProperty('--pv-handoff-ms', `${look.handoffMs}ms`);
   s.setProperty('--pv-reveal-ms', `${look.revealMs}ms`);
   s.setProperty('--pv-reveal-blur', `${look.revealBlurPx}px`);
@@ -818,6 +845,9 @@ const VARS = [
   '--pv-grid-gap',
   '--pv-measure',
   '--pv-letterhead-title',
+  '--pv-head-eyebrow-gap',
+  '--pv-head-title-gap',
+  '--pv-head-rule-gap',
   '--pv-handoff-ms',
   '--pv-page-x',
   '--pv-page-y',

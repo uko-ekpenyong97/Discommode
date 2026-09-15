@@ -52,8 +52,12 @@ export interface PosterItem {
 
 /**
  * The sequence. One magazine (Discommode issue 01) followed by the three
- * portfolio projects; 02/03/04 are placeholders — flat-colour art and the shared
- * placeholder block list — until the real projects land.
+ * portfolio projects. 02 is the Rive homepage redesign, the first real one; 03
+ * and 04 are still placeholders — flat-colour art and the shared placeholder
+ * block list — until their projects land.
+ *
+ * Card 02's ART is still the flat placeholder plate: the project behind it is
+ * real, the 2000x2600 cover for it is not drawn yet.
  */
 export const CONTENT: PosterItem[] = [
   {
@@ -74,7 +78,7 @@ export const CONTENT: PosterItem[] = [
     project: '02',
     image: '/projects/02/card.webp',
     hue: 208,
-    captions: ['NO 02', 'PLACEHOLDER', 'PROJECT'],
+    captions: ['NO 02', 'RIVE', 'REDESIGN'],
     cta: 'OPEN',
   },
   {
