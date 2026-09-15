@@ -56,6 +56,25 @@ const SEGMENTS_Y = 96;
 /** Retina is worth it on a page of type; past 2 it is not. */
 const MAX_DPR = 2;
 
+/**
+ * HOW FAR EITHER SIDE OF THE READER A CAPTURE IS KEPT.
+ *
+ * One section. The resident set is the section being read and its two
+ * neighbours — six captures, two per section — and everything else is disposed
+ * the moment the reader commits to another section. A 2x capture of a
+ * 1632 x 844 page is 21.0 MB of uncompressed RGBA with no mipmap chain, so the
+ * number that matters is not the size of one, it is that the set STOPS GROWING
+ * with the length of the project: a five-section card used to end a read-through
+ * holding ten of them.
+ *
+ * One is the smallest radius that is still safe, and the reason is the rewind.
+ * `activeIndex` commits at the forward hand-off, so during section k's entrance
+ * it is still k − 1 — which means the window has to reach a section FORWARD to
+ * hold the sheet that is on screen, and a section BACK to hold the tail of the
+ * tear a reader rewinding out of this page runs into next.
+ */
+export const RESIDENT_RADIUS = 1;
+
 /** The free corner, projected, with the flat sheet's own corner beside it. */
 export interface CornerLift {
   x: number;
@@ -72,9 +91,16 @@ export interface SheetCanvasHandle {
   fit: (rect: ScreenRect) => void;
   /** Paint one frame of section `index`'s entrance. */
   show: (index: number, pose: SheetPose) => void;
-  /** Start fetching a capture without binding or painting it — the two textures
-   *  a reader is about to need, while they are reading. */
+  /** Start fetching a capture without binding or painting it — the textures a
+   *  reader is about to need, while they are reading. */
   warm: (index: number, kind: SheetKind) => void;
+  /** Dispose every capture more than {@link RESIDENT_RADIUS} sections from
+   *  `center`. Called when the reader commits to another section, so the set
+   *  the GPU holds stops growing with the length of the project. */
+  evict: (center: number) => void;
+  /** DEV: what the GPU is holding — one entry per capture that has decoded.
+   *  The residency claim is asked of this rather than asserted. */
+  residentTextures: () => { src: string; mb: number }[];
   /** The capture currently bound, and whether it has actually decoded. A sheet
    *  wearing nothing is blank paper, which is what a hand-off must not be. */
   texture: () => { src: string; ready: boolean } | null;
@@ -271,6 +297,27 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         for (const t of textures.values()) t.dispose();
         textures.clear();
         renderer.dispose();
+        /**
+         * …AND THE CONTEXT ITSELF, which `dispose` does not take. It frees
+         * three's own resources and leaves the WebGL context live, to be
+         * collected whenever the canvas element is — and the view is opened and
+         * closed from the grid, so "whenever" is a context per open. Chrome
+         * keeps sixteen and then drops the oldest, which is a leak that looks
+         * like a plateau rather than a ramp.
+         *
+         * ONLY IF THE CANVAS HAS ACTUALLY GONE, and that is not a nicety. A
+         * forced loss is permanent for the element it is asked of: `getContext`
+         * afterwards hands back the lost context, `getContextAttributes` comes
+         * back null, and the next `WebGLRenderer` on it throws reading
+         * `precision`. React's StrictMode mounts this effect, tears it down and
+         * mounts it again on THE SAME element, so a loss taken in the cleanup
+         * kills the canvas the remount is about to use. A macrotask later the
+         * element is either back in the tree (a remount — leave it alone) or
+         * detached (a real close — take the context with it).
+         */
+        window.setTimeout(() => {
+          if (!canvas.isConnected) renderer.forceContextLoss();
+        }, 0);
         gl.current = null;
       };
     }, []);
@@ -313,6 +360,11 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       const have = loaded.current.get(entry.src);
       if (have) return have;
       const tex = new TextureLoader().load(entry.src, () => {
+        // EVICTED WHILE IN FLIGHT, and the map is what says so: a fetch started
+        // for a section the reader has since moved away from lands on a texture
+        // that has been disposed and dropped, and putting that on the screen
+        // would bind an object with no GPU resource behind it.
+        if (loaded.current.get(entry.src) !== tex) return;
         // A late arrival has to reach the screen, and it cannot wait for the
         // next scroll tick: a reader who has stopped mid-entrance would be
         // looking at blank paper until they moved again.
@@ -448,20 +500,88 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
      * the files are four times the pixels, which turned an unlikely race into a
      * measurable one (`pv-verify`, 1440×900 @2x: 74% of the page differing).
      *
-     * So when the reader lands on a page, the two captures they are next going
-     * to need — this section's tail, at its tear, and the next section's sheet,
-     * at its entrance — are asked for. It is a fetch and a decode, nothing is
-     * bound and no frame is painted, and it happens long after the first-open
-     * lock has armed, so the argument for keeping captures off the critical
-     * path is untouched.
+     * So when the reader lands on a page, the captures they are next going to
+     * need — this section's tail, at its tear, and the next section's sheet, at
+     * its entrance — are asked for. It is a fetch and a decode, nothing is bound
+     * and no frame is painted, and it happens long after the first-open lock has
+     * armed, so the argument for keeping captures off the critical path is
+     * untouched.
+     *
+     * The driver now asks for the whole resident window rather than those two,
+     * and {@link evict} is why it has to: a capture that was fetched three
+     * sections ago has been disposed since, so "it is already in the map" is no
+     * longer something the warm can assume. The extra four are the same fetch
+     * and the same decode, and on a rewind they are served from the HTTP cache.
      */
     const warm = (index: number, kind: SheetKind): void => {
       if (!gl.current || index < 0 || index >= capturesRef.current.length) return;
       textureFor(index, kind);
     };
 
+    /**
+     * …AND LETTING GO AGAIN, which is the half that keeps the number flat.
+     *
+     * Every capture the reader had been past used to stay resident for the life
+     * of the view: uncompressed RGBA at the file's own pixels with no mipmap
+     * chain, 21.0 MB apiece at 2x, ten of them by the end of a five-section
+     * card. So when the reader commits to a section, everything more than
+     * {@link RESIDENT_RADIUS} away from it is disposed and dropped from the
+     * map — the GPU resource goes now, and the bytes come back off the HTTP
+     * cache if the reader ever rewinds that far.
+     *
+     * The keep set is built from {@link captureFor} rather than from the
+     * section's whole list, so the entries a resize or a DPR change left behind
+     * — the same page at the width or the scale the reader is no longer at — go
+     * with it.
+     *
+     * THE BOUND CAPTURE IS NEVER DISPOSED, whatever the window says, and that
+     * guard is load-bearing rather than defensive. A hand-off paints the flat
+     * sheet of the section it was started for on every one of its 120ms of
+     * frames, and the driver prunes again when one lands — so an eviction can
+     * and does run while the sheet is wearing a capture the window has just
+     * moved off. Disposing that one would put a texture with no GPU resource
+     * behind it into a crossfade, which is the blank paper the crossfade exists
+     * to prevent. It goes at the next section change instead.
+     */
+    const evict = (center: number): void => {
+      const keep = new Set<string>();
+      if (boundSrcRef.current) keep.add(boundSrcRef.current);
+      for (let k = center - RESIDENT_RADIUS; k <= center + RESIDENT_RADIUS; k++) {
+        if (k < 0 || k >= capturesRef.current.length) continue;
+        for (const kind of ['sheet', 'tail'] as const) {
+          const entry = captureFor(k, kind);
+          if (entry) keep.add(entry.src);
+        }
+      }
+      for (const [src, tex] of loaded.current) {
+        if (keep.has(src)) continue;
+        tex.dispose();
+        loaded.current.delete(src);
+      }
+    };
+
+    /** DEV: what the GPU is holding. A texture that has not decoded has no
+     *  image and no resource behind it yet, so it is not counted — the claim is
+     *  about bytes on the card, not about fetches in flight. */
+    const residentTextures = (): { src: string; mb: number }[] => {
+      const out: { src: string; mb: number }[] = [];
+      for (const [src, tex] of loaded.current) {
+        const img = tex.image as { width?: number; height?: number } | undefined;
+        if (!img?.width || !img.height) continue;
+        out.push({ src, mb: (img.width * img.height * 4) / (1024 * 1024) });
+      }
+      return out;
+    };
+
     const hide = (): void => {
       lastRef.current = null;
+      // NOTHING IS BOUND once the canvas is out of the paint order, and saying
+      // so is what keeps {@link evict}'s guard honest: a src left here is a
+      // capture the eviction will not touch, and the whole vertical run and the
+      // whole dwell are spent hidden. Measured before this line existed: a
+      // reader two sections on from where the canvas was last painted held
+      // SEVEN captures, the six of the window and one the hide had pinned.
+      boundSrcRef.current = '';
       const canvas = canvasRef.current;
       if (canvas) canvas.style.visibility = 'hidden';
     };
@@ -582,6 +702,8 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         fit,
         show,
         warm,
+        evict,
+        residentTextures,
         texture,
         hide,
         screenRect,
