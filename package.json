@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "verify:pv": "node scripts/pv-verify.mjs",
+    "verify:gpu": "node scripts/pv-gpu-loop.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

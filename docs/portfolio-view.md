@@ -501,41 +501,131 @@ Two numbers, and they are not the same number.
 
 | | files | on disk |
 | --- | --- | --- |
-| 1× | 36 | 765 KB |
-| 2× | 36 | 2,391 KB |
-| **all** | **72** | **3,156 KB** |
+| 1× | 36 | 839 KB |
+| 2× | 36 | 2,599 KB |
+| **all** | **72** | **3,438 KB** |
 
-The **bundle** cost is that last row: 2.3 MB more than before, and none of it on
+The **bundle** cost is that last row: 2.5 MB more than before, and none of it on
 the critical path — the first-open lock arms with every capture cold, and
 `pv-verify` proves that at both ratios rather than asserting it.
 
-The **texture** cost is the one with a budget on it, and it is not 3.2 MB. A
+The **texture** cost is the one with a budget on it, and it is not 3.4 MB. A
 texture is uncompressed RGBA at the file's own pixels with no mipmap chain, so a
-2× capture of a 1632 × 844 page is `3264 × 1688 × 4` = **21.0 MB on its own**
-— and nothing disposes one: `SheetCanvas` holds its `loaded` map for the life
-of the view, so the resident set only grows as a reader goes through a project.
+2× capture of a 1632 × 844 page is `3264 × 1688 × 4` = **21.0 MB on its own**,
+and a section binds two of them.
 
-| card | sections | 1× | 2× |
+What it is no longer is *the whole project*. Captures more than a section away
+from the reader are disposed — see
+[what is resident](#what-is-resident-and-what-is-let-go) — so the figure to put
+against a budget is the worst WINDOW and not two per section:
+
+| card | sections | held, 1× | held, 2× | resident, 1× | resident, 2× |
+| --- | --- | --- | --- | --- | --- |
+| 02 | 5 | 52.5 MB | 210.2 MB | **31.5 MB** | **126.1 MB** |
+| 03 | 1 | 10.5 MB | 42.0 MB | 10.5 MB | 42.0 MB |
+| 04 | 3 | 31.5 MB | 126.1 MB | 31.5 MB | 126.1 MB |
+
+"Held" is what the same read-through used to end up holding, and it is in the
+table because the difference between the two right-hand columns and the two
+beside them is the whole point: card 02 has five sections and card 04 has three,
+and they now cost the same.
+
+`pv-verify` prints both every run. It **asserts the count** — six captures, on
+every section of every card, walked forward and rewound — and **reports the
+megabytes** without failing on them, which is a decision rather than an
+omission. A 24 MB budget admits one 2× capture and nothing else, so no
+arrangement of files gets a three-section window under it while the sheet is
+sharp; the obvious lever, softening the `tail` because it is on screen for less
+time, spends the budget in the one place it shows — the tail is what the sheet
+wears at `p` = 0 of a tear, at the page's own rect, in a 120ms crossfade off a
+page drawn at 2×. What the eviction changed is not the size of the number but
+its SHAPE: it does not grow with the length of the project, which is the part
+that was unbounded.
+
+#### What is resident, and what is let go
+
+**The window is the section being read and its two neighbours** — six captures,
+a sheet and a tail apiece. `SheetCanvas.loaded` is still a map keyed by src, and
+what is new is that something takes entries out of it: everything further out is
+`dispose()`d and dropped, and the bytes come back off the HTTP cache if the
+reader ever rewinds that far.
+
+**One section either side, and the rewind is what sets it.** `activeIndex`
+commits at the forward hand-off, so during section *k*'s entrance it is still
+*k* − 1 — the window has to reach a section FORWARD to hold the sheet that is
+on screen at all. It has to reach a section BACK because a reader rewinding out
+of a page runs into the previous section's tear, at `p` = 0, with no reading in
+front of it to fetch anything in.
+
+**Letting go and asking are one call**, `residentWindow` in `Scroller`, and it
+runs at three moments:
+
+| when | why |
+| --- | --- |
+| the reader commits to another section | the window moved |
+| a hand-off lands | see below — a crossfade can outlive the window it started in |
+| the first-open lock opens | nothing else would: `activeIndex` starts at the section being opened, so on a fresh open there is no change to hang a warm off, and the first tear of a visit would bind a tail nobody had asked for |
+
+It **warms the whole window** rather than the two captures the reader is walking
+towards, and the eviction is exactly what made that difference matter: the tail
+of the section behind may have been disposed several sections ago. A warm is a
+fetch and a decode with nothing bound and no frame painted, and it happens long
+after the lock has armed, so the argument for keeping captures off the critical
+path is untouched.
+
+**Nothing bound is ever disposed**, and there is a guard in `evict` that says so
+whatever the window says. Two findings sit behind it, and both came out of the
+suite rather than out of reading the code:
+
+- **`hide` has to say that nothing is bound.** The canvas keeps the src it last
+  painted so a texture arriving late can be put on screen without waiting for a
+  scroll tick — but the vertical run and the dwell are spent hidden, and a src
+  left behind there is a capture the eviction will not touch. Measured: a reader
+  two sections on from where the canvas last painted held **seven**.
+- **A crossfade can outlive the window it started in.** A hand-off paints the
+  flat sheet on every one of its 120ms of frames, and one already in flight when
+  the position jumps goes on painting the section it was started for — so a
+  letterhead click across three sections re-creates a capture the eviction has
+  just disposed, and nothing would take it away again until the reader next
+  changed section. Measured, stepping a section every 80ms: **seven** again. The
+  prune when the hand-off lands is the other half of the fix, and the guard is
+  what makes it safe to run there.
+
+**What it costs is a re-fetch on a long rewind**, and the shape of the risk is
+worth naming: a texture that has to come back is not instant. An entrance
+renders with whatever has decoded (`uHasMap` 0 is blank paper) and for its first
+60% the sheet is a tube with very little texture to show, so the visible case is
+a rewind landing late in one — which is why the window is warmed on arrival
+rather than on demand.
+
+**And the view lets go of the whole context when it closes.** `renderer.dispose`
+frees three's own resources and leaves the WebGL context live, to be collected
+whenever the canvas element is; the view is opened and closed from the grid, so
+"whenever" is a context per open, and Chrome keeps sixteen and then drops the
+oldest — a leak that looks like a plateau rather than a ramp. The unmount takes
+the context too, **but only once the element has actually gone**: a forced loss
+is permanent for the element it is asked of, and React's StrictMode tears this
+effect down and mounts it again on the same canvas, so a loss taken in the
+cleanup kills the canvas the remount is about to use. It throws reading
+`precision`, which is an obscure way to find that out. A macrotask later the
+element is either back in the tree or detached, and that is the difference.
+
+**Measured, 20 open/close cycles of card 02 at 2×**, sampling the GPU process
+after each (`npm run verify:gpu`, headed Chrome, this machine):
+
+| | first cycle | last cycle | range over the twenty |
 | --- | --- | --- | --- |
-| 02 | 5 | 46.6 MB | 186.3 MB |
-| 03 | 1 | 9.3 MB | 37.3 MB |
-| 04 | 3 | 27.9 MB | 111.8 MB |
+| before | 195.1 MB | 193.7 MB | 174.1 – 230.4 MB |
+| after | 199.2 MB | 188.7 MB | 184.7 – 200.7 MB |
 
-The 1× column was already over a 24 MB budget before any of this, which is
-worth saying plainly: the problem is the *number of sections held*, not the
-scale.
-
-`pv-verify` prints this every run and does not fail on it, which is a decision.
-**A 24 MB per-project budget admits one 2× capture and nothing else** — one
-is
-18.6 MB — so no arrangement of files gets a five-section project under it
-while
-the sheet is sharp. The obvious lever, softening the `tail` because it is on
-screen for less time, spends the budget in the one place it shows: the tail is
-what the sheet wears at `p` = 0 of a tear, at the page's own rect, in a 120ms
-crossfade off a page drawn at 2×. What would actually bring the number down is
-disposing the captures for sections the reader is nowhere near. See
-[Not done](#not-done).
+**Both are flat, and that is the honest reading of it**: opening and closing the
+view was never the leak. The unmount already disposed every texture, the
+material, the geometry and the renderer, and the loop says so from both sides of
+the change. What grew was the set held *inside* one open view — the resident
+column of [what the set costs](#what-the-set-costs) — and that is what
+`__pv.textures()` and the resident-set check in `pv-verify` measure. The after run is steadier — a 16 MB band against 56 MB — which is what
+releasing the context at unmount looks like at this sample rate, and it is not a
+number to lean on.
 
 And the consequence that has not gone away, now four times over: **this is a
 placeholder pipeline, not a content pipeline.** Nothing fails if a section's
@@ -664,19 +754,23 @@ existed, this measurement at `deviceScaleFactor: 2` would have been a 1× textur
 magnified two to one into a 2× framebuffer next to type drawn at 2× — and the
 suite could not see it, because it only ever ran at 1×.
 
-**The two captures a reader is about to need are fetched while they read.** A
+**The captures a reader is about to need are fetched while they read.** A
 texture is otherwise requested the moment it is first BOUND, and for a tail that
 moment is `p` = 0 of the tear — the frame the reverse crossfade lands on, where
 a capture that has not arrived is blank paper. At 1× that race was rarely lost;
 at 2× the files are four times the pixels and it was measurable, at **74.8% of
 the page differing** on the first tail of a run at 1440×900. So when the reader
-lands on a page the driver warms this section's `tail` and the next section's
-`sheet`: a fetch and a decode, nothing bound and no frame painted, long after
-the first-open lock has armed. `pv-verify` asks the canvas which capture it is
-wearing and whether it has decoded (`__pv.sheetTexture()`) before it photographs
-the sheet, because the suite seeks straight to the frame and skips the reading
-the warm depends on — and a failing diff now says which file, and whether it was
-cold.
+lands on a page the driver warms the whole resident window — this section and
+its two neighbours, a `sheet` and a `tail` apiece: a fetch and a decode, nothing
+bound and no frame painted, long after the first-open lock has armed. It is the
+window rather than the two the reader is walking towards because the captures
+behind them have been DISPOSED by then; see
+[what is resident](#what-is-resident-and-what-is-let-go).
+
+`pv-verify` asks the canvas which capture it is wearing and whether it has
+decoded (`__pv.sheetTexture()`) before it photographs the sheet, because the
+suite seeks straight to the frame and skips the reading the warm depends on —
+and a failing diff now says which file, and whether it was cold.
 
 The reverse diff is all but zero because it is the easier of the two: a tail
 capture is taken from the same page at the same scroll the tear starts at, and
@@ -1558,57 +1652,39 @@ observation about it.
 > formulas share a vocabulary, no amount of testing the vocabulary tests the
 > formula.
 
-1. **Nothing ever disposes a capture, and at 2× that is 186 MB of texture.**
-   `SheetCanvas.loaded` is a `Map` keyed by src that is only cleared on unmount,
-   so every capture a reader has been past is still resident: a 2× capture of a
-   1632 × 844 page is 21.0 MB, a section binds two of them, and card 02 has five
-   sections. Measured, and printed by `pv-verify` every run — see
-   [what the set costs](#what-the-set-costs).
+> **A note on what has just gone off this list, for the same reason.** Eviction
+> is in: the GPU holds the section being read and its two neighbours and lets go
+> of the rest, and `pv-verify` asserts the count rather than reporting the
+> megabytes. It took two findings that no amount of reading the code would have
+> produced, and both are written down in
+> [what is resident](#what-is-resident-and-what-is-let-go) — a `hide` that left
+> a capture pinned, and a crossfade that outlived the window it started in. The
+> general form: a cache with a window is only as small as its EXITS, and the
+> exits are the paths nobody draws on the diagram.
 
-   A 24 MB per-project budget is the one that was asked for, and it cannot be
-   met by choosing files: one 2× capture is 18.6 MB. Softening the `tail`
-   because it is on screen for less time buys a quarter of its share and spends
-   it in the one place a softness shows — the tail is what the sheet wears at
-   `p` = 0 of a tear, at the page's own rect, in a 120ms crossfade off a page
-   drawn at 2×, which is the hand-off this release exists to keep sharp.
-
-   What would work is **evicting what nobody is near**: dispose a section's two
-   textures once the reader is more than one section away, and let the HTTP
-   cache serve them back on a rewind. Holding the current section and its two
-   neighbours is six captures — 112 MB at 2×, still not 24, but a number that
-   stops growing with the length of the project, which is the part that matters.
-   The cost to weigh first is that a re-fetched texture is not instant: an
-   entrance already renders with whatever has decoded (`uHasMap` 0 is blank
-   paper) and for its first 60% the sheet is a tube with very little texture to
-   show, so the visible risk is a rewind landing late in one.
-
-   The driver's `warm` — this section's tail and the next section's sheet, asked
-   for the moment the reader lands on a page — is the other half of the same
-   idea and is already in: eviction is the part that lets go again.
-
-2. **The captures are not a build step.** `npm run placeholders` takes them, and
+1. **The captures are not a build step.** `npm run placeholders` takes them, and
    nothing fails if a section's first or last viewport changes and its capture
    does not. The hand-off diffs catch it *in the verify run*, which is the right
    signal in the wrong place. A content hash of each captured frame, checked at
    build, is the fix — and it now has to cover eight captures per section rather
    than two.
-3. **three.js is 539 KB of the bundle.** Measured: 367 KB → 912 KB raw,
+2. **three.js is 539 KB of the bundle.** Measured: 367 KB → 912 KB raw,
    119 KB → 257 KB gzipped. It is a static import for the reason the view itself
    is one — the open is a storyboard that has to start on the click, and a chunk
    fetch in front of the first entrance is a blank ground. Splitting it behind
    the view's own 600ms fade would probably be invisible and has not been
    measured.
-4. **Close reversal.** The spec asked for the page to drop back the way it came
+3. **Close reversal.** The spec asked for the page to drop back the way it came
    as the view closes, trailing the scrim by 100ms. It currently leaves with the
    view. The entrance machinery — a tween driving the track position — is what
    to reuse: run it from the current position to `minPosition` on `requestExit`,
    100ms behind the scrim.
-5. **A hash change while the view is open does nothing.** A deep link works on a
+4. **A hash change while the view is open does nothing.** A deep link works on a
    fresh open; editing `#view-02/3` to `#view-02/5` in place, or a `popstate`
    that lands on a different section, leaves the scroller where it was.
    `PortfolioView` has the handle to fix it in one line — it did not seem worth
    doing without a case that wanted it.
-6. **The tear’s flap is rigid.** Past the arc it is a straight plane, so a peel
+5. **The tear’s flap is rigid.** Past the arc it is a straight plane, so a peel
    that travelled the whole sheet would put a stiff flag several page heights
    long into the frame. `peelTravel` is dialled to 0.45 to stay well inside
    that, and `curlDepth` flattens what is left. A flap that DROOPED — a second,
@@ -1622,6 +1698,7 @@ npm run dev          # in one shell
 npm test             # pageTrack + fitPlaneToRect + both shapes, in node
 npm run placeholders # regenerate the captures after a page change (needs the dev server)
 npm run verify:pv    # the same view, in Chrome, at both viewports and both DPRs
+npm run verify:gpu   # 20 open/close cycles, watching the GPU process
 ```
 
 `scripts/pv-verify.mjs` is the browser suite, and it exists because the unit
@@ -1675,10 +1752,15 @@ tear and no dwell) and card 04 (three), and checks:
   and back to 100% by 0.60. This is the check that was missing: the pose was
   right all through the release in which the entrance was a flat sheet tilting
   in, so nothing that looked at a pose could see it;
+- **the resident set**, which is asserted: walking every section of every card
+  forward and then rewinding it, the GPU never holds more than the six captures
+  of the reader's window — and never fewer, so nothing the reader is about to
+  need is left to be fetched cold. Asked of `__pv.textures()`, which is the map
+  itself. See [what is resident](#what-is-resident-and-what-is-let-go);
 - **the capture set's cost**, reported rather than asserted: files and bytes on
-  disk at each scale, and the GPU texture each project would hold with nothing
-  disposed. See [what the set costs](#what-the-set-costs) and
-  [Not done](#not-done);
+  disk at each scale, the GPU texture a project would hold with nothing disposed
+  and what the worst window actually holds. See
+  [what the set costs](#what-the-set-costs);
 - **contrast ≥ 7:1**, ink on paper and mono on the ground, via `__pvProbe`,
   sampled down a whole section;
 - the page's layout: the letterhead block on the inset line, content filling the
@@ -1712,7 +1794,27 @@ that reads the position before then reads it in flight. `sheetRect()` and
 track's arithmetic; `canvasFrames()` is how "the canvas does nothing" is asked
 rather than assumed; and `sheetPoint(u, v)` / `cornerLift()` are how a question
 about a VERTEX gets an answer, since the bend happens in a shader and the CPU
-cannot otherwise know where one ended up.
+cannot otherwise know where one ended up; and `textures()` is the resident set —
+every capture the GPU is holding and what it costs, which is the one claim about
+memory that can be asked rather than inferred.
+
+**`verify:gpu` is a separate run, and it asks the question `verify:pv` cannot.**
+That one holds the view open and counts what is resident inside it, and a map
+that is correctly pruned on every section change still leaks if nothing lets go
+when the view closes. So: open card 02, walk every section of it, close back to
+the grid, twenty times, sampling the GPU process's resident set from `ps` after
+every cycle — which is the row Chrome's own task manager calls "GPU Process". It
+is not a precise accounting of texture bytes and is not meant to be; what is
+being asked is whether the twentieth cycle ends where the first one did, and the
+shape of the curve in between is the finding.
+
+It runs **headed**, and that is not a preference: headless Chrome falls back to
+SwiftShader here, and WebGL on the CPU answers every question about video memory
+with a flat line — the baseline came back just as flat *with every capture held*,
+which is how that was found. It runs against the dev server, which mounts the
+canvas twice per open (StrictMode) and so asks for two contexts where a reader's
+browser asks for one; the measurement is conservative on purpose. The numbers are
+in [what is resident](#what-is-resident-and-what-is-let-go).
 
 **Opening the view is not done when the track has armed.** The intro is a tween
 on its own rAF and it owns the position while it runs — and `seek` sets the very

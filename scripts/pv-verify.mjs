@@ -122,13 +122,25 @@ const ROLL_RATIO = 0.25;
 /**
  * What a project's captures may cost the GPU, in megabytes.
  *
- * Counted as every capture the reader will have bound by the time they have
- * been through the project — a sheet and a tail per section — because nothing
- * disposes one: `SheetCanvas` keeps its `loaded` map for the life of the view,
- * so the resident set only grows. Uncompressed RGBA at the file's own pixels,
- * with no mipmap chain (`generateMipmaps` is off, on purpose — see the sheet).
+ * Counted as the WORST WINDOW rather than as the whole project: `SheetCanvas`
+ * holds the section being read and its two neighbours and disposes the rest, so
+ * the figure to compare against a budget is six captures and not two per
+ * section. Uncompressed RGBA at the file's own pixels, with no mipmap chain
+ * (`generateMipmaps` is off, on purpose — see the sheet). Both numbers are
+ * printed, because the one the eviction retired is what says what it was for.
  */
 const TEXTURE_MB = 24;
+
+/**
+ * …and how many captures may be resident at once, whatever they cost.
+ *
+ * `SheetCanvas` keeps the section being read and its two neighbours — a sheet
+ * and a tail apiece — and disposes the rest when the reader commits to another
+ * section. Six is the whole claim: not that the set is small, but that it is
+ * the same size on the last section of a project as on the first.
+ */
+const RESIDENT_RADIUS = 1;
+const RESIDENT_MAX = (RESIDENT_RADIUS * 2 + 1) * 2;
 
 /** Where the committed captures are. */
 const PUBLIC_DIR = fileURLToPath(new URL('../public/projects/', import.meta.url));
@@ -728,6 +740,82 @@ async function run() {
               `${inTear.moving} of ${inTear.total} reveals running, ` +
               `${pct(fast.pct)} of ${DIFF_PCT}%`,
           );
+        }
+
+        // 1c — THE RESIDENT SET, walked forward and then rewound.
+        //
+        //      What the GPU holds is the section being read and its two
+        //      neighbours, and it does not grow with the length of the project:
+        //      a five-section card used to end a read-through holding ten
+        //      captures, 210 MB of uncompressed RGBA at 2x, because nothing
+        //      disposed one.
+        //
+        //      Asked at every section in both directions, because the two
+        //      directions fail differently. FORWARD is the eviction: the count
+        //      is what stops growing. BACKWARD is the warm: a rewind runs into
+        //      the tail of the section behind, which was disposed several
+        //      sections ago, at `p` = 0 of a tear with no reading in front of
+        //      it — so it is not enough that the window is small, the window
+        //      has to be FULL by the time the reader could have reached either
+        //      edge of it.
+        {
+          const n = track.start.length;
+          // Where the walk found the view, to put it back — see the restore at
+          // the end of the block.
+          const before = await page.evaluate(() => window.__pv.position());
+          const forward = [...track.start.keys()];
+          const walk = [...forward, ...forward.slice(0, -1).reverse()];
+          const held = [];
+          for (const k of walk) {
+            // SETTLED, not seeked. What is resident is a property of a view
+            // that has stopped moving: a crossfade paints the flat sheet of the
+            // section it was started for on every one of its frames, so a
+            // measurement taken inside one counts a capture the reader is on
+            // their way out of. The driver prunes again when the hand-off lands
+            // — this waits for that to have happened.
+            await seekSettled(page, track.start[k] + 1, handoffMs);
+            // The six are a fetch and a decode, and only a decoded one is on
+            // the card at all — so wait for the window to fill rather than
+            // reading a number that is really a measure of the network.
+            const want = Math.min(n, k + 1 + RESIDENT_RADIUS) - Math.max(0, k - RESIDENT_RADIUS);
+            await page
+              .waitForFunction((w) => window.__pv.textures().count >= w, want * 2, { timeout: 5000 })
+              .catch(() => {});
+            held.push({ k, ...(await page.evaluate(() => window.__pv.textures())) });
+          }
+          const most = held.reduce((a, b) => (b.count > a.count ? b : a));
+          const short = held.filter(
+            (h) =>
+              h.count <
+              (Math.min(n, h.k + 1 + RESIDENT_RADIUS) - Math.max(0, h.k - RESIDENT_RADIUS)) * 2,
+          );
+          check(
+            most.count <= RESIDENT_MAX,
+            `card ${id}: the GPU holds this section and its neighbours, and no more`,
+            `worst ${most.count} captures of ${RESIDENT_MAX}, ${round(most.mb)} MB, at section ${most.k}` +
+              // Naming them is the difference between "one too many" and which
+              // one: a stray is always a neighbour of the window it escaped.
+              (most.count > RESIDENT_MAX
+                ? ` — ${most.srcs.map((s) => s.split('/').pop()).join(' ')}`
+                : ''),
+          );
+          check(
+            short.length === 0,
+            `card ${id}: …and the whole window is warm, forward and rewound`,
+            short.length === 0
+              ? `${walk.length} stop${walk.length === 1 ? '' : 's'}`
+              : short.map((h) => `section ${h.k}: ${h.count}`).join(', '),
+          );
+
+          // AND PUT THE VIEW BACK WHERE THE WALK FOUND IT, which is not
+          // housekeeping. This block ends standing on a PAGE, and the next
+          // seek off a page starts a 120ms reverse crossfade — through which
+          // the canvas holds the FLAT sheet, by design. The position is parked,
+          // so when the crossfade ends nothing applies another frame and the
+          // flat pose is simply what the canvas is left showing: the shape
+          // checks below then measure a tube and find a rectangle. Restoring
+          // through `seekSettled` waits the crossfade out.
+          await seekSettled(page, before, handoffMs);
         }
 
         // 2 — THE ENTRANCE'S SHAPE. The bend is out well before the swap and
@@ -1492,34 +1580,49 @@ async function run() {
           (k) => mine.filter((f) => f.section === k).reduce((a, f) => a + f.pixels * 4, 0) / MB,
         );
         const total = per.reduce((a, b) => a + b, 0);
+        // THE WORST WINDOW, which is the number with the budget on it now: the
+        // most any one section and its two neighbours can cost. `total` is what
+        // the same read-through used to end up holding, kept beside it because
+        // the difference is the whole point of the eviction.
+        const resident = Math.max(
+          ...sections.map((_, k) =>
+            per
+              .slice(Math.max(0, k - RESIDENT_RADIUS), k + 1 + RESIDENT_RADIUS)
+              .reduce((a, b) => a + b, 0),
+          ),
+        );
         console.log(
           `      ${scale}x  card ${id}  ${sections.length} sections  ` +
-            `${per.map((v) => v.toFixed(1)).join(' + ')} = ${total.toFixed(1)} MB of texture`,
+            `${per.map((v) => v.toFixed(1)).join(' + ')} = ${total.toFixed(1)} MB, ` +
+            `resident ${resident.toFixed(1)} MB`,
         );
-        if (total > TEXTURE_MB) overBudget.push(`${id}@${scale}x ${total.toFixed(1)}MB`);
+        if (resident > TEXTURE_MB) overBudget.push(`${id}@${scale}x ${resident.toFixed(1)}MB`);
       }
     }
     /**
-     * REPORTED, NOT ASSERTED, and that is a decision rather than an omission.
+     * REPORTED, NOT ASSERTED, and that is still a decision rather than an
+     * omission.
      *
      * A 2x capture of a 1632 x 844 page is 3264 x 1688 RGBA = 21.0 MB on its
      * own, so a {@link TEXTURE_MB} budget admits ONE of them and nothing else.
-     * No arrangement of captures gets a five-section project under it while the
+     * No arrangement of captures gets a three-section window under it while the
      * sheet is sharp, and the obvious lever — soften the tail, which is on
      * screen for less time — spends it in the one place it shows: the tail is
      * what the sheet wears at p = 0 of a tear, at the page's own rect, in a
      * 120ms crossfade off a page drawn at 2x.
      *
-     * What would actually bring it down is disposing the captures for sections
-     * the reader is nowhere near, which nothing does today. See
-     * `docs/portfolio-view.md`, Not done.
+     * What the eviction changed is the shape of the number rather than the
+     * number: the resident set no longer grows with the length of the project,
+     * which is the part that was unbounded. The count is asserted (see
+     * {@link RESIDENT_MAX}); the megabytes are what one capture costs.
      */
     if (overBudget.length > 0) {
-      console.log(`      ! over ${TEXTURE_MB} MB per project: ${overBudget.join(', ')}`);
-      console.log('        nothing disposes a capture, so this is the resident set after a');
-      console.log('        full read-through. See docs/portfolio-view.md, Not done.');
+      console.log(`      ! over ${TEXTURE_MB} MB per window: ${overBudget.join(', ')}`);
+      console.log('        six captures, and one 2x capture is 21.0 MB. What the eviction');
+      console.log('        bought is that this does not grow with the project — the count');
+      console.log('        is asserted above, on every section of every card.');
     } else {
-      ok(`every project's captures fit ${TEXTURE_MB} MB of texture`);
+      ok(`every window of captures fits ${TEXTURE_MB} MB of texture`);
     }
   }
 

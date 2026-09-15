@@ -10,7 +10,7 @@ import {
 import Lenis from 'lenis';
 import { animate } from 'motion';
 import { SectionPage } from './SectionPage';
-import { SheetCanvas } from './SheetCanvas';
+import { RESIDENT_RADIUS, SheetCanvas } from './SheetCanvas';
 import type { CornerLift, SheetCanvasHandle } from './SheetCanvas';
 import { EASE, look, openFrame, poseDials, subscribeLook } from './portfolioMotion';
 import {
@@ -118,6 +118,43 @@ const snap = (v: number, dpr: number): number => Math.round(v * dpr) / dpr;
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
+ * THE RESIDENT WINDOW: the section being read and its two neighbours, and
+ * nothing else.
+ *
+ * Letting go and asking are one decision, which is why they are one call — a
+ * capture is held because the reader is near it, and both halves of "near" are
+ * the same window.
+ *
+ * LET GO of everything further out. A capture is uncompressed RGBA at the
+ * file's own pixels with no mipmap chain — 21.0 MB apiece at 2x — and nothing
+ * used to dispose one, so the set grew by two per section a reader went past
+ * and a five-section card ended a read-through holding ten.
+ *
+ * …AND ASK for the six that are left, while the reader is reading. A texture is
+ * otherwise fetched at the moment it is first BOUND, and for a tail that moment
+ * is `p` = 0 of the tear — the frame the reverse hand-off crossfades onto,
+ * where a capture that has not arrived is blank paper. From here they have a
+ * whole vertical run to arrive in.
+ *
+ * It is the whole window rather than the two the reader is walking towards,
+ * and the eviction is exactly what made that difference matter: the tail of the
+ * section BEHIND this one may have been disposed several sections ago, and a
+ * rewind runs into it at `p` = 0 of a tear with no reading in front of it. On a
+ * rewind the bytes come off the HTTP cache.
+ *
+ * The radius is `SheetCanvas`'s, and the canvas is what holds the map; this is
+ * the call that says WHEN.
+ */
+function residentWindow(canvas: SheetCanvasHandle | null, center: number): void {
+  if (!canvas) return;
+  canvas.evict(center);
+  for (let k = center - RESIDENT_RADIUS; k <= center + RESIDENT_RADIUS; k++) {
+    canvas.warm(k, 'sheet');
+    canvas.warm(k, 'tail');
+  }
+}
+
+/**
  * DEV: the handle `scripts/pv-verify.mjs` drives the view through.
  *
  * The checks that matter here are ones only a browser can answer — do the
@@ -165,6 +202,11 @@ export interface PortfolioProbe {
    *  photographs the sheet before its texture has landed measures blank paper
    *  and reports it as a hand-off that shows. */
   sheetTexture: () => { src: string; ready: boolean } | null;
+  /** EVERY capture the GPU is holding, and what it costs. The resident set is
+   *  the section being read and its two neighbours — six — and the claim that
+   *  it stops growing with the length of the project is a claim only the map
+   *  can answer. */
+  textures: () => { count: number; mb: number; srcs: string[] };
   pageRect: () => ScreenRect | null;
   /** Frames the canvas has painted. Must not move during a vertical run. */
   canvasFrames: () => number;
@@ -495,13 +537,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       if (l.activeIndex !== activeRef.current) {
         activeRef.current = l.activeIndex;
         changeRef.current(l.activeIndex);
-        // THE NEXT TWO CAPTURES, asked for while the reader is reading. A
-        // texture is otherwise fetched at the moment it is first bound, and for
-        // a tail that moment is `p` = 0 of the tear — the frame the reverse
-        // hand-off crossfades onto, where a capture that has not arrived is
-        // blank paper. From here they have a whole vertical run to arrive in.
-        canvas?.warm(l.activeIndex, 'tail');
-        canvas?.warm(l.activeIndex + 1, 'sheet');
+        residentWindow(canvas, l.activeIndex);
       }
       if (l.pendingIndex !== pendingRef.current) {
         pendingRef.current = l.pendingIndex;
@@ -594,6 +630,17 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         } else {
           handoffRef.current = null;
           apply(positionRef.current);
+          // …AND PRUNE AGAIN, because a crossfade can outlive the window it
+          // started in. A hand-off paints the flat sheet on every one of its
+          // frames, and a hand-off already in flight when the position jumps
+          // goes on painting the section it was started for — so a letterhead
+          // click across three sections re-creates a capture the eviction has
+          // just disposed, and nothing would take it away again until the
+          // reader next changed section. Measured, with the walk in `pv-verify`
+          // stepping a section every 80ms: seven captures resident where the
+          // window is six. It is the same call the section change makes, and
+          // whatever the crossfade is wearing is held by {@link evict}'s guard.
+          residentWindow(canvasRef.current, activeRef.current);
         }
       };
       state.raf = requestAnimationFrame(frame);
@@ -779,6 +826,14 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       },
       sheetRect: () => canvasRef.current?.screenRect() ?? null,
       sheetTexture: () => canvasRef.current?.texture() ?? null,
+      textures: () => {
+        const held = canvasRef.current?.residentTextures() ?? [];
+        return {
+          count: held.length,
+          mb: held.reduce((a, t) => a + t.mb, 0),
+          srcs: held.map((t) => t.src),
+        };
+      },
       pageRect: () => {
         const live = pagesRef.current.find((el) => el.style.visibility !== 'hidden');
         if (!live) return null;
@@ -851,6 +906,17 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     readyRef.current.armed = true;
     setArmed(true);
     lenisRef.current?.start();
+    // THE FIRST WINDOW, and it has to be asked for here because nothing else
+    // will. Every other warm hangs off the reader COMMITTING to another
+    // section, and on a fresh open that never happens: `activeRef` starts at
+    // the section being opened, so without this the first tear of a visit would
+    // bind a tail nobody had asked for — the exact cold fetch the warm exists
+    // to prevent, at the one hand-off a reader always sees.
+    //
+    // After the lock, never in front of it. The captures are deliberately not
+    // part of the first-open gate (see above), and this runs at the moment the
+    // gate opens rather than at the moment the track is built.
+    residentWindow(canvasRef.current, activeRef.current);
   }, []);
 
   /**
