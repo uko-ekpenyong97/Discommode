@@ -1812,6 +1812,16 @@ tear and no dwell) and card 04 (three), and checks:
   dwell, and an entrance. Outside the dials nothing moves, the ground a tear
   finishes on is left alone, a letterhead click is not grabbed, and a real wheel
   gesture stopped mid-tear finishes;
+- **the last section is reachable at all**, which is a question about the
+  SCROLLER rather than about the track: the position IS the scrollTop, so the
+  spacer has to be the forward extent plus one viewport or the last viewport of
+  track cannot be scrolled to. Asked three ways per card — the furthest
+  reachable scrollTop against `maxPosition`, a real `park` scroll onto the last
+  section, and a cold deep link straight to it;
+- **the clips run**, walking each section's own vertical run so every clip comes
+  into view: within 2s of arriving, every clip IN VIEW is decoded
+  (`readyState` ≥ 2), playing, and visible — plus every clip on the page carries
+  a poster and is muted as an ATTRIBUTE, not merely as a property;
 - deep link (`#view-02/4` lands flat on section 3 with no entrance replay and no
   canvas frame), resize (the reader keeps their section AND the plane re-fits),
   `inert`, Escape, and the reader still opening.
@@ -1831,6 +1841,28 @@ about a VERTEX gets an answer, since the bend happens in a shader and the CPU
 cannot otherwise know where one ended up; and `textures()` is the resident set —
 every capture the GPU is holding and what it costs, which is the one claim about
 memory that can be asked rather than inferred.
+
+**THE TWO THINGS `seek` CANNOT SEE.** Every check above steers the track with
+`__pv.seek`, which writes the position straight into the driver. That is what
+makes a mid-tear frame holdable at all — but it means the suite never asks the
+SCROLLER whether a reader could have reached a position, and never waits on a
+media element the way a reader's browser does. Both of the bugs a live walk
+found on the first real project were in that blind spot:
+
+- the spacer was `maxPosition` rather than `maxPosition + one viewport`, so the
+  furthest reachable scrollTop was a whole viewport short and the entire last
+  section of every multi-section card was unreachable — measured at 1456×839 on
+  card 02: `maxPosition` 12285, furthest 11446, `start[4]` 11766. Seeking went
+  there happily;
+- a clip was `opacity: 0` until `is-loaded`, and `is-loaded` arrived only with
+  `loadeddata` — which under `preload="metadata"` means after a successful
+  `play()`. So a clip's visibility was gated on it having PLAYED, and anything
+  that rejects a play left an empty grey box wearing `.pv-frame`'s tint, with
+  the poster hidden by the same rule. The capture pipeline parks every video on
+  its first frame before it shoots, so the textures looked perfect throughout.
+
+The two check families above exist because of them, and both fail against the
+state that shipped them.
 
 **`verify:gpu` is a separate run, and it asks the question `verify:pv` cannot.**
 That one holds the view open and counts what is resident inside it, and a map

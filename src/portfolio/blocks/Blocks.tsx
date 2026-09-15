@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { charDelayMs } from '../portfolioMotion';
 import { useScroller } from '../scrollerContext';
@@ -65,6 +65,9 @@ function imageRef(el: HTMLImageElement | null): void {
 
 /** `HTMLMediaElement.HAVE_CURRENT_DATA` — a frame is decoded and paintable. */
 const HAVE_CURRENT_DATA = 2;
+/** `HTMLMediaElement.HAVE_METADATA` — dimensions are known and the poster has a
+ *  box to sit in, which is all the crossfade needs to have something to show. */
+const HAVE_METADATA = 1;
 
 /** ↗ — the LinkPill's "this leaves the site" mark. */
 function ExternalIcon() {
@@ -106,6 +109,23 @@ function VideoMedia({
   const scroller = useScroller();
   const ref = useRef<HTMLVideoElement>(null);
 
+  /**
+   * MUTED HAS TO BE AN ATTRIBUTE, not just a property.
+   *
+   * React sets `muted` as a DOM property during commit, and never writes the
+   * attribute. Chrome's autoplay gate reads the element as it first sees it, so
+   * a clip whose mutedness arrives a tick later can be judged unmuted, and every
+   * `play()` on it is rejected for the life of the page. Setting both from a
+   * callback ref puts it there at attach, which is before any effect runs and
+   * before the first `play()`.
+   */
+  const attach = useCallback((el: HTMLVideoElement | null) => {
+    ref.current = el;
+    if (!el) return;
+    el.muted = true;
+    el.setAttribute('muted', '');
+  }, []);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -121,8 +141,17 @@ function VideoMedia({
     const sync = () => {
       const showing =
         !page || (page.style.visibility !== 'hidden' && !page.hasAttribute('data-exiting'));
-      if (onScreen && showing) void el.play().catch(() => {});
-      else el.pause();
+      if (onScreen && showing) {
+        void el.play().catch((e: unknown) => {
+          // Swallowed in production — a clip that will not start is a still
+          // frame now rather than a broken page. But it is never NOTHING: this
+          // is the failure that used to present as an empty grey box, and it
+          // should be findable the next time it happens.
+          if (import.meta.env.DEV) {
+            console.warn(`[pv:video] play rejected for ${el.currentSrc || src}`, e);
+          }
+        });
+      } else el.pause();
     };
 
     const io = new IntersectionObserver(
@@ -143,17 +172,47 @@ function VideoMedia({
     if (el.readyState >= HAVE_CURRENT_DATA) onData();
     el.addEventListener('loadeddata', onData);
 
+    // …AND THE POSTER IS ENOUGH ON ITS OWN. This is the half that was missing,
+    // and it is why a clip that failed to start was an empty grey box rather
+    // than a still frame.
+    //
+    // `.pv-video` is `opacity: 0` until `is-loaded`, and `is-loaded` used to
+    // arrive only with `loadeddata` — readyState 2, which under
+    // `preload="metadata"` means AFTER A SUCCESSFUL `play()`. So the clip's
+    // visibility was gated on it having played, and anything that rejects a
+    // play (the autoplay gate, decoder pressure, a background tab, battery
+    // saver) left the element invisible for good — showing `.pv-frame`'s own
+    // tint, with the poster hidden behind the same rule that was hiding the
+    // video. The poster exists precisely to cover "has not played yet"; it
+    // cannot be behind a flag that means "has played".
+    //
+    // Decoding it separately rather than trusting the element: there is no load
+    // event for a poster, and no way to ask whether one painted.
+    let posterImg: HTMLImageElement | null = null;
+    if (poster) {
+      posterImg = new Image();
+      posterImg.onload = () => markLoaded(el);
+      posterImg.src = poster;
+    }
+    // Metadata alone also means there is a frame's worth of geometry and a
+    // poster to sit in it, so it is a second floor under the same guarantee.
+    const onMeta = () => markLoaded(el);
+    if (el.readyState >= HAVE_METADATA) onMeta();
+    el.addEventListener('loadedmetadata', onMeta);
+
     return () => {
       io.disconnect();
       page?.removeEventListener('pv:shown', sync);
       el.removeEventListener('loadeddata', onData);
+      el.removeEventListener('loadedmetadata', onMeta);
+      if (posterImg) posterImg.onload = null;
       el.pause();
     };
-  }, [scroller]);
+  }, [scroller, poster, src]);
 
   return (
     <video
-      ref={ref}
+      ref={attach}
       className={className ? `pv-video ${className}` : 'pv-video'}
       poster={poster}
       muted

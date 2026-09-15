@@ -1706,6 +1706,193 @@ async function run() {
     }
   }
 
+  // ── the last section, and the clips ────────────────────────────────────────
+  //
+  // BOTH OF THESE ARE LIVE-PAGE CHECKS, and neither could have been caught by
+  // anything above. Every other check in this suite steers with `__pv.seek`,
+  // which writes the position straight into the driver — so it never asks the
+  // scroller whether a reader could have got there, and never waits for a clip
+  // the way a reader's browser does.
+  console.log('\n── the last section lands ───────────────────────────────────');
+  {
+    const ctx2 = await browser.newContext({ deviceScaleFactor: 1 });
+    for (const id of PROJECTS) {
+      // 1 — THE SCROLLER CAN ACTUALLY REACH THE END OF THE TRACK.
+      //
+      // The position IS the scrollTop, so a spacer of exactly `maxPosition`
+      // stops one viewport short and the whole last section — entrance, page
+      // and all — is unreachable. It cost the last sheet of every multi-section
+      // card, and `seek` walked straight past it.
+      const p1 = await openView(ctx2, VIEWPORTS[0], `#view-${id}`);
+      const reach = await p1.evaluate(() => {
+        const sc = document.querySelector('.pv-scroller');
+        const t = window.__pv.track();
+        const max = t.start[t.start.length - 1] + t.pageScroll[t.start.length - 1];
+        return { max, reachable: sc.scrollHeight - sc.clientHeight };
+      });
+      check(
+        reach.reachable >= reach.max - 1,
+        `card ${id}: the scroller can reach the end of the track`,
+        `furthest ${Math.round(reach.reachable)} of ${Math.round(reach.max)}`,
+      );
+
+      // 2 — …AND A REAL SCROLL TO THE LAST SECTION LANDS ON IT. `park` is a
+      //     real scroll that lets go, so this is the reader's own path.
+      const lastK = await p1.evaluate(() => window.__pv.track().start.length - 1);
+      await p1.evaluate((k) => window.__pv.park(window.__pv.track().start[k]), lastK);
+      let landed = null;
+      for (let i = 0; i < 40; i++) {
+        await p1.waitForTimeout(150);
+        landed = await p1.evaluate((k) => {
+          const t = window.__pv.track();
+          const l = window.__pv.layout();
+          return {
+            y: window.__pv.position(),
+            want: t.start[k],
+            segment: l?.segment ?? null,
+            shown: [...document.querySelectorAll('.pv-page')].findIndex(
+              (p) => p.style.visibility !== 'hidden',
+            ),
+          };
+        }, lastK);
+        if (landed.segment === 'page' && Math.abs(landed.y - landed.want) < 2) break;
+      }
+      check(
+        landed.segment === 'page' && Math.abs(landed.y - landed.want) < 2 && landed.shown === lastK,
+        `card ${id}: a real scroll to the last section lands on it`,
+        `y ${Math.round(landed.y)} of ${Math.round(landed.want)}, segment ${landed.segment}, showing ${landed.shown}`,
+      );
+      await p1.close();
+
+      // 3 — …AND SO DOES A DEEP LINK STRAIGHT TO IT, which is a different path
+      //     into the same place: no entrance, no scroll, and the position set
+      //     before the reader has touched anything.
+      const p2 = await ctx2.newPage();
+      await p2.setViewportSize({ width: VIEWPORTS[0].width, height: VIEWPORTS[0].height });
+      await p2.goto(`${ORIGIN}/#view-${id}/${lastK + 1}`, { waitUntil: 'load' });
+      await p2.waitForFunction(() => window.__pv?.track() != null, null, { timeout: 20000 });
+      let deepLast = null;
+      for (let i = 0; i < 40; i++) {
+        await p2.waitForTimeout(150);
+        deepLast = await p2.evaluate((k) => {
+          const t = window.__pv.track();
+          const l = window.__pv.layout();
+          return {
+            y: window.__pv.position(),
+            want: t.start[k],
+            segment: l?.segment ?? null,
+            hash: location.hash,
+            shown: [...document.querySelectorAll('.pv-page')].findIndex(
+              (p) => p.style.visibility !== 'hidden',
+            ),
+          };
+        }, lastK);
+        if (deepLast.segment === 'page' && Math.abs(deepLast.y - deepLast.want) < 2) break;
+      }
+      check(
+        deepLast.segment === 'page' &&
+          Math.abs(deepLast.y - deepLast.want) < 2 &&
+          deepLast.shown === lastK &&
+          deepLast.hash === `#view-${id}/${lastK + 1}`,
+        `card ${id}: …and a deep link to the last section lands on it`,
+        `y ${Math.round(deepLast.y)} of ${Math.round(deepLast.want)}, segment ${deepLast.segment}, hash ${deepLast.hash}`,
+      );
+      await p2.close();
+    }
+    await ctx2.close();
+  }
+
+  // ── the clips actually run ─────────────────────────────────────────────────
+  //
+  // A clip is `opacity: 0` until it is marked loaded, over a frame that has its
+  // own tint — so a clip that never starts is not a still frame, it is an empty
+  // grey box. That is live-page behaviour end to end: the capture pipeline
+  // parks every video on its first frame before it shoots, so the textures look
+  // perfect whatever the live element is doing.
+  console.log('\n── the clips ────────────────────────────────────────────────');
+  {
+    const ctx3 = await browser.newContext({ deviceScaleFactor: 1 });
+    for (const id of PROJECTS) {
+      const p = await openView(ctx3, VIEWPORTS[0], `#view-${id}`);
+      const n = await p.evaluate(() => window.__pv.track().start.length);
+      let checked = 0;
+      const faults = [];
+      for (let k = 0; k < n; k++) {
+        // THE POSTER, BEFORE ANYTHING HAS PLAYED. Asked at the hand-off, which
+        // is the first moment the section is on screen: every clip on the page
+        // carries one, and is visible wearing it.
+        await p.evaluate((k) => window.__pv.park(window.__pv.track().start[k]), k);
+        await p.waitForTimeout(600);
+        const posters = await p.evaluate((k) => {
+          const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+          return [...pg.querySelectorAll('video')].map((v) => ({
+            src: (v.getAttribute('src') || v.querySelector('source')?.src || '').split('/').pop(),
+            poster: Boolean(v.poster),
+            muted: v.muted && v.hasAttribute('muted'),
+          }));
+        }, k);
+        for (const v of posters) {
+          if (!v.poster) faults.push(`${id}/${k} ${v.src}: no poster`);
+          // Muted has to be an ATTRIBUTE as well as a property, or Chrome's
+          // autoplay gate can reject every play the clip ever makes.
+          if (!v.muted) faults.push(`${id}/${k} ${v.src}: not muted as an attribute`);
+        }
+
+        // …AND THEN IT RUNS. Walk the section's own vertical run so every clip
+        // on the page comes into view — one below the fold is PAUSED on
+        // purpose, and asking it to play where the reader cannot see it would
+        // be asking for the bug this pauses to avoid.
+        for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+          await p.evaluate(
+            ([k, f]) => {
+              const t = window.__pv.track();
+              window.__pv.park(t.start[k] + t.pageScroll[k] * f);
+            },
+            [k, f],
+          );
+          // Within 2s of arriving, every clip IN VIEW is decoded and running.
+          let state = [];
+          for (let i = 0; i < 10; i++) {
+            await p.waitForTimeout(200);
+            state = await p.evaluate((k) => {
+              const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+              const box = pg.querySelector('.pv-page__scroll').getBoundingClientRect();
+              return [...pg.querySelectorAll('video')]
+                .map((v) => {
+                  const r = v.getBoundingClientRect();
+                  const seen = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top);
+                  return {
+                    src: (v.currentSrc || '').split('/').pop(),
+                    inView: seen > r.height * 0.25,
+                    ready: v.readyState,
+                    playing: !v.paused,
+                    shown: v.classList.contains('is-loaded'),
+                  };
+                })
+                .filter((v) => v.inView);
+            }, k);
+            if (state.length > 0 && state.every((v) => v.ready >= 2 && v.playing && v.shown)) break;
+          }
+          for (const v of state) {
+            checked++;
+            if (v.ready < 2 || !v.playing || !v.shown) {
+              faults.push(
+                `${id}/${k}@${f} ${v.src}: readyState ${v.ready}, ${v.playing ? 'playing' : 'PAUSED'}, ${v.shown ? 'shown' : 'INVISIBLE'}`,
+              );
+            }
+          }
+        }
+      }
+      check(
+        faults.length === 0,
+        `card ${id}: every clip in view is decoded, running and visible`,
+        faults.length === 0 ? `${checked} sightings` : faults.slice(0, 4).join(' | '),
+      );
+      await p.close();
+    }
+    await ctx3.close();
+  }
+
   // ── the ways in and out ────────────────────────────────────────────────────
   console.log('\n── navigation ───────────────────────────────────────────────');
   const context = await browser.newContext({ deviceScaleFactor: 2 });

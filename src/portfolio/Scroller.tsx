@@ -767,9 +767,27 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     });
     trackRef.current = track;
 
-    // The spacer is the only reason the scroller has anywhere to go: the whole
-    // forward extent, since the sticky stage already occupies one viewport.
-    spacer.style.height = `${Math.max(0, maxPosition(track))}px`;
+    // THE SPACER IS THE ONLY REASON THE SCROLLER HAS ANYWHERE TO GO, and it has
+    // to be the forward extent PLUS ONE VIEWPORT.
+    //
+    // The position IS the scrollTop, and a scroller stops at
+    // `scrollHeight - clientHeight`. So a spacer of exactly `maxPosition` can
+    // only ever be scrolled to `maxPosition - box.height` — it makes the last
+    // viewport of the track unreachable, which is the whole of the last
+    // section: its entrance, its page and everything after. Measured at
+    // 1456×839 on card 02: `maxPosition` 12285, furthest reachable 11446,
+    // `start[4]` 11766. The last sheet stalled mid-roll and never landed,
+    // whether it was scrolled to, clicked on in the letterhead, or deep linked.
+    //
+    // This used to say the sticky stage already occupies one viewport. It does
+    // not: the stage is out of flow, the spacer is the scroller's ONLY child,
+    // and so `scrollHeight` was the spacer's height and nothing else.
+    //
+    // `pv-verify` could not see it. Every check in that suite steers with
+    // `__pv.seek`, which writes the position directly and never asks the
+    // scroller whether it could have got there — so the one thing this breaks
+    // is the one thing seeking bypasses.
+    spacer.style.height = `${Math.max(0, maxPosition(track) + box.height)}px`;
 
     // Back into pixels against the NEW track, synchronously — there must be no
     // frame that paints the new starts against the old position.
