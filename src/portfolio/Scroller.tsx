@@ -25,6 +25,7 @@ import {
   positionAt,
   positionOf,
   resolve,
+  SEGMENT_EPSILON,
   settleAt,
   sheetPose,
   tearPose,
@@ -166,6 +167,17 @@ function residentWindow(canvas: SheetCanvasHandle | null, center: number): void 
  * `import.meta.env.DEV` is a literal, so the whole block leaves a production
  * build with the rest of the dead branch.
  */
+/**
+ * How far below the segment boundary {@link PortfolioProbe.handoffFrame} sits.
+ *
+ * Small enough that it is the same frame the reader sees hand over, large
+ * enough to survive the float arithmetic between here and `positionAt` — which
+ * compares against `start[k] - SEGMENT_EPSILON` with a strict `<`. Landing
+ * exactly ON the boundary would resolve to `page` and photograph no sheet at
+ * all.
+ */
+const HANDOFF_PROBE_STEP = 0.01;
+
 export interface PortfolioProbe {
   track: () => Track | null;
   position: () => number;
@@ -176,6 +188,24 @@ export interface PortfolioProbe {
   enterWindow: (k: number) => { from: number; to: number } | null;
   /** …and the stretch of empty ground after section `k`'s tear. */
   dwellWindow: (k: number) => { from: number; to: number } | null;
+  /**
+   * THE LAST FRAME SECTION `k`'S SHEET EXISTS ON — which is the frame its
+   * forward hand-off actually happens on, and therefore the only honest place
+   * to measure one.
+   *
+   * `positionAt` turns the segment to `page` at `start[k] - SEGMENT_EPSILON`,
+   * so the sheet is on screen up to but not including that line. This returns
+   * one probe step below it, DERIVED from the same constant rather than from a
+   * number typed into the suite: move the boundary and the measurement moves
+   * with it.
+   *
+   * Sampling anywhere short of this measures the easing rather than the
+   * hand-off. The approach is steep right to the end — at the widest viewport
+   * the same diff reads 32% at `p` = 0.6, 7.3% at 0.99 and 2.1% at 0.999 — so a
+   * frame chosen for being "near the end" is a frame chosen arbitrarily, and
+   * the arbitrariness is worth about a percent of the budget.
+   */
+  handoffFrame: (k: number) => number | null;
   /** The tear's free corner, against where a flat sheet would put it. */
   cornerLift: () => CornerLift | null;
   /** Where the shader put the vertex at `(u, v)`, in screen pixels — and where
@@ -807,6 +837,11 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         if (!t) return null;
         const from = dwellStart(t, k);
         return { from, to: from + t.dwellDistance };
+      },
+      handoffFrame: (k: number) => {
+        const t = trackRef.current;
+        if (!t) return null;
+        return t.start[k] - SEGMENT_EPSILON - HANDOFF_PROBE_STEP;
       },
       seek: (y: number) => {
         if (!trackRef.current) return;

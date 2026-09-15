@@ -734,20 +734,51 @@ view.
 The measurable version is the **diff**: screenshot one surface, screenshot the
 other, and count the pixels inside the page rect that differ.
 
-| | forward, worst | reverse, worst | mean absolute difference |
-| --- | --- | --- | --- |
-| 1728×996, 1× | **1.478%** (card 02, the all-prose section) | **0%** | 2.2 levels |
-| 1440×900, 1× | **1.738%** (same section) | **0%** | 2.4 levels |
-| 1728×996, 2× | **1.48%** (same section) | **0%** | 2.3 levels |
-| 1440×900, 2× | **1.705%** (same section) | **0%** | 2.4 levels |
-| budget | 2% | 2% | — |
+**IT IS TAKEN ON THE FRAME THE HAND-OFF HAPPENS ON, and that is load-bearing.**
+`positionAt` turns the segment to `page` at `start[k] - SEGMENT_EPSILON`, so the
+sheet is on screen up to but not including that line; the suite asks the app for
+that frame (`__pv.handoffFrame(k)`) rather than carrying its own copy of the
+number, and a boundary that moves takes the measurement with it.
 
-**2× costs nothing — it is a wash.** The forward diff is 1.48% at 2× against
-1.478% at 1728×996 and 1.705% against 1.738% at 1440×900, and the
-reason is the same one that makes the whole release worth doing: at 1× the
-disagreement is dominated by how two rasterisers antialias a glyph edge, and at
-2× each of those edges is drawn with four times the samples on both sides of the
-comparison. The reverse diff is a flat zero at both scales and both viewports.
+It used to sample `p` = 0.999 of the entrance — a number rather than a
+mechanism, and 0.9px short of the boundary at the shipped `enterDistance`. The
+gap is not free, because the entrance eases in and the last of the easing is
+where all of it is. Measured down the tail of one entrance at 1728×996:
+
+| `p` | 0.6 | 0.8 | 0.9 | 0.95 | 0.99 | 0.999 | the hand-off frame |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| forward diff | 32.4% | 22.9% | 16.6% | 13.1% | 7.3% | 2.1% | **1.0%** |
+
+**Real prose is what made it legible.** Nothing about the approach changed; what
+changed is the page. A full measure of body type has glyph edges everywhere, and
+every one of them resamples through whatever sub-pixel of the approach is left —
+where the placeholder's flat colour plates and short paragraphs had almost no
+edges to show it on, and sat under budget by accident rather than by being
+right. Cards 03 and 04 are still placeholders and still improved, from ~0.7% to
+~0.45%, which is how you can tell this is the mechanism rather than a fix for
+one card.
+
+| | forward, worst | reverse, worst | mean | residual at `p` = 0.999 |
+| --- | --- | --- | --- | --- |
+| 1728×996, 1× | **1.029%** (card 02) | 0.029% | 1.9 levels | 2.093% |
+| 1440×900, 1× | **0.983%** (card 02) | 0.04% | 1.9 levels | 2.099% |
+| 1728×996, 2× | **1.187%** (card 02) | 0.023% | 2.0 levels | 2.002% |
+| 1440×900, 2× | **1.234%** (card 02) | 0.018% | 1.9 levels | 1.953% |
+| cards 03 / 04 | 0.365 – 0.493% | **0%** | 1.2 – 1.3 levels | 0.641 – 0.878% |
+| budget | 2% | 2% | — | not asserted |
+
+**The residual is reported and never asserted.** It is the same comparison taken
+at `p` = 0.999, printed on every run so the cost of the last sub-pixel of the
+easing stays a number somebody can see — rather than one nobody measures again
+the moment the check stops tripping over it. Card 02 is 1.95 – 2.10% of the page
+there, which is the figure that used to be the hand-off's own and used to fail.
+
+**2× costs a little, and it is the type.** Forward runs 1.187 / 1.234% at 2×
+against 1.029 / 0.983% at 1×: four times the samples per glyph edge resolve more
+of the disagreement rather than less of it, on both sides of the comparison. The
+reverse diff is a flat zero on the two placeholder cards; card 02's 0.018 –
+0.04% is its clips, which are parked on their first frame but decoded by two
+different code paths at the two ends of the swap.
 
 What the table cannot show is the state it replaces: before the 2× captures
 existed, this measurement at `deviceScaleFactor: 2` would have been a 1× texture
@@ -1718,7 +1749,10 @@ tear and no dwell) and card 04 (three), and checks:
   with `animations: 'disabled'` fast-forwards the very thing being looked for;
 - **both hand-off diffs** — the last frame of an entrance against the settled
   page, and the settled page against the first frame of a tear, ≤ 2% of pixels
-  differing inside the page rect. Plus the **control** (the same measurement
+  differing inside the page rect. "The last frame" is the app's own
+  (`__pv.handoffFrame`, derived from `SEGMENT_EPSILON`) rather than a `p` the
+  suite picked, and the **approach residual** at `p` = 0.999 is printed beside
+  it without being asserted — see [the hand-offs](#the-hand-offs). Plus the **control** (the same measurement
   against the wrong section's page, which must be large) and a guard that the
   reverse one is photographing the sheet at all;
 - **the tear, in pixels**, with the ground repainted flat magenta and the chrome

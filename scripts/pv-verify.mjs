@@ -528,12 +528,41 @@ const rectDrift = (page) =>
  * over a canvas still showing the sheet, so a diff there would compare the
  * sheet with itself and pass on anything.
  */
+/**
+ * THE FORWARD HAND-OFF, measured on the frame it actually happens on.
+ *
+ * The sampling point is the app's, not the suite's: `__pv.handoffFrame(k)` is
+ * derived from the same `SEGMENT_EPSILON` that `positionAt` decides the segment
+ * boundary with, so if that boundary ever moves this measurement moves with it.
+ *
+ * It used to be `atEnter(track, k, 0.999)`, which is a number rather than a
+ * mechanism — 0.9px short of the boundary at the shipped `enterDistance`, and a
+ * different distance short of it at any other. That gap is not free, because
+ * the entrance eases in and the last of the easing is where all of it is: the
+ * same diff reads 32% at `p` = 0.6, 7.3% at 0.99, 2.1% at 0.999 and 1.0% on the
+ * frame the hand-off is on. A page of real prose is what made the difference
+ * legible — every glyph edge in a full measure of type resamples through the
+ * last sub-pixel of the approach, where the placeholder's flat plates and short
+ * paragraphs had almost no edges to show it on.
+ *
+ * THE RESIDUAL IS STILL REPORTED. `residual` is the same comparison taken at
+ * 0.999, carried out and printed but never failed on, so the cost of the
+ * approach stays a visible number rather than becoming one nobody measures
+ * again the moment the check stops tripping over it.
+ */
 async function handoffIn(page, track, k, clip, handoffMs) {
-  await seek(page, atEnter(track, k, 0.999));
+  const at = await page.evaluate((k) => window.__pv.handoffFrame(k), k);
+  await seek(page, at);
   const drift = await rectDrift(page);
   const wearing = await textureReady(page);
   await parkMedia(page);
   const sheet = await page.screenshot({ clip, animations: 'disabled' });
+
+  // …and the approach residual, one frame's worth of easing earlier.
+  await seek(page, atEnter(track, k, 0.999));
+  await page.waitForTimeout(handoffMs);
+  await parkMedia(page);
+  const approach = await page.screenshot({ clip, animations: 'disabled' });
 
   await seek(page, track.start[k]);
   // The first frame after the swap, and no settling: the page is put into its
@@ -558,7 +587,8 @@ async function handoffIn(page, track, k, clip, handoffMs) {
   await grainOff(page);
   const reanimated = (await differing(early, late)).pct;
 
-  return { drift, wearing, reanimated, moving, ...(await differing(sheet, live)), sheet };
+  const residual = (await differing(approach, live)).pct;
+  return { drift, wearing, reanimated, moving, residual, ...(await differing(sheet, live)), sheet };
 }
 
 /**
@@ -626,6 +656,8 @@ async function run() {
         };
         const worst = {
           inDrift: 0, inDiff: 0, outDrift: 0, outDiff: 0, mean: 0, reanim: 0, moving: 0, tearMoving: 0,
+          // REPORTED, NEVER ASSERTED — see `handoffIn`.
+          residual: 0,
         };
         let control = null;
         const last = track.start.length - 1;
@@ -637,6 +669,7 @@ async function run() {
           worst.mean = Math.max(worst.mean, into.mean);
           worst.reanim = Math.max(worst.reanim, into.reanimated);
           worst.moving = Math.max(worst.moving, into.moving.moving);
+          worst.residual = Math.max(worst.residual, into.residual);
           if (into.drift > RECT_PX) bad(`card ${id} section ${k} in — rect`, `${round(into.drift)}px`);
           if (into.pct > DIFF_PCT) {
             bad(`card ${id} section ${k} in — diff`, `${pct(into.pct)} wearing ${wore(into)}`);
@@ -682,12 +715,18 @@ async function run() {
           in: worst.inDiff,
           out: worst.outDiff,
           mean: worst.mean,
+          residual: worst.residual,
         });
         check(
           Math.max(worst.inDiff, worst.outDiff) <= DIFF_PCT,
           `card ${id}: neither hand-off shows`,
           `in ${pct(worst.inDiff)}, out ${pct(worst.outDiff)} of ${DIFF_PCT}%, mean ${round(worst.mean)} levels`,
         );
+        // Not a check. The cost of the last sub-pixel of the entrance's easing,
+        // measured at `p` = 0.999 — where this suite used to take the hand-off
+        // shot, and where it is a property of the approach rather than of the
+        // swap. Printed so the number stays in the run's output.
+        console.log(`      · approach residual at p = 0.999: ${pct(worst.residual)}`);
         if (control !== null) {
           check(
             control > 10,
@@ -1437,12 +1476,12 @@ async function run() {
   // into, which is the whole failure this release is about and is not something
   // a per-run pass/fail says out loud.
   console.log('\n── the hand-off diffs, 1x against 2x ────────────────────────');
-  console.log('      scale  viewport   card   rect      forward    reverse   mean');
+  console.log('      scale  viewport   card   rect      forward    reverse   mean   residual');
   for (const h of handoffs) {
     console.log(
       `      ${String(h.dsf).padStart(2)}x    ${h.viewport.padEnd(10)} ${h.card}    ` +
         `${`${round(h.drift)}px`.padEnd(8)} ${pct(h.in).padEnd(10)} ${pct(h.out).padEnd(9)} ` +
-        `${round(h.mean)}`,
+        `${String(round(h.mean)).padEnd(6)} ${pct(h.residual)}`,
     );
   }
   for (const dsf of DPRS) {
