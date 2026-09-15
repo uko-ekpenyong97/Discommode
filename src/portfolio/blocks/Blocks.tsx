@@ -90,12 +90,14 @@ function ExternalIcon() {
  */
 function VideoMedia({
   src,
+  webm,
   poster,
   w,
   h,
   className,
 }: {
   src: string;
+  webm?: string;
   poster: string;
   w: number;
   h: number;
@@ -158,15 +160,114 @@ function VideoMedia({
       loop
       playsInline
       preload="metadata"
-      src={src}
+      // `src` WINS OVER `<source>` when both are present, so a clip that has a
+      // webm has to offer BOTH as children or the browser never sees the
+      // smaller one. A clip that has only the mp4 keeps the attribute, which is
+      // one element instead of two for the same result.
+      src={webm ? undefined : src}
       // The intrinsic size, so the box is the right height before a byte of
       // video arrives — with `width: 100%; height: auto` the browser derives
       // the aspect ratio from these and reserves the space.
       width={w}
       height={h}
-    />
+    >
+      {webm && (
+        <>
+          {/* Smaller first, and the mp4 last: the browser takes the first it
+              can play, and the mp4 is the one that always can. */}
+          <source src={webm} type="video/webm" />
+          <source src={src} type="video/mp4" />
+        </>
+      )}
+    </video>
   );
 }
+
+/**
+ * EVERY LIVE ARTBOARD, so tooling can put one on a KNOWN frame — the exact
+ * counterpart of `parkMedia`'s `v.pause(); v.currentTime = 0` for video, and it
+ * exists for the same reason.
+ *
+ * A sheet capture and the live page it hands off to are compared pixel for
+ * pixel inside the page rect, at a 2% budget. A clip that is playing is a
+ * difference the diff cannot tell from a real one — and a state machine running
+ * its own rAF loop is the same problem with none of the same handles on it. The
+ * capture pipeline got away with ignoring Rive for as long as card 02 was a
+ * placeholder, because there was no `.riv` to load and every Rive block fell
+ * back to a CSS stand-in, which `animations: 'disabled'` freezes for you. A real
+ * artboard is on canvas, where a screenshot flag cannot reach it.
+ *
+ * WHY IT IS A RESET AND THEN EIGHT FRAMES, which looks like superstition and is
+ * measured. There is no "seek the state machine to t" in the runtime, so the
+ * only fixed point available is a fresh instance. `reset` gives one — but it
+ * paints NOTHING for the first several frames, so the obvious
+ * `reset({ autoplay: false })` (and `reset` + one frame, and + three) leaves an
+ * empty box: deterministic, and a hole in the texture where the character is.
+ * By the eighth frame it is drawing, and two parks taken from different elapsed
+ * times agree to ZERO differing pixels. A plain `pause()` — the thing to reach
+ * for first — paints the character but lands wherever the loop happened to be:
+ * 0.89% of the canvas, 0.15% of the page, against a budget the hand-off already
+ * spends 1.46% of.
+ *
+ * `settle: false` is the no-wait form, for a shot that has to be taken at the
+ * first frame after a swap. It is only a `pause()`, and it is enough there
+ * BECAUSE NOTHING EVER RESUMES ONE: an instance parked by the full form above
+ * is still on that frame when the next shot is taken, so the cheap call has
+ * nothing left to do unless a block has mounted in between.
+ *
+ * Registered as closures rather than instances because only the block knows
+ * which artboard and state machine its instance was built with.
+ */
+interface Parker {
+  settle: () => Promise<void>;
+  pause: () => void;
+}
+const parkers = new Set<Parker>();
+
+if (import.meta.env.DEV) {
+  (window as unknown as { __pvRive?: (settle?: boolean) => Promise<number> | number }).__pvRive = (
+    settle = true,
+  ) => {
+    if (!settle) {
+      for (const p of parkers) p.pause();
+      return parkers.size;
+    }
+    return Promise.all([...parkers].map((p) => p.settle())).then(() => parkers.size);
+  };
+}
+
+/**
+ * How many frames a reset artboard is given before it is paused. MEASURED, and
+ * the number is about what the frame LOOKS like rather than about determinism:
+ *
+ *   frames   ink        two parks, as a share of the page
+ *    8       4.1%       0.016%   — drawing, but still assembling
+ *   20       4.4%       0
+ *   40       6.4%       0.014%
+ *   70       7.5%       0        — fully assembled, and it stops changing here
+ *  110       7.5%       0
+ *
+ * Under eight the canvas comes back empty. Anywhere past it the two parks agree
+ * to within a rounding of nothing, so the choice is free — and 70 is where the
+ * character has finished arriving, which is the frame worth baking into a
+ * texture a reader watches unroll.
+ *
+ * It costs about 1.2s per park, and only on a page with a LIVE artboard: cards
+ * 03 and 04 have no `.riv`, so their blocks render the CSS stand-in, register
+ * no parker, and this resolves immediately.
+ */
+const PARK_FRAMES = 70;
+
+const nextFrames = (n: number): Promise<void> =>
+  new Promise((resolve) => {
+    let i = 0;
+    const step = () => {
+      i += 1;
+      if (i >= n) resolve();
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
 
 /** Rive files start with the ASCII fingerprint "RIVE". */
 function isRiv(buffer: ArrayBuffer): boolean {
@@ -196,14 +297,18 @@ function RiveBlock({
   src,
   artboard,
   stateMachine,
+  animation,
   label,
+  surface,
   w,
   h,
 }: {
   src: string;
   artboard?: string;
   stateMachine?: string;
+  animation?: string;
   label?: string;
+  surface?: 'paper' | 'ink';
   w: number;
   h: number;
 }) {
@@ -229,6 +334,15 @@ function RiveBlock({
     if (!near) return;
     let cancelled = false;
     let instance: { cleanup: () => void } | null = null;
+    /** Dev tooling has parked this artboard on a chosen frame; `pv:shown` must
+     *  not quietly start it again. Always false in production, where nothing
+     *  ever parks one. */
+    let parkedByTooling = false;
+
+    /** The instance's own park, removed again when it is torn down. */
+    let unpark: (() => void) | null = null;
+    /** …and its `pv:shown` listener, which is attached once it is loaded. */
+    let detach: (() => void) | null = null;
 
     void (async () => {
       let buffer: ArrayBuffer;
@@ -247,14 +361,73 @@ function RiveBlock({
       try {
         const rive = await import('@rive-app/canvas');
         if (cancelled || !canvasRef.current) return;
-        instance = new rive.Rive({
+        const params = {
           buffer,
           canvas: canvasRef.current,
           artboard,
           stateMachines: stateMachine,
+          animations: animation,
+        };
+        const live = new rive.Rive({
+          ...params,
           autoplay: true,
+          // THE BACKING STORE AT THE DISPLAY'S RATIO, and not the 1200x800 the
+          // canvas is authored at. The box is the ARTBOARD's ratio, so a square
+          // artboard in a 3:2 buffer is letterboxed by `Fit.contain` and then
+          // stretched back out by `width: 100%; height: 100%` — the character
+          // came out a third narrower than it is. This is the runtime's own
+          // answer to it, and it takes `devicePixelRatio` at the same time,
+          // which is what keeps the artboard as sharp as the type beside it.
+          onLoad: () => live.resizeDrawingSurfaceToCanvas(),
           onLoadError: () => setMissing(true),
         });
+        instance = live;
+
+        // NOTHING RUNS BEHIND A SHEET — the same rule the video above obeys,
+        // and for a stronger reason. A Rive instance drives its own rAF loop,
+        // so an artboard left playing while its page tilts away is costing
+        // frames during the single most expensive moment in the view. The
+        // `near` observer cannot see this: a page part-way through its exit is
+        // still exactly where it was, so the block is still within a viewport
+        // of the scroll position and still "near".
+        //
+        // It went unnoticed for as long as card 02 was a placeholder, because
+        // the placeholder has no `.riv` to load: every Rive block fell back to
+        // the CSS stand-in, which has no rAF loop of its own to leave running.
+        // The first real artboard put a frame of 33.3ms into a tear against a
+        // 20ms budget.
+        const page = hostRef.current?.closest<HTMLElement>('.pv-page') ?? null;
+        const sync = () => {
+          // Tooling owns the artboard once it has parked one — see `parkers`.
+          // Without this, a seek would fire `pv:shown`, resume the instance,
+          // and the very next shot would be of a frame nobody asked for.
+          if (parkedByTooling) return;
+          const showing =
+            !page || (page.style.visibility !== 'hidden' && !page.hasAttribute('data-exiting'));
+          if (showing) live.play();
+          else live.pause();
+        };
+        page?.addEventListener('pv:shown', sync);
+        detach = () => page?.removeEventListener('pv:shown', sync);
+        sync();
+
+        if (import.meta.env.DEV) {
+          const parker: Parker = {
+            pause: () => {
+              parkedByTooling = true;
+              live.pause();
+            },
+            settle: async () => {
+              parkedByTooling = true;
+              live.reset({ ...params, autoplay: true });
+              live.resizeDrawingSurfaceToCanvas();
+              await nextFrames(PARK_FRAMES);
+              live.pause();
+            },
+          };
+          parkers.add(parker);
+          unpark = () => parkers.delete(parker);
+        }
       } catch {
         if (!cancelled) setMissing(true);
       }
@@ -262,15 +435,22 @@ function RiveBlock({
 
     return () => {
       cancelled = true;
+      unpark?.();
+      detach?.();
       instance?.cleanup();
     };
-  }, [near, src, artboard, stateMachine]);
+  }, [near, src, artboard, stateMachine, animation]);
 
   return (
     // The artboard's ratio holds the box open from the first frame: the lazy
     // mount has to be invisible to layout, or arriving at the block would
     // lengthen the page and move every page start behind it.
-    <div className="pv-rive" ref={hostRef} style={{ aspectRatio: `${w} / ${h}` }}>
+    <div
+      className="pv-rive"
+      ref={hostRef}
+      data-surface={surface}
+      style={{ aspectRatio: `${w} / ${h}` }}
+    >
       {near &&
         (missing ? (
           <div className="pv-rive__stand-in" role="img" aria-label={label ?? 'Animation placeholder'}>
@@ -278,7 +458,7 @@ function RiveBlock({
             <span className="pv-rive__label">{label ?? 'RIVE'}</span>
           </div>
         ) : (
-          <canvas ref={canvasRef} className="pv-rive__canvas" width={1200} height={800} />
+          <canvas ref={canvasRef} className="pv-rive__canvas" width={w} height={h} />
         ))}
     </div>
   );
@@ -289,6 +469,7 @@ function MediaView({ media, className }: { media: Media; className?: string }) {
     return (
       <VideoMedia
         src={media.src}
+        webm={media.webm}
         poster={media.poster}
         w={media.w}
         h={media.h}
@@ -404,7 +585,7 @@ function BlockBodyView({ block }: { block: Block }) {
     case 'text':
       return (
         <>
-          <h3 className="pv-heading">{block.heading}</h3>
+          {block.heading && <h3 className="pv-heading">{block.heading}</h3>}
           {block.body.map((para, i) => (
             <p key={i} className="pv-body">
               {para}
@@ -451,7 +632,13 @@ function BlockBodyView({ block }: { block: Block }) {
       return (
         <figure className="pv-figure">
           <div className="pv-frame">
-            <VideoMedia src={block.src} poster={block.poster} w={block.w} h={block.h} />
+            <VideoMedia
+              src={block.src}
+              webm={block.webm}
+              poster={block.poster}
+              w={block.w}
+              h={block.h}
+            />
           </div>
           {block.caption && <figcaption className="pv-figcaption">{block.caption}</figcaption>}
         </figure>
@@ -462,7 +649,9 @@ function BlockBodyView({ block }: { block: Block }) {
           src={block.src}
           artboard={block.artboard}
           stateMachine={block.stateMachine}
+          animation={block.animation}
           label={block.label}
+          surface={block.surface}
           w={block.w}
           h={block.h}
         />

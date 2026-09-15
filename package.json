@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "pages": "node scripts/optimize-pages.mjs",
     "anims": "node scripts/optimize-anims.mjs",
+    "projects": "node scripts/optimize-projects.mjs",
     "backgrounds": "node scripts/optimize-backgrounds.mjs",
     "placeholders": "node scripts/make-placeholders.mjs",
     "lint": "eslint .",

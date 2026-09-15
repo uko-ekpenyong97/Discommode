@@ -374,14 +374,31 @@ const parkMediaNow = (page) =>
       v.pause();
       v.currentTime = 0;
     }
+    // The no-wait form: a plain pause. The full park below has already run
+    // before the seek, and nothing ever resumes an artboard — so this only has
+    // to catch one that mounted in between, and must not spend eight frames
+    // here, where the whole point is that nothing has been given time to settle.
+    window.__pvRive?.(false);
   });
 
+/**
+ * …AND EVERY RIVE ARTBOARD, which is the same problem on a surface a screenshot
+ * flag cannot reach.
+ *
+ * `animations: 'disabled'` pins the CSS animations, and while card 02 was a
+ * placeholder that was enough: there was no `.riv` to load, so every Rive block
+ * fell back to its CSS stand-in. A real artboard draws to a canvas off its own
+ * rAF loop, and a capture taken at one frame of it against a live page at
+ * another is a difference the diff cannot tell from a real one — the same
+ * argument as the video above, and `__pvRive` is the same handle for it.
+ */
 const parkMedia = (page) =>
   page.evaluate(async () => {
     for (const v of document.querySelectorAll('video')) {
       v.pause();
       v.currentTime = 0;
     }
+    await window.__pvRive?.();
     await new Promise((r) => setTimeout(r, 200));
   });
 
@@ -1466,7 +1483,18 @@ async function run() {
       await new Promise((r) => setTimeout(r, TEXTURE_MS));
       await route.continue();
     });
-    await held.route('**/projects/placeholder/**', async (route) => {
+    // CARD 02'S BLOCK MEDIA, wherever it lives. It was `/projects/placeholder/`
+    // for as long as card 02 was a placeholder; the real project's media is
+    // under its SLUG (`/projects/rive-site/`), while its captures stay under
+    // the project ID and are held back by the route above. Matching on the
+    // media's own extensions rather than on the folder is what keeps the two
+    // apart: a glob over `/projects/**` would swallow the captures too, and —
+    // because Playwright checks the most recently registered route first — it
+    // would quietly replace their 3s hold-back with this 1.5s one and the
+    // stronger of the two claims would stop being made at all.
+    const MEDIA_GLOB = '**/projects/*/*.{webp,mp4,webm,riv}';
+    await held.route(MEDIA_GLOB, async (route) => {
+      if (CAPTURE_RE.test(route.request().url())) return route.continue();
       await new Promise((r) => setTimeout(r, MEDIA_MS));
       await route.continue();
     });
@@ -1486,10 +1514,23 @@ async function run() {
     await held.waitForFunction(() => window.__pv?.track() != null, null, { timeout: 20000 });
     const gateAt = Date.now() - t0;
     const heights = () => held.evaluate(() => window.__pv.track().heights.map(Math.round));
+    // IMAGES AND CLIPS, because card 02 is now a page of clips and counting
+    // `document.images` alone would have come back 0 of 0 — and `0 > 0` is a
+    // check that fails while reporting nothing about what it was watching.
+    // A video's poster is not an `<img>`, so the video's own readiness is what
+    // stands in for "the media has landed": `HAVE_METADATA` is the first state
+    // that needed bytes off the wire.
     const decoded = () =>
       held.evaluate(() => {
-        const mine = [...document.images].filter((i) => i.src.includes('/projects/placeholder/'));
-        return { of: mine.length, done: mine.filter((i) => i.complete).length };
+        const isMine = (url) => /\/projects\/[^/]+\//.test(url) && !/(sheet|tail)-\d+-\d+/.test(url);
+        const imgs = [...document.images].filter((i) => isMine(i.currentSrc || i.src));
+        const vids = [...document.querySelectorAll('video')].filter((v) =>
+          isMine(v.currentSrc || v.src || ''),
+        );
+        return {
+          of: imgs.length + vids.length,
+          done: imgs.filter((i) => i.complete).length + vids.filter((v) => v.readyState >= 1).length,
+        };
       });
     const before = await heights();
     const atGate = await decoded();

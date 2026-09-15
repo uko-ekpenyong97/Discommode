@@ -295,6 +295,12 @@
   background: rgba(20, 18, 15, 0.07);
 }
 
+/* A file drawn for a dark product UI, printed on one. See the `surface` note
+   in `types.ts`: the plate is what makes a light artboard legible on paper. */
+.pv-rive[data-surface='ink'] {
+  background: #14120f;
+}
+
 .pv-rive__canvas {
   display: block;
   width: 100%;

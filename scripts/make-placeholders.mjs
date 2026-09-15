@@ -288,6 +288,14 @@ async function captureSheets(browser, id, viewport, scale) {
         v.pause();
         v.currentTime = 0;
       }
+      // AND EVERY RIVE ARTBOARD, back to the frame it mounted on. A state
+      // machine runs its own rAF loop on a canvas, where `animations:
+      // 'disabled'` cannot reach it — so without this the capture bakes
+      // whatever frame the artboard happened to be on and the live page is
+      // never on that frame again. `pv-verify` parks them the same way before
+      // it measures the hand-off. Dev-only, and absent on a project with no
+      // artboard, so the call is optional.
+      await window.__pvRive?.();
       await new Promise((r) => setTimeout(r, 250));
       const r = document.querySelector(`.pv-page[data-k="${k}"]`).getBoundingClientRect();
       return {
