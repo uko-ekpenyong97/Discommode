@@ -82,47 +82,30 @@ const letterhead = (index: number, title: string): Block => ({
 /**
  * 01 — A BUTTON.
  *
- * The Loop artboard is Uko's own character, the loading ring with a face, and
- * it is the first thing on the page for the reason the copy gives: a Rive file
- * running live is the argument, and a screenshot of one is the opposite of it.
+ * THE TWO BUTTONS THE COPY IS ABOUT, side by side and directly under the
+ * header, so the thing being described is in the first viewport with the
+ * sentence describing it. A two-up rather than a stack for the same reason the
+ * copy names them in one breath: the rocket and the cat are one argument, not
+ * two.
  *
- * It takes FOUR of the twelve columns rather than the measure. The artboard is
- * square, so a full-width block would be 1536px tall on a page that is 844 —
- * the character would be the whole first viewport and the sentence it is there
- * to introduce would be below the fold.
+ * It replaced the Loop artboard, which opened this section while it was the
+ * only live Rive on the page. `loop.riv` stays in the masters folder and is no
+ * longer shipped — see `NOT_SHIPPED` in `scripts/optimize-projects.mjs`.
  */
 const section01 = (): Section => ({
   title: 'A button',
   blocks: [
     letterhead(0, 'A button'),
     {
-      type: 'rive',
-      src: `${M}/loop.riv`,
-      artboard: 'Loop',
-      // NOT `BeatMachine`, which is the artboard's only state machine and would
-      // be the right entry point if it were usable. It paints the EDITOR'S
-      // SELECTION HANDLES over the character — four blue corner squares, four
-      // edge dots and a centre crosshair — and draws less than half the
-      // character's ink while it does it. Verified against a bare page with
-      // nothing on it but the runtime and this file, so it is the file rather
-      // than anything here. Every other entry point on the artboard is clean.
-      //
-      // `LoadingSustain` is the one the copy is about: the orange loading arc
-      // with the face, sustained. Re-export the state machine without that
-      // layer and this becomes `stateMachine: 'BeatMachine'` again.
-      animation: 'LoadingSustain',
-      label: 'LOOP',
-      // Loop is a light ring and a light face with nothing behind it — drawn
-      // for a dark product UI, which is where it lives on the redesign. On this
-      // page's paper it all but disappears, so it gets the plate it was drawn
-      // against rather than a recolour it was not.
-      surface: 'ink',
-      span: 4,
-      w: 240,
-      h: 240,
+      type: 'twoUp',
+      columns: [
+        { media: videoMedia('hero'), text: 'The rocket' },
+        { media: videoMedia('cat'), text: 'The cat' },
+      ],
     },
     {
       type: 'text',
+      newRun: true,
       heading: 'It started with a button',
       body: [
         'There’s a button on Rive’s homepage that says GET STARTED, with a tiny rocket idling above it. Hover, and it fires. Up in the corner there’s another one, and when your cursor drifts toward it, a cat leans your way.',

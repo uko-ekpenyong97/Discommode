@@ -200,6 +200,11 @@ export default function PortfolioDialKit() {
     // 0 is off — the body runs to the right inset. 90 is the alternative.
     textMeasureCh: [LOOK.textMeasureCh, 0, 140, 1],
     letterheadTitlePx: [LOOK.letterheadTitlePx, 32, 300, 2],
+    // THE AIR IN THE MASTHEAD. Sizes are not in here — these move the spacing
+    // around the title without touching it.
+    headEyebrowGapPx: [LOOK.headEyebrowGapPx, 0, 80, 1],
+    headTitleGapPx: [LOOK.headTitleGapPx, 0, 80, 1],
+    headRuleGapPx: [LOOK.headRuleGapPx, 0, 120, 1],
   });
 
   // THE CHOREOGRAPHY. The four entrance windows are fractions of the entrance's
@@ -305,6 +310,9 @@ export default function PortfolioDialKit() {
     gridGapPx: page.gridGapPx,
     textMeasureCh: page.textMeasureCh,
     letterheadTitlePx: page.letterheadTitlePx,
+    headEyebrowGapPx: page.headEyebrowGapPx,
+    headTitleGapPx: page.headTitleGapPx,
+    headRuleGapPx: page.headRuleGapPx,
     curlTaper: paper.curlTaper,
     curlDepth: paper.curlDepth,
     lightA: paper.lightA,

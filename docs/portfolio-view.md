@@ -696,6 +696,31 @@ nested grid on the same gutter lands on exactly the outer grid's lines. It also
 keeps a two-up one block rather than two, which the reveal and the run's stagger
 both depend on.
 
+**THE HEADER'S AIR IS THREE DIALS**, and the sizes in it are not. The letterhead
+block is a masthead rather than prose — it is the first thing in every capture,
+and the space in it is doing as much of the work as the type — so the three gaps
+are tunable live like everything else in `PV PAGE`:
+
+| dial | what it opens | was | is |
+| --- | --- | --- | --- |
+| `headEyebrowGapPx` | `SECTION NN` → the title | 10 | **15** |
+| `headTitleGapPx` | the title → the reference line | 10 | **15** |
+| `headRuleGapPx` | the air on EACH side of the hairline | 24 above, 28 below | **36** |
+
+The first two were one 10px flex `gap`, which is why they could not differ: one
+gap cannot tell the eyebrow-to-title distance from the title-to-reference one.
+The rule had less air above it than below, because the space below was the block
+grid's own 28px margin and nothing had chosen it; it is the same on both sides
+now.
+
+![The page header at 1728×996](header-spacing.png)
+
+Moving these changes the height of every page on every card, so the captures are
+retaken when they move — `BLOCK_VP.letterhead` in `placeholder.ts` is the
+measured cost of the block and is deliberately NOT updated with them: it decides
+how many blocks a placeholder section emits, and holding it still keeps cards 03
+and 04 the same documents they were, half a block taller.
+
 **`textMeasureCh` is off by default**, so a paragraph runs the full measure —
 which at 16px is a long line. The dial is the lever if that reads too long: 90
 is the figure to try. It caps the words without reintroducing a column.
@@ -760,11 +785,11 @@ one card.
 
 | | forward, worst | reverse, worst | mean | residual at `p` = 0.999 |
 | --- | --- | --- | --- | --- |
-| 1728×996, 1× | **1.029%** (card 02) | 0.029% | 1.9 levels | 2.093% |
-| 1440×900, 1× | **0.983%** (card 02) | 0.04% | 1.9 levels | 2.099% |
-| 1728×996, 2× | **1.187%** (card 02) | 0.023% | 2.0 levels | 2.002% |
-| 1440×900, 2× | **1.234%** (card 02) | 0.018% | 1.9 levels | 1.953% |
-| cards 03 / 04 | 0.365 – 0.493% | **0%** | 1.2 – 1.3 levels | 0.641 – 0.878% |
+| 1728×996, 1× | **0.994%** (card 02) | 0.029% | 1.9 levels | 1.949% |
+| 1440×900, 1× | **0.904%** (card 02) | 0.04% | 1.9 levels | 1.943% |
+| 1728×996, 2× | **1.102%** (card 02) | 0.003% | 1.9 levels | 1.877% |
+| 1440×900, 2× | **1.125%** (card 02) | 0.002% | 1.9 levels | 1.906% |
+| cards 03 / 04 | 0.361 – 0.501% | **0%** | 1.2 – 1.3 levels | 0.634 – 0.869% |
 | budget | 2% | 2% | — | not asserted |
 
 **The residual is reported and never asserted.** It is the same comparison taken
@@ -773,8 +798,8 @@ easing stays a number somebody can see — rather than one nobody measures again
 the moment the check stops tripping over it. Card 02 is 1.95 – 2.10% of the page
 there, which is the figure that used to be the hand-off's own and used to fail.
 
-**2× costs a little, and it is the type.** Forward runs 1.187 / 1.234% at 2×
-against 1.029 / 0.983% at 1×: four times the samples per glyph edge resolve more
+**2× costs a little, and it is the type.** Forward runs 1.102 / 1.125% at 2×
+against 0.994 / 0.904% at 1×: four times the samples per glyph edge resolve more
 of the disagreement rather than less of it, on both sides of the comparison. The
 reverse diff is a flat zero on the two placeholder cards; card 02's 0.018 –
 0.04% is its clips, which are parked on their first frame but decoded by two

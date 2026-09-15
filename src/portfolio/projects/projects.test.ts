@@ -75,11 +75,22 @@ describe('project registry', () => {
     expect(projectById('04')!.sections).toHaveLength(3);
   });
 
-  it('puts the video and the Rive artboard somewhere in every project', () => {
+  it('puts a video in every project, and the Rive artboard somewhere', () => {
+    // A CLIP IS IN ALL OF THEM, because a video is the block with a lifecycle
+    // every project actually has: it mounts, plays and pauses as it crosses the
+    // viewport, and `pv-verify` walks each section's vertical run asking every
+    // clip in view whether it is decoded, running and visible.
     for (const project of PROJECTS) {
       const types = project.sections.flatMap((s) => s.blocks.map((b) => b.type));
       expect(types).toContain('video');
-      expect(types).toContain('rive');
     }
+    // THE ARTBOARD IS ASKED OF THE SET, not of each project. It used to be
+    // required of every one, which was a fact about there being nothing but
+    // placeholders: a real project ships the blocks its content needs, and card
+    // 02 opens with two clips where it once opened with the Loop artboard. What
+    // has to stay true is that the LAZY-MOUNT PATH is still exercised
+    // somewhere, and the placeholders are what exercise it.
+    const everything = PROJECTS.flatMap((p) => p.sections.flatMap((s) => s.blocks.map((b) => b.type)));
+    expect(everything).toContain('rive');
   });
 });

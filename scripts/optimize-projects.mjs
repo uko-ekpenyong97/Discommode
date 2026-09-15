@@ -94,6 +94,21 @@ const CRF_CEILING = Math.max(CRF.webm.ceiling, CRF.mp4.ceiling);
 /** WebP quality for stills and posters. Matches `optimize-pages`. */
 const QUALITY = 82;
 
+/**
+ * SOURCES THAT STAY SOURCES — kept in the masters folder, never shipped.
+ *
+ * A project's source folder is a working folder: things get tried and dropped
+ * out of the page without anybody wanting to delete the file that made them.
+ * Without this, every run would faithfully copy one back into `public/` and the
+ * next commit would carry an asset nothing loads.
+ *
+ * `rive-site/loop.riv` is the Loop character, which section 01 opened with
+ * until the two clips replaced it. It is 3.6 MB of artboard nothing fetches.
+ */
+const NOT_SHIPPED = {
+  'rive-site': ['loop.riv'],
+};
+
 const VIDEO_RE = /\.(mp4|mov)$/i;
 const IMAGE_RE = /\.(png|jpe?g)$/i;
 const RIVE_RE = /\.riv$/i;
@@ -320,9 +335,11 @@ if (slugs.length === 0) {
 
 console.log('project media →', OUTPUT_DIR);
 for (const slug of slugs) {
+  const skip = new Set(NOT_SHIPPED[slug] ?? []);
   const files = (await readdir(join(SOURCE_DIR, slug))).filter(
-    (f) => VIDEO_RE.test(f) || IMAGE_RE.test(f) || RIVE_RE.test(f),
+    (f) => !skip.has(f) && (VIDEO_RE.test(f) || IMAGE_RE.test(f) || RIVE_RE.test(f)),
   );
+  for (const name of skip) console.log(`  ${name.padEnd(20)} kept as a source, not shipped`);
   files.sort();
   console.log(`\n${slug}  (${files.length} file${files.length === 1 ? '' : 's'})`);
   /** stem → intrinsic size. Written out whole at the end of the slug, so a
