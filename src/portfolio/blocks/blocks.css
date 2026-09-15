@@ -189,12 +189,28 @@
   margin: 0;
 }
 
+/* A MEDIA CAPTION IS A MEDIA CAPTION, wherever the media is.
+
+   This used to be 11px mono with 0.1em of tracking while the two-up's and the
+   row's were 14px sans, so the same sentence was set two different ways
+   depending on which block it happened to be in — an accident of two rules
+   written at different times, not a distinction anybody chose. Mono is the
+   LETTERHEAD's voice in this view: the strip on the ground, the block's eyebrow
+   and reference line, the `caption` block that carries a dateline or a credit.
+   A line describing a clip is prose about the picture above it, and it is set
+   like the prose beside it.
+
+   One selector for both, so the next one that appears cannot drift: the margins
+   differ because a figure stacks and a two-up cell has a `gap`. */
+.pv-figcaption,
+.pv-twoup__text {
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(20, 18, 15, 0.82);
+}
+
 .pv-figcaption {
   margin: 10px 0 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: rgba(20, 18, 15, 0.8);
 }
 
 /* ── two-up ────────────────────────────────────────────────────────────── */
@@ -217,11 +233,9 @@
   gap: 24px;
 }
 
+/* Type is shared with `.pv-figcaption` above — this is the cell's spacing. */
 .pv-twoup__text {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-  color: rgba(20, 18, 15, 0.82);
 }
 
 /* ── list row ──────────────────────────────────────────────────────────── */

@@ -692,6 +692,17 @@ and gives every block a grid area without a wrapper.
 
 A block can override with `span`; `spanOf` in `Blocks.tsx` holds the defaults.
 
+**A media caption is set like the prose beside it, wherever the media is.** A
+single `image`/`video` caption used to be 11px mono with 0.1em of tracking while
+a two-up's was 14px sans, so the same sentence was set two different ways
+depending on which block it happened to be in — two rules written at different
+times, not a distinction anybody chose. They share one now. **Mono is the
+letterhead's voice in this view**: the strip on the ground, the block's eyebrow
+and reference line, and the `caption` BLOCK, which is a dateline or a credit and
+is a different thing from a caption on a picture. Moving the figure captions
+moved them in the contrast table too — off the 11px mono row and onto the 14px
+one, where they measure the same 9.01:1 the two-up's text does.
+
 **The composite blocks lay the twelve out again inside themselves** rather than
 taking a share of the outer grid. It looks redundant and is not: seven twelfths
 of a measure is not seven columns once the eleven gutters are counted, and a
@@ -1408,9 +1419,10 @@ Measured, worst of each kind, sampled down a whole section at both viewports:
 | run | on | px | ratio |
 | --- | --- | --- | --- |
 | `pv-letterhead__no`, `__ref`, `__back` | ground | 11 | **7.64** |
-| `pv-letterhead-block__no`, `__ref`, `pv-figcaption` | paper | 11 | 8.47 |
+| `pv-letterhead-block__no`, `__ref` | paper | 11 | 8.47 |
 | `pv-letterhead__section` | ground | 11 | 8.87 |
 | `pv-body` | paper | 16 | 9.01 |
+| `pv-twoup__text`, `pv-figcaption` | paper | 14 | 9.01 |
 | `pv-linkpill` | paper | 12 | 9.86 |
 | `pv-letterhead__project` | ground | 11 | 10.94 |
 | `pv-letterhead-block__title`, `pv-heading` | paper | 96, 22 | 14.06 |
@@ -1703,6 +1715,29 @@ observation about it.
 > reveal-state settles are in and the suite is green, but the symptom persists
 > on a real wheel — not yet diagnosed.
 
+> **Known: the letterhead sometimes exits instead of scrolling.** Clicking a
+> section number after scrolling WITHIN a section occasionally leaves the view
+> for the grid — the hash lands on `#item-NN` — rather than rolling to that
+> section. Seen twice in about eight clicks, on cards 02 and 04, in headed
+> Chrome. Not reproducible on demand, and the suite does not see it: `pv-verify`
+> clicks with `element.click()`, which dispatches a bare `click` and no pointer
+> events at all, so every path that depends on a real press is invisible to it.
+>
+> That is the same blind spot that hid the last bug in this exact place — a real
+> pointer click on a section number used to scroll AND close, because the
+> letterhead IS ground as far as `useDismissOnGround` is concerned, and the fix
+> was to stop the control's own pointer events (see
+> [Pointer targets](#pointer-targets)). The intermittency is what makes this a
+> different bug rather than a regression of that one: `stopPropagation` on a
+> control either runs or it does not. **Where to look first** is the hook's
+> drag rule — a press that moves more than 4px is not a click, both ends have to
+> land on the ground, and a letterhead click that arrives while Lenis is still
+> smoothing is a press whose `pointerup` may be over a different element than
+> its `pointerdown` was. A capture-phase log of `pointerdown`/`pointerup`
+> targets and the `closest('.pv-page')` answer at each, left running until it
+> happens again, is the cheapest way to find out. Do not treat a green suite as
+> evidence here.
+
 > **A note on what has just been fixed, because it is the kind of thing that
 > comes back.** The entrance lost its roll for a release without a single check
 > failing. The tear's PR replaced the cone wrap with an arc fold and gave the
@@ -1791,9 +1826,39 @@ observation about it.
 
 ## Running the checks
 
+**Two prerequisites, and neither is installed by cloning.**
+
+```
+npm ci               # a Conductor worktree starts with NO node_modules
+brew install ffmpeg  # must be a VP9-capable build
+```
+
+`npm ci` first: a worktree is an isolated checkout and `node_modules` is not
+copied into it, so the first `npm run projects` in a fresh one fails on
+`Cannot find package 'sharp'` rather than on anything to do with media.
+
+**ffmpeg is NOT a project dependency** — `optimize-projects` and
+`make-placeholders` both look for `$FFMPEG` and then for one on `PATH`, and skip
+their video steps with a note when there is none. What they need is a build with
+**`libvpx-vp9` and `libx264`**, because a clip ships as both encodes; Homebrew's
+has had both for years. Check before trusting one that is already there:
+
+```
+ffmpeg -hide_banner -encoders | grep -E 'libx264|libvpx-vp9'
+```
+
+A binary can be on the disk and still be no use. The one this machine had was
+an ffmpeg 0.10.2 from 2012 bundled inside an unrelated app, with no VP9 encoder
+at all — it was not on `PATH`, so nothing was silently wrong, but a build old
+enough to answer `ffmpeg -version` and young enough to look fine is exactly the
+thing to check the encoder list of rather than the version of.
+
+Then:
+
 ```
 npm run dev          # in one shell
 npm test             # pageTrack + fitPlaneToRect + both shapes, in node
+npm run projects     # re-encode a project's media from ~/Discommode-pages (needs ffmpeg)
 npm run placeholders # regenerate the captures after a page change (needs the dev server)
 npm run verify:pv    # the same view, in Chrome, at both viewports and both DPRs
 npm run verify:gpu   # 20 open/close cycles, watching the GPU process

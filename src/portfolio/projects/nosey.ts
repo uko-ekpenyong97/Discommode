@@ -33,12 +33,6 @@ import ASSETS from './nosey-assets.json';
  * to ship. The lazy-mount path is still exercised by cards 03's placeholders —
  * see the note in `projects.test.ts`.
  *
- * THE SOURCE FOLDER SPELLS THE TWO SCENARIO CLIPS `03-scenerio-N.mp4`, and the
- * outputs carry that spelling. The name here is the name on disk: the masters
- * live outside the repo and are the reader's own working folder, so renaming
- * one to tidy a stem in here is a change to somebody else's files for no gain
- * a reader of the page can see.
- *
  * The CAPTURES still live under the project ID (`/projects/04/`), because that
  * is what `#view-NN` names and what the capture script walks — the slug is the
  * source folder's name, not the view's.
@@ -219,13 +213,13 @@ const section03 = (): Section => ({
       newRun: true,
       heading: 'Scenario 1',
       text: 'One agent (Nosey) does something in front of you: greets you, thinks about it, writes something on the page, and lets you know it’s done. Every step is visible.',
-      media: videoMedia('03-scenerio-1'),
+      media: videoMedia('03-scenario-1'),
     },
     {
       type: 'row',
       heading: 'Scenario 2',
       text: 'Two agents working together. One greets you and starts thinking, hands off to a second one to write, then comes back to confirm. This is the moment where the case for internal ownership gets concrete. Choreographing two characters to work in sync — as a coordinated pair, not as isolated widgets — is the kind of thing a team inside the building can do. It’s much harder to specify to an outside vendor.',
-      media: videoMedia('03-scenerio-2'),
+      media: videoMedia('03-scenario-2'),
     },
   ],
   ...capturesFor(2),
