@@ -52,25 +52,60 @@
   );
 }
 
-.reader__caption {
-  /* The book is absolutely centred on the hero rect, so the caption sits in the
-     bottom band on its own rather than riding below the book in flow. Fades in
-     with the reader chrome (--doorway-chrome); 1 for the ordinary reader. */
+/* ── the chrome ──────────────────────────────────────────────────────────
+   The back pill and the bar are the detail view's own (`detail__back`,
+   `detail__bar`, `detail__btn` from DetailView.css): same 24px margin, same 40px
+   chips, same fills. What differs is only what drives them. Here that is the
+   doorway's CHROME channel (--doorway-chrome: 0 through the entrance and the
+   exit, 1 at rest and for the plain reader), written every frame — so the
+   detail view's opacity transition is taken OFF, or the chrome would trail the
+   storyboard by 200ms. */
+.reader {
+  --detail-margin: 24px;
+  --detail-chrome: 40px;
+}
+
+.reader .reader__back {
   opacity: var(--doorway-chrome, 1);
-  position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+  transition: background 160ms ease;
+}
+
+.reader .reader__bar {
+  opacity: var(--doorway-chrome, 1);
+  transition: none;
+}
+
+/* The detail bar never disables (its carousel wraps); this one does, at the
+   ends. Dimmed and inert, still gated by the chrome channel above. */
+.reader .detail__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.reader .detail__btn:disabled:hover {
+  background: rgba(53, 53, 53, 0.4);
+}
+
+/* The middle segment: what used to float alone in the bottom band, now a chip
+   in the bar. Fixed width, so the buttons either side never shift under the
+   cursor as the numbers change — the widest caption is `SPREAD 22 / 22 · 39 – 40`. */
+.reader__caption {
+  box-sizing: border-box;
+  width: 31ch;
+  height: var(--detail-chrome);
   display: flex;
-  gap: 18px;
-  align-items: baseline;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
   margin: 0;
+  padding: 0 14px;
+  border-radius: 2px;
+  background: rgba(53, 53, 53, 0.4);
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: rgba(255, 255, 255, 0.5);
-  /* Legible over mid-tone wood without competing with the pages. */
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   user-select: none;
 }
 

@@ -5,6 +5,10 @@ import { ISSUES, buildSpreads, issue01, issueAnims, pageLabel } from './issue-01
 import { closeReader } from './readerNav';
 import { applyDoorwayRest } from './doorway';
 import { useDoorwayMotion } from './useDoorwayMotion';
+// The pill and the bar ARE the detail view's — same classes, same rules — so the
+// two chrome grammars cannot drift. Imported here as well as by DetailView so the
+// dependency is written down where it is taken.
+import '../components/DetailView.css';
 import './ReaderPage.css';
 
 interface ReaderPageProps {
@@ -12,7 +16,8 @@ interface ReaderPageProps {
   issue: string;
   /** Dev-only frozen-t scrub, from `#read-NN?debug`. */
   debug?: boolean;
-  /** Dev-only doorway authoring, from `#item-NN?intro`. */
+  /** Dev-only: `#item-NN?intro` is doorway authoring; `#read-NN?intro` mounts
+   *  the READER NAV dock. */
   intro?: boolean;
   /** True when mounted over the detail view for doorway authoring (dev): the
    *  hash is `#item-NN?intro`, so this page must not mutate or follow it. */
@@ -25,6 +30,7 @@ interface ReaderPageProps {
 // Dev-only: the DialKit doorway harness is behind an `import.meta.env.DEV`
 // dynamic import, so it and `dialkit` tree-shake out of production entirely.
 const DoorwayDialKit = import.meta.env.DEV ? lazy(() => import('./DoorwayDialKit')) : null;
+const ReaderNavDialKit = import.meta.env.DEV ? lazy(() => import('./ReaderNavDialKit')) : null;
 
 const HASH_PREFIX = '#read-';
 
@@ -67,10 +73,10 @@ export default function ReaderPage({
   const lastSpread = spreads.length - 1;
   const [spread, setSpread] = useState(() => clamp(parseHash().spread, lastSpread));
 
-  // The doorway needs the flip engine (OPEN drives the cover turn) whenever a
-  // driver will run: the production entrance or the dev authoring harness.
+  // The engine is always handed up: the chrome drives it, and so does the
+  // doorway (OPEN is the cover turn) in production and in the authoring harness.
   const authoringActive = import.meta.env.DEV && authoring && intro && DoorwayDialKit !== null;
-  const needsEngine = authoringActive || entrance;
+  const navDockActive = import.meta.env.DEV && !authoring && intro && ReaderNavDialKit !== null;
   const [engine, setEngine] = useState<FlipEngine | null>(null);
   const resetToCover = useCallback(() => setSpread(0), []);
 
@@ -89,8 +95,11 @@ export default function ReaderPage({
   });
 
   // Mirror the current spread into the hash (not while authoring over #item-NN).
+  // Only while the hash is still the reader's: Escape during a jump lands it and
+  // closes in one handler, and the render that lands it must not write
+  // `#read-01/21` back over the `#item-01` the close has just set.
   useEffect(() => {
-    if (authoring) return;
+    if (authoring || !window.location.hash.startsWith(HASH_PREFIX)) return;
     const next = `${HASH_PREFIX}${issue}/${spread}${parseHash().query}`;
     if (window.location.hash !== next) window.history.replaceState(null, '', next);
   }, [issue, spread, authoring]);
@@ -111,41 +120,107 @@ export default function ReaderPage({
     };
   }, [lastSpread, authoring]);
 
-  // Escape: authoring uses the dock's own transport; otherwise play the exit
-  // (reversed doorway, or an immediate close for the plain path) then leave.
+  // The one way out, however it is asked for — Escape or the pill. A jump in the
+  // air lands first (instantly), then the exit plays: the reversed doorway, or an
+  // immediate close for the plain path.
+  const exit = useCallback(() => {
+    engine?.finishJump();
+    requestExit(() => closeReader());
+  }, [engine, requestExit]);
+
+  // Escape: authoring uses the dock's own transport.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
       if (authoring) return;
-      requestExit(() => closeReader());
+      exit();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [authoring, requestExit]);
+  }, [authoring, exit]);
 
   const goto = useCallback((index: number) => setSpread(index), []);
 
   const [left, right] = spreads[spread] ?? [null, null];
   const labels = [left, right].filter((p) => p !== null).map(pageLabel);
+  const atCover = spread === 0;
+  const atBack = spread === lastSpread;
 
   return (
     <div className="reader">
+      {/* The way out is first in the DOM, so it is the first thing Tab reaches:
+          this is a modal. None of the chrome exists while authoring over
+          `#item-NN?intro` — the dock owns that screen. */}
+      {!authoring && (
+        <button type="button" className="detail__back reader__back" onClick={exit}>
+          ‹ Back
+        </button>
+      )}
       <FlipBook
         spreads={spreads}
         spread={spread}
         onSpreadChange={goto}
         debug={debug}
-        onEngineReady={needsEngine ? setEngine : undefined}
+        onEngineReady={setEngine}
         anims={issueAnims(issue)}
       />
-      <p className="reader__caption">
-        <span>
-          ISSUE {data.id} — SPREAD {spread + 1} / {spreads.length}
-        </span>
-        <span aria-hidden="true">·</span>
-        <span className="reader__pages">{labels.join(' – ')}</span>
-      </p>
+      {!authoring && (
+        <nav className="detail__bar reader__bar" aria-label="Pages">
+          <button
+            type="button"
+            className="detail__btn"
+            disabled={atCover}
+            onClick={() => engine?.turnTo(0)}
+            onPointerEnter={() => engine?.prepareJump(0)}
+            onFocus={() => engine?.prepareJump(0)}
+            aria-label="Jump to the cover"
+          >
+            |‹ Cover
+          </button>
+          <button
+            type="button"
+            className="detail__btn"
+            disabled={atCover}
+            onClick={() => engine?.turn('prev')}
+            aria-label="Previous spread"
+          >
+            ‹ Prev
+          </button>
+          <p className="reader__caption">
+            <span>
+              SPREAD {spread + 1} / {spreads.length}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span className="reader__pages">{labels.join(' – ')}</span>
+          </p>
+          <button
+            type="button"
+            className="detail__btn"
+            disabled={atBack}
+            onClick={() => engine?.turn('next')}
+            aria-label="Next spread"
+          >
+            Next ›
+          </button>
+          <button
+            type="button"
+            className="detail__btn"
+            disabled={atBack}
+            onClick={() => engine?.turnTo(lastSpread)}
+            onPointerEnter={() => engine?.prepareJump(lastSpread)}
+            onFocus={() => engine?.prepareJump(lastSpread)}
+            aria-label="Jump to the back cover"
+          >
+            Back cover ›|
+          </button>
+        </nav>
+      )}
+      {navDockActive && ReaderNavDialKit && (
+        <Suspense fallback={null}>
+          <ReaderNavDialKit />
+        </Suspense>
+      )}
       {authoringActive && DoorwayDialKit && (
         <Suspense fallback={null}>
           <DoorwayDialKit engine={engine} onResetToCover={resetToCover} />
