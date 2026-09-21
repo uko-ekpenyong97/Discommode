@@ -1,5 +1,9 @@
 import { useEffect } from 'react';
 import { DialRoot, useDialKit } from 'dialkit';
+// Its own stylesheet: the app's dev dials, which also import it, are not mounted
+// while the reader is open, so a direct load of `#read-NN?intro` would otherwise
+// render the dock unstyled and below the fold.
+import 'dialkit/styles.css';
 import { JUMP } from './jump';
 import type { JumpMode, RiffleCurve } from './jump';
 
