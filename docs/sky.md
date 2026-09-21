@@ -186,6 +186,41 @@ onto is the sky you left, mid-drift, in the same weather. Verified — opening
 `#view-01` and closing it again leaves exactly one canvas, which travels from
 `.app` to `.pv-ground` and back.
 
+### The claim is re-asserted, not taken once
+
+A host claims on **every render**, not only on mount, and `claimSky` is
+idempotent. That looks redundant and is not — it is the fix for a bug that cost
+a walk-through, and the shape of it is worth keeping written down.
+
+The canvas is not the component's. It is built lazily by whichever host claims
+first, and it can be **replaced underneath a component React has no reason to
+re-render an effect for** — which is exactly what a dev hot update of this
+module does. A fresh module builds a fresh canvas and a fresh engine; a
+mount-only claim never runs again; so the new canvas is never put in the DOM,
+the new engine renders into a detached element, and what stays on screen is the
+*previous* canvas, cut off from its driver and frozen on its last frame.
+
+Every symptom of that points somewhere else. Nothing throws, nothing logs, and
+the `EnvReadout` beside it goes on reporting the correct state — so it reads as
+"the time of day does not reach the shader" when in fact nothing reaches it and
+the picture is simply old. It was diagnosed as a sun-specific mapping fault
+before the pixels were measured.
+
+Three things close it, and each closes it from a different side:
+
+- the claim is re-asserted every render, so the invariant is *stated*: while
+  this host is mounted, it holds the canvas;
+- `attach` sweeps any `.sky-layer__canvas` that is not the current one out of
+  the host — there is exactly one sky, so a second element is a ghost with a
+  live loop behind it;
+- `start` replays the stage's current target into a newly built engine, so an
+  engine born after a push cannot miss it. (`setSkyTarget` compares before it
+  publishes, which is what keeps the every-render push from looping against the
+  store it also subscribes to.)
+
+And `pv-verify` now asserts it in light rather than in structure — see
+[the contact sheet](#the-contact-sheet) below.
+
 The one thing that does not travel with it is the WASH. On the grid the sky is
 bare; in the project view it is under `groundScrim`, and the letterhead's band
 under `letterheadScrim` on top of that. Both live in the project view's look —
@@ -247,6 +282,21 @@ bug — the shutter caught a lightning flash.
 The sheet is shot from the **grid**, where the sky is bare. The project view
 puts it under a wash; see
 [Two washes](portfolio-view.md#two-washes-because-there-are-two-questions).
+
+### The sheet is not a check, and one was needed
+
+A contact sheet is an eye test. It is driven by `window.__skyPreview`, a handle
+that calls `setEnvOverride` directly — so it can come out **perfect while the
+buttons a person actually presses are wired to nothing**, and it did. That gap
+is now a check: `pv-verify` forces NOON and NIGHT from the grid **through the
+DOM buttons** — EnvReadout → `setEnvOverride` → `useEnvState` → `SkyLayer` →
+`skyStage` → engine → glass, every link in the order a walk would hit them —
+and fails if night is not under **35%** of noon's mean luminance.
+
+It photographs the sky with the grid hidden. The cards are opaque art that does
+not change with the weather, and with them in frame a *working* night measures
+56% of noon, which leaves no threshold worth setting. Sky alone it is 28%, and
+it was 100% with the bug.
 
 ### …and the thing the sheet nearly hid
 
