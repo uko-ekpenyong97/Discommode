@@ -444,14 +444,14 @@ async function differing(a, b) {
  *
  * THE SKY GOES TOO, and it is the reason this pass needs a rule it did not need
  * before: the ground is the sky now, so repainting `.pv-ground` flat magenta
- * paints a layer that has an opaque WebGL canvas and a black scrim sitting on
- * top of it. Both are hidden here rather than recoloured — a canvas does not
- * take a `background` — which puts the magenta back on screen and leaves the
- * pixel counts measuring exactly what they measured before.
+ * paints a layer that has an opaque WebGL canvas and two black washes sitting
+ * on top of it. All three are hidden here rather than recoloured — a canvas
+ * does not take a `background` — which puts the magenta back on screen and
+ * leaves the pixel counts measuring exactly what they measured before.
  */
 const PAINT_CSS = `
   .pv-ground { background: #ff00ff !important; }
-  .pv-ground .sky-layer, .pv-ground__scrim { display: none !important; }
+  .pv-ground .sky-layer, .pv-ground__scrim, .pv-letterhead__scrim { display: none !important; }
   .pv-grain, .pv-page__grain { display: none !important; }
   .pv-letterhead { visibility: hidden !important; }
 `;

@@ -139,12 +139,16 @@ export default function PortfolioDialKit() {
   // to live on PV GLASS. `groundAlpha` below 1 is a debugging affordance and not
   // a look — every figure in the readout is measured at 1.
   //
-  // `groundScrim` is the one that moves the readout now. It is the black wash
-  // over the sky, and the probe measures the letterhead against a CLEAR NOON
-  // whatever the weather is actually doing, so dragging it is a live read of
-  // the worst case rather than of today.
+  // TWO WASHES OVER THE SKY, and only one of them is a contrast dial.
+  // `groundScrim` covers the whole ground and is chosen by eye — nothing is
+  // measured against it, because nothing is printed on it. `letterheadScrim`
+  // covers the 56px band the strip is in, which is where every run of type on
+  // the ground lives, and it is the one that moves the readout: the probe
+  // measures the letterhead against a CLEAR NOON whatever the weather is
+  // actually doing, so dragging it is a live read of the worst case.
   const ground = useDialKit('PV GROUND', {
     groundScrim: [LOOK.groundScrim, 0, 0.95, 0.01],
+    letterheadScrim: [LOOK.letterheadScrim, 0, 0.95, 0.01],
     groundColor: { type: 'color', default: LOOK.groundColor },
     groundAlpha: [LOOK.groundAlpha, 0, 1, 0.01],
     grainOpacity: [LOOK.grainOpacity, 0, 0.3, 0.005],
@@ -308,6 +312,7 @@ export default function PortfolioDialKit() {
     groundColor: ground.groundColor,
     groundAlpha: ground.groundAlpha,
     groundScrim: ground.groundScrim,
+    letterheadScrim: ground.letterheadScrim,
     grainOpacity: ground.grainOpacity,
     letterheadHPx: ground.letterheadHPx,
     paperColor: paper.paperColor,

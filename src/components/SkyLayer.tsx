@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { EnvState } from '../env';
 import { claimSky, skyEngine, setSkyTarget, skyTarget, subscribeSky } from '../sky/skyStage';
-import type { SkyTarget } from '../sky/skyEngine';
+import { envToTarget } from '../sky/envToTarget';
 import { skyFallbackCss, skyGradientAt } from '../sky/palette';
 import './SkyLayer.css';
 
@@ -12,37 +12,6 @@ interface SkyLayerProps {
    * shows whatever the driver is showing.
    */
   env?: EnvState;
-}
-
-function clamp01(x: number): number {
-  return x < 0 ? 0 : x > 1 ? 1 : x;
-}
-
-/**
- * The EnvState → sky mapping, and the whole of it. Every condition gets its own
- * element and no two share a code path:
- *
- *   cloud  cloudiness, as coverage
- *   fog    the CONDITION, 0 or 1 — not a function of cloudiness
- *   rain   precipitation
- *   storm  the CONDITION, 0 or 1
- *   wind   normalized windspeed
- *
- * FOG AND OVERCAST ARE DIFFERENT STATES and that is the point of the change.
- * They used to be one: `fog = clamp01((cloudiness - 0.85) / 0.15)`, which gave
- * WMO 3 — plain overcast, the most ordinary sky San Francisco has — the full
- * fog treatment, and left every condition converging on the same grey.
- */
-function envToTarget(env: EnvState): SkyTarget {
-  return {
-    sun: env.sunElevation,
-    dayPhase: env.dayPhase,
-    cloud: clamp01(env.cloudiness),
-    fog: env.condition === 'fog' ? 1 : 0,
-    rain: clamp01(env.precipitation),
-    storm: env.condition === 'storm' ? 1 : 0,
-    wind: clamp01(env.windSpeed),
-  };
 }
 
 /**

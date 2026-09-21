@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useState } from 'react';
 import { ATTRIBUTION, setEnvOverride } from '../env';
 import type { Condition, EnvSnapshot } from '../env';
+import { envToTarget } from '../sky/envToTarget';
 import { CONDITIONS, SUN_PRESETS, SUN_PRESET_NAMES, previewEnv } from './skyPreview';
 import type { SunPreset } from './skyPreview';
 import './EnvReadout.css';
@@ -48,12 +49,23 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
     const w = window as unknown as {
       __setEnvOverride?: typeof setEnvOverride;
       __skyPreview?: (c: Condition, p: SunPreset) => void;
+      __skyStates?: () => { condition: Condition; time: SunPreset; target: unknown }[];
     };
     w.__setEnvOverride = setEnvOverride;
     w.__skyPreview = (c, p) => {
       const { sun, phase } = SUN_PRESETS[p];
       setEnvOverride(previewEnv(sun, c, phase));
     };
+    // Every state the sky has, as the targets the engine would be given —
+    // what `scripts/sky-contrast.mjs` hands the probe, one at a time, so the
+    // contrast sweep walks the same twenty-four states the contact sheet does.
+    w.__skyStates = () =>
+      CONDITIONS.flatMap((c) =>
+        SUN_PRESET_NAMES.map((p) => {
+          const { sun, phase } = SUN_PRESETS[p];
+          return { condition: c, time: p, target: envToTarget(previewEnv(sun, c, phase)) };
+        }),
+      );
   }, []);
 
   // Drop the override when the readout unmounts, so a hot reload cannot leave

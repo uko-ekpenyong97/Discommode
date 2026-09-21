@@ -12,8 +12,11 @@ from, and anything argued about here should be argued about there first.
 
 > **On the numbers in this file.** Architecture and dials are as shipped.
 > Anything reported as a *measurement* names the run that produced it. The
-> frame-time table and the contrast figure come from runs on 2026-09-20 on an
-> Apple M1 Max; the contact sheet is `scripts/sky-sheet.mjs` from the same day.
+> frame-time table comes from a run on 2026-09-20 on an Apple M1 Max; the
+> contact sheet is `scripts/sky-sheet.mjs` from the same day; the contrast
+> figures are `scripts/sky-contrast.mjs` and live in
+> [docs/portfolio-view.md](portfolio-view.md#two-washes-because-there-are-two-questions),
+> which is where the ground they are measured on is documented.
 
 ## What was wrong with the one before it
 
@@ -80,7 +83,7 @@ and a flip cross-fades rather than throwing the sun across the sky.
 
 ## The mapping
 
-`envToTarget` in `SkyLayer.tsx`, and this is the whole of it:
+`envToTarget` in `src/sky/envToTarget.ts`, and this is the whole of it:
 
 | target | from | note |
 | --- | --- | --- |
@@ -183,6 +186,11 @@ onto is the sky you left, mid-drift, in the same weather. Verified — opening
 `#view-01` and closing it again leaves exactly one canvas, which travels from
 `.app` to `.pv-ground` and back.
 
+The one thing that does not travel with it is the WASH. On the grid the sky is
+bare; in the project view it is under `groundScrim`, and the letterhead's band
+under `letterheadScrim` on top of that. Both live in the project view's look —
+the grid has nothing printed on the sky and needs neither.
+
 Every host paints a CSS gradient of the current sky *behind* the canvas
 (`skyFallbackCss` — a zenith→horizon gradient plus a flat cloud-grey wash
 proportional to coverage). That covers the host that is not currently holding
@@ -236,6 +244,22 @@ The twenty-four images are in `docs/sky/`. The three that carry the argument:
 Reading the sheet: `storm-dawn` is brighter than `storm-noon`, which is not a
 bug — the shutter caught a lightning flash.
 
+The sheet is shot from the **grid**, where the sky is bare. The project view
+puts it under a wash; see
+[Two washes](portfolio-view.md#two-washes-because-there-are-two-questions).
+
+### …and the thing the sheet nearly hid
+
+`scripts/sky-contrast.mjs` walks the same twenty-four states and measures the
+letterhead against each. It is what caught the one wrong assumption in this
+change: a **clear** noon is not the brightest sky over the strip. An overcast
+one is, because the lit top of the cloud deck clips to white — `litCol` is
+near-white before `dayLight` scales it and the shader clamps to 1.0, so every
+daylit clouded state ties at exactly the same ratio. Clear noon measures 8.51:1
+and overcast noon 7.65. The mean-luma column the sheet prints says the same
+thing if you read it: `cloudy-noon` and `fog-noon` are the two brightest frames
+of the twenty-four, and `clear-noon` is twenty levels behind them.
+
 ## Where this is wired
 
 | File | What it is |
@@ -243,12 +267,14 @@ bug — the shutter caught a lightning flash.
 | `src/sky/palette.ts` | The hex table and the band blend. The only place a sky colour is written. |
 | `src/sky/skyEngine.ts` | The shader, the eased targets, the rAF loop, the lightning envelope, the dev readback. |
 | `src/sky/skyStage.ts` | The one canvas and the claim stack. |
-| `src/components/SkyLayer.tsx` | The host, and `envToTarget` — the mapping. |
+| `src/sky/envToTarget.ts` | The mapping: `EnvState` → `SkyTarget`. |
+| `src/components/SkyLayer.tsx` | The host. Claims the canvas; feeds the target in. |
 | `src/env/wmo.ts` | WMO code → condition, cloudiness, precipitation. |
 | `src/dev/skyPreview.ts` | Dev: what each condition and each time of day means as numbers. |
 | `src/dev/EnvReadout.tsx` | Dev: the readout and the override buttons. |
 | `scripts/sky-sheet.mjs` | The 24-image contact sheet. |
 | `scripts/sky-perf.mjs` | The frame-time table above. |
+| `scripts/sky-contrast.mjs` | The letterhead against all 24 skies, and the sweep that set `letterheadScrim`. |
 
 ## Not done
 

@@ -21,10 +21,14 @@ import type { Project } from './blocks/types';
  * is the sky you left, mid-drift, and opening a project costs no second
  * shader.
  *
- * Over it goes the SCRIM, a flat black wash at `groundScrim`. The sky is a
- * picture and the paper has to sit on it rather than in front of it; the number
- * is what the letterhead's 7:1 needs at clear noon, which is the brightest the
- * sky ever gets. See `contrastProbe.ts`.
+ * Over it go TWO washes, and they are two because they answer two different
+ * questions. `groundScrim` covers the whole ground and sets how far back the
+ * sky sits behind the paper — a look, chosen by eye, with nothing measured
+ * against it. `letterheadScrim` covers only the band the strip is in, and it is
+ * the one the 7:1 rests on: every run of type on the ground is in that band, so
+ * that is where the contrast is paid for. One wash doing both took the whole
+ * screen to 0.78 of black, which is a legible strip bought by throwing the
+ * weather away. See `contrastProbe.ts`.
  *
  * Then the GRAIN, which is a compositor-only transform loop over a tile of
  * turbulence — a repaint per step of a full-viewport layer would cost frames
@@ -102,6 +106,7 @@ export function Ground({ project, activeIndex, pendingIndex, onSelect, onClose }
     <div className="pv-ground">
       <SkyLayer />
       <div className="pv-ground__scrim" aria-hidden="true" />
+      <div className="pv-letterhead__scrim" aria-hidden="true" />
       <div className="pv-grain" aria-hidden="true" />
       <header className="pv-letterhead">
         {/* First in the DOM, last on screen. A button, so Enter and Space

@@ -86,56 +86,93 @@ costs no second shader. Everything else about the sky is in **[docs/sky.md](sky.
 
 | Dial | Default | Notes |
 | --- | --- | --- |
-| `groundScrim` | 0.78 | Black wash over the sky. **Measured, not chosen** — see below. |
+| `groundScrim` | 0.35 | Black wash over the whole ground. **A look. Nothing is measured against it.** |
+| `letterheadScrim` | 0.72 | Black wash over the letterhead's band only. **Measured** — see below. |
 | `groundColor` | `#142a63` | What is under the sky. Shows only with no WebGL2, or in the frame before the canvas is claimed. |
 | `groundAlpha` | 1 | Below 1 the grid shows through, for A/B only. **Ship at 1.** |
 | `grainOpacity` | 0.08 | Film grain over the ground and over the paper. One dial for both. |
 | `paperColor` | `#f4efe6` | The page surface, and the sheet's albedo where no texture has decoded. |
 | `inkColor` | `#14120f` | The ink, and the hairline along both surfaces' edges. |
 
-### The scrim is the whole cost of the change, and it is 0.78
+### Two washes, because there are two questions
 
 A flat colour has one luminance. **A sky is a picture**: it has a sun in it, it
-has a bright fog bank in it, and at clear noon it is the brightest thing the
-site paints anywhere. The paper has to read as paper on it, and the letterhead —
-11px mono, white, in a 56px band across the very top — has to clear the same 7:1
-it cleared against `#142a63`.
+has a bright fog bank in it, and where daylight hits the top of the cloud deck
+it is white. Two different things follow from that and they were run together at
+first, which is the mistake worth writing down.
 
-So the ground is measured differently now. `contrastProbe.ts` reads the ground's
-colour **out of the WebGL buffer**, and it makes two choices that turn a year of
-weather into one number:
+One is a **look**: how far back the sky sits behind the paper. That is
+`groundScrim`, it covers the whole ground, and it is chosen by eye — **nothing
+is printed on it**, so nothing is measured against it.
 
-- **It measures at clear noon, always** — whatever the sky is actually doing. A
-  bar that passes on a foggy Tuesday and fails in July is not a bar. Clear noon
-  is the brightest the sky gets, and it is worst *here* specifically: the sun
-  sits at `uv.y` 0.86, a few per cent of the viewport from the top, which is
-  exactly where the strip is.
-- **It takes the brightest pixel in the band**, not its average. The strip runs
-  the full width and its type is white; a run only has to cross the sun's glow
-  once to be the run that fails.
+The other is a **bar**: 11px white mono at 7:1. That is the letterhead, and the
+letterhead is a 56px band across the very top. Every run of type on the ground
+is in it — the whole of `GROUND_SELECTORS` is `.pv-letterhead__*` — so the whole
+contrast argument lives in one band, and so does the wash that answers it.
+`letterheadScrim` is flat across the strip's own height and then fades out over
+the same height again below it, where there is no type: flat keeps the probe's
+model exact (the type sits on one value, not somewhere on a gradient) and the
+fade keeps the band off the screen as an edge.
 
-That sample goes under the scrim, and then through the same grain model
-everything else goes through. Swept against the real type, at 1440×900 @2×, on
-the worst run in the view (`pv-letterhead__back`, the way out):
+**One wash doing both jobs costs 0.78 of black over the entire view**, which is
+a legible strip bought by throwing the weather away — and the weather is the
+reason the ground is the sky. Split, the strip pays for itself and the sky is
+at 0.35.
 
-| `groundScrim` | worst ground ratio |
-| --- | --- |
-| 0.55 | 4.31 ← the number this change was first tried at |
-| 0.70 | 6.30 |
-| 0.74 | 6.97 |
-| 0.75 | 7.15 |
-| **0.78** | **7.71** ← shipped |
-| 0.85 | 9.11 |
+### What the bar is measured against, and why it is not a clear noon
 
-**0.55 does not pass and nothing close to it does.** 0.78 is the first value
-with any margin, and it lands at 7.71:1 — a hair above the 7.64 the flat blue
-used to report, which is the right answer: the bar did not move, so the ground's
-worst patch should not have either. Measured again at 1728×996 @2×: 7.77:1.
+`contrastProbe.ts` reads the ground's colour **out of the WebGL buffer**, in the
+letterhead's band, as the **brightest pixel** in it — the strip runs the full
+width and a run only has to cross the sun's glow once to be the run that fails.
+It reads that sample against one forced sky, whatever the weather is actually
+doing, because a bar that passes on a foggy Tuesday and fails in July is not a
+bar.
 
-What that buys is a darker sky in the project view than on the grid, and it is a
-real cost — through a dwell, with nothing but ground on screen, the weather is
-legible rather than vivid. The alternative is chrome you cannot read, and the
-letterhead is the only navigation and the only way out this view has.
+This was first written to force a **clear noon**, on the reasoning that a clear
+noon is the brightest sky there is. `scripts/sky-contrast.mjs` disproved it. A
+clear noon measures **8.51:1**; an overcast noon measures **7.65**. The lit top
+of the cloud deck is near-white before daylight scales it, the shader clamps to
+1.0, and so any daylit sky with cloud in it puts **pure white pixels** in the
+band. Every combination of `cloud` ≥ 0.5 and `sun` ≥ 0.5 ties at exactly the
+same ratio — which makes it a *ceiling* rather than a bright example, and that
+is what `WORST_CASE_SKY` is now.
+
+The sweep that set the dial, worst of all twenty-four states:
+
+| `letterheadScrim` | worst of 24 | |
+| --- | --- | --- |
+| 0.60 | 6.00 | fails |
+| 0.66 | 6.78 | fails |
+| 0.68 | 7.06 | passes, barely |
+| 0.70 | 7.35 | |
+| **0.72** | **7.65** | shipped |
+| 0.75 | 8.11 | |
+
+7.65 is where the flat blue's floor was (7.64), which is the right place for it
+to land: the bar did not move, so the worst patch of type in the view should not
+have either.
+
+### All twenty-four states, worst run of letterhead type
+
+`node scripts/sky-contrast.mjs`, at 1728×996 @2×. Identical at 1440×900 @2× to
+within 0.05 except `clear night`, which reads 9.77 there. Bar is 7:1.
+
+| | night | dawn | noon | dusk |
+| --- | --- | --- | --- | --- |
+| clear | 10.18 | 10.46 | 8.51 | 10.77 |
+| partly | 10.77 | 10.47 | **7.65** | 10.54 |
+| cloudy | 10.77 | 10.53 | **7.65** | 10.54 |
+| fog | 10.76 | 10.51 | **7.65** | 10.53 |
+| rain | 10.48 | 10.17 | 8.02 | 10.24 |
+| storm | 10.45 | 10.38 | 9.90 | 10.29 |
+
+The three that tie at the floor are the three that have a lit cloud deck at
+noon. Storm is the *safest* daylit state, because a storm dims the whole scene
+before the deck is shaded.
+
+**If a state ever fails, `letterheadScrim` goes up and `groundScrim` does not.**
+Paying a contrast bar with a wash that covers things nothing is printed on is
+how this ended up at 0.78 the first time.
 
 The **grain** is one tile of SVG turbulence, four times the viewport, stepped
 around by a `transform` eight times a second. Stepping `background-position`
@@ -1447,9 +1484,10 @@ No backdrop to reconstruct, no stack of two translucent layers.
 
 The **ground** is the sky, so its colour comes back out of the WebGL buffer —
 which is the one thing the flat blue had retired and this change brings back. It
-is read at a forced clear noon, as the brightest pixel in the letterhead's band,
-under the scrim; the whole argument, and the sweep that set `groundScrim` to
-0.78, is in [The scrim](#the-scrim-is-the-whole-cost-of-the-change-and-it-is-078).
+is read as the brightest pixel in the letterhead's band, against a forced
+worst-case sky, under both washes. The whole argument — including why the worst
+case is an *overcast* noon and not a clear one — is in
+[What the bar is measured against](#what-the-bar-is-measured-against-and-why-it-is-not-a-clear-noon).
 
 **What is left is the grain**, and it is worth keeping. Film grain over a surface
 moves its local luminance, so "the ratio" is a distribution rather than a number
@@ -1474,7 +1512,7 @@ Measured, worst of each kind, sampled down a whole section at both viewports:
 
 | run | on | px | ratio |
 | --- | --- | --- | --- |
-| `pv-letterhead__no`, `__ref`, `__back` | ground | 11 | **7.71** |
+| `pv-letterhead__no`, `__ref`, `__back` | ground | 11 | **7.65** |
 | `pv-letterhead-block__no`, `__ref` | paper | 11 | 8.47 |
 | `pv-letterhead__section` | ground | 11 | 8.87 |
 | `pv-body` | paper | 16 | 9.01 |
@@ -1487,9 +1525,9 @@ Two numbers in that table were set by the measurement rather than by eye. The
 small mono labels on paper are at **0.80** ink and not 0.74: the paper's grain
 multiplies, so its worst patch is 8% darker paper under type that is 8% darker
 too, and at 0.74 the 11px labels land on 6.94:1 — a miss by six hundredths. And
-the letterhead's dim state is at **0.80 white** on a ground held down to roughly
+the letterhead's dim state is at **0.80 white** on a band held down to roughly
 `#142a63`'s luminance — by `groundColor` when that was the ground, by
-`groundScrim` now that the sky is — which is what leaves any room at all between
+`letterheadScrim` now that the sky is — which is what leaves any room at all between
 "dim" and "white"; the current section is marked with a rule as well as with a
 weight of light, because 0.80 to 1.0 is not much of a signal on its own.
 
@@ -1662,8 +1700,9 @@ as a footnote to the strip rather than as the first thing in it. Verified: the
 first Tab lands on it, Enter and Space both close, a real click closes, and the
 app behind is still `inert`.
 
-The contrast probe measures it with the rest of the strip — **7.71:1** against a
-clear noon, the same floor the section numbers sit at, against the 7:1 bar.
+The contrast probe measures it with the rest of the strip — **7.65:1** against a
+blown-out overcast noon, the same floor the section numbers sit at, against the
+7:1 bar. It is the worst run of type anywhere in the view, in any weather.
 
 And the page got the band back: **96px taller at both signed-off viewports.**
 
@@ -1677,11 +1716,12 @@ the close is a separate storyboard (the pane leads, the scrim trails 100ms) so
 
 `PV STACK`, `PV FOLDERS` and `PV GLASS` are gone with the cabinet and the
 frosted surface. `PV PAPER` holds the shader's MATERIAL uniforms, both lights
-and the two colours; `PV GROUND` holds `groundScrim`, `groundColor`,
-`groundAlpha` and `grainOpacity` plus the contrast readout that used to live on
-`PV GLASS` — and `groundScrim` is the one that moves the readout now, because
-the probe measures the letterhead against a clear noon whatever the weather is
-doing, so dragging it is a live read of the worst case;
+and the two colours; `PV GROUND` holds `groundScrim`, `letterheadScrim`,
+`groundColor`, `groundAlpha` and `grainOpacity` plus the contrast readout that
+used to live on `PV GLASS` — and `letterheadScrim` is the one that moves the
+readout, because the probe measures the strip against a worst-case sky whatever
+the weather is doing, so dragging it is a live read of the bar. `groundScrim` is
+next to it and does nothing to the number, which is the point of having two;
 `PV MOTION` holds the two distances, `handoffMs`, every entrance window and the
 settle; `PV TEAR` holds the peel.
 
@@ -1774,15 +1814,6 @@ observation about it.
 > **Known: when scrolling between two pages the content jumps at the swap.** The
 > reveal-state settles are in and the suite is green, but the symptom persists
 > on a real wheel — not yet diagnosed.
-
-> **The ground's sky is darker than the grid's, by 0.78 of black, and nothing
-> has been done about that except accept it.** The scrim is flat, and it is flat
-> everywhere for the sake of one 56px band at the top — the letterhead is the
-> only run of type in the view that is printed on the sky, and it is where the
-> sun is. A scrim that is heavy across the strip and lighter down the page would
-> give a dwell its weather back at no cost to the measurement; a gradient, or a
-> second band-only wash, are both one declaration. It has not been tried, and
-> the number in the table above is the number for a flat one.
 
 > **Known: the letterhead sometimes exits instead of scrolling.** Clicking a
 > section number after scrolling WITHIN a section occasionally leaves the view
