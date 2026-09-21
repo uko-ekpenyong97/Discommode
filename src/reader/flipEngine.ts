@@ -728,29 +728,27 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
 
   /**
    * Which leaves draw their pages from the half-resolution riffle set
-   * (`Page.riffle`, 1000px wide): every leaf but the FIRST and the LAST. Those
-   * two are the slow ones the eye follows, and the last is what the book comes
-   * to rest on; the final slots are full size too.
+   * (`Page.riffle`, 1000px wide): those scheduled to cross in under
+   * `JUMP.riffleHalfResBelowMs` — too fast to be seen at any resolution. Every
+   * slower leaf, and the page the book comes to rest on, is full size, so there
+   * is no softness anywhere the eye can follow. With the shipped dials on 20→0
+   * that is the middle sixteen leaves; the first (370ms), the second and
+   * second-to-last (166ms) and the last two (513ms) are full size.
    *
-   * Measured on 20→0 / 0→20 at 1x and 2x, rAF intervals, 1728x996:
-   *   full-size pages throughout        1–6 frames of 33–50ms per run, all paint
-   *                                     (none with the leaves painted flat colours)
-   *   half-size under 150ms leaves      3 frames of 33ms in 16 runs, at the hand-
-   *                                     over into the slow tail
-   *   half-size but first and last      0 in 16 runs  ← this
-   *   the same with 1300px copies       2 frames of 33ms in 8 runs at 1x
-   * The cost is a full-size page being decoded at a new scale while several
-   * leaves are already moving; a riffle crosses too many pages too fast for that.
+   * The cost of full size is a page decoded at a new scale while other leaves
+   * are moving. At 150 the riffle drops a single frame in roughly 1 run of 10
+   * (the last leaf lifting while the full-size penultimate one is in the air);
+   * see docs/reader.md for the measurements.
    */
-  const isFast = (l: RiffleLeaf, k: number): boolean => k !== 0 && !l.last;
+  const isFast = (l: RiffleLeaf): boolean => l.duration < JUMP.riffleHalfResBelowMs;
 
   /** The image a leaf should use for `page`. */
   const srcFor = (page: Page | null, fast: boolean): string | null =>
     page ? (fast && page.riffle ? page.riffle : page.src) : null;
 
   /** The pages a riffle leaf puts on screen: its back and what it reveals. */
-  function leafPages(l: RiffleLeaf, k: number): string[] {
-    const fast = isFast(l, k);
+  function leafPages(l: RiffleLeaf): string[] {
+    const fast = isFast(l);
     const s = getSpreads()[l.to];
     return [srcFor(s[0], fast), srcFor(s[1], fast)].filter((x): x is string => !!x);
   }
@@ -761,7 +759,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   function prepareJump(index: number): void {
     const from = getSpread();
     if (JUMP.mode === 'cut' || index === from || index < 0 || index >= getSpreads().length) return;
-    planRiffle(from, index, JUMP).slice(0, DECODE_AHEAD).forEach((l, k) => leafPages(l, k).forEach((src) => void decode(src)));
+    for (const l of planRiffle(from, index, JUMP).slice(0, DECODE_AHEAD)) for (const src of leafPages(l)) void decode(src);
   }
 
   function turnTo(index: number): boolean {
@@ -826,7 +824,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
 
     // The first leaves' pages decoded before the clock starts; the rest follow
     // ahead of the lifts as the riffle runs (see `render`).
-    void Promise.all(plan.slice(0, DECODE_AHEAD).flatMap((l, k) => leafPages(l, k)).map(decode)).then(() => {
+    void Promise.all(plan.slice(0, DECODE_AHEAD).flatMap(leafPages).map(decode)).then(() => {
       if (destroyed || riffle !== r || r.held !== null) return;
       r.raf = requestAnimationFrame(tickOf(r));
     });
@@ -953,11 +951,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       if (l.phase === 'pending') {
         l.phase = 'air';
         l.curl = takeCurl(r.dir);
-        const fast = isFast(l, l.k);
+        const fast = isFast(l);
         // The lifting page is whatever the near slot showed — so it is fast only
         // if the leaf before this one was (the slot swapped to it at that size).
         const prev = r.leaves[l.k - 1];
-        const liftFast = prev ? isFast(prev, prev.k) : false;
+        const liftFast = prev ? isFast(prev) : false;
         const lift = srcFor(spreads[l.from][near], liftFast && fast);
         const back = srcFor(spreads[l.to][1 - near], fast);
         if (import.meta.env.DEV && debugColours) {
@@ -974,7 +972,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
         r.pendingNear = { src: srcFor(spreads[l.to][near], fast), frame: r.frame };
         // Keep the decode ahead of the lifts.
         for (const ahead of r.leaves.slice(l.k + 1, l.k + 1 + DECODE_AHEAD)) {
-          for (const src of leafPages(ahead, ahead.k)) void decode(src);
+          for (const src of leafPages(ahead)) void decode(src);
         }
       }
       if (local < 1) {
@@ -1001,7 +999,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       // An inner leaf lies flat on the landed stack: the far slot takes its page
       // and the chain goes back to the pool. React hears the spread, so the
       // caption and the hash count along with the pages.
-      swapSlot(r.far, srcFor(spreads[l.to][1 - near], isFast(l, l.k)));
+      swapSlot(r.far, srcFor(spreads[l.to][1 - near], isFast(l)));
       giveCurl(r.dir, l.curl!);
       l.curl = null;
       opts.onSpreadChange(l.to);

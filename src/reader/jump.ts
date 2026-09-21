@@ -29,6 +29,9 @@ export interface JumpSettings {
   /** Most leaves in the air at once. */
   riffleMaxInAir: number;
   riffleCurve: RiffleCurve;
+  /** A leaf scheduled to cross faster than this uses the half-resolution
+   *  copies of its pages (`Page.riffle`); slower leaves, full size. */
+  riffleHalfResBelowMs: number;
   mode: JumpMode;
 }
 
@@ -38,6 +41,7 @@ export const JUMP: JumpSettings = {
   riffleOverlap: 0.45,
   riffleMaxInAir: 3,
   riffleCurve: 'easeInOutCubic',
+  riffleHalfResBelowMs: 150,
   mode: 'riffle',
 };
 

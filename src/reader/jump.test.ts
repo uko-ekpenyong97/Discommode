@@ -24,6 +24,7 @@ describe('riffle settings', () => {
       riffleOverlap: 0.45,
       riffleMaxInAir: 3,
       riffleCurve: 'easeInOutCubic',
+      riffleHalfResBelowMs: 150,
       mode: 'riffle',
     });
     expect(RIFFLE_CURVES.easeInOutCubic).toEqual([0.65, 0, 0.35, 1]);
@@ -94,6 +95,11 @@ describe('planRiffle', () => {
   it('gives the last leaf at least 320ms, and a one-spread jump the whole run', () => {
     for (const n of [2, 5, 20]) expect(planRiffle(0, n, JUMP).at(-1)!.duration).toBeGreaterThanOrEqual(LAST_LEAF_MIN_MS);
     expect(planRiffle(1, 0, JUMP)).toEqual([{ from: 1, to: 0, start: 0, duration: 900, last: true }]);
+  });
+
+  it('leaves only the fast middle under the half-res threshold on 20→0', () => {
+    const slow = planRiffle(20, 0, JUMP).map((l, k) => [k, l.duration] as const).filter(([, d]) => d >= JUMP.riffleHalfResBelowMs);
+    expect(slow.map(([k]) => k)).toEqual([0, 1, 17, 18, 19]);
   });
 
   it('is empty for a jump to where the book already is', () => {

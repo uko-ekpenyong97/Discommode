@@ -25,9 +25,10 @@ export default function ReaderNavDialKit() {
         options: ['easeInOutCubic', 'easeInOutSine', 'easeInOutQuint', 'linear'],
         default: SHIPPED.riffleCurve,
       },
+      riffleHalfResBelowMs: [SHIPPED.riffleHalfResBelowMs, 0, 1000, 5],
       jumpMode: { type: 'select', options: ['riffle', 'cut'], default: SHIPPED.mode },
     },
-    { id: 'reader-nav-2' },
+    { id: 'reader-nav-3' },
   );
 
   useEffect(() => {
@@ -36,8 +37,17 @@ export default function ReaderNavDialKit() {
     JUMP.riffleOverlap = nav.riffleOverlap;
     JUMP.riffleMaxInAir = nav.riffleMaxInAir;
     JUMP.riffleCurve = nav.riffleCurve as RiffleCurve;
+    JUMP.riffleHalfResBelowMs = nav.riffleHalfResBelowMs;
     JUMP.mode = nav.jumpMode as JumpMode;
-  }, [nav.riffleMsPer20, nav.riffleMinMs, nav.riffleOverlap, nav.riffleMaxInAir, nav.riffleCurve, nav.jumpMode]);
+  }, [
+    nav.riffleMsPer20,
+    nav.riffleMinMs,
+    nav.riffleOverlap,
+    nav.riffleMaxInAir,
+    nav.riffleCurve,
+    nav.riffleHalfResBelowMs,
+    nav.jumpMode,
+  ]);
 
   useEffect(
     () => () => {
