@@ -467,6 +467,37 @@ const paintOn = (page) =>
 const paintOff = (page) => page.evaluate(() => document.getElementById('pv-paint')?.remove());
 
 /**
+ * HOLD THE SKY STILL, for a check that is about the sheet.
+ *
+ * The ground is a live shader now — a cloud deck that blows, a bank that rolls,
+ * and per-pixel grain that changes every frame — so any sample taken at the
+ * sheet's SILHOUETTE, where the rendered pixel is antialiased against whatever
+ * is behind it, legitimately differs between two captures taken seconds apart.
+ * That is not the sheet changing. It is the weather.
+ *
+ * Measured, on one flap pose photographed twice four seconds apart: 11 levels
+ * with the sky live, 0 with it hidden. Against the flat ground this suite was
+ * written on, the same comparison was exactly 0 every time — which is why the
+ * tolerance is as tight as it is, and why it is worth keeping rather than
+ * widening to swallow a backdrop the check is not asking about.
+ *
+ * Hiding the sky puts the flat `--pv-ground` back underneath: a constant
+ * backdrop, and the one thing that makes an edge pixel comparable with itself.
+ * Same move the paint pass makes for the same reason — isolate the subject.
+ */
+const SKY_STILL_CSS = `.pv-ground .sky-layer { display: none !important; }`;
+
+const skyStill = (page) =>
+  page.evaluate((css) => {
+    const el = document.createElement('style');
+    el.id = 'pv-sky-still';
+    el.textContent = css;
+    document.head.append(el);
+  }, SKY_STILL_CSS);
+
+const skyLive = (page) => page.evaluate(() => document.getElementById('pv-sky-still')?.remove());
+
+/**
  * The bounding box of everything that is NOT the magenta ground, in CSS pixels
  * — plus how many DEVICE pixels there are of it.
  *
@@ -1182,8 +1213,12 @@ async function run() {
           return [raw.data[o], raw.data[o + 1], raw.data[o + 2]];
         });
       };
+      // The sky goes still for this one — see `skyStill`. The flap is the
+      // subject; the weather behind its edge is not.
+      await skyStill(page);
       const flapA = await flapOf(0);
       const flapB = await flapOf(1);
+      await skyLive(page);
       const pairs = flapA.map((a, i) => [a, flapB[i]]).filter(([a, b]) => a && b);
       const apart = pairs.map(([a, b]) => Math.max(...a.map((c, i) => Math.abs(c - b[i]))));
       check(
