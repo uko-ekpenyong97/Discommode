@@ -1,40 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo } from 'react';
 import { DialRoot, DialStore, useDialKit } from 'dialkit';
 import 'dialkit/styles.css';
 import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
-import { setEnvOverride } from '../env';
-import type { Condition, DayPhase, EnvState } from '../env';
-
-/** Conditions in WMO-ish order, indexed by the `previewCondition` dial. */
-const CONDITIONS: Condition[] = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'snow', 'storm'];
-
-/** Representative cloud/precip per condition so the preview shows weather. */
-const PREVIEW_WEATHER: Record<Condition, { cloudiness: number; precipitation: number }> = {
-  clear: { cloudiness: 0, precipitation: 0 },
-  partly: { cloudiness: 0.5, precipitation: 0 },
-  cloudy: { cloudiness: 1, precipitation: 0 },
-  fog: { cloudiness: 0.9, precipitation: 0 },
-  rain: { cloudiness: 0.9, precipitation: 0.6 },
-  snow: { cloudiness: 0.9, precipitation: 0.5 },
-  storm: { cloudiness: 1, precipitation: 0.85 },
-};
-
-/** Build a forced EnvState for the sky preview (Phase 12 / 12b). */
-function previewEnv(sunElevation: number, condition: Condition, dayPhase: DayPhase): EnvState {
-  const w = PREVIEW_WEATHER[condition];
-  return {
-    sunElevation,
-    isDay: sunElevation > 0.15,
-    dayPhase,
-    condition,
-    cloudiness: w.cloudiness,
-    precipitation: w.precipitation,
-    windSpeed: 0,
-    rawWeatherCode: -1,
-    fetchedAt: Date.now(),
-  };
-}
 
 /**
  * Dev-only DialKit panel for live feel/layout tuning. This whole module is
@@ -115,65 +83,21 @@ function Dials() {
     detailSlideMs: [start.detailSlideMs, 150, 900],
   });
 
-  // SKY preview: "Toggle sky preview" forces an EnvState via setEnvOverride so
-  // the previewSun / previewCondition / dayPhase dials sweep the full
-  // time × weather matrix live without waiting for real conditions. "Toggle
-  // dayPhase" flips rising↔setting so dusk can be previewed. `skyRef` holds the
-  // latest dial values for the action callbacks (memoised, can't read `sky`).
-  const previewOnRef = useRef(false);
-  const skyRef = useRef<{ sun: number; condition: number; phase: DayPhase }>({
-    sun: 0.5,
-    condition: 0,
-    phase: 'rising',
+  // SKY — the sky's FEEL, and only its feel. Six dials, which is the whole
+  // panel: the prototype's five (`docs/prototypes/sky-prototype.html`) plus the
+  // transition. The old panel also carried the weather modifiers and a preview
+  // sweep; the modifiers went with the tint model, and the preview moved to the
+  // EnvReadout, where the six conditions are six buttons instead of a slider
+  // you have to count clicks on.
+  const sky = useDialKit('SKY', {
+    skyTransitionMs: [start.skyTransitionMs, 150, 4000],
+    skyDrift: [start.skyDrift, 0, 3, 0.05],
+    cloudScale: [start.cloudScale, 0.8, 4, 0.05],
+    fogHeight: [start.fogHeight, 0.3, 1.2, 0.01],
+    skySaturation: [start.skySaturation, 0.4, 1.6, 0.01],
+    skyGrain: [start.skyGrain, 0, 0.1, 0.005],
+    skyResolution: [start.skyResolution, 0.5, 1, 0.05],
   });
-  const applyPreview = useCallback(() => {
-    const { sun, condition, phase } = skyRef.current;
-    setEnvOverride(previewOnRef.current ? previewEnv(sun, CONDITIONS[Math.round(condition)], phase) : null);
-  }, []);
-  const onSkyAction = useCallback(
-    (action: string) => {
-      if (action === 'previewSky') {
-        previewOnRef.current = !previewOnRef.current;
-        applyPreview();
-      } else if (action === 'previewPhase') {
-        skyRef.current.phase = skyRef.current.phase === 'rising' ? 'setting' : 'rising';
-        if (previewOnRef.current) applyPreview();
-      }
-    },
-    [applyPreview],
-  );
-
-  const sky = useDialKit(
-    'SKY',
-    {
-      skyTransitionMs: [start.skyTransitionMs, 150, 4000],
-      skyParallax: [start.skyParallax, 0, 0.2],
-      fieldDriftSpeed: [start.fieldDriftSpeed, 0, 0.15],
-      fieldSoftness: [start.fieldSoftness, 0, 1],
-      fieldGrain: [start.fieldGrain, 0, 0.12],
-      fogDesaturation: [start.fogDesaturation, 0, 1],
-      fogLift: [start.fogLift, 0, 1],
-      cloudMute: [start.cloudMute, 0, 1],
-      stormDarken: [start.stormDarken, 0, 1],
-      stormDrift: [start.stormDrift, 0, 3],
-      windDriftFactor: [start.windDriftFactor, 0, 0.2],
-      previewSun: [0.5, 0, 1],
-      previewCondition: [0, 0, CONDITIONS.length - 1, 1],
-      previewSky: { type: 'action', label: 'Toggle sky preview' },
-      previewPhase: { type: 'action', label: 'Toggle dayPhase (dawn/dusk)' },
-    },
-    { onAction: onSkyAction },
-  );
-
-  // Track the latest preview dial values; while preview is on, keep the forced
-  // EnvState in sync as the dials move.
-  useEffect(() => {
-    skyRef.current.sun = sky.previewSun;
-    skyRef.current.condition = sky.previewCondition;
-    if (previewOnRef.current) applyPreview();
-    // applyPreview reads refs only; intentionally not a dep.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sky.previewSun, sky.previewCondition]);
 
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
   // Reads the live `config` singleton directly, so it needs no stale-closure ref.
@@ -246,16 +170,12 @@ function Dials() {
       detailChromeFadeMs: detail.detailChromeFadeMs,
       detailSlideMs: detail.detailSlideMs,
       skyTransitionMs: sky.skyTransitionMs,
-      skyParallax: sky.skyParallax,
-      fieldDriftSpeed: sky.fieldDriftSpeed,
-      fieldSoftness: sky.fieldSoftness,
-      fieldGrain: sky.fieldGrain,
-      fogDesaturation: sky.fogDesaturation,
-      fogLift: sky.fogLift,
-      cloudMute: sky.cloudMute,
-      stormDarken: sky.stormDarken,
-      stormDrift: sky.stormDrift,
-      windDriftFactor: sky.windDriftFactor,
+      skyDrift: sky.skyDrift,
+      cloudScale: sky.cloudScale,
+      fogHeight: sky.fogHeight,
+      skySaturation: sky.skySaturation,
+      skyGrain: sky.skyGrain,
+      skyResolution: sky.skyResolution,
     };
     setConfig(next);
     try {

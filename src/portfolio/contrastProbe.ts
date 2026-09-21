@@ -1,14 +1,45 @@
 import { look } from './portfolioMotion';
+import { skyEngine } from '../sky/skyStage';
+import type { SkyTarget } from '../sky/skyEngine';
 
 /**
  * DEV-ONLY contrast probe — ink on paper, and the letterhead on the ground.
  *
- * The surfaces are OPAQUE now, so the ratio under a run of text is a property
- * of two colours rather than of whatever the compositor happened to blur behind
- * it. That retires most of what this file used to be: there is no backdrop to
- * reconstruct, no sky to read back out of a WebGL buffer, no stack of two
- * translucent layers to put a sampled pixel through. Read the surface, read the
- * ink, composite, compare.
+ * The PAPER is opaque, so the ratio under a run of text on it is a property of
+ * two colours: read the surface, read the ink, composite, compare. No backdrop
+ * to reconstruct, no stack of two translucent layers to put a sampled pixel
+ * through.
+ *
+ * THE GROUND IS THE SKY, and that brings one thing back that the flat blue had
+ * retired: the ground's colour has to be read out of the WebGL buffer, because
+ * it is a picture and not a value. Three decisions make that a number rather
+ * than a distribution over the whole year:
+ *
+ *   IT IS READ IN THE LETTERHEAD'S BAND and nowhere else. Every run of type on
+ *   the ground is in the strip — the whole of {@link GROUND_SELECTORS} is
+ *   `.pv-letterhead__*` — so the only sky that can fail anything is the 56px of
+ *   it behind that band. Which is also why the wash that answers the bar is the
+ *   band's own (`letterheadScrim`) and not the whole screen's (`groundScrim`).
+ *
+ *   IT IS MEASURED AGAINST THE WORST SKY THE SHADER CAN PAINT by default —
+ *   {@link WORST_CASE_SKY} — whatever the weather is actually doing. A bar that
+ *   passes on a foggy Tuesday and fails in July is not a bar. Pass `sky` to
+ *   measure any other state; `scripts/sky-contrast.mjs` walks all twenty-four.
+ *
+ *   AND THE WORST SKY IS NOT A CLEAR NOON, which is what this was first written
+ *   to assume and what the sweep then disproved. A clear noon comes out at
+ *   7.73:1 and an OVERCAST one at 6.78 — because the lit top of the cloud deck
+ *   CLIPS. `litCol` is near-white before daylight scales it, the shader clamps
+ *   to 1.0, and so any daylit sky with cloud in it puts pure white pixels in
+ *   the band. Measured, every combination of `cloud` ≥ 0.5 and `sun` ≥ 0.5 ties
+ *   at exactly the same ratio: the ceiling, not a bright example of something.
+ *
+ *   IT IS THE BRIGHTEST PIXEL IN THE BAND, not the average of it. The strip
+ *   runs the full width, its type is white, and a run of it only has to cross
+ *   the sun's glow once to be the run that fails.
+ *
+ * That sample then goes under both washes, ground first and band second, which
+ * is the order the compositor paints them in.
  *
  * WHAT IS LEFT IS THE GRAIN, and it is worth keeping. Film grain over a surface
  * moves its local luminance, so "the ratio" is a distribution rather than a
@@ -29,8 +60,8 @@ import { look } from './portfolioMotion';
  *
  * TARGET: 7:1 FOR EVERYTHING, with no size exception. The page is dark ink on
  * warm off-white and there is no reason to spend the margin; the letterhead is
- * mono type on `groundColor` and is held to the same bar, which is the one
- * thing the paper target says nothing about.
+ * mono type on the twice-scrimmed sky and is held to the same bar, which is the
+ * one thing the paper target says nothing about.
  */
 
 /** The bar. One number, for every run of type in the view. */
@@ -42,6 +73,22 @@ const GRAIN_SAMPLES = 256;
 
 /** Which surface a run of type is printed on. */
 export type Surface = 'paper' | 'ground';
+
+/**
+ * The sky the ground is measured against: a full overcast with the sun at its
+ * highest — the state whose cloud tops are blown to white. See the note at the
+ * top: this is the CEILING of what the shader can put in the letterhead's band,
+ * not merely a bright sky, and every daylit clouded state ties with it.
+ */
+export const WORST_CASE_SKY: SkyTarget = {
+  sun: 1,
+  dayPhase: 'rising',
+  cloud: 1,
+  fog: 0,
+  rain: 0,
+  storm: 0,
+  wind: 0,
+};
 
 /** Every run of type on the PAPER, and the name it is reported under. */
 const PAPER_SELECTORS = [
@@ -93,8 +140,19 @@ export interface ContrastReport {
 }
 
 /** Try a surface without committing to it — what the sweep that chose the
- *  shipped defaults is for. Anything not given comes from the live `look`. */
-export type SurfaceOverride = Partial<Pick<typeof look, 'paperColor' | 'groundColor' | 'grainOpacity'>>;
+ *  shipped defaults is for. Anything not given comes from the live `look`.
+ *  `groundColor` here overrides the SKY SAMPLE as well: pass it and the ground
+ *  is measured as that flat colour under the washes, which is how you ask "what
+ *  would this be if the sky were gone". */
+export type SurfaceOverride = Partial<
+  Pick<
+    typeof look,
+    'paperColor' | 'groundColor' | 'grainOpacity' | 'groundScrim' | 'letterheadScrim'
+  >
+> & {
+  /** Measure the ground against this sky rather than {@link WORST_CASE_SKY}. */
+  sky?: SkyTarget;
+};
 
 /* ── colour ──────────────────────────────────────────────────────────────── */
 
@@ -155,14 +213,43 @@ function surfaceColor(surface: Surface, overrides: SurfaceOverride): [number, nu
   const wanted = surface === 'paper' ? overrides.paperColor : overrides.groundColor;
   if (wanted) {
     const [r, g, b] = parseColor(cssColor(wanted));
-    return [r, g, b];
+    return surface === 'ground' ? scrimmed([r, g, b], overrides) : [r, g, b];
   }
+  if (surface === 'ground') return groundColor(overrides);
   // Read it off the element rather than off the dial, so the probe cannot drift
   // from the stylesheet the way a second copy of a colour always eventually
   // does.
-  const el = document.querySelector<HTMLElement>(surface === 'paper' ? '.pv-page' : '.pv-ground');
+  const el = document.querySelector<HTMLElement>('.pv-page');
   const [r, g, b] = parseColor(el ? getComputedStyle(el).backgroundColor : 'rgb(0,0,0)');
   return [r, g, b];
+}
+
+/**
+ * Both washes, in the order the compositor paints them: black at `groundScrim`
+ * over the whole ground, then black at `letterheadScrim` over the band. The
+ * type is inside the band, so it sits on the result of both.
+ */
+function scrimmed(c: [number, number, number], overrides: SurfaceOverride): [number, number, number] {
+  const ground = over([0, 0, 0], overrides.groundScrim ?? look.groundScrim, c);
+  return over([0, 0, 0], overrides.letterheadScrim ?? look.letterheadScrim, ground);
+}
+
+/**
+ * What the letterhead is actually printed on: the brightest pixel of the band
+ * the strip occupies, under both washes.
+ *
+ * Falls back to `.pv-ground`'s own background when there is no sky to read —
+ * no WebGL2, or the canvas has not been claimed yet — which is exactly what is
+ * on screen in that case.
+ */
+function groundColor(overrides: SurfaceOverride): [number, number, number] {
+  const engine = skyEngine();
+  const band = Math.min(1, look.letterheadHPx / Math.max(window.innerHeight, 1));
+  const sampled = engine?.sampleBand(0, band, overrides.sky ?? WORST_CASE_SKY) ?? null;
+  if (sampled) return scrimmed(sampled, overrides);
+  const el = document.querySelector<HTMLElement>('.pv-ground');
+  const [r, g, b] = parseColor(el ? getComputedStyle(el).backgroundColor : 'rgb(0,0,0)');
+  return scrimmed([r, g, b], overrides);
 }
 
 /** Resolve any CSS colour string to `rgb(...)` by asking the browser. */
@@ -289,6 +376,9 @@ export function logContrastProbe(overrides: SurfaceOverride = {}): ContrastRepor
   }
   console.log(
     `[pv:contrast] worst ${report.worst}:1 across ${report.samples.length} runs` +
+      ` (ground at ${overrides.sky ? 'a forced sky' : 'a blown overcast noon'}, ground scrim ` +
+      `${overrides.groundScrim ?? look.groundScrim}, letterhead scrim ` +
+      `${overrides.letterheadScrim ?? look.letterheadScrim})` +
       `${report.failures ? `  — ${report.failures} BELOW ${REQUIRED}:1` : '  — all pass'}`,
   );
   console.table(

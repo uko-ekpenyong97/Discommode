@@ -1,19 +1,39 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
+import SkyLayer from '../components/SkyLayer';
 import type { Project } from './blocks/types';
 
 /**
- * THE GROUND — the opaque field the paper sits on, and the only thing in the
- * view that never moves.
+ * THE GROUND — the field the paper sits on, and the only thing in the view
+ * that never moves.
  *
- * Full-viewport and opaque. The grid behind it is still rendering and the scrim
+ * IT IS THE SKY NOW. It used to be one flat ink blue, and the argument for that
+ * was that it is opaque: the grid behind it is still rendering and the scrim
  * still tints it, so the card you opened from is where you left it, but nothing
- * shows through: paper on glass is a contradiction, and a frosted surface is
- * what the model this replaced spent its whole contrast budget on.
+ * shows through, because paper on glass is a contradiction. All of that still
+ * holds — the sky layer here is an opaque canvas, and the grid is as covered by
+ * it as it was by the blue. What changed is what the opaque thing IS. A page
+ * about a project is a page you put down somewhere, and the somewhere the rest
+ * of the site has is San Francisco's weather.
  *
- * Two things are on it. The GRAIN, which is a compositor-only transform loop
- * over a tile of turbulence — a repaint per step of a full-viewport layer would
- * cost frames under a page of type, and the whole point of the vertical run is
- * that nothing is costing frames during it. And the LETTERHEAD, a mono strip
+ * It is the SAME sky, not a copy of it: one WebGL2 context for the whole app,
+ * whose canvas this layer claims off the grid while the view is open and hands
+ * back when it closes (see `skyStage.ts`). So the sky you scroll a project on
+ * is the sky you left, mid-drift, and opening a project costs no second
+ * shader.
+ *
+ * Over it go TWO washes, and they are two because they answer two different
+ * questions. `groundScrim` covers the whole ground and sets how far back the
+ * sky sits behind the paper — a look, chosen by eye, with nothing measured
+ * against it. `letterheadScrim` covers only the band the strip is in, and it is
+ * the one the 7:1 rests on: every run of type on the ground is in that band, so
+ * that is where the contrast is paid for. One wash doing both took the whole
+ * screen to 0.78 of black, which is a legible strip bought by throwing the
+ * weather away. See `contrastProbe.ts`.
+ *
+ * Then the GRAIN, which is a compositor-only transform loop over a tile of
+ * turbulence — a repaint per step of a full-viewport layer would cost frames
+ * under a page of type, and the whole point of the vertical run is that nothing
+ * is costing frames during it. And the LETTERHEAD, a mono strip
  * across the top: the project, the section numbers as links, the section you
  * are on, and a dateline. It goes UNDER the paper rather than over it — see
  * `portfolio.css`, which is where that decision is written down.
@@ -21,7 +41,7 @@ import type { Project } from './blocks/types';
  * The number of the section ON ITS WAY is marked pending — dim, and named in
  * the strip beside the numbers — from the moment the ground empties to the
  * moment that section's page arrives. Through a dwell it is the only thing on
- * screen, and without it half a screen of bare blue reads as the view having
+ * screen, and without it half a screen of bare ground reads as the view having
  * stopped rather than as a beat between two sheets.
  *
  * THE NUMBERS ARE THE ONLY NAVIGATION THE VIEW HAS. Clicking one is
@@ -84,6 +104,9 @@ export function Ground({ project, activeIndex, pendingIndex, onSelect, onClose }
   const pending = pendingIndex === null ? null : project.sections[pendingIndex];
   return (
     <div className="pv-ground">
+      <SkyLayer />
+      <div className="pv-ground__scrim" aria-hidden="true" />
+      <div className="pv-letterhead__scrim" aria-hidden="true" />
       <div className="pv-grain" aria-hidden="true" />
       <header className="pv-letterhead">
         {/* First in the DOM, last on screen. A button, so Enter and Space

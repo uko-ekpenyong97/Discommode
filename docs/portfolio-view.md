@@ -30,7 +30,7 @@ is why they transfer), `docs/prototypes/folder-prototype.html` and
 | --- | --- |
 | `PortfolioGate.tsx` | Outermost gate. Renders `ReaderGate` (which renders `App`) plus the view layer when the hash is `#view-…`. |
 | `PortfolioView.tsx` | Scrim + ground + the scroller. Owns the section index and the hash. |
-| `Ground.tsx` | The opaque field the paper sits on: colour, grain, letterhead. |
+| `Ground.tsx` | The field the paper sits on: the shared `SkyLayer`, the scrim over it, grain, letterhead. |
 | `Scroller.tsx` | The one scroller. Measures, builds the track, applies a layout every frame. |
 | `SheetCanvas.tsx` | The one fixed WebGL canvas. Mounts three.js, owns the plane, paints only during an entrance or a tear. |
 | `curlMaterial.ts` | TWO `ShaderMaterial`s from one pair of vertex functions — the entrance's cone wrap and the tear's arc-and-flap — sharing one uniforms object; two point lights, an ambient floor and a blank back face in the fragment stage. Plus `bentPoint`, the CPU port of both, unit-tested in `curlMaterial.test.ts`. |
@@ -56,7 +56,8 @@ Three things are on screen, front to back:
 2. the **sheet** — the same page as a texture on a deformed plane in WebGL,
    visible while it is unrolling and while it is being peeled away;
 3. the **ground** — a full-viewport opaque field with a letterhead across the
-   top, which never moves.
+   top, which never moves. It is the sky ([docs/sky.md](sky.md)), under a dark
+   scrim.
 
 The page and the sheet occupy **the same rectangle** and are never both visible.
 The whole model is that swap, done at a moment where it cannot be seen — and it
@@ -65,26 +66,113 @@ is done TWICE now, once at either end of a vertical run. See
 
 ## The ground
 
-Full-viewport and opaque. The grid behind it is still rendering — the scrim
-keeps its dark tint so the card you opened from is where you left it — but
-nothing shows through, because paper on glass is a contradiction and the frosted
-surface is what the previous model spent its contrast budget on.
+**The ground is the sky.** It was one flat ink blue until this change, and the
+argument for that was never the colour — it was that the layer is *opaque*: the
+grid behind it is still rendering and the scrim keeps its dark tint, so the card
+you opened from is where you left it, but nothing shows through, because paper
+on glass is a contradiction and the frosted surface is what the previous model
+spent its contrast budget on.
+
+All of that still holds. The sky layer is an opaque WebGL canvas and the grid is
+as covered by it as it was by the blue. What changed is what the opaque thing
+*is*: a page about a project is a page you put down somewhere, and the somewhere
+the rest of the site already has is San Francisco's weather.
+
+It is the **same** sky, not a copy of it. There is one WebGL2 context in the
+app, and this layer claims its canvas off the grid while the view is open and
+hands it back when it closes — see [One canvas](sky.md#one-canvas). So the sky
+you scroll a project on is the sky you left, mid-drift, and opening a project
+costs no second shader. Everything else about the sky is in **[docs/sky.md](sky.md)**.
 
 | Dial | Default | Notes |
 | --- | --- | --- |
-| `groundColor` | `#142a63` | Deep ink blue. **Measured, not chosen** — see below. |
+| `groundScrim` | 0.35 | Black wash over the whole ground. **A look. Nothing is measured against it.** |
+| `letterheadScrim` | 0.72 | Black wash over the letterhead's band only. **Measured** — see below. |
+| `groundColor` | `#142a63` | What is under the sky. Shows only with no WebGL2, or in the frame before the canvas is claimed. |
 | `groundAlpha` | 1 | Below 1 the grid shows through, for A/B only. **Ship at 1.** |
 | `grainOpacity` | 0.08 | Film grain over the ground and over the paper. One dial for both. |
 | `paperColor` | `#f4efe6` | The page surface, and the sheet's albedo where no texture has decoded. |
 | `inkColor` | `#14120f` | The ink, and the hairline along both surfaces' edges. |
 
-The ground is **darker than it looks like it needs to be**, and the thing that
-set it is not the paper. It is the letterhead: mono type on `groundColor` is
-held to the same 7:1 the ink on the paper is, and the ground's grain is
-source-over, so its worst patch is a *lighter* field under the same white. At
-`#1f3a8a` the 11px numbers came out at 4:1. At `#142a63` with the dim state
-raised to 0.80 white they clear at 7.64:1, which is the worst figure anywhere in
-the view. See [Contrast](#contrast-on-paper-and-on-the-ground).
+### Two washes, because there are two questions
+
+A flat colour has one luminance. **A sky is a picture**: it has a sun in it, it
+has a bright fog bank in it, and where daylight hits the top of the cloud deck
+it is white. Two different things follow from that and they were run together at
+first, which is the mistake worth writing down.
+
+One is a **look**: how far back the sky sits behind the paper. That is
+`groundScrim`, it covers the whole ground, and it is chosen by eye — **nothing
+is printed on it**, so nothing is measured against it.
+
+The other is a **bar**: 11px white mono at 7:1. That is the letterhead, and the
+letterhead is a 56px band across the very top. Every run of type on the ground
+is in it — the whole of `GROUND_SELECTORS` is `.pv-letterhead__*` — so the whole
+contrast argument lives in one band, and so does the wash that answers it.
+`letterheadScrim` is flat across the strip's own height and then fades out over
+the same height again below it, where there is no type: flat keeps the probe's
+model exact (the type sits on one value, not somewhere on a gradient) and the
+fade keeps the band off the screen as an edge.
+
+**One wash doing both jobs costs 0.78 of black over the entire view**, which is
+a legible strip bought by throwing the weather away — and the weather is the
+reason the ground is the sky. Split, the strip pays for itself and the sky is
+at 0.35.
+
+### What the bar is measured against, and why it is not a clear noon
+
+`contrastProbe.ts` reads the ground's colour **out of the WebGL buffer**, in the
+letterhead's band, as the **brightest pixel** in it — the strip runs the full
+width and a run only has to cross the sun's glow once to be the run that fails.
+It reads that sample against one forced sky, whatever the weather is actually
+doing, because a bar that passes on a foggy Tuesday and fails in July is not a
+bar.
+
+This was first written to force a **clear noon**, on the reasoning that a clear
+noon is the brightest sky there is. `scripts/sky-contrast.mjs` disproved it. A
+clear noon measures **8.51:1**; an overcast noon measures **7.65**. The lit top
+of the cloud deck is near-white before daylight scales it, the shader clamps to
+1.0, and so any daylit sky with cloud in it puts **pure white pixels** in the
+band. Every combination of `cloud` ≥ 0.5 and `sun` ≥ 0.5 ties at exactly the
+same ratio — which makes it a *ceiling* rather than a bright example, and that
+is what `WORST_CASE_SKY` is now.
+
+The sweep that set the dial, worst of all twenty-four states:
+
+| `letterheadScrim` | worst of 24 | |
+| --- | --- | --- |
+| 0.60 | 6.00 | fails |
+| 0.66 | 6.78 | fails |
+| 0.68 | 7.06 | passes, barely |
+| 0.70 | 7.35 | |
+| **0.72** | **7.65** | shipped |
+| 0.75 | 8.11 | |
+
+7.65 is where the flat blue's floor was (7.64), which is the right place for it
+to land: the bar did not move, so the worst patch of type in the view should not
+have either.
+
+### All twenty-four states, worst run of letterhead type
+
+`node scripts/sky-contrast.mjs`, at 1728×996 @2×. Identical at 1440×900 @2× to
+within 0.05 except `clear night`, which reads 9.77 there. Bar is 7:1.
+
+| | night | dawn | noon | dusk |
+| --- | --- | --- | --- | --- |
+| clear | 10.18 | 10.46 | 8.51 | 10.77 |
+| partly | 10.77 | 10.47 | **7.65** | 10.54 |
+| cloudy | 10.77 | 10.53 | **7.65** | 10.54 |
+| fog | 10.76 | 10.51 | **7.65** | 10.53 |
+| rain | 10.48 | 10.17 | 8.02 | 10.24 |
+| storm | 10.45 | 10.38 | 9.90 | 10.29 |
+
+The three that tie at the floor are the three that have a lit cloud deck at
+noon. Storm is the *safest* daylit state, because a storm dims the whole scene
+before the deck is shaded.
+
+**If a state ever fails, `letterheadScrim` goes up and `groundScrim` does not.**
+Paying a contrast bar with a wash that covers things nothing is printed on is
+how this ended up at 0.78 the first time.
 
 The **grain** is one tile of SVG turbulence, four times the viewport, stepped
 around by a `transform` eight times a second. Stepping `background-position`
@@ -1390,10 +1478,16 @@ this view ever loses its subpixel antialiasing. `pv-verify` asserts it.
 
 ## Contrast, on paper and on the ground
 
-The surfaces are opaque, so the ratio under a run of text is a property of two
-colours rather than of whatever the compositor happened to blur behind it. That
-retires most of `contrastProbe.ts`: no backdrop to reconstruct, no sky to read
-back out of a WebGL buffer, no stack of two translucent layers.
+The **paper** is opaque, so the ratio under a run of text on it is a property of
+two colours rather than of whatever the compositor happened to blur behind it.
+No backdrop to reconstruct, no stack of two translucent layers.
+
+The **ground** is the sky, so its colour comes back out of the WebGL buffer —
+which is the one thing the flat blue had retired and this change brings back. It
+is read as the brightest pixel in the letterhead's band, against a forced
+worst-case sky, under both washes. The whole argument — including why the worst
+case is an *overcast* noon and not a clear one — is in
+[What the bar is measured against](#what-the-bar-is-measured-against-and-why-it-is-not-a-clear-noon).
 
 **What is left is the grain**, and it is worth keeping. Film grain over a surface
 moves its local luminance, so "the ratio" is a distribution rather than a number
@@ -1418,7 +1512,7 @@ Measured, worst of each kind, sampled down a whole section at both viewports:
 
 | run | on | px | ratio |
 | --- | --- | --- | --- |
-| `pv-letterhead__no`, `__ref`, `__back` | ground | 11 | **7.64** |
+| `pv-letterhead__no`, `__ref`, `__back` | ground | 11 | **7.65** |
 | `pv-letterhead-block__no`, `__ref` | paper | 11 | 8.47 |
 | `pv-letterhead__section` | ground | 11 | 8.87 |
 | `pv-body` | paper | 16 | 9.01 |
@@ -1431,10 +1525,11 @@ Two numbers in that table were set by the measurement rather than by eye. The
 small mono labels on paper are at **0.80** ink and not 0.74: the paper's grain
 multiplies, so its worst patch is 8% darker paper under type that is 8% darker
 too, and at 0.74 the 11px labels land on 6.94:1 — a miss by six hundredths. And
-the letterhead's dim state is at **0.80 white** on a ground darkened to
-`#142a63`, which is what leaves any room at all between "dim" and "white"; the
-current section is marked with a rule as well as with a weight of light, because
-0.80 to 1.0 is not much of a signal on its own.
+the letterhead's dim state is at **0.80 white** on a band held down to roughly
+`#142a63`'s luminance — by `groundColor` when that was the ground, by
+`letterheadScrim` now that the sky is — which is what leaves any room at all between
+"dim" and "white"; the current section is marked with a rule as well as with a
+weight of light, because 0.80 to 1.0 is not much of a signal on its own.
 
 Two things the old glass findings do *not* carry over to:
 
@@ -1605,8 +1700,9 @@ as a footnote to the strip rather than as the first thing in it. Verified: the
 first Tab lands on it, Enter and Space both close, a real click closes, and the
 app behind is still `inert`.
 
-The contrast probe measures it with the rest of the strip — **7.64:1**, the same
-floor the section numbers sit at, against the 7:1 bar.
+The contrast probe measures it with the rest of the strip — **7.65:1** against a
+blown-out overcast noon, the same floor the section numbers sit at, against the
+7:1 bar. It is the worst run of type anywhere in the view, in any weather.
 
 And the page got the band back: **96px taller at both signed-off viewports.**
 
@@ -1620,8 +1716,12 @@ the close is a separate storyboard (the pane leads, the scrim trails 100ms) so
 
 `PV STACK`, `PV FOLDERS` and `PV GLASS` are gone with the cabinet and the
 frosted surface. `PV PAPER` holds the shader's MATERIAL uniforms, both lights
-and the two colours; `PV GROUND` holds `groundColor`, `groundAlpha` and
-`grainOpacity` plus the contrast readout that used to live on `PV GLASS`;
+and the two colours; `PV GROUND` holds `groundScrim`, `letterheadScrim`,
+`groundColor`, `groundAlpha` and `grainOpacity` plus the contrast readout that
+used to live on `PV GLASS` — and `letterheadScrim` is the one that moves the
+readout, because the probe measures the strip against a worst-case sky whatever
+the weather is doing, so dragging it is a live read of the bar. `groundScrim` is
+next to it and does nothing to the number, which is the point of having two;
 `PV MOTION` holds the two distances, `handoffMs`, every entrance window and the
 settle; `PV TEAR` holds the peel.
 

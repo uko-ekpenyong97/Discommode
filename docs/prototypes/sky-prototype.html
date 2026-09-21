@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sky prototype — Discommode</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  canvas#sky { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+
+  /* fake grid cards to judge how the site reads over the sky */
+  .cards { position: fixed; inset: 0; pointer-events: none; display: none; }
+  .cards.on { display: block; }
+  .card { position: absolute; width: 22vw; aspect-ratio: 10 / 13; border-radius: 6px;
+          background: linear-gradient(160deg, #e9e2d6, #b8ad9c); box-shadow: 0 30px 60px rgba(0,0,0,.35);
+          display: flex; align-items: flex-end; padding: 14px; box-sizing: border-box; color: #2a2620; font-size: 11px; letter-spacing: .08em; }
+  .card.dark { background: linear-gradient(160deg, #1f2430, #0d1017); color: #cfd4dd; }
+  .hud { position: absolute; left: 24px; top: 20px; color: #fff; mix-blend-mode: difference; font-size: 11px; letter-spacing: .12em; }
+
+  /* dock */
+  .dock { position: fixed; right: 16px; top: 16px; width: 272px; background: rgba(12,12,16,.82); backdrop-filter: blur(14px);
+          border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 12px 14px 14px; color: #ddd; font-size: 11px; line-height: 1.5; }
+  .dock h1 { font-size: 11px; letter-spacing: .16em; font-weight: 500; margin: 0 0 10px; color: #fff; }
+  .dock .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .dock label { width: 78px; color: #9aa; flex: none; }
+  .dock input[type=range] { flex: 1; accent-color: #f0b585; }
+  .dock output { width: 34px; text-align: right; color: #fff; font-variant-numeric: tabular-nums; }
+  .cond { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 8px 0 10px; }
+  .cond button, .dock .btn { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: #ddd; border-radius: 6px; padding: 6px 4px; font: inherit; font-size: 10px; letter-spacing: .06em; cursor: pointer; }
+  .cond button.on { background: #f0b585; color: #1a1208; border-color: #f0b585; }
+  .dock .btn.on { background: rgba(240,181,133,.25); border-color: #f0b585; }
+  .btns { display: flex; gap: 5px; margin-top: 8px; }
+  .btns .btn { flex: 1; }
+  .note { margin-top: 10px; color: #778; font-size: 10px; }
+  .sect { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,.08); color: #9aa; letter-spacing: .12em; font-size: 10px; }
+  .readout { position: fixed; left: 16px; bottom: 14px; color: rgba(255,255,255,.75); font-size: 10px; letter-spacing: .1em; mix-blend-mode: difference; }
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+
+<div class="cards" id="cards">
+  <div class="hud">DISCOMMODE — ISSUE 01 · AUG 2026</div>
+  <div class="card" style="left:14vw; top:18vh;">01 · DISCOMMODE</div>
+  <div class="card dark" style="left:39vw; top:18vh;">02 · RIVE</div>
+  <div class="card" style="left:14vw; top:62vh;">03 · —</div>
+  <div class="card dark" style="left:39vw; top:62vh;">04 · NOSEY</div>
+</div>
+
+<div class="dock">
+  <h1>SKY</h1>
+  <div class="cond" id="cond">
+    <button data-c="clear">CLEAR</button><button data-c="partly">PARTLY</button><button data-c="cloudy">OVERCAST</button><button data-c="fog">FOG</button>
+    <button data-c="rain">RAIN</button><button data-c="snow">SNOW</button><button data-c="storm">STORM</button><button class="btn" id="live">LIVE SF</button>
+  </div>
+  <div class="row"><label>sun</label><input type="range" id="sun" min="0" max="1" step="0.005" value="0.7"><output id="sunO">0.70</output></div>
+  <div class="row"><label>phase</label><button class="btn" id="phase" style="flex:1">RISING ▸ SETTING</button></div>
+  <div class="row"><label>wind</label><input type="range" id="wind" min="0" max="1" step="0.01" value="0.3"><output id="windO">0.30</output></div>
+  <div class="row"><label>precip</label><input type="range" id="precip" min="0" max="1" step="0.01" value="0"><output id="precipO">0.00</output></div>
+  <div class="row"><label>cloud</label><input type="range" id="cloud" min="0" max="1" step="0.01" value="0"><output id="cloudO">0.00</output></div>
+
+  <div class="sect">FEEL</div>
+  <div class="row"><label>drift</label><input type="range" id="drift" min="0" max="3" step="0.05" value="1"><output id="driftO">1.00</output></div>
+  <div class="row"><label>cloud scale</label><input type="range" id="cscale" min="0.8" max="4" step="0.05" value="2.0"><output id="cscaleO">2.00</output></div>
+  <div class="row"><label>fog height</label><input type="range" id="fogh" min="0.3" max="1.2" step="0.01" value="0.85"><output id="foghO">0.85</output></div>
+  <div class="row"><label>saturation</label><input type="range" id="sat" min="0.4" max="1.6" step="0.01" value="1"><output id="satO">1.00</output></div>
+  <div class="row"><label>grain</label><input type="range" id="grain" min="0" max="0.1" step="0.005" value="0.03"><output id="grainO">0.03</output></div>
+
+  <div class="btns">
+    <button class="btn" id="cycle">CYCLE DAY</button>
+    <button class="btn" id="showCards">SHOW CARDS</button>
+  </div>
+  <div class="note" id="note">Presets set cloud / precip the way the WMO table does. Sliders override.</div>
+</div>
+<div class="readout" id="readout"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Shader
+// ---------------------------------------------------------------------------
+const VERT = `#version 300 es
+out vec2 vUv;
+void main(){ vec2 p = vec2(float((gl_VertexID<<1)&2), float(gl_VertexID&2)); vUv = p; gl_Position = vec4(p*2.0-1.0,0.0,1.0); }`;
+
+const FRAG = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uSun;     // 0 night .. 1 noon
+uniform float uPhase;   // 0 rising .. 1 setting
+uniform float uCloud;   // coverage 0..1
+uniform float uFog;     // 0..1
+uniform float uRain;    // 0..1
+uniform float uSnow;    // 0..1
+uniform float uStorm;   // 0..1
+uniform float uWind;    // 0..1
+uniform float uFlash;   // lightning envelope 0..1
+uniform float uDrift;   // motion multiplier
+uniform float uCloudScale;
+uniform float uFogHeight;
+uniform float uSat;
+uniform float uGrain;
+
+float hash(vec2 p){ p = fract(p*vec2(123.34,345.45)); p += dot(p,p+34.345); return fract(p.x*p.y); }
+float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); float a=hash(i), b=hash(i+vec2(1,0)), c=hash(i+vec2(0,1)), d=hash(i+vec2(1,1)); vec2 u=f*f*(3.0-2.0*f); return mix(mix(a,b,u.x),mix(c,d,u.x),u.y); }
+float fbm5(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<5;i++){ v+=a*vnoise(p); p=p*2.02+vec2(1.7,9.2); a*=0.5; } return v; }
+float fbm3(vec2 p){ float v=0.0,a=0.5; for(int i=0;i<3;i++){ v+=a*vnoise(p); p=p*2.02+vec2(1.7,9.2); a*=0.5; } return v; }
+
+vec3 hex(float r,float g,float b){ return vec3(r,g,b)/255.0; }
+
+// time-of-day palette: zenith (top) / horizon (bottom)
+void palette(float s, float ph, out vec3 Z, out vec3 H){
+  vec3 nZ=hex(5.,9.,24.),    nH=hex(22.,30.,64.);
+  vec3 dwZ=hex(72.,92.,168.), dwH=hex(246.,170.,112.);
+  vec3 dyZ=hex(52.,124.,214.),dyH=hex(196.,222.,245.);
+  vec3 dkZ=hex(48.,40.,110.), dkH=hex(240.,118.,78.);
+  vec3 lZ=mix(dwZ,dkZ,ph), lH=mix(dwH,dkH,ph);
+  if(s<=0.0){ Z=nZ; H=nH; return; }
+  if(s<0.15){ float t=s/0.15; Z=mix(nZ,lZ,t); H=mix(nH,lH,t); return; }
+  if(s<0.42){ float t=(s-0.15)/0.27; t=t*t*(3.0-2.0*t); Z=mix(lZ,dyZ,t); H=mix(lH,dyH,t); return; }
+  Z=dyZ; H=dyH;
+}
+
+float rainLayer(vec2 uv, float aspect, float speed, float scale, float seed, float t){
+  vec2 p = uv*vec2(aspect,1.0);
+  p.x += (1.0-uv.y)*(0.10+uWind*0.30);           // slant with wind
+  p *= vec2(scale, scale*0.22);
+  p.y += t*speed;
+  vec2 id=floor(p), f=fract(p);
+  float h=hash(id+seed);
+  float on = step(1.0-uRain*0.55, h);
+  float streak = smoothstep(0.40,0.5,f.x)*smoothstep(0.60,0.5,f.x) * smoothstep(0.0,0.25,f.y)*smoothstep(1.0,0.55,f.y);
+  return on*streak;
+}
+float snowLayer(vec2 uv, float aspect, float scale, float speed, float seed, float t){
+  vec2 p = uv*vec2(aspect,1.0)*scale;
+  p.y += t*speed;
+  p.x += sin(t*0.6+uv.y*5.0+seed)*0.35 + uWind*t*0.6;
+  vec2 id=floor(p), f=fract(p)-0.5;
+  float h=hash(id+seed);
+  vec2 off=(vec2(hash(id+1.3+seed),hash(id+5.7+seed))-0.5)*0.7;
+  float on=step(1.0-uSnow*0.45,h);
+  return on*smoothstep(0.13,0.03,length(f-off));
+}
+
+void main(){
+  float aspect = uRes.x/max(uRes.y,1.0);
+  vec2 uv = vUv;
+  float t = uTime*uDrift;
+  float sun = clamp(uSun,0.0,1.0);
+
+  float dayAmt  = smoothstep(0.0,0.35,sun);                       // how much daylight
+  float lowAmt  = smoothstep(0.0,0.12,sun)*(1.0-smoothstep(0.2,0.48,sun)); // golden hour
+  float nightAmt= 1.0-smoothstep(0.0,0.12,sun);
+  vec3 sunCol = mix(vec3(1.0,0.52,0.28), vec3(1.0,0.97,0.90), smoothstep(0.05,0.42,sun));
+
+  // ---- base sky: soft vertical gradient, gently warped so it reads painted, not printed
+  vec3 Z,H; palette(sun,uPhase,Z,H);
+  float warp = (fbm3(vec2(uv.x*aspect,uv.y)*1.4 + vec2(t*0.02,-t*0.01))-0.5)*0.16;
+  float yy = clamp(uv.y+warp,0.0,1.0);
+  vec3 col = mix(H,Z,smoothstep(0.0,1.0,yy));
+  // horizon warmth at golden hour
+  col += sunCol*pow(1.0-uv.y,3.0)*lowAmt*0.45;
+
+  // ---- sun glow (position: side by phase, height by elevation)
+  vec2 sunPos = vec2(mix(0.24,0.76,uPhase), mix(-0.06,0.86,sun));
+  float sd = length((uv-sunPos)*vec2(aspect,1.0));
+  float occl = (1.0-uCloud*0.55)*(1.0-uFog*0.75)*(1.0-uStorm*0.7);
+  float glow = (exp(-sd*2.2)*0.32 + exp(-sd*8.0)*0.30 + exp(-sd*70.0)*0.75);
+  col += sunCol*glow*smoothstep(0.0,0.10,sun)*occl*0.75;
+
+  // ---- stars + moon (clear nights)
+  {
+    vec2 sp = uv*vec2(aspect,1.0)*150.0; vec2 id=floor(sp); vec2 f=fract(sp)-0.5;
+    float h=hash(id); vec2 off=(vec2(hash(id+3.1),hash(id+7.7))-0.5)*0.6;
+    float twinkle = 0.55+0.45*sin(uTime*1.7+h*80.0);
+    float star = smoothstep(0.978,1.0,h)*smoothstep(0.10,0.0,length(f-off))*twinkle;
+    vec2 mp=vec2(0.70,0.80); float md=length((uv-mp)*vec2(aspect,1.0));
+    float moon=smoothstep(0.040,0.032,md); float mglow=exp(-md*7.0)*0.22;
+    vec3 sky = col;
+    col += vec3(0.85,0.92,1.0)*star*nightAmt;
+    col += mix(vec3(0.70,0.78,0.95),vec3(0.96,0.97,1.0),moon)*(moon*0.85+mglow)*nightAmt;
+    col = mix(sky, col, (1.0-uCloud*0.9)*(1.0-uFog*0.9));
+  }
+
+  // ---- clouds
+  float cov = max(uCloud, uStorm);
+  vec2 cp = vec2(uv.x*aspect, uv.y*1.5);
+  vec2 wind = vec2(0.015+uWind*0.10, 0.004)*t;
+  float n  = fbm5(cp*uCloudScale + wind + vec2(7.0,3.0));
+  float nn = smoothstep(0.22,0.78,n);
+  float thr = 1.0-cov;
+  float cd = smoothstep(thr, thr+0.38, nn);
+  cd = mix(cd, 1.0, smoothstep(0.72,1.0,cov)*0.92);                // full cover closes the ceiling; texture comes from the shading below
+  cd *= 0.95+0.05*uStorm;
+  float n2 = fbm5(cp*uCloudScale*2.3 + wind*1.35 + vec2(2.0,11.0));
+  float dayLight = mix(0.2,1.0,dayAmt);
+  vec3 shadowCol = mix(vec3(0.58,0.63,0.72), vec3(0.28,0.30,0.38), uStorm) * (1.0-uRain*0.22) * dayLight;
+  vec3 litCol    = mix(vec3(0.98,0.98,0.97), sunCol*1.05, lowAmt*0.85) * dayLight;
+  // underlit at golden hour: base of the cloud catches the sun
+  litCol = mix(litCol, sunCol*1.1*dayLight, lowAmt*smoothstep(0.6,0.2,uv.y)*0.6);
+  litCol *= 1.0 - uStorm*0.55 - uRain*0.15;
+  vec3 cloudCol = mix(shadowCol, litCol, smoothstep(0.30,0.85,n2));
+  cloudCol += vec3(0.9,0.92,1.0)*uFlash*0.9;                      // lightning lights the deck from inside
+  col = mix(col, cloudCol, cd);
+  col *= 1.0 - uStorm*0.22*(1.0-uFlash);                          // storm dims the whole scene
+
+  // ---- fog: a bright bank rolling in low, not a grey tint
+  {
+    vec2 fp = vec2(uv.x*aspect, uv.y);
+    float fn = fbm5(fp*1.25 + vec2(t*(0.035+uWind*0.06), t*0.012) + vec2(20.0,5.0));
+    float vb = 1.0-smoothstep(0.0, uFogHeight, uv.y);
+    float fd = uFog*smoothstep(0.30,0.82, fn*0.62 + vb*0.60);
+    vec3 fogCol = mix(vec3(0.30,0.34,0.44), vec3(0.91,0.91,0.89), smoothstep(0.0,0.32,sun));
+    fogCol = mix(fogCol, fogCol*mix(vec3(1.0),sunCol,0.55), lowAmt);
+    col = mix(col, fogCol, fd);
+    col += sunCol*exp(-sd*3.0)*fd*lowAmt*0.25;                    // sun bleeding through the bank
+  }
+
+  // ---- rain
+  if(uRain>0.001){
+    float r = rainLayer(uv,aspect,3.6,70.0,1.0,t)*0.55 + rainLayer(uv,aspect,2.4,42.0,2.0,t)*0.40;
+    vec3 streak = mix(col, vec3(0.86,0.89,0.94), 0.55);
+    col = mix(col, streak, r*uRain*0.85);
+  }
+  // ---- snow
+  if(uSnow>0.001){
+    float s = snowLayer(uv,aspect,16.0,0.30,1.0,t) + snowLayer(uv,aspect,28.0,0.50,2.0,t)*0.7 + snowLayer(uv,aspect,44.0,0.75,3.0,t)*0.45;
+    col = mix(col, vec3(0.97,0.97,0.98), clamp(s,0.0,1.0)*uSnow*0.95);
+  }
+  // ---- lightning lifts everything for a frame
+  col += vec3(0.85,0.88,1.0)*uFlash*0.35;
+
+  // saturation dial + grain
+  float l = dot(col, vec3(0.299,0.587,0.114));
+  col = mix(vec3(l), col, uSat);
+  col += (hash(vUv*uRes + fract(uTime))-0.5)*uGrain;
+  o = vec4(clamp(col,0.0,1.0),1.0);
+}`;
+
+// ---------------------------------------------------------------------------
+// Engine (mirrors skyEngine: eased targets, tau 1500ms)
+// ---------------------------------------------------------------------------
+const canvas = document.getElementById('sky');
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+if (!gl) document.body.innerHTML = '<p style="color:#fff;padding:2rem">WebGL2 unavailable</p>';
+function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ console.error(gl.getShaderInfoLog(s)); throw new Error('shader'); } return s; }
+const prog = gl.createProgram(); gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT)); gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG)); gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog); gl.bindVertexArray(gl.createVertexArray());
+const U = {}; for (const n of ['uRes','uTime','uSun','uPhase','uCloud','uFog','uRain','uSnow','uStorm','uWind','uFlash','uDrift','uCloudScale','uFogHeight','uSat','uGrain']) U[n]=gl.getUniformLocation(prog,n);
+
+const tgt = { sun:0.7, phase:0, cloud:0, fog:0, rain:0, snow:0, storm:0, wind:0.3 };
+const cur = { ...tgt };
+const feel = { drift:1, cscale:2.0, fogh:0.85, sat:1, grain:0.03 };
+const TAU = 1500;
+
+let W=0,Hh=0;
+function resize(){ const dpr=Math.min(devicePixelRatio||1,1.5); const w=Math.round(innerWidth*dpr), h=Math.round(innerHeight*dpr); if(w===W&&h===Hh) return; W=w; Hh=h; canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
+addEventListener('resize', resize); resize();
+
+// lightning scheduler
+let nextFlash = 0, flashAt = -1;
+function flashEnv(now){
+  if (cur.storm > 0.3) {
+    if (now > nextFlash) { flashAt = now; nextFlash = now + 3500 + Math.random()*9000; }
+  } else { nextFlash = now + 2000; }
+  if (flashAt < 0) return 0;
+  const d = (now - flashAt)/1000;
+  const burst = (t0,a,k)=> d>t0 ? a*Math.exp(-(d-t0)/k) : 0;
+  return Math.min(1, burst(0,1.0,0.09) + burst(0.10,0.35,0.07) + burst(0.18,0.8,0.14)) * Math.min(1, cur.storm*1.5);
+}
+
+const t0 = performance.now(); let last = t0;
+let cycling = false;
+function frame(now){
+  const dt = Math.min((now-last)/1000, 0.05); last = now;
+  if (cycling) { const p = ((now - t0)/1000 % 40)/40; tgt.sun = Math.max(0, Math.sin(p*Math.PI*2)) ; tgt.phase = p<0.25?0:1; if(p>0.5) tgt.sun = 0; ui.sun.value=tgt.sun.toFixed(3); ui.sunO.value=tgt.sun.toFixed(2); }
+  const k = 1 - Math.exp(-dt/(TAU/1000));
+  for (const key in tgt) cur[key] += (tgt[key]-cur[key])*k;
+  const flash = flashEnv(now);
+  gl.uniform2f(U.uRes,W,Hh);
+  gl.uniform1f(U.uTime,(now-t0)/1000);
+  gl.uniform1f(U.uSun,cur.sun); gl.uniform1f(U.uPhase,cur.phase);
+  gl.uniform1f(U.uCloud,cur.cloud); gl.uniform1f(U.uFog,cur.fog); gl.uniform1f(U.uRain,cur.rain);
+  gl.uniform1f(U.uSnow,cur.snow); gl.uniform1f(U.uStorm,cur.storm); gl.uniform1f(U.uWind,cur.wind);
+  gl.uniform1f(U.uFlash,flash);
+  gl.uniform1f(U.uDrift,feel.drift); gl.uniform1f(U.uCloudScale,feel.cscale); gl.uniform1f(U.uFogHeight,feel.fogh);
+  gl.uniform1f(U.uSat,feel.sat); gl.uniform1f(U.uGrain,feel.grain);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  readout.textContent = `sun ${cur.sun.toFixed(2)} · ${cur.phase<0.5?'rising':'setting'} · cloud ${cur.cloud.toFixed(2)} fog ${cur.fog.toFixed(2)} rain ${cur.rain.toFixed(2)} snow ${cur.snow.toFixed(2)} storm ${cur.storm.toFixed(2)} wind ${cur.wind.toFixed(2)}${liveNote}`;
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------------------
+// Presets — what the WMO table + SkyLayer mapping produce, but with fog and
+// overcast finally separated, and precip split into rain/snow.
+// ---------------------------------------------------------------------------
+const PRESETS = {
+  clear:  { cloud:0.00, fog:0, rain:0,   snow:0,   storm:0 },
+  partly: { cloud:0.50, fog:0, rain:0,   snow:0,   storm:0 },
+  cloudy: { cloud:1.00, fog:0, rain:0,   snow:0,   storm:0 },
+  fog:    { cloud:0.35, fog:1, rain:0,   snow:0,   storm:0 },
+  rain:   { cloud:0.92, fog:0, rain:0.6, snow:0,   storm:0 },
+  snow:   { cloud:0.92, fog:0, rain:0,   snow:0.6, storm:0 },
+  storm:  { cloud:1.00, fog:0, rain:0.85,snow:0,   storm:1 },
+};
+const ui = {}; for (const id of ['sun','sunO','wind','windO','precip','precipO','cloud','cloudO','drift','driftO','cscale','cscaleO','fogh','foghO','sat','satO','grain','grainO','phase','cycle','showCards','live','note']) ui[id]=document.getElementById(id);
+const readout = document.getElementById('readout'); let liveNote = '';
+let condName = 'clear';
+function setCond(name){
+  condName = name; const p = PRESETS[name]; Object.assign(tgt, p);
+  ui.cloud.value = p.cloud; ui.cloudO.value = p.cloud.toFixed(2);
+  const pr = Math.max(p.rain, p.snow); ui.precip.value = pr; ui.precipO.value = pr.toFixed(2);
+  document.querySelectorAll('#cond button[data-c]').forEach(b=>b.classList.toggle('on', b.dataset.c===name));
+}
+document.querySelectorAll('#cond button[data-c]').forEach(b=>b.addEventListener('click',()=>setCond(b.dataset.c)));
+setCond('clear');
+
+ui.sun.addEventListener('input',()=>{ cycling=false; ui.cycle.classList.remove('on'); tgt.sun=+ui.sun.value; ui.sunO.value=tgt.sun.toFixed(2); });
+ui.wind.addEventListener('input',()=>{ tgt.wind=+ui.wind.value; ui.windO.value=tgt.wind.toFixed(2); });
+ui.cloud.addEventListener('input',()=>{ tgt.cloud=+ui.cloud.value; ui.cloudO.value=tgt.cloud.toFixed(2); });
+ui.precip.addEventListener('input',()=>{ const v=+ui.precip.value; ui.precipO.value=v.toFixed(2); if(condName==='snow') tgt.snow=v; else tgt.rain=v; });
+ui.phase.addEventListener('click',()=>{ tgt.phase = tgt.phase>0.5?0:1; ui.phase.textContent = tgt.phase>0.5 ? 'SETTING ◂ RISING' : 'RISING ▸ SETTING'; });
+for (const [id,key] of [['drift','drift'],['cscale','cscale'],['fogh','fogh'],['sat','sat'],['grain','grain']]) ui[id].addEventListener('input',()=>{ feel[key]=+ui[id].value; ui[id+'O'].value=(+ui[id].value).toFixed(2); });
+ui.cycle.addEventListener('click',()=>{ cycling=!cycling; ui.cycle.classList.toggle('on',cycling); });
+ui.showCards.addEventListener('click',()=>{ const c=document.getElementById('cards'); c.classList.toggle('on'); ui.showCards.classList.toggle('on', c.classList.contains('on')); });
+
+// Live SF via Open-Meteo (Weather data by Open-Meteo, CC BY 4.0)
+const WMO = (c)=> c===0||c===1 ? 'clear' : c===2 ? 'partly' : c===3 ? 'cloudy' : (c===45||c===48) ? 'fog' : (c>=71&&c<=77)||c===85||c===86 ? 'snow' : c>=95 ? 'storm' : (c>=51&&c<=67)||(c>=80&&c<=82) ? 'rain' : 'clear';
+ui.live.addEventListener('click', async ()=>{
+  ui.note.textContent = 'fetching…';
+  try {
+    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.7749&longitude=-122.4194&current_weather=true&daily=sunrise,sunset&timezone=America/Los_Angeles');
+    const j = await r.json();
+    const cw = j.current_weather; const rise = new Date(j.daily.sunrise[0]).getTime(), set = new Date(j.daily.sunset[0]).getTime();
+    const now = Date.now(); const noon = (rise+set)/2;
+    let el = 0; if (now>rise && now<set) el = Math.sin(Math.PI*(now-rise)/(set-rise)); else { const d = Math.min(Math.abs(now-rise), Math.abs(now-set))/3.6e6; el = Math.max(0, 0.12 - d*0.12); }
+    setCond(WMO(cw.weathercode)); cycling=false; ui.cycle.classList.remove('on');
+    tgt.sun = el; ui.sun.value = el.toFixed(3); ui.sunO.value = el.toFixed(2);
+    tgt.phase = now<noon?0:1; ui.phase.textContent = tgt.phase ? 'SETTING ◂ RISING' : 'RISING ▸ SETTING';
+    tgt.wind = Math.min(1, cw.windspeed/40); ui.wind.value = tgt.wind; ui.windO.value = tgt.wind.toFixed(2);
+    liveNote = ` · live WMO ${cw.weathercode} ${cw.temperature}°C`;
+    ui.note.textContent = `Live: WMO ${cw.weathercode} → ${WMO(cw.weathercode)}, wind ${cw.windspeed} km/h. Weather data by Open-Meteo, CC BY 4.0.`;
+  } catch(e){ ui.note.textContent = 'Live fetch failed (offline or blocked). Presets still work.'; }
+});
+
+// URL params for headless screenshots: ?c=fog&sun=0.7&phase=1&snap=1
+const q = new URLSearchParams(location.search);
+if (q.get('c')) setCond(q.get('c'));
+if (q.get('sun')!==null) { tgt.sun=+q.get('sun'); ui.sun.value=tgt.sun; ui.sunO.value=tgt.sun.toFixed(2); }
+if (q.get('phase')!==null) tgt.phase=+q.get('phase');
+if (q.get('wind')!==null) tgt.wind=+q.get('wind');
+if (q.get('cards')) { document.getElementById('cards').classList.add('on'); ui.showCards.classList.add('on'); }
+if (q.get('snap')) { Object.assign(cur, tgt); document.querySelector('.dock').style.display='none'; }
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

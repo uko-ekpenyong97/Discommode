@@ -126,13 +126,44 @@ export interface PortfolioLook {
   scrimAlpha: number;
 
   /* ── the ground ────────────────────────────────────────────────────────── */
-  /** The opaque field the paper sits on. */
+  /**
+   * What the ground is when there is no sky on it: the flat field under the sky
+   * layer, which shows only while WebGL2 is unavailable or in the frame before
+   * the shared canvas has been claimed. It used to BE the ground.
+   */
   groundColor: string;
   /**
    * Below 1 the grid shows through, for A/B only. SHIP AT 1 — paper on glass is
    * a contradiction, and every contrast figure in the docs is measured here.
    */
   groundAlpha: number;
+  /**
+   * THE SCRIM OVER THE SKY, as a black alpha — the one that covers the whole
+   * ground. A LOOK DIAL AND NOT A CONTRAST ONE: it sets how far back the sky
+   * sits behind the paper, and nothing is measured against it.
+   *
+   * It used to be both, and that was the mistake. Holding 7:1 for the
+   * letterhead with a full-screen wash took it to 0.78, which buys a legible
+   * strip by throwing the weather away everywhere — the sky under the paper is
+   * meant to read as sky. The bar belongs to the 56px band the type is in, so
+   * that band has its own wash now ({@link PortfolioLook.letterheadScrim}) and
+   * this one is free to be chosen by eye.
+   */
+  groundScrim: number;
+  /**
+   * THE SCRIM UNDER THE LETTERHEAD, as a black alpha over the ground's own.
+   *
+   * Every run of type on the ground is in the strip — the whole of
+   * `GROUND_SELECTORS` is `.pv-letterhead__*` — so the whole contrast argument
+   * lives in one 56px band, and so does the wash that answers it. Flat across
+   * the strip's own height, then faded out over the same height again below it,
+   * where there is no type to measure: that keeps the probe's model exact (the
+   * type sits on one value, not on a gradient) and keeps the bottom edge off
+   * the screen.
+   *
+   * MEASURED, NOT CHOSEN. See the sweep in `docs/portfolio-view.md`.
+   */
+  letterheadScrim: number;
   /** Film grain over the ground and over the paper. One dial for both: they are
    *  the same grain, and the sheet's texture has it baked in. */
   grainOpacity: number;
@@ -407,6 +438,8 @@ export const LOOK: PortfolioLook = {
   // chosen: see `docs/portfolio-view.md`.
   groundColor: '#142a63',
   groundAlpha: 1,
+  groundScrim: 0.35,
+  letterheadScrim: 0.72,
   grainOpacity: 0.08,
   letterheadHPx: 56,
 
@@ -801,6 +834,8 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
   s.setProperty('--pv-ground', look.groundColor);
   s.setProperty('--pv-ground-alpha', String(look.groundAlpha));
+  s.setProperty('--pv-ground-scrim', String(look.groundScrim));
+  s.setProperty('--pv-letterhead-scrim', String(look.letterheadScrim));
   s.setProperty('--pv-grain', String(look.grainOpacity));
   s.setProperty('--pv-letterhead-h', `${look.letterheadHPx}px`);
   s.setProperty('--pv-paper', look.paperColor);
@@ -835,6 +870,8 @@ const VARS = [
   '--pv-scrim-alpha',
   '--pv-ground',
   '--pv-ground-alpha',
+  '--pv-ground-scrim',
+  '--pv-letterhead-scrim',
   '--pv-grain',
   '--pv-letterhead-h',
   '--pv-paper',
