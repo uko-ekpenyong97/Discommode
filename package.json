@@ -15,6 +15,7 @@
     "test": "vitest run",
     "verify:pv": "node scripts/pv-verify.mjs",
     "verify:gpu": "node scripts/pv-gpu-loop.mjs",
+    "verify:reader": "node scripts/reader-verify.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

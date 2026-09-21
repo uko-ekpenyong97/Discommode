@@ -224,22 +224,26 @@ Three decisions, each measured (2026-09-21, 20→0 and 0→20):
   the table. With every chain in the book's one 3D context, Chrome's depth sort
   drew the lower leaf on top over 2,499 (1×) / 13,075 (2×) overlap pixels on
   20→0; wrapped, 55 / 0, all on the shared hinge.
-- **Inner leaves use half-resolution pages** (`riffle/NN.webp`, 1000px, from
-  `npm run pages`); the first and last leaves and the final slots are full size.
-  Full size throughout dropped 1–6 frames of 33–50ms per run, all paint (none
-  with the leaves painted flat colours); half size below a 150ms leaf still
-  dropped 3 in 16 runs at the hand-over into the slow tail; 1300px copies
-  dropped 2 in 8. First-and-last-only: 0 in 16. The price: the slow
-  penultimate leaf is a touch soft at 2× while it moves.
+- **Leaves too fast to see use half-resolution pages** (`riffle/NN.webp`,
+  1000px, from `npm run pages`): any leaf scheduled under
+  `riffleHalfResBelowMs` (150ms). On 20→0 that is the middle sixteen; the first
+  (370ms), second and second-to-last (166ms) and last two (513ms) leaves, and the
+  page the book lands on, are full size, so nothing the eye follows is soft. Full
+  size throughout dropped 1–6 frames of 33–50ms per run, all paint (none with the
+  leaves painted flat colours).
 - **Pages are decoded ahead**: the first six leaves' before the clock starts,
   then six ahead of each lift — and the chains the riffle will need are built in
   that same wait, not as leaves lift.
 
-Frame times with all of that in (rAF intervals, real riffles): 20→0 and 0→20,
-five runs each at 1× and 2×, then ten more of the worst two cases — 29 of 30
-runs never went over 16.8ms. The one miss was a single 33ms frame as the first
-leaf lifted off the cover at 2×, and it is not the riffle's: an ordinary Next
-from the cover — code untouched here — drops that same frame in 6 of 20 runs.
+**What full size on the slow leaves costs.** `npm run verify:reader`, 10 runs
+each (2026-09-21): 20→0 at 1× and 2× and 0→20 at 1× each dropped a frame in 1–2
+of 10 runs (a single 33 or 50ms frame); 0→20 at 2× in none. Profiled, the 2×
+misses land at ~1.1s — the last leaf lifting two full-size pages while the
+full-size penultimate leaf is still in the air. So the 513ms leaves at full size
+DO push the riffle over 20ms now and then; the earlier rule (half size for every
+leaf but the first and last) dropped 1 in 30. For scale, an ordinary Next from
+the cover dropped a frame in 6 of 10 runs at 1× and 5 of 10 at 2× in the same
+session. The threshold is a dial; this is the trade it sets.
 
 **The dev probe.** In dev, `window.__flip` is the engine and `__flip.probe`
 holds a running riffle at any ms (`hold(ms)`, `hold(null)` resumes), paints its
@@ -258,6 +262,7 @@ READER NAV dock at `#read-NN?intro`; `jump.ts` is the source of truth.
 | `riffleOverlap` | 0.45 | how far a leaf has turned when the next lifts |
 | `riffleMaxInAir` | 3 | most leaves up at once |
 | `riffleCurve` | easeInOutCubic | also easeInOutSine, easeInOutQuint, linear |
+| `riffleHalfResBelowMs` | 150 | leaves scheduled faster than this use the 1000px pages |
 | `jumpMode` | riffle | or cut |
 
 ## The pages pipeline
@@ -292,11 +297,45 @@ magenta.
 
 ```
 npm test && npx tsc -b && npm run lint
+npm run dev                  # in another shell
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,exit,hover
 ```
 
-The browser checks for this reader were scripts driven through `window.__flip`
-and are not yet a committed suite: frame times over real riffles, the z-order
-check above, the landing's frame-to-frame diff against an ordinary turn, and a
-walk through Prev / Next / arrows / drag / Home / End / Cover / Back cover
-asserting caption, hash, `data-pos` and the rendered pages agree at every step.
-Making those a `verify:reader` script is the obvious next thing.
+`scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
+about what Chrome draws or when, which no unit test can answer. It drives the
+reader through `window.__flip` (the dev-only engine handle) and its `probe`, and
+exits non-zero on any ✗.
+
+- **Riffle frame budget.** Real 20→0 and 0→20 riffles, `--runs` each at 1× and
+  2×: no rAF interval over 20ms. An ordinary Next from the cover is measured
+  alongside and REPORTED, not asserted — it lifts the same full-size leaf a
+  riffle's first leaf does, so it is the baseline a miss should be read against.
+- **Riffle landing.** After every one of those: hash, caption, `data-pos` and
+  the rendered pages agree, and the turn layer is gone.
+- **Riffle z-order, pixel-exact.** The riffle is held at every 60Hz frame with
+  its leaves painted flat hues; each pair in the air is rendered alone and
+  together, and wherever both cover a pixel the combined frame must show the
+  more upright leaf. At most 1 in 10,000 overlap pixels may disagree (hinge
+  antialiasing). Coverage is where the leaf-alone render differs from a
+  no-leaves render AND carries the leaf's hue — hue alone picks up page artwork
+  of the same colour, and a bounding rect of a curled chain inside a
+  perspective box does not describe where it paints; both mistakes were made
+  once and reported wrong-order pixels that were not there.
+- **Navigation.** Prev / Next / arrows / drag / Home / End / Cover / Back cover
+  land on one spread index; drag, arrows and Next during a riffle are ignored;
+  Escape mid-riffle lands the riffle (the caption reaches 22/22) and then exits.
+- **Pill vs Escape.** The doorway exit from each, opened from `#item-01`,
+  screencast three times over. Every exit must end on `#item-01` with the reader
+  unmounted, and the Escape exit must pass through a frame the pill exit also
+  shows, to under 0.1% of pixels. Frames are paired by IMAGE, not by the
+  `--doorway-*` values logged beside them: a screencast frame can be a vsync
+  behind the rAF that logged its channels, and pairing by value once put two
+  different moments side by side (31.6% differing) — the kind of failure that
+  says nothing about the exits. (Playwright's fake clock does not hold Motion's
+  frame loop either, so pairing by time is out.)
+- **Hover loops.** libros (cover) and riddim (back) keep changing frames for
+  more than three passes while hovered; on leave the animation is still
+  running, and the still is back within one pass. And the back's layer exists
+  only at rest on the last spread — not at spread 20, not while turning in or out.
+
+A full run takes about fifteen minutes, most of it the z-order check.
