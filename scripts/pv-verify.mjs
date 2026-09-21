@@ -634,6 +634,99 @@ async function handoffOut(page, track, k, clip, handoffMs) {
   return { drift, swapped, wearing, ...(await differing(live, sheet)) };
 }
 
+/* ── the sky follows the clock ─────────────────────────────────────────────── */
+
+/**
+ * THE SKY IS DRIVEN BY THE TIME OF DAY, AND THE PROOF IS PIXELS.
+ *
+ * This one is here because of a bug that every other check in this file was
+ * blind to, and would be again. The sky's canvas is SHARED — one WebGL2 context
+ * for the app, moved between hosts — and it is created lazily by whichever host
+ * claims it first. That means the element on screen and the engine being fed
+ * targets can come apart: what you get is a live `EnvReadout` saying midnight
+ * over a canvas frozen on a noon it drew before the two were separated. Nothing
+ * throws. Nothing logs. The readout, which is the thing you would naturally
+ * check, is *correct* — it is the picture that is a lie.
+ *
+ * So the assertion is made of light. Force NOON, photograph it; force NIGHT,
+ * photograph it; a night that is not much darker than a noon is a sky that has
+ * stopped listening.
+ *
+ * THROUGH THE REAL OVERRIDE, and that part is not incidental. The contact sheet
+ * (`scripts/sky-sheet.mjs`) drives `window.__skyPreview`, a handle that calls
+ * `setEnvOverride` directly — so a sheet can come out perfect while the buttons
+ * a person actually presses are wired to nothing. This clicks the buttons in
+ * the DOM: EnvReadout → setEnvOverride → useEnvState → SkyLayer → skyStage →
+ * engine → glass. Every link, in the order a walk would hit them.
+ *
+ * THE GRID GOES AWAY FOR THE MEASUREMENT. The cards are opaque art on top of
+ * the sky and they do not change with it, so leaving them in only dilutes the
+ * signal — with them, a working night measures 56% of noon and a threshold that
+ * means anything cannot be set. Hidden, the frame is sky and nothing else.
+ */
+const NIGHT_OF_NOON = 0.35;
+
+const skyLuma = async (page) => {
+  const png = await page.screenshot({ animations: 'disabled' });
+  const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+  let total = 0;
+  for (let i = 0; i < data.length; i += info.channels) {
+    total += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  }
+  return total / (data.length / info.channels);
+};
+
+/** Press one of the EnvReadout's override buttons by its label. */
+const pressOverride = async (page, label) => {
+  const found = await page.evaluate((want) => {
+    const btn = [...document.querySelectorAll('.env-readout__btn')].find(
+      (b) => b.textContent.trim() === want,
+    );
+    if (!btn) return false;
+    btn.click();
+    return true;
+  }, label);
+  if (!found) throw new Error(`no override button labelled "${label}"`);
+  // The sky EASES to a new target over `skyTransitionMs` (tau 1500ms), so a
+  // shutter opened too early photographs a cross-fade between two skies.
+  await page.waitForTimeout(5200);
+};
+
+async function checkSkyFollowsTheClock(context, viewport) {
+  const page = await context.newPage();
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  await page.goto(`${ORIGIN}/`, { waitUntil: 'load' });
+  await page.waitForFunction(() => typeof window.__skyPreview === 'function', null, {
+    timeout: 20000,
+  });
+  await page.waitForTimeout(1200);
+  await page.addStyleTag({
+    content: '.grid-stage, .minimap-wrap, .env-readout, [class*="dialkit"] { display: none !important; }',
+  });
+
+  await pressOverride(page, 'clear');
+  await pressOverride(page, 'noon');
+  const noon = await skyLuma(page);
+  await pressOverride(page, 'night');
+  const night = await skyLuma(page);
+  // What the data layer thinks, so a failure says whether the override or the
+  // renderer is the one that is wrong.
+  const readout = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.env-readout__row')].find((r) =>
+      r.textContent.startsWith('sunElev'),
+    );
+    return row ? row.textContent : 'no readout';
+  });
+  await page.close();
+
+  const ratio = night / noon;
+  check(
+    ratio < NIGHT_OF_NOON,
+    `the sky follows the clock — night is under ${Math.round(NIGHT_OF_NOON * 100)}% of noon`,
+    `night ${round(night)} / noon ${round(noon)} = ${Math.round(ratio * 100)}%, readout says ${readout}`,
+  );
+}
+
 /* ── the run ──────────────────────────────────────────────────────────────── */
 
 async function run() {
@@ -1470,6 +1563,9 @@ async function run() {
       );
       check(noisy.length === 0, 'no console errors', noisy.slice(0, 3).join(' | '));
       await page.close();
+
+      // 12 — THE SKY, from the grid, through the buttons a person would press.
+      await checkSkyFollowsTheClock(context, viewport);
     }
 
     await context.close();

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { EnvState } from '../env';
-import { claimSky, skyEngine, setSkyTarget, skyTarget, subscribeSky } from '../sky/skyStage';
+import { claimSky, releaseSky, setSkyTarget, skyEngine, skyTarget, subscribeSky } from '../sky/skyStage';
 import { envToTarget } from '../sky/envToTarget';
 import { skyFallbackCss, skyGradientAt } from '../sky/palette';
 import './SkyLayer.css';
@@ -34,11 +34,28 @@ interface SkyLayerProps {
 function SkyLayer({ env }: SkyLayerProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
 
-  // Claim the shared canvas for as long as this host is mounted.
+  // Claim the shared canvas for as long as this host is mounted — and RE-ASSERT
+  // that claim on every render, not only on mount.
+  //
+  // The canvas is not this component's. It can be replaced underneath a
+  // component React has no reason to re-run an effect for, which is exactly
+  // what a dev hot-swap of the stage does: a fresh module builds a fresh canvas
+  // and a fresh engine, a mount-only claim never runs, and so the new canvas is
+  // never put in the DOM. What stays on screen is the previous one — detached
+  // from its driver, frozen on its last frame, while the readout beside it goes
+  // on reporting the state nobody is drawing. `claimSky` is idempotent, so
+  // saying it every render costs an `includes` and closes that hole.
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
-    return claimSky(host);
+    if (host) claimSky(host);
+  });
+
+  // …and hand it back on unmount, which is the only time it should move.
+  useEffect(() => {
+    const host = hostRef.current;
+    return () => {
+      if (host) releaseSky(host);
+    };
   }, []);
 
   // Reduced motion: a static frame, and quick transitions. Only the driving
@@ -54,14 +71,26 @@ function SkyLayer({ env }: SkyLayerProps) {
     return () => mq.removeEventListener('change', sync);
   }, [env]);
 
-  // Cross-fade toward the live EnvState whenever it changes. The first push
-  // snaps, so the first paint is the real sky rather than a fade up from night.
+  // Cross-fade toward the live EnvState. The first push snaps, so the first
+  // paint is the real sky rather than a fade up from night.
+  //
+  // NO DEPENDENCY ARRAY, DELIBERATELY. The obvious form of this is keyed on
+  // `[env]`, and it is wrong in one specific way: the engine is not owned by
+  // this component. It is created lazily by whichever host claims the shared
+  // canvas first, and it can be REPLACED underneath a component that React has
+  // no reason to re-render — which is exactly what a dev hot-swap of the stage
+  // does. The result is a live readout over a sky frozen at the engine's
+  // constructor state, with the override reaching neither.
+  //
+  // So the invariant is stated rather than inferred: after any render, the
+  // engine holds this layer's env. `setSkyTarget` compares before it publishes,
+  // so a push that changes nothing costs an assignment and does not re-render.
   const firstRef = useRef(true);
   useEffect(() => {
     if (!env) return;
     setSkyTarget(envToTarget(env), firstRef.current);
     firstRef.current = false;
-  }, [env]);
+  });
 
   // Test hook for `scripts/sky-perf.mjs`. Dev only; the whole branch is
   // constant-folded away in a production build.

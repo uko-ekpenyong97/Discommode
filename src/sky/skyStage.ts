@@ -61,6 +61,13 @@ function start(): void {
   }
   canvas = el;
   engine = made;
+  // REPLAY THE TARGET INTO IT. The engine is built lazily by whichever host
+  // claims first, and it is born at zeros — which is a clear midnight. Nothing
+  // guarantees that a target has not already been pushed by the time that
+  // happens (a cold load straight into the project view claims from two hosts
+  // in one commit), and an engine that missed the push has no way to ask for
+  // it. Snapping rather than easing: this is a first paint, not a change.
+  made.setEnv(target, true);
   // The resolution dial changes the backing-store size, which only `resize`
   // knows how to do — and it only runs on a window resize otherwise.
   subscribeConfig(() => made.syncSize());
@@ -73,25 +80,35 @@ function attach(): void {
     canvas.remove();
     return;
   }
+  // SWEEP OUT ANYTHING THAT IS NOT OURS. There is exactly one sky, so a second
+  // `.sky-layer__canvas` in a host is a ghost — in dev a hot swap builds a new
+  // stage module, and hence a new canvas, while the previous module's element
+  // is still sitting in the DOM with a live loop behind it. Left alone it is
+  // the thing on screen, frozen at whatever it last drew, and no target will
+  // ever reach it again.
+  for (const stale of top.querySelectorAll('canvas.sky-layer__canvas')) {
+    if (stale !== canvas) stale.remove();
+  }
   if (canvas.parentElement !== top) top.append(canvas);
 }
 
 /**
- * Claim the shared canvas into `host`. Returns the release function; releasing
- * hands the canvas back to the previous claimant (or detaches it).
+ * Claim the shared canvas into `host`. IDEMPOTENT: claiming a host that already
+ * holds the claim re-asserts it and re-attaches, which is what makes it safe to
+ * call on every render — see the note in `SkyLayer`.
  */
-export function claimSky(host: HTMLElement): () => void {
+export function claimSky(host: HTMLElement): void {
   start();
-  hosts.push(host);
+  if (!hosts.includes(host)) hosts.push(host);
   attach();
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    const i = hosts.lastIndexOf(host);
-    if (i >= 0) hosts.splice(i, 1);
-    attach();
-  };
+}
+
+/** Give the canvas back to whoever claimed before `host` (or detach it). */
+export function releaseSky(host: HTMLElement): void {
+  const i = hosts.lastIndexOf(host);
+  if (i < 0) return;
+  hosts.splice(i, 1);
+  attach();
 }
 
 /** The shared engine, or null when WebGL2 is unavailable. */
@@ -100,11 +117,22 @@ export function skyEngine(): SkyEngine | null {
   return engine;
 }
 
-/** Push the EnvState-derived target into the engine and publish it. */
+/**
+ * Push the EnvState-derived target into the engine and publish it.
+ *
+ * IT COMPARES BEFORE IT PUBLISHES, and that is load-bearing rather than an
+ * optimisation. `SkyLayer` pushes on every render (see the note there) and it
+ * also subscribes here for its fallback gradient, so publishing a new object
+ * unconditionally would be a render → push → notify → render loop. Holding the
+ * old object when nothing has moved keeps `useSyncExternalStore`'s snapshot
+ * stable and the cycle closes after one pass.
+ */
 export function setSkyTarget(next: SkyTarget, immediate = false): void {
   start();
-  target = next;
   engine?.setEnv(next, immediate);
+  const changed = (Object.keys(next) as (keyof SkyTarget)[]).some((k) => next[k] !== target[k]);
+  if (!changed) return;
+  target = next;
   listeners.forEach((fn) => fn());
 }
 
@@ -117,4 +145,24 @@ export function subscribeSky(fn: () => void): () => void {
   return () => {
     listeners.delete(fn);
   };
+}
+
+// DEV: hand the engine back when this module is replaced.
+//
+// Without this, every hot update strands a live rAF loop rendering into a
+// canvas that has been detached from the DOM — one more per edit, all of them
+// drawing a five-octave fbm nobody can see. It is also half of a bug that was
+// worth the trouble of finding: the other half was a new engine that never
+// received a target, which is what `start` replaying it now fixes. See
+// `docs/sky.md`.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    engine?.dispose();
+    canvas?.remove();
+    engine = null;
+    canvas = null;
+    started = false;
+    hosts.length = 0;
+    listeners.clear();
+  });
 }
