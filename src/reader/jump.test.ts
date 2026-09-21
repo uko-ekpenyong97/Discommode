@@ -1,73 +1,119 @@
 import { describe, expect, it } from 'vitest';
-import { JUMP, RIFFLE_RATIO, planRiffle } from './jump';
+import {
+  INNER_LEAF_EASE,
+  JUMP,
+  LAST_LEAF_MIN_MS,
+  RIFFLE_CURVES,
+  cubicBezier,
+  inverseOf,
+  planRiffle,
+  riffleMs,
+} from './jump';
+import type { JumpSettings, RiffleLeaf } from './jump';
 
-const TURN_MS = 850;
-const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
-/** The shipped dials. */
-const plan = (from: number, to: number) =>
-  planRiffle(from, to, JUMP.riffleTotalMs, JUMP.riffleMinLeafMs, TURN_MS);
+const end = (l: RiffleLeaf) => l.start + l.duration;
+/** Most leaves in the air at any moment — checked at every lift. */
+const maxInAir = (p: RiffleLeaf[]) =>
+  Math.max(...p.map((a) => p.filter((b) => b.start <= a.start + 1e-6 && end(b) > a.start + 1e-6).length));
+
+describe('riffle settings', () => {
+  it('ship as specified', () => {
+    expect(JUMP).toEqual({
+      riffleMsPer20: 1600,
+      riffleMinMs: 900,
+      riffleOverlap: 0.45,
+      riffleMaxInAir: 3,
+      riffleCurve: 'easeInOutCubic',
+      mode: 'riffle',
+    });
+    expect(RIFFLE_CURVES.easeInOutCubic).toEqual([0.65, 0, 0.35, 1]);
+  });
+});
+
+describe('riffleMs', () => {
+  it('is 1600ms for twenty spreads, sub-linear either side, floored at 900', () => {
+    expect(riffleMs(20, JUMP)).toBeCloseTo(1600, 6);
+    expect(riffleMs(10, JUMP)).toBeCloseTo(1600 * 0.5 ** 0.7, 6);
+    expect(riffleMs(40, JUMP)).toBeCloseTo(1600 * 2 ** 0.7, 6);
+    expect(riffleMs(2, JUMP)).toBe(900);
+    expect(riffleMs(0, JUMP)).toBe(0);
+  });
+});
 
 describe('planRiffle', () => {
-  it('ships at 700ms / 60ms', () => {
-    expect(JUMP).toEqual({ riffleTotalMs: 700, riffleMinLeafMs: 60, mode: 'riffle' });
+  it('turns every spread crossed, adjacent pairs, in either direction', () => {
+    const down = planRiffle(20, 0, JUMP);
+    expect(down).toHaveLength(20);
+    expect(down.map((l) => [l.from, l.to])).toEqual(Array.from({ length: 20 }, (_, k) => [20 - k, 19 - k]));
+    const up = planRiffle(0, 21, JUMP);
+    expect(up).toHaveLength(21);
+    expect(up.at(-1)).toMatchObject({ from: 20, to: 21, last: true });
   });
 
-  it('is empty for a jump to where the book already is', () => {
-    expect(plan(4, 4)).toEqual({ stops: [], durations: [] });
+  it('ends at the run length, with the last leaf landing last', () => {
+    for (const n of [1, 2, 3, 5, 12, 20, 21]) {
+      const p = planRiffle(0, n, JUMP);
+      expect(end(p.at(-1)!)).toBeCloseTo(riffleMs(n, JUMP), 6);
+      for (const l of p) expect(end(l)).toBeLessThanOrEqual(end(p.at(-1)!) + 1e-6);
+    }
   });
 
-  it('lands in the budget at every distance in the issue, both ways', () => {
-    for (let from = 0; from < 22; from++) {
-      for (const to of [0, 21]) {
-        if (from === to) continue;
-        const { stops, durations } = plan(from, to);
-        expect(sum(durations)).toBeLessThanOrEqual(700 + 1e-6);
-        expect(stops.at(-1)).toBe(to);
-        expect(stops).toHaveLength(durations.length);
+  it('lands in lift order and never has more than riffleMaxInAir up', () => {
+    for (const s of [JUMP, { ...JUMP, riffleMaxInAir: 2 }, { ...JUMP, riffleOverlap: 0.8 }, { ...JUMP, riffleCurve: 'easeInOutQuint' as const }]) {
+      for (const n of [2, 5, 20, 21]) {
+        const p = planRiffle(0, n, s);
+        for (let k = 1; k < p.length; k++) {
+          expect(p[k].start).toBeGreaterThan(p[k - 1].start);
+          expect(end(p[k])).toBeGreaterThan(end(p[k - 1]));
+        }
+        expect(maxInAir(p)).toBeLessThanOrEqual(s.riffleMaxInAir);
       }
     }
   });
 
-  it('never draws a leaf under the minimum', () => {
-    for (let d = 1; d <= 21; d++) {
-      for (const leaf of plan(0, d).durations) expect(leaf).toBeGreaterThanOrEqual(60);
+  it('lifts each leaf no earlier than its predecessor has passed the overlap', () => {
+    const inner = cubicBezier(INNER_LEAF_EASE);
+    const p = planRiffle(20, 0, JUMP);
+    for (let k = 1; k < p.length; k++) {
+      const prev = p[k - 1];
+      const travelled = inner(Math.min(1, (p[k].start - prev.start) / prev.duration));
+      expect(travelled).toBeGreaterThanOrEqual(JUMP.riffleOverlap - 1e-6);
     }
   });
 
-  it('shrinks geometrically going back from the landing, the last leaf longest', () => {
-    const { durations } = plan(20, 0);
-    for (let k = 1; k < durations.length; k++) {
-      expect(durations[k - 1] / durations[k]).toBeCloseTo(RIFFLE_RATIO, 9);
-    }
-    expect(Math.max(...durations)).toBe(durations.at(-1));
+  it('accelerates out of the first leaf and decelerates into the last', () => {
+    const p = planRiffle(20, 0, JUMP);
+    const gaps = p.slice(1).map((l, k) => l.start - p[k].start);
+    const mid = gaps.indexOf(Math.min(...gaps));
+    expect(mid).toBeGreaterThan(3);
+    expect(mid).toBeLessThan(gaps.length - 4);
+    for (let k = 1; k <= mid; k++) expect(gaps[k]).toBeLessThanOrEqual(gaps[k - 1] + 1e-6);
+    for (let k = mid + 1; k < gaps.length; k++) expect(gaps[k]).toBeGreaterThanOrEqual(gaps[k - 1] - 1e-6);
   });
 
-  it('is five leaves from spread 20 to the cover, spending the whole budget', () => {
-    const { stops, durations } = plan(20, 0);
-    expect(stops).toEqual([4, 3, 2, 1, 0]);
-    expect(durations.map(Math.round)).toEqual([61, 87, 124, 177, 252]);
-    expect(sum(durations)).toBeCloseTo(700, 6);
+  it('gives the last leaf at least 320ms, and a one-spread jump the whole run', () => {
+    for (const n of [2, 5, 20]) expect(planRiffle(0, n, JUMP).at(-1)!.duration).toBeGreaterThanOrEqual(LAST_LEAF_MIN_MS);
+    expect(planRiffle(1, 0, JUMP)).toEqual([{ from: 1, to: 0, start: 0, duration: 900, last: true }]);
   });
 
-  it('turns through every spread when they all fit', () => {
-    expect(plan(3, 0).stops).toEqual([2, 1, 0]);
-    expect(plan(18, 21).stops).toEqual([19, 20, 21]);
+  it('is empty for a jump to where the book already is', () => {
+    expect(planRiffle(4, 4, JUMP)).toEqual([]);
   });
 
-  it('folds the spreads that do not fit into the first leaf', () => {
-    // 21 spreads, five leaves: the first carries 17 of them.
-    expect(plan(0, 21).stops).toEqual([17, 18, 19, 20, 21]);
+  it('follows the curve dial', () => {
+    const lift = (s: JumpSettings) => planRiffle(20, 0, s).map((l) => l.start);
+    const linear = lift({ ...JUMP, riffleCurve: 'linear' });
+    const gaps = linear.slice(1).map((t, k) => t - linear[k]);
+    for (const g of gaps) expect(g).toBeCloseTo(gaps[0], 3);
+    expect(lift({ ...JUMP, riffleCurve: 'easeInOutQuint' })[1]).toBeGreaterThan(lift(JUMP)[1]);
   });
+});
 
-  it('never turns a leaf slower than an ordinary turn', () => {
-    const one = planRiffle(1, 0, 2000, 60, TURN_MS);
-    expect(one.durations).toEqual([TURN_MS]);
-    for (const leaf of planRiffle(0, 3, 5000, 60, TURN_MS).durations) {
-      expect(leaf).toBeLessThanOrEqual(TURN_MS);
-    }
-  });
-
-  it('is one leaf of the whole budget when the minimum leaves no room for two', () => {
-    expect(planRiffle(10, 0, 700, 400, TURN_MS)).toEqual({ stops: [0], durations: [700] });
+describe('cubicBezier / inverseOf', () => {
+  it('invert each other', () => {
+    const f = cubicBezier([0.65, 0, 0.35, 1]);
+    const g = inverseOf(f);
+    for (const y of [0.1, 0.25, 0.5, 0.9]) expect(f(g(y))).toBeCloseTo(y, 6);
+    expect(f(0.5)).toBeCloseTo(0.5, 6);
   });
 });

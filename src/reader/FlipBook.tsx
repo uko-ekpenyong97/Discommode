@@ -85,6 +85,8 @@ export function FlipBook({
     });
     engineRef.current = engine;
     onEngineReady?.(engine);
+    // Dev-only handle for the browser checks (the riffle probe among them).
+    if (import.meta.env.DEV) (window as unknown as { __flip?: FlipEngine }).__flip = engine;
 
     return () => {
       engine.destroy();

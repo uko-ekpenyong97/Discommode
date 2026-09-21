@@ -161,6 +161,17 @@
 
 /* ── the curl ───────────────────────────────────────────────────────────── */
 
+/* A riffle leaf's own box (flipEngine `takeCurl`): the book's perspective, but
+   FLAT, so each leaf renders its curl in 3D inside it and the leaves stack by
+   z-index rather than by Chrome's depth sort, which gets curled leaves sharing a
+   hinge partly wrong (see the measurement at `takeCurl`). Same box and perspective origin as the book, so a leaf in here
+   is pixel-for-pixel where it would be without it. */
+.flip-leaf {
+  position: absolute;
+  inset: 0;
+  perspective: 2600px;
+}
+
 .flip-curl {
   position: absolute;
   top: 0;

@@ -13,6 +13,13 @@ export interface Page {
   src: string;
   /** Caption override. Numbered pages leave this unset and fall back to `n`. */
   label?: string;
+  /**
+   * The same page at half resolution (1000px wide), for the inner leaves of a
+   * riffle — every leaf but the first and last (flipEngine `isFast`): a riffle
+   * crosses too many pages too fast for each to be decoded at full size at a new
+   * scale. Written by `npm run pages`; absent on the cover and back.
+   */
+  riffle?: string;
 }
 
 export interface Issue {
@@ -85,6 +92,7 @@ export const issue01: Issue = {
     ...Array.from({ length: PAGE_COUNT }, (_, i) => ({
       n: i + 1,
       src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
+      riffle: `/issues/01/riffle/${String(i + 1).padStart(2, '0')}.webp`,
     })),
     { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
   ],
