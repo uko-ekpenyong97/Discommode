@@ -126,13 +126,29 @@ export interface PortfolioLook {
   scrimAlpha: number;
 
   /* ── the ground ────────────────────────────────────────────────────────── */
-  /** The opaque field the paper sits on. */
+  /**
+   * What the ground is when there is no sky on it: the flat field under the sky
+   * layer, which shows only while WebGL2 is unavailable or in the frame before
+   * the shared canvas has been claimed. It used to BE the ground.
+   */
   groundColor: string;
   /**
    * Below 1 the grid shows through, for A/B only. SHIP AT 1 — paper on glass is
    * a contradiction, and every contrast figure in the docs is measured here.
    */
   groundAlpha: number;
+  /**
+   * THE SCRIM OVER THE SKY, as a black alpha. The ground is the sky now, and a
+   * sky is a picture: it has a sun in it, it has a bright fog bank in it, and at
+   * clear noon it is the brightest thing the site ever paints. The paper has to
+   * read as paper on it and the letterhead has to clear 7:1 against its worst
+   * patch, which is what set this number — see `docs/portfolio-view.md`.
+   *
+   * MEASURED, NOT CHOSEN, the same way `groundColor` was: the sweep is in the
+   * doc, and 0.78 is the first value at which the way out clears the bar with
+   * any margin at all (7.71:1, against 6.97 at 0.74 and 4.31 at 0.55).
+   */
+  groundScrim: number;
   /** Film grain over the ground and over the paper. One dial for both: they are
    *  the same grain, and the sheet's texture has it baked in. */
   grainOpacity: number;
@@ -407,6 +423,7 @@ export const LOOK: PortfolioLook = {
   // chosen: see `docs/portfolio-view.md`.
   groundColor: '#142a63',
   groundAlpha: 1,
+  groundScrim: 0.78,
   grainOpacity: 0.08,
   letterheadHPx: 56,
 
@@ -801,6 +818,7 @@ export function applyPortfolioLook(next: PortfolioLook = LOOK): void {
   s.setProperty('--pv-scrim-alpha', String(look.scrimAlpha));
   s.setProperty('--pv-ground', look.groundColor);
   s.setProperty('--pv-ground-alpha', String(look.groundAlpha));
+  s.setProperty('--pv-ground-scrim', String(look.groundScrim));
   s.setProperty('--pv-grain', String(look.grainOpacity));
   s.setProperty('--pv-letterhead-h', `${look.letterheadHPx}px`);
   s.setProperty('--pv-paper', look.paperColor);
@@ -835,6 +853,7 @@ const VARS = [
   '--pv-scrim-alpha',
   '--pv-ground',
   '--pv-ground-alpha',
+  '--pv-ground-scrim',
   '--pv-grain',
   '--pv-letterhead-h',
   '--pv-paper',

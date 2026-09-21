@@ -1,11 +1,16 @@
-/* Dev-only EnvState readout. Top-left, below the HUD index counter; clear of the
-   DialKit panel (top-right) and the mini-map (bottom-left). Plain text — there is
-   no sky renderer yet, this just verifies the data layer. */
+/* Dev-only EnvState readout + sky override. Top-left, below the HUD index
+   counter; clear of the DialKit panel (top-right) and the mini-map
+   (bottom-left). The numbers are what the data layer says; the two rows of
+   buttons under them force any of the six conditions at any of the four times
+   of day, which is the only way to eye-test a sky that depends on the weather
+   in another city. */
 .env-readout {
   position: fixed;
   top: 56px;
   left: 26px;
   z-index: 20;
+  /* The readout itself is inert — only the override buttons take the pointer,
+     so the grid still pans under the panel everywhere else. */
   pointer-events: none;
   font-family: var(--mono);
   font-size: 11px;
@@ -43,4 +48,46 @@
 
 .env-readout__val--loading {
   color: #6fa8e2;
+}
+
+.env-readout__sep {
+  margin: 8px 0 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hud-line);
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.env-readout__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+  margin-bottom: 3px;
+}
+
+.env-readout__btn {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hud-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--hud-line);
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.env-readout__btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.env-readout__btn[data-on] {
+  color: #1a1208;
+  background: #f0b585;
+  border-color: #f0b585;
+}
+
+.env-readout__btn--wide {
+  grid-column: span 2;
 }

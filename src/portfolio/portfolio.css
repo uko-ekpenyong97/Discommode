@@ -82,6 +82,12 @@
 
 /* THE GROUND. Opaque, full-viewport, and it never moves.
 
+   It is THE SKY — the app's one shared WebGL canvas, claimed off the grid for
+   as long as the view is open (`skyStage.ts`). The canvas is opaque, so the
+   grid is as covered as it was by the flat blue this replaced; `--pv-ground`
+   is what is left underneath it, and it only ever shows while WebGL2 is
+   unavailable or in the frame before the canvas has been claimed.
+
    `--pv-ground-alpha` below 1 lets the grid show through, which is a debugging
    affordance and not a look: every contrast figure in the docs is measured at
    1, and paper over glass is the thing this model exists to stop doing. */
@@ -90,6 +96,22 @@
   inset: 0;
   background: var(--pv-ground, #142a63);
   opacity: var(--pv-ground-alpha, 1);
+}
+
+/* THE SCRIM OVER THE SKY. Flat black at `--pv-ground-scrim`, between the sky
+   and the grain.
+
+   The sky is a picture, and paper does not read as paper against a picture at
+   full strength — nor does 11px mono. What set the number is the letterhead:
+   it is held to 7:1 against the WORST patch of the BRIGHTEST sky the site can
+   paint, which is a clear noon with the sun high and near the top of the frame
+   where the strip is. See `contrastProbe.ts` and `docs/portfolio-view.md`. */
+.pv-ground__scrim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: var(--pv-ground-scrim, 0.78);
+  pointer-events: none;
 }
 
 /* FILM GRAIN, as a compositor-only loop.

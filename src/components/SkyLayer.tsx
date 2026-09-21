@@ -1,14 +1,17 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { EnvState } from '../env';
-import { config } from '../config';
-import { createSkyEngine } from '../sky/skyEngine';
-import type { SkyEngine, SkyTarget } from '../sky/skyEngine';
-import { applyFieldWeather, fieldColorsAt, fieldFallbackCss } from '../sky/palette';
+import { claimSky, skyEngine, setSkyTarget, skyTarget, subscribeSky } from '../sky/skyStage';
+import type { SkyTarget } from '../sky/skyEngine';
+import { skyFallbackCss, skyGradientAt } from '../sky/palette';
 import './SkyLayer.css';
 
 interface SkyLayerProps {
-  /** Live sky state from `useEnvState()` (Phase 11). */
-  env: EnvState;
+  /**
+   * Live sky state from `useEnvState()`. The layer that has it DRIVES the sky;
+   * a layer without it (the project view's ground) only claims the canvas and
+   * shows whatever the driver is showing.
+   */
+  env?: EnvState;
 }
 
 function clamp01(x: number): number {
@@ -16,105 +19,105 @@ function clamp01(x: number): number {
 }
 
 /**
- * Derive the continuous weather amounts the renderer lerps toward. Fog is the
- * SF hero state — `condition: 'fog'`, or very high cloudiness, drives it.
+ * The EnvState → sky mapping, and the whole of it. Every condition gets its own
+ * element and no two share a code path:
+ *
+ *   cloud  cloudiness, as coverage
+ *   fog    the CONDITION, 0 or 1 — not a function of cloudiness
+ *   rain   precipitation
+ *   storm  the CONDITION, 0 or 1
+ *   wind   normalized windspeed
+ *
+ * FOG AND OVERCAST ARE DIFFERENT STATES and that is the point of the change.
+ * They used to be one: `fog = clamp01((cloudiness - 0.85) / 0.15)`, which gave
+ * WMO 3 — plain overcast, the most ordinary sky San Francisco has — the full
+ * fog treatment, and left every condition converging on the same grey.
  */
 function envToTarget(env: EnvState): SkyTarget {
   return {
     sun: env.sunElevation,
     dayPhase: env.dayPhase,
-    fog: env.condition === 'fog' ? 1 : clamp01((env.cloudiness - 0.85) / 0.15),
     cloud: clamp01(env.cloudiness),
-    storm: clamp01(Math.max(env.precipitation, env.condition === 'storm' ? 0.8 : 0)),
+    fog: env.condition === 'fog' ? 1 : 0,
+    rain: clamp01(env.precipitation),
+    storm: env.condition === 'storm' ? 1 : 0,
     wind: clamp01(env.windSpeed),
   };
 }
 
 /**
- * Layer 0 — the deepest layer, behind the grid. A full-screen WebGL2 fragment
- * shader draws a slowly-drifting atmospheric color field (no horizon, no sun
- * disc) driven by `EnvState`: time of day picks the palette, weather modifies it.
+ * The sky. A full-viewport WebGL2 fragment shader driven by `EnvState`: time of
+ * day sets the gradient, and each weather condition is drawn as its own layer
+ * over it (see `docs/sky.md`).
  *
- * React only feeds *targets* into the imperative {@link SkyEngine} (the per-frame
- * lerp + render happen there, off the React path), so the per-frame grid
- * re-renders never touch the sky. `memo`'d, and `env` is a stable reference from
- * the hook, so effects re-run only when data changes.
+ * This component is a HOST, not a canvas. The canvas is shared — one context for
+ * the whole app, moved between hosts by `skyStage` — because the sky is drawn
+ * both behind the grid and under the paper in the project view, and two
+ * contexts for one sky is two of everything. The host paints a CSS gradient of
+ * the current sky behind it, which covers both the moment a host does not hold
+ * the canvas and the browser that has no WebGL2 at all.
  *
- * If WebGL2 is unavailable, falls back to a static CSS gradient of the current
- * (weather-modified) palette so the background is never blank.
+ * React only feeds *targets* in (the per-frame lerp + render happen in the
+ * engine, off the React path), so the per-frame grid re-renders never touch the
+ * sky. `memo`'d, and `env` is a stable reference from the hook, so effects
+ * re-run only when the data changes.
  */
 function SkyLayer({ env }: SkyLayerProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const engineRef = useRef<SkyEngine | null>(null);
-  const [fallback, setFallback] = useState(false);
+  const hostRef = useRef<HTMLDivElement | null>(null);
 
-  // Create the engine once. On WebGL2 failure, flip to the CSS fallback.
+  // Claim the shared canvas for as long as this host is mounted.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const engine = createSkyEngine(canvas);
-    if (!engine) {
-      console.warn('[sky] WebGL2 unavailable — using CSS gradient fallback.');
-      setFallback(true);
-      return;
-    }
-    engineRef.current = engine;
-    engine.setEnv(envToTarget(env), true); // snap to the current state on first paint
-
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const syncMq = () => engine.setReducedMotion(mq.matches);
-    syncMq();
-    mq.addEventListener('change', syncMq);
-
-    return () => {
-      mq.removeEventListener('change', syncMq);
-      engine.dispose();
-      engineRef.current = null;
-    };
-    // Run once: the first state is read here; later changes go via the effect
-    // below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const host = hostRef.current;
+    if (!host) return;
+    return claimSky(host);
   }, []);
 
-  // Cross-fade toward the live EnvState whenever it changes.
+  // Reduced motion: a static frame, and quick transitions. Only the driving
+  // layer sets it — it is a property of the one engine, not of a host.
   useEffect(() => {
-    engineRef.current?.setEnv(envToTarget(env));
+    if (!env) return;
+    const engine = skyEngine();
+    if (!engine) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => engine.setReducedMotion(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
   }, [env]);
 
-  // Optional cursor-Y parallax (off by default). Tracks the pointer and feeds
-  // the eased target; the engine lerps + renders it.
+  // Cross-fade toward the live EnvState whenever it changes. The first push
+  // snaps, so the first paint is the real sky rather than a fade up from night.
+  const firstRef = useRef(true);
   useEffect(() => {
-    if (fallback) return;
-    const onMove = (e: PointerEvent) => {
-      if (e.pointerType === 'touch') return;
-      const ny = (e.clientY / window.innerHeight) * 2 - 1; // -1 top, +1 bottom
-      engineRef.current?.setParallax(-ny * config.skyParallax);
-    };
-    const onLeave = () => engineRef.current?.setParallax(0);
-    window.addEventListener('pointermove', onMove);
-    document.documentElement.addEventListener('pointerleave', onLeave);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      document.documentElement.removeEventListener('pointerleave', onLeave);
-    };
-  }, [fallback]);
+    if (!env) return;
+    setSkyTarget(envToTarget(env), firstRef.current);
+    firstRef.current = false;
+  }, [env]);
 
-  if (fallback) {
-    const t = envToTarget(env);
-    const field = applyFieldWeather(
-      fieldColorsAt(t.sun, t.dayPhase),
-      { fog: t.fog, cloud: t.cloud, storm: t.storm },
-      {
-        fogDesaturation: config.fogDesaturation,
-        fogLift: config.fogLift,
-        cloudMute: config.cloudMute,
-        stormDarken: config.stormDarken,
-      },
-    );
-    return <div className="sky-layer sky-layer--fallback" style={{ background: fieldFallbackCss(field) }} />;
-  }
+  // Test hook for `scripts/sky-perf.mjs`. Dev only; the whole branch is
+  // constant-folded away in a production build.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !env) return;
+    const w = window as unknown as {
+      __skyBenchmark?: (n?: number, b?: number) => number[];
+      __skyRenderer?: () => string;
+    };
+    w.__skyBenchmark = (n, b) => skyEngine()?.benchmark(n, b) ?? [];
+    w.__skyRenderer = () => skyEngine()?.renderer() ?? 'none';
+  }, [env]);
 
-  return <canvas ref={canvasRef} className="sky-layer" />;
+  // The fallback wash under the canvas, in the current sky's own colours.
+  const live = useSyncExternalStore(subscribeSky, skyTarget, skyTarget);
+  const gradient = skyGradientAt(live.sun, live.dayPhase === 'setting' ? 1 : 0);
+
+  return (
+    <div
+      ref={hostRef}
+      className="sky-layer"
+      aria-hidden="true"
+      style={{ background: skyFallbackCss(gradient, live.cloud) }}
+    />
+  );
 }
 
 export default memo(SkyLayer);

@@ -137,29 +137,29 @@ export interface LiveConfig {
   detailChromeFadeMs: number;
   /** Time constant (ms) for the prev/next panel slide settle. */
   detailSlideMs: number;
-  // SKY — WebGL atmospheric color field driven by EnvState (Phase 12 / 12b)
+  // SKY — the WebGL sky driven by EnvState. See `docs/sky.md`; these are the
+  // prototype's five FEEL dials plus the transition, and nothing else: the old
+  // weather modifiers (fogDesaturation / fogLift / cloudMute / stormDarken)
+  // went with the tint model, because weather is drawn now rather than mixed
+  // into a colour.
   /** Cross-fade time constant (ms) when the sky's EnvState target changes. */
   skyTransitionMs: number;
-  /** Cursor-Y parallax shift of the field (0 = off). Subtle when on. */
-  skyParallax: number;
-  /** Noise-domain drift per second — "alive but barely". */
-  fieldDriftSpeed: number;
-  /** Color-boundary diffuseness: 0 = crisp, 1 = watercolor bleed. */
-  fieldSoftness: number;
-  /** Subtle additive grain strength over the field. */
-  fieldGrain: number;
-  /** Fog: how strongly it desaturates the field toward gray (SF hero state). */
-  fogDesaturation: number;
-  /** Fog: how strongly it lifts/lightens the field toward soft gray. */
-  fogLift: number;
-  /** Cloudiness: saturation mute + slight darken strength. */
-  cloudMute: number;
-  /** Precip/storm: darken strength. */
-  stormDarken: number;
-  /** Precip/storm: extra drift agitation (multiplier on drift at storm=1). */
-  stormDrift: number;
-  /** Wind: additive drift-speed contribution per unit of normalized windSpeed. */
-  windDriftFactor: number;
+  /** Multiplier on every motion in the sky: the deck, the bank, the warp. */
+  skyDrift: number;
+  /** Noise frequency of the cloud deck — bigger is smaller, busier cloud. */
+  cloudScale: number;
+  /** How far up the screen the fog bank reaches, as a fraction of the height. */
+  fogHeight: number;
+  /** Final saturation multiplier over the whole sky. */
+  skySaturation: number;
+  /** Additive grain over the sky, which is also what hides `skyResolution`. */
+  skyGrain: number;
+  /**
+   * Backing-store scale, on top of the DPR cap of 2. Below 1 the sky renders
+   * small and the compositor upscales it — the grain covers the softening. See
+   * the frame-time table in `docs/sky.md` for what set the shipped value.
+   */
+  skyResolution: number;
 }
 
 /** Production defaults — also the starting point for every dial. */
@@ -205,16 +205,12 @@ export const DEFAULTS: LiveConfig = {
   detailChromeFadeMs: 200,
   detailSlideMs: 420,
   skyTransitionMs: 1500,
-  skyParallax: 0,
-  fieldDriftSpeed: 0.02,
-  fieldSoftness: 0.6,
-  fieldGrain: 0.03,
-  fogDesaturation: 0.7,
-  fogLift: 0.5,
-  cloudMute: 0.5,
-  stormDarken: 0.45,
-  stormDrift: 1,
-  windDriftFactor: 0.04,
+  skyDrift: 1,
+  cloudScale: 2,
+  fogHeight: 0.85,
+  skySaturation: 1,
+  skyGrain: 0.03,
+  skyResolution: 1,
 };
 
 // --- Mini-map / pagination squares static sizes (px) -------------------------

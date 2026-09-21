@@ -441,9 +441,17 @@ async function differing(a, b) {
  * about neither. The letterhead goes because it is chrome: it paints through a
  * dwell on purpose, and it is checked from the DOM instead. It is also the only
  * chrome left — the close pill and the band of ground it sat in are gone.
+ *
+ * THE SKY GOES TOO, and it is the reason this pass needs a rule it did not need
+ * before: the ground is the sky now, so repainting `.pv-ground` flat magenta
+ * paints a layer that has an opaque WebGL canvas and a black scrim sitting on
+ * top of it. Both are hidden here rather than recoloured — a canvas does not
+ * take a `background` — which puts the magenta back on screen and leaves the
+ * pixel counts measuring exactly what they measured before.
  */
 const PAINT_CSS = `
   .pv-ground { background: #ff00ff !important; }
+  .pv-ground .sky-layer, .pv-ground__scrim { display: none !important; }
   .pv-grain, .pv-page__grain { display: none !important; }
   .pv-letterhead { visibility: hidden !important; }
 `;

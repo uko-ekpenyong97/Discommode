@@ -1,11 +1,22 @@
-/* Layer 0 — the sky, behind everything. Full-bleed; the WebGL canvas (or the
-   CSS-gradient fallback) fills the viewport. */
+/* The sky's HOST. Full-bleed, and it paints a CSS gradient of the current sky
+   in its own right — see `skyStage.ts`: the WebGL canvas is shared between this
+   and the project view's ground, so at any moment one of the two hosts is
+   showing the gradient rather than the shader, and a browser with no WebGL2
+   shows it in both. */
 .sky-layer {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 0;
+  pointer-events: none;
+}
+
+/* The shared canvas, wherever it currently is. `position: absolute` rather than
+   `fixed`: it has two parents over the life of the app and one of them is
+   inside a layer that fades, which a fixed element would escape. */
+.sky-layer__canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
-  pointer-events: none;
 }

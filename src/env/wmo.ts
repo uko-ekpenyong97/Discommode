@@ -12,10 +12,17 @@
  *   45, 48     fog / depositing rime fog        (first-class for SF)
  *   51–57      drizzle (incl. freezing)         → 'rain'
  *   61–67      rain (incl. freezing)            → 'rain'
- *   71–77      snow fall / snow grains          → 'snow'
+ *   71–77      snow fall / snow grains          → 'rain'  (see below)
  *   80–82      rain showers                     → 'rain'
- *   85, 86     snow showers                     → 'snow'
+ *   85, 86     snow showers                     → 'rain'  (see below)
  *   95–99      thunderstorm (incl. hail)        → 'storm'
+ *
+ * THE SNOW CODES MAP TO RAIN, deliberately. The sky draws six conditions and
+ * none of them is snow (`docs/sky.md`): this is San Francisco, where it has
+ * snowed three times in a century. The codes still have to GO somewhere —
+ * Open-Meteo will report what it reports, and a reading the renderer has no
+ * state for is a blank sky. Falling wet is the nearest thing the sky can draw,
+ * so a freak 73 is a heavy grey day with rain in it rather than a bug.
  *
  * Anything not listed falls back to a calm 'clear' (see {@link classifyWeather}).
  */
@@ -55,20 +62,20 @@ export const WMO_TABLE: Record<number, WeatherClass> = {
   66: { condition: 'rain', cloudiness: 0.9, precipitation: 0.5 }, // light freezing rain
   67: { condition: 'rain', cloudiness: 1, precipitation: 0.8 }, // heavy freezing rain
 
-  // 71–77 — snow fall / snow grains.
-  71: { condition: 'snow', cloudiness: 0.85, precipitation: 0.3 }, // slight snow
-  73: { condition: 'snow', cloudiness: 0.9, precipitation: 0.55 }, // moderate snow
-  75: { condition: 'snow', cloudiness: 1, precipitation: 0.85 }, // heavy snow
-  77: { condition: 'snow', cloudiness: 0.8, precipitation: 0.3 }, // snow grains
+  // 71–77 — snow fall / snow grains. Drawn as rain; see the note above.
+  71: { condition: 'rain', cloudiness: 0.85, precipitation: 0.3 }, // slight snow
+  73: { condition: 'rain', cloudiness: 0.9, precipitation: 0.55 }, // moderate snow
+  75: { condition: 'rain', cloudiness: 1, precipitation: 0.85 }, // heavy snow
+  77: { condition: 'rain', cloudiness: 0.8, precipitation: 0.3 }, // snow grains
 
   // 80–82 — rain showers (slight → violent).
   80: { condition: 'rain', cloudiness: 0.75, precipitation: 0.4 }, // slight rain showers
   81: { condition: 'rain', cloudiness: 0.85, precipitation: 0.6 }, // moderate rain showers
   82: { condition: 'rain', cloudiness: 1, precipitation: 0.9 }, // violent rain showers
 
-  // 85 / 86 — snow showers.
-  85: { condition: 'snow', cloudiness: 0.85, precipitation: 0.4 }, // slight snow showers
-  86: { condition: 'snow', cloudiness: 1, precipitation: 0.75 }, // heavy snow showers
+  // 85 / 86 — snow showers. Drawn as rain; see the note above.
+  85: { condition: 'rain', cloudiness: 0.85, precipitation: 0.4 }, // slight snow showers
+  86: { condition: 'rain', cloudiness: 1, precipitation: 0.75 }, // heavy snow showers
 
   // 95–99 — thunderstorm (slight/moderate, with hail).
   95: { condition: 'storm', cloudiness: 1, precipitation: 0.7 }, // thunderstorm

@@ -13,6 +13,12 @@ export const ATTRIBUTION = 'Weather data by Open-Meteo, CC BY 4.0';
 /**
  * Sky condition, mapped from the WMO weathercode (see `wmo.ts`). Fog is a
  * first-class state — this is San Francisco.
+ *
+ * SIX CONDITIONS, AND NO SNOW. The sky is San Francisco's and only San
+ * Francisco's: it has snowed on the city three times in a century, and a snow
+ * layer is a layer nobody will ever see, drawn by a shader everybody pays for.
+ * The WMO snow codes map to 'rain' rather than to a seventh state, so a freak
+ * reading is a wet day and never a sky that cannot be drawn. See `docs/sky.md`.
  */
 export type Condition =
   | 'clear'
@@ -20,7 +26,6 @@ export type Condition =
   | 'cloudy'
   | 'fog'
   | 'rain'
-  | 'snow'
   | 'storm';
 
 /** Data-source health, surfaced so the UI can show live-vs-fallback. */
