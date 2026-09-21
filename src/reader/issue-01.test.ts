@@ -84,6 +84,13 @@ describe('issue 01', () => {
     expect(shape([spreads[21]])).toEqual([[41, null]]);
   });
 
+  it('closes on the drawn back at rest, keeping its label, while the page keeps the print', () => {
+    const [back] = spreads[21];
+    expect(back?.src).toBe('/issues/01/back-rest.webp');
+    expect(back?.label).toBe('BACK');
+    expect(issue01.pages[41].src).toBe('/issues/01/back.webp');
+  });
+
   it('pairs the numbered pages in between', () => {
     expect(shape([spreads[1]])).toEqual([[1, 2]]);
     expect(shape([spreads[20]])).toEqual([[39, 40]]);

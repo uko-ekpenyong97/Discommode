@@ -45,8 +45,14 @@ export const ENTER_FADE_MS = 150;
 /** Cross-fade the still back over the loop when returning to rest. */
 export const LEAVE_FADE_MS = 120;
 
+/** Which face of the issue an object is drawn on. */
+export type CoverAnimFace = 'cover' | 'back';
+
 export interface CoverAnim {
   id: string;
+  /** The face it lives on. Manifests from before the back cover had objects
+   *  carry none, which means the cover. */
+  face?: CoverAnimFace;
   /** Figma stack order. Higher wins when two hit rects overlap. */
   z: number;
   /** Animated WebP, starting on FRAME 1 — which is also the still. */
@@ -73,7 +79,26 @@ export interface CoverAnimManifest {
   plate: string;
   /** The same thing with every frame 1 composited back on, pre-flattened. */
   rest: string;
+  /** The back cover's pair, when the issue has back-cover objects. */
+  back?: { backW: number; backH: number; plate: string; rest: string };
   objects: CoverAnim[];
+}
+
+/** One face of a manifest, as the layer draws it: its space, its backdrop, and
+ *  its objects (z-sorted, as stored). Null when the face has nothing to draw. */
+export interface FaceAnims {
+  w: number;
+  h: number;
+  plate: string;
+  objects: CoverAnim[];
+}
+
+export function faceOf(m: CoverAnimManifest, face: CoverAnimFace): FaceAnims | null {
+  const objects = m.objects.filter((o) => (o.face ?? 'cover') === face);
+  if (objects.length === 0) return null;
+  if (face === 'cover') return { w: m.coverW, h: m.coverH, plate: m.plate, objects };
+  if (!m.back) return null;
+  return { w: m.back.backW, h: m.back.backH, plate: m.back.plate, objects };
 }
 
 /** How the cover is laid into a box: uniform scale + letterbox offset. */

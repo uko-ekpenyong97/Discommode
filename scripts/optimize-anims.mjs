@@ -1,5 +1,6 @@
 /**
- * Procreate frame stacks -> animated WebP, registered onto the illustrated cover.
+ * Procreate frame stacks -> animated WebP, registered onto the illustrated cover
+ * — and onto the back cover, which carries objects of its own.
  *
  * Drop one folder per object into
  *
@@ -51,6 +52,24 @@
  *
  * Animated WebP is muxed by sharp itself (`join: { animated: true }`), which the
  * installed 0.35.x supports — no `img2webp` / `brew install webp` needed.
+ *
+ * THE BACK FACE. `placements.back` lists objects drawn on the back cover, in
+ * `backW`x`backH` space. The same machinery runs against a different pair of
+ * images:
+ *
+ *   ~/Discommode-pages/<issue>/back.png         the back as printed — objects drawn
+ *   ~/Discommode-pages/<issue>/back-plate.png   OPTIONAL, objects hidden
+ *
+ * and writes `back-plate.webp` and `back-rest.webp` beside the cover's pair. The
+ * back has no Figma rects: each object's `rect` is found by NCC against back.png
+ * (scripts/face-register-ncc.mjs) and recorded in the placements file with its
+ * scores. When there is no `back-plate.png`, the plate is DERIVED — back.png
+ * with each object's area filled with the face's background colour — and only
+ * if everything in that area other than the drawing itself is background;
+ * otherwise the run stops and asks for the export.
+ *
+ * Every manifest entry says which face it is on (`face: 'cover' | 'back'`), and
+ * a face's plate and rest are rebuilt only when one of its objects was.
  */
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -105,7 +124,8 @@ async function statOrNull(path) {
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
-async function processObject(cover, issue, o, outDir) {
+async function processObject(face, issue, o, outDir) {
+  const { cover } = face;
   const dir = join(SOURCE_DIR, issue, 'anim', o.folder ?? o.id);
   const entries = await readdir(dir).catch(() => null);
   if (!entries) {
@@ -120,7 +140,11 @@ async function processObject(cover, issue, o, outDir) {
 
   const outAnim = join(outDir, `${o.id}.webp`);
   const outStill = join(outDir, `${o.id}-still.webp`);
+  // fps.json counts as a source: changing an object's fps, mode or rest has to
+  // rebuild it, or the edit silently does nothing.
+  const optsStat = await statOrNull(join(dir, 'fps.json'));
   const newest = Math.max(
+    optsStat?.mtimeMs ?? 0,
     ...(await Promise.all(files.map(async (f) => (await stat(join(dir, f))).mtimeMs))),
   );
   const prev = await statOrNull(outAnim);
@@ -237,6 +261,7 @@ async function processObject(cover, issue, o, outDir) {
     stillBytes: stillStat.size,
     entry: {
       id: o.id,
+      face: face.name,
       z: o.z,
       src: `/issues/${issue}/anim/${o.id}.webp`,
       still: `/issues/${issue}/anim/${o.id}-still.webp`,
@@ -283,13 +308,13 @@ async function processObject(cover, issue, o, outDir) {
  * file's own encode. (Falls back to the PNG if `npm run pages` has not run yet,
  * which costs a little fidelity and says so.)
  */
-async function buildRestCover(platePath, manifestObjects, outDir, coverW, coverH) {
+async function buildRestCover(platePath, manifestObjects, outDir, coverW, coverH, names = { plate: 'cover-plate', rest: 'cover-rest' }) {
   const layers = [];
   for (const o of manifestObjects) {
     const file = join(outDir, `${o.id}-still.webp`);
     let sprite = await readFile(file).catch(() => null);
     if (!sprite) {
-      warnings.push(`${o.id}: ${file} missing — left out of cover-rest.webp`);
+      warnings.push(`${o.id}: ${file} missing — left out of ${names.rest}.webp`);
       continue;
     }
     let { x, y, w, h } = o.displayRect;
@@ -314,15 +339,15 @@ async function buildRestCover(platePath, manifestObjects, outDir, coverW, coverH
     layers.push({ input: sprite, left: x, top: y });
   }
 
-  const plateWebp = join(outDir, '..', 'cover-plate.webp');
+  const plateWebp = join(outDir, '..', `${names.plate}.webp`);
   let base = plateWebp;
   if ((await statOrNull(plateWebp)) === null) {
     base = platePath;
     warnings.push(
-      `cover-plate.webp not built yet — cover-rest.webp was composited from the PNG instead. Run \`npm run pages\` then \`npm run anims\` for an exact match with the live layer.`,
+      `${names.plate}.webp not built yet — ${names.rest}.webp was composited from the PNG instead. Run \`npm run pages\` then \`npm run anims\` for an exact match with the live layer.`,
     );
   }
-  const restPath = join(outDir, '..', 'cover-rest.webp');
+  const restPath = join(outDir, '..', `${names.rest}.webp`);
   await sharp(base).composite(layers).webp({ quality: QUALITY }).toFile(restPath);
   return { path: restPath, bytes: (await stat(restPath)).size, placed: layers.length };
 }
@@ -460,20 +485,137 @@ if ((await statOrNull(SOURCE_DIR)) === null) {
   process.exit(0);
 }
 
+// ── the derived back plate ────────────────────────────────────────────────
+
+/** How far the fill reaches past each object's displayRect, in face px. */
+const PLATE_PAD = 6;
+/** Per-channel tolerance for "this pixel is the face's background". */
+const BG_TOL = 12;
+
+/** The face's modal colour — on a flat-ground face, its background. */
+async function modalColour(path) {
+  const data = await sharp(path).removeAlpha().raw().toBuffer();
+  const hist = new Map();
+  for (let i = 0; i < data.length; i += 3) {
+    const k = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+    hist.set(k, (hist.get(k) ?? 0) + 1);
+  }
+  let key = 0;
+  let n = -1;
+  for (const [k, c] of hist) if (c > n) [key, n] = [k, c];
+  return [(key >> 16) & 255, (key >> 8) & 255, key & 255];
+}
+
+/**
+ * A plate for a face that has no objects-hidden export: the face with each
+ * object's padded displayRect filled with the background colour.
+ *
+ * That is only a plate if the rect held NOTHING but the drawing and background.
+ * So, per object, every pixel of the padded rect that the resting sprite does
+ * not cover (its alpha, dilated a few px for the antialiased edge) must already
+ * be background. Anything else — a second drawing under the object, a gradient,
+ * texture — means filling would erase real artwork, and the run stops.
+ */
+async function derivePlate(facePath, results, faceW, faceH) {
+  const bg = await modalColour(facePath);
+  const { data } = await sharp(facePath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const out = Buffer.from(data);
+  for (const r of results) {
+    const d = r.entry.displayRect;
+    const x0 = Math.max(0, Math.floor(d.x) - PLATE_PAD);
+    const y0 = Math.max(0, Math.floor(d.y) - PLATE_PAD);
+    const x1 = Math.min(faceW, Math.ceil(d.x + d.w) + PLATE_PAD);
+    const y1 = Math.min(faceH, Math.ceil(d.y + d.h) + PLATE_PAD);
+    // The resting sprite's alpha, at its place on the face.
+    const alpha = await sharp(join(OUTPUT_DIR, r.issue, 'anim', `${r.id}-still.webp`))
+      .ensureAlpha().extractChannel(3).raw().toBuffer();
+    const covered = (x, y) => {
+      for (let dy = -3; dy <= 3; dy++) {
+        for (let dx = -3; dx <= 3; dx++) {
+          const sx = x + dx - Math.round(d.x);
+          const sy = y + dy - Math.round(d.y);
+          if (sx < 0 || sy < 0 || sx >= d.w || sy >= d.h) continue;
+          if (alpha[sy * d.w + sx] > 8) return true;
+        }
+      }
+      return false;
+    };
+    let stray = 0;
+    let checked = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = (y * faceW + x) * 3;
+        const isBg =
+          Math.abs(data[i] - bg[0]) <= BG_TOL &&
+          Math.abs(data[i + 1] - bg[1]) <= BG_TOL &&
+          Math.abs(data[i + 2] - bg[2]) <= BG_TOL;
+        if (!isBg) {
+          checked++;
+          if (!covered(x, y)) stray++;
+        }
+        out[i] = bg[0];
+        out[i + 1] = bg[1];
+        out[i + 2] = bg[2];
+      }
+    }
+    if (stray > 0.001 * (x1 - x0) * (y1 - y0)) {
+      return { error: `${r.id}: ${stray} px of non-background artwork inside its rect are not part of the drawing — a plate cannot be derived; export back-plate.png with the object hidden` };
+    }
+    notes.push(`${r.id}: back plate derived — rect filled with rgb(${bg.join(',')}); ${stray} stray px of ${checked} non-background`);
+  }
+  return { buffer: out, bg };
+}
+
+// ── driver ────────────────────────────────────────────────────────────────
+
+if ((await statOrNull(SOURCE_DIR)) === null) {
+  console.log(`
+!!  NO PAGE SOURCE FOLDER  !!
+!!  Expected the Procreate exports in: ${SOURCE_DIR}/<issue>/anim/<object>/
+!!
+!!  This folder lives outside the repo so a git operation can never destroy it.
+!!  Nothing to do until it exists.
+`);
+  process.exit(0);
+}
+
 const placements = JSON.parse(await readFile(PLACEMENTS, 'utf8'));
 const issue = placements.issue ?? '01';
 const { coverW, coverH } = placements;
 const coverPath = join(SOURCE_DIR, issue, 'cover-illustrated.png');
 const platePath = join(SOURCE_DIR, issue, 'cover-plate.png');
 
-if ((await statOrNull(coverPath)) === null) {
-  console.log(`
-!!  NO ILLUSTRATED COVER  !!
-!!  Expected: ${coverPath}
-!!
-!!  Frames are registered against it, so nothing can be placed without it.
-`);
-  process.exit(1);
+/** Both faces, as the rest of the driver sees them. The back is optional. */
+const faces = [
+  {
+    name: 'cover',
+    W: coverW,
+    H: coverH,
+    illustrated: coverPath,
+    platePng: platePath,
+    names: { plate: 'cover-plate', rest: 'cover-rest' },
+    objects: placements.objects,
+    sheet: 'contact-sheet.png',
+  },
+];
+if (placements.back) {
+  faces.push({
+    name: 'back',
+    W: placements.back.backW,
+    H: placements.back.backH,
+    illustrated: join(SOURCE_DIR, issue, 'back.png'),
+    platePng: join(SOURCE_DIR, issue, 'back-plate.png'),
+    names: { plate: 'back-plate', rest: 'back-rest' },
+    objects: placements.back.objects,
+    sheet: 'contact-sheet-back.png',
+  });
+}
+
+for (const f of faces) {
+  if ((await statOrNull(f.illustrated)) === null) {
+    console.log(`\n!!  NO ${f.name.toUpperCase()} TO REGISTER AGAINST: ${f.illustrated}\n`);
+    process.exit(1);
+  }
 }
 
 if ((await statOrNull(platePath)) === null) {
@@ -488,8 +630,8 @@ if ((await statOrNull(platePath)) === null) {
   process.exit(1);
 }
 
-const objects = placements.objects.filter((o) => !onlyId || o.id === onlyId);
-if (objects.length === 0) {
+const allObjects = faces.flatMap((f) => f.objects);
+if (onlyId && !allObjects.some((o) => o.id === onlyId)) {
   console.log(`No object matches --only ${onlyId}`);
   process.exit(1);
 }
@@ -497,41 +639,79 @@ if (objects.length === 0) {
 const outDir = join(OUTPUT_DIR, issue, 'anim');
 await mkdir(outDir, { recursive: true });
 
-console.log(`\nissue ${issue}  (${objects.length} object${objects.length === 1 ? '' : 's'}, cover ${coverW}x${coverH})`);
-const cover = await loadCover(coverPath, coverW, coverH);
-
-const results = [];
-for (const o of objects) {
-  const r = await processObject(cover, issue, o, outDir);
-  if (!r) continue;
-  results.push(r);
-  if (r.skipped) {
-    console.log(`  ${r.id.padEnd(12)} ${String(r.frames).padStart(2)} frames  ${kb(r.bytes).padStart(9)}   (up to date)`);
-  } else {
-    const seed = `${r.seedRatio.toFixed(3)}x seed`;
-    console.log(
-      `  ${r.id.padEnd(12)} ${String(r.frames).padStart(2)} frames  ${kb(r.bytes).padStart(9)}   ` +
-        `${r.outW}x${r.outH} @ ${r.fps}fps   agree ${pct(r.agree).padStart(6)} ±${pct(r.margin).padStart(5)}   ` +
-        `rest f${r.restIndex + 1}${r.mode === 'once' ? ' once' : ''}   fit f${r.still}   ${seed}` +
-        `${r.agree < AGREE_FLOOR ? '   !! CHECK !!' : ''}`,
-    );
-  }
-}
-
-// The manifest is merged, not overwritten, so `--only` and skips keep the rest.
 const manifestPath = join(outDir, 'manifest.json');
 const previous = JSON.parse(await readFile(manifestPath, 'utf8').catch(() => '{"objects":[]}'));
-const byId = new Map((previous.objects ?? []).map((e) => [e.id, e]));
-for (const r of results) if (r.entry) byId.set(r.id, r.entry);
+const byId = new Map((previous.objects ?? []).map((e) => [e.id, { face: 'cover', ...e }]));
 
-// Cover-space z order: the hover layer resolves overlaps highest-z-first, and
-// paints in the same order, so the manifest is stored sorted once here.
-const merged = placements.objects
-  .map((o) => byId.get(o.id))
-  .filter(Boolean)
-  .sort((a, b) => a.z - b.z);
+const allResults = [];
+let faceRests = {};
+for (const f of faces) {
+  const objects = f.objects.filter((o) => !onlyId || o.id === onlyId);
+  if (objects.length === 0) continue;
+  console.log(`\nissue ${issue} ${f.name}  (${objects.length} object${objects.length === 1 ? '' : 's'}, ${f.W}x${f.H})`);
+  const cover = await loadCover(f.illustrated, f.W, f.H);
 
-const rest = await buildRestCover(platePath, merged, outDir, coverW, coverH);
+  const results = [];
+  for (const o of objects) {
+    const r = await processObject({ cover, name: f.name }, issue, o, outDir);
+    if (!r) continue;
+    r.issue = issue;
+    results.push(r);
+    if (r.skipped) {
+      console.log(`  ${r.id.padEnd(12)} ${String(r.frames).padStart(2)} frames  ${kb(r.bytes).padStart(9)}   (up to date)`);
+    } else {
+      const seed = `${r.seedRatio.toFixed(3)}x seed`;
+      console.log(
+        `  ${r.id.padEnd(12)} ${String(r.frames).padStart(2)} frames  ${kb(r.bytes).padStart(9)}   ` +
+          `${r.outW}x${r.outH} @ ${r.fps}fps   agree ${pct(r.agree).padStart(6)} ±${pct(r.margin).padStart(5)}   ` +
+          `rest f${r.restIndex + 1}${r.mode === 'once' ? ' once' : ''}   fit f${r.still}   ${seed}` +
+          `${r.agree < AGREE_FLOOR ? '   !! CHECK !!' : ''}`,
+      );
+    }
+  }
+  allResults.push(...results);
+  // The manifest is merged, not overwritten, so `--only` and skips keep the rest.
+  for (const r of results) if (r.entry) byId.set(r.id, r.entry);
+
+  // Face-space z order: the hover layer resolves overlaps highest-z-first, and
+  // paints in the same order, so each face's objects are stored sorted.
+  const merged = f.objects
+    .map((o) => byId.get(o.id))
+    .filter(Boolean)
+    .sort((a, b) => a.z - b.z);
+
+  // A face's plate and rest only move when one of its objects did — `--only
+  // libros` must not so much as re-encode the back.
+  const built = results.filter((r) => !r.skipped);
+  const restPath = join(outDir, '..', `${f.names.rest}.webp`);
+  if (built.length > 0 || (await statOrNull(restPath)) === null) {
+    let platePng = f.platePng;
+    if ((await statOrNull(platePng)) === null) {
+      // No objects-hidden export: derive one (see derivePlate). Needs every
+      // object on the face, not just this run's.
+      const faceResults = f.objects
+        .map((o) => results.find((r) => r.id === o.id) ?? { id: o.id, issue, entry: byId.get(o.id) })
+        .filter((r) => r.entry);
+      const plate = await derivePlate(f.illustrated, faceResults, f.W, f.H);
+      if (plate.error) {
+        console.log(`\n!!  ${plate.error}\n`);
+        process.exit(1);
+      }
+      await sharp(plate.buffer, { raw: { width: f.W, height: f.H, channels: 3 } })
+        .webp({ quality: 82 })
+        .toFile(join(outDir, '..', `${f.names.plate}.webp`));
+      platePng = null;
+    }
+    faceRests[f.name] = await buildRestCover(platePng, merged, outDir, f.W, f.H, f.names);
+  }
+
+  const sheetPath = join(SOURCE_DIR, issue, 'anim', f.sheet);
+  const sheetBytes = await contactSheet(f.illustrated, f.W, f.H, results, sheetPath);
+  if (sheetBytes) console.log(`contact sheet  ${sheetPath}  ${kb(sheetBytes)}`);
+}
+
+const coverObjects = placements.objects.map((o) => byId.get(o.id)).filter(Boolean).sort((a, b) => a.z - b.z);
+const backObjects = (placements.back?.objects ?? []).map((o) => byId.get(o.id)).filter(Boolean).sort((a, b) => a.z - b.z);
 
 await writeFile(
   manifestPath,
@@ -544,23 +724,32 @@ await writeFile(
       plate: `/issues/${issue}/cover-plate.webp`,
       /** The same thing pre-flattened, for surfaces that cannot mount the layer. */
       rest: `/issues/${issue}/cover-rest.webp`,
+      ...(placements.back
+        ? {
+            /** The back cover's pair, same roles, in its own face space. */
+            back: {
+              backW: placements.back.backW,
+              backH: placements.back.backH,
+              plate: `/issues/${issue}/back-plate.webp`,
+              rest: `/issues/${issue}/back-rest.webp`,
+            },
+          }
+        : {}),
       generated: new Date().toISOString(),
-      objects: merged,
+      objects: [...coverObjects, ...backObjects],
     },
     null,
     2,
   )}\n`,
 );
 
-const sheetPath = join(SOURCE_DIR, issue, 'anim', 'contact-sheet.png');
-const sheetBytes = await contactSheet(coverPath, coverW, coverH, results, sheetPath);
-
-const totalBytes = merged.reduce((n, e) => n + e.bytes, 0);
-const stillBytes = results.reduce((n, r) => n + (r.stillBytes ?? 0), 0);
-console.log(`\n${results.filter((r) => !r.skipped).length} built, ${results.filter((r) => r.skipped).length} up to date`);
-console.log(`manifest  ${merged.length} objects   animations ${kb(totalBytes)}${stillBytes ? ` + stills ${kb(stillBytes)}` : ''}`);
-console.log(`cover-rest  plate + ${rest.placed} resting sprites   ${kb(rest.bytes)}`);
-if (sheetBytes) console.log(`contact sheet  ${sheetPath}  ${kb(sheetBytes)}`);
+const totalBytes = [...coverObjects, ...backObjects].reduce((n, e) => n + e.bytes, 0);
+const stillBytes = allResults.reduce((n, r) => n + (r.stillBytes ?? 0), 0);
+console.log(`\n${allResults.filter((r) => !r.skipped).length} built, ${allResults.filter((r) => r.skipped).length} up to date`);
+console.log(`manifest  ${coverObjects.length} cover + ${backObjects.length} back objects   animations ${kb(totalBytes)}${stillBytes ? ` + stills ${kb(stillBytes)}` : ''}`);
+for (const [name, rest] of Object.entries(faceRests)) {
+  console.log(`${name}-rest  plate + ${rest.placed} resting sprites   ${kb(rest.bytes)}`);
+}
 
 if (notes.length > 0) {
   console.log(`\n${notes.length} note${notes.length === 1 ? '' : 's'}:`);

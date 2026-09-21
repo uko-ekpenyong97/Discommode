@@ -166,6 +166,15 @@ export function FlipBook({
           <CoverAnimLayer manifest={anims} listen={bookEl} />
         </div>
       )}
+      {/* The back cover's, on exactly the mirrored rule: the last spread, nothing
+          in the air. At data-pos="back" the book slides the other way and its
+          LEFT slot lands on the hero rect — the same box as the cover's, so the
+          same `.book-anim` placement holds. */}
+      {anims && spread === spreads.length - 1 && !turning && (
+        <div className="book-anim">
+          <CoverAnimLayer manifest={anims} listen={bookEl} face="back" />
+        </div>
+      )}
     </div>
   );
 }

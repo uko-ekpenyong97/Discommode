@@ -4,9 +4,16 @@
   "coverH": 2600,
   "plate": "/issues/01/cover-plate.webp",
   "rest": "/issues/01/cover-rest.webp",
-  "generated": "2026-09-10T21:21:22.820Z",
+  "back": {
+    "backW": 2000,
+    "backH": 2600,
+    "plate": "/issues/01/back-plate.webp",
+    "rest": "/issues/01/back-rest.webp"
+  },
+  "generated": "2026-09-21T21:37:49.868Z",
   "objects": [
     {
+      "face": "cover",
       "id": "bed",
       "z": 1,
       "src": "/issues/01/anim/bed.webp",
@@ -31,6 +38,7 @@
       "bytes": 246068
     },
     {
+      "face": "cover",
       "id": "shark",
       "z": 2,
       "src": "/issues/01/anim/shark.webp",
@@ -55,6 +63,7 @@
       "bytes": 48880
     },
     {
+      "face": "cover",
       "id": "uhaul",
       "z": 3,
       "src": "/issues/01/anim/uhaul.webp",
@@ -79,6 +88,7 @@
       "bytes": 145662
     },
     {
+      "face": "cover",
       "id": "halfframe",
       "z": 4,
       "src": "/issues/01/anim/halfframe.webp",
@@ -103,6 +113,7 @@
       "bytes": 61520
     },
     {
+      "face": "cover",
       "id": "koii",
       "z": 5,
       "src": "/issues/01/anim/koii.webp",
@@ -127,6 +138,7 @@
       "bytes": 89716
     },
     {
+      "face": "cover",
       "id": "rosas",
       "z": 6,
       "src": "/issues/01/anim/rosas.webp",
@@ -151,6 +163,7 @@
       "bytes": 152448
     },
     {
+      "face": "cover",
       "id": "op1",
       "z": 7,
       "src": "/issues/01/anim/op1.webp",
@@ -175,6 +188,7 @@
       "bytes": 103646
     },
     {
+      "face": "cover",
       "id": "xolo",
       "z": 8,
       "src": "/issues/01/anim/xolo.webp",
@@ -199,6 +213,7 @@
       "bytes": 51158
     },
     {
+      "face": "cover",
       "id": "polaroid",
       "z": 9,
       "src": "/issues/01/anim/polaroid.webp",
@@ -223,6 +238,7 @@
       "bytes": 140804
     },
     {
+      "face": "cover",
       "id": "ipad",
       "z": 10,
       "src": "/issues/01/anim/ipad.webp",
@@ -247,6 +263,7 @@
       "bytes": 467428
     },
     {
+      "face": "cover",
       "id": "hippo",
       "z": 11,
       "src": "/issues/01/anim/hippo.webp",
@@ -271,6 +288,7 @@
       "bytes": 45850
     },
     {
+      "face": "cover",
       "id": "blossoms",
       "z": 12,
       "src": "/issues/01/anim/blossoms.webp",
@@ -295,6 +313,7 @@
       "bytes": 133528
     },
     {
+      "face": "cover",
       "id": "uko",
       "z": 13,
       "src": "/issues/01/anim/uko.webp",
@@ -319,6 +338,7 @@
       "bytes": 241334
     },
     {
+      "face": "cover",
       "id": "patito",
       "z": 14,
       "src": "/issues/01/anim/patito.webp",
@@ -343,6 +363,7 @@
       "bytes": 141952
     },
     {
+      "face": "cover",
       "id": "lucero",
       "z": 15,
       "src": "/issues/01/anim/lucero.webp",
@@ -368,6 +389,7 @@
     },
     {
       "id": "libros",
+      "face": "cover",
       "z": 16,
       "src": "/issues/01/anim/libros.webp",
       "still": "/issues/01/anim/libros-still.webp",
@@ -385,12 +407,13 @@
       },
       "frames": 11,
       "fps": 6,
-      "mode": "once",
+      "mode": "loop",
       "restFrame": "last",
       "durationMs": 1837,
       "bytes": 274000
     },
     {
+      "face": "cover",
       "id": "carrito",
       "z": 17,
       "src": "/issues/01/anim/carrito.webp",
@@ -415,6 +438,7 @@
       "bytes": 579786
     },
     {
+      "face": "cover",
       "id": "bookshelf",
       "z": 18,
       "src": "/issues/01/anim/bookshelf.webp",
@@ -439,6 +463,7 @@
       "bytes": 402354
     },
     {
+      "face": "cover",
       "id": "freewrite",
       "z": 19,
       "src": "/issues/01/anim/freewrite.webp",
@@ -463,6 +488,7 @@
       "bytes": 321740
     },
     {
+      "face": "cover",
       "id": "specialized",
       "z": 20,
       "src": "/issues/01/anim/specialized.webp",
@@ -485,6 +511,31 @@
       "restFrame": "first",
       "durationMs": 501,
       "bytes": 311368
+    },
+    {
+      "face": "back",
+      "id": "riddim",
+      "z": 1,
+      "src": "/issues/01/anim/riddim.webp",
+      "still": "/issues/01/anim/riddim-still.webp",
+      "displayRect": {
+        "x": 702,
+        "y": 897,
+        "w": 592,
+        "h": 803
+      },
+      "hitRect": {
+        "x": 702,
+        "y": 903,
+        "w": 587,
+        "h": 796
+      },
+      "frames": 3,
+      "fps": 6,
+      "mode": "loop",
+      "restFrame": "first",
+      "durationMs": 501,
+      "bytes": 442772
     }
   ]
 }

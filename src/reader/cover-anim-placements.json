@@ -226,5 +226,31 @@
       "z": 20
     }
   ],
-  "note": "Frames live in ~/Discommode-pages/01/anim/<folder or id>/; files are named <Object>-<n>.png and are ordered by the trailing number."
+  "note": "Frames live in ~/Discommode-pages/01/anim/<folder or id>/; files are named <Object>-<n>.png and are ordered by the trailing number.",
+  "back": {
+    "source": "No Figma rects for the back: each rect is frame 1 of the object registered against ~/Discommode-pages/01/back.png by normalized cross-correlation (scripts/face-register-ncc.mjs), 2000x2600 back space",
+    "backW": 2000,
+    "backH": 2600,
+    "objects": [
+      {
+        "id": "riddim",
+        "figmaLayer": null,
+        "rect": {
+          "x": 702,
+          "y": 903,
+          "w": 587,
+          "h": 796
+        },
+        "z": 1,
+        "registration": {
+          "method": "ncc",
+          "frame": "Teenage_Engineering-1.png",
+          "peak": 0.9692,
+          "secondPeak": 0.3016,
+          "scale": 0.3615,
+          "run": "2026-09-21"
+        }
+      }
+    ]
+  }
 }

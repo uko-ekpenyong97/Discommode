@@ -46,6 +46,13 @@ export interface Issue {
    */
   coverRest?: string;
   /**
+   * The back cover at REST — `coverRest`'s counterpart, for an issue whose back
+   * carries hover objects: the back plate with each object's first frame
+   * composited on (`npm run anims`). The reader's closed book shows it, so the
+   * back's hover layer mounting and unmounting is invisible.
+   */
+  backRest?: string;
+  /**
    * URL of the cover-animation manifest written by `npm run anims`. It is
    * FETCHED rather than bundled: it is generated output living in `public/`
    * beside the WebPs it indexes, and only the two views that mount the hover
@@ -83,6 +90,7 @@ export const issue01: Issue = {
   ],
   overlay: '/issues/01/overlay.webp',
   coverRest: '/issues/01/cover-rest.webp',
+  backRest: '/issues/01/back-rest.webp',
   anims: '/issues/01/anim/manifest.json',
 };
 
@@ -157,6 +165,8 @@ export function buildSpreads(issue: Issue): Spread[] {
   let back: Page | null = null;
   if (issue.hasBack && rest.length) {
     back = rest[rest.length - 1];
+    // Same substitution as the cover, same reason.
+    if (issue.backRest) back = { ...back, src: issue.backRest };
     rest = rest.slice(0, -1);
   }
 

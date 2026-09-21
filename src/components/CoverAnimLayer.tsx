@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   enterFadeMs,
+  faceOf,
   fitCover,
   hitTest,
   leavePlan,
@@ -8,7 +9,7 @@ import {
   toCover,
   toScreen,
 } from '../reader/coverAnims';
-import type { CoverAnim, CoverAnimManifest, CoverFit } from '../reader/coverAnims';
+import type { CoverAnim, CoverAnimFace, CoverFit, FaceAnims } from '../reader/coverAnims';
 import './CoverAnimLayer.css';
 
 interface CoverAnimLayerProps {
@@ -25,6 +26,8 @@ interface CoverAnimLayerProps {
    * every slide.
    */
   listen: HTMLElement | null;
+  /** Which face's objects to draw — the cover (default) or the back cover. */
+  face?: CoverAnimFace;
 }
 
 /**
@@ -79,9 +82,9 @@ interface Runtime {
  * Touch is out of scope: `pointermove` from a touch pointer is ignored, so the
  * layer simply never animates on a phone and the still stays.
  */
-export function CoverAnimLayer({ manifest, listen }: CoverAnimLayerProps) {
+export function CoverAnimLayer({ manifest, listen, face = 'cover' }: CoverAnimLayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [data, setData] = useState<CoverAnimManifest | null>(null);
+  const [data, setData] = useState<FaceAnims | null>(null);
   const [ready, setReady] = useState(false);
   const [fit, setFit] = useState<CoverFit>({ scale: 0, offsetX: 0, offsetY: 0 });
   const [hovered, setHovered] = useState<string | null>(null);
@@ -115,13 +118,13 @@ export function CoverAnimLayer({ manifest, listen }: CoverAnimLayerProps) {
     let live = true;
     loadCoverAnims(manifest)
       .then((m) => {
-        if (live) setData(m);
+        if (live) setData(faceOf(m, face));
       })
       .catch(() => {}); // no manifest yet ⇒ no layer, the cover just sits there
     return () => {
       live = false;
     };
-  }, [manifest]);
+  }, [manifest, face]);
 
   // Geometry: the layer fills the cover box, so its own size is the box size.
   // A ResizeObserver covers window resizes AND the dial-driven hero rect moving
@@ -130,7 +133,7 @@ export function CoverAnimLayer({ manifest, listen }: CoverAnimLayerProps) {
     const el = rootRef.current;
     if (!el || !data) return;
     const r = el.getBoundingClientRect();
-    const next = fitCover(r.width, r.height, data.coverW, data.coverH);
+    const next = fitCover(r.width, r.height, data.w, data.h);
     setFit((prev) =>
       prev.scale === next.scale && prev.offsetX === next.offsetX && prev.offsetY === next.offsetY
         ? prev
