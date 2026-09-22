@@ -17,6 +17,7 @@ import {
 import { CONTENT, itemHeroFace } from '../content';
 import { faceOf, loadCoverAnims } from '../reader/coverAnims';
 import { issueAnims } from '../reader/issue-01';
+import { boilFor, subscribeBoil } from '../reader/coverLife';
 import type { HeroRect } from '../layout/hero';
 import { HANDOFF_MS, registerHandOut } from './detailPaper/handoff';
 import { paper, setPaper, subscribePaper } from './detailPaper/paperDials';
@@ -426,6 +427,13 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+  // The cover's boil is driven by the CoverAnimLayer, which publishes each new
+  // value in the same task it moves its sprites: repaint the plate right here,
+  // so the two never show different values on one frame.
+  const unsubBoil = subscribeBoil(() => {
+    if (state !== 'dom') render(false);
+  });
+
   // ── state ──────────────────────────────────────────────────────────────
   let state: State = 'dom';
   let timer = 0;
@@ -668,6 +676,15 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       u.uRipple.value = zero || still ? 0 : ripple * P;
       u.uFold.value = zero ? 0 : fold;
       u.uFoldAmp.value = paper.foldAmp;
+      // The boil moves the plate with its sprites — the layer's own translate
+      // and rotate, taken to screen by the panel's scale. Not under `presence`:
+      // the sprites boil whether or not the paper has settled, and the plate
+      // has to go where they go. Not under `override.zero` either: that zeroes
+      // the paper's EFFECTS, and the boil is registration, not an effect — it is
+      // how the verify suite compares a boiled plate with the boiled DOM one.
+      // The layer does not boil under reduced motion.
+      const b = boilFor(p.el);
+      u.uBoil.value.set(b.dx * p.scale, b.dy * p.scale, (b.deg * Math.PI) / 180);
       c.mesh.visible = tex !== null;
 
       // The shadow: the DOM panel's box-shadow, scaled with the panel, faded
@@ -703,6 +720,9 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
         u.uSquash.value,
         u.uSquashScale.value,
         u.uFoldAmp.value,
+        u.uBoil.value.x,
+        u.uBoil.value.y,
+        u.uBoil.value.z * 1000,
         sprites,
         tex ? tex.id : -1,
         s.uAlpha.value,
@@ -761,6 +781,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
             hover: u?.uHover.value,
             velocity: u?.uVelocity.value,
             fold: u?.uFold.value,
+            boil: u ? { x: u.uBoil.value.x, y: u.uBoil.value.y, rad: u.uBoil.value.z } : null,
             sprites: u?.uSpriteCount.value,
           };
         }),
@@ -809,6 +830,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       mo.disconnect();
       unregister();
       unsubPaper();
+      unsubBoil();
       window.removeEventListener('pointermove', onMove);
       document.documentElement.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('blur', onLeave);

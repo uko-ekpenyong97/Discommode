@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   enterFadeMs,
   faceOf,
@@ -10,6 +10,20 @@ import {
   toScreen,
 } from '../reader/coverAnims';
 import type { CoverAnim, CoverAnimFace, CoverFit, FaceAnims } from '../reader/coverAnims';
+import {
+  BOIL_REST,
+  Boil,
+  HERO_REF_W,
+  applyBoilStyle,
+  boilHoldFor,
+  coverLife,
+  lastBoil,
+  publishBoil,
+  staggerMs,
+  subscribeBoilHold,
+  subscribeCoverLife,
+} from '../reader/coverLife';
+import type { BoilSample } from '../reader/coverLife';
 import './CoverAnimLayer.css';
 
 interface CoverAnimLayerProps {
@@ -28,15 +42,33 @@ interface CoverAnimLayerProps {
   listen: HTMLElement | null;
   /** Which face's objects to draw — the cover (default) or the back cover. */
   face?: CoverAnimFace;
+  /**
+   * Whatever else has to BOIL with this layer (see coverLife.ts): the reader
+   * passes the book's static slot under the cover, so the face and its sprites
+   * move as one. Each must share this layer's box, since both turn about their
+   * own centre. The detail view passes nothing: its plate is the paper plane,
+   * which reads the boil from the registry instead.
+   */
+  boilWith?: () => (HTMLElement | null)[];
 }
+
+/** Each face boils its own way; the seeds only have to differ. */
+const BOIL_SEED: Record<CoverAnimFace, number> = { cover: 0xb011c0, back: 0xb011ba };
+
+const allOnHoverNow = () => coverLife.allOnHover;
 
 /**
  * What an object is doing right now. Objects not in the map are at rest: the
  * still alone, no animated WebP mounted at all.
  *
- *   playing  pointer is on it; still hidden, animation running
- *   waiting  pointer has left; still hidden, animation running out its pass
+ *   playing  it is active (the page is hovered, or it is); still hidden,
+ *            animation running
+ *   waiting  no longer active; still hidden, animation running out its pass
+ *            (plus, on a page leave, its stagger hold)
  *   fading   the pass has landed; the still cross-fades back in over it
+ *
+ * Each object's box carries its phase as `data-phase` (`rest` when absent
+ * from the map), which is what the verify suites read.
  */
 type Phase = 'playing' | 'waiting' | 'fading';
 interface Runtime {
@@ -73,6 +105,13 @@ interface Runtime {
  * a `once` object that has finished on the very frame it rests on — returns
  * instantly; see `leavePlan`.
  *
+ * PAGE HOVER (coverLife.ts): with `allOnHover`, the pointer anywhere on the
+ * face makes EVERY object active, not just the one under it, and the face
+ * BOILS — this layer drives its face's boil and writes it to itself, to
+ * `boilWith`, and to the registry the paper plane reads, in one task. On a
+ * page leave the objects go on the ordinary leave rule, each held a little
+ * longer (`staggerMs`) so they do not all fade on one frame.
+ *
  * ONE `pointermove` listener resolves hover for all twenty objects by testing
  * the pointer against the hit rects in cover space, highest z first. Twenty
  * hover targets would mean twenty elements with pointer events, which would both
@@ -82,13 +121,25 @@ interface Runtime {
  * Touch is out of scope: `pointermove` from a touch pointer is ignored, so the
  * layer simply never animates on a phone and the still stays.
  */
-export function CoverAnimLayer({ manifest, listen, face = 'cover' }: CoverAnimLayerProps) {
+export function CoverAnimLayer({ manifest, listen, face = 'cover', boilWith }: CoverAnimLayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [data, setData] = useState<FaceAnims | null>(null);
   const [ready, setReady] = useState(false);
   const [fit, setFit] = useState<CoverFit>({ scale: 0, offsetX: 0, offsetY: 0 });
   const [hovered, setHovered] = useState<string | null>(null);
-  const [runtime, setRuntime] = useState<Record<string, Runtime>>({});
+  // The pointer is on the PAGE — anywhere inside this layer's box.
+  const [pageHover, setPageHover] = useState(false);
+  const allOnHover = useSyncExternalStore(subscribeCoverLife, allOnHoverNow);
+  const [runtime, setRuntimeState] = useState<Record<string, Runtime>>({});
+  // Mirrored so the state machine reads what is current without side effects
+  // inside a state updater (which StrictMode runs twice).
+  const runtimeRef = useRef<Record<string, Runtime>>({});
+  const setRuntime = useCallback((fn: (prev: Record<string, Runtime>) => Record<string, Runtime>) => {
+    const next = fn(runtimeRef.current);
+    if (next === runtimeRef.current) return;
+    runtimeRef.current = next;
+    setRuntimeState(next);
+  }, []);
 
   // Pending phase changes, keyed by object, so a re-entry can cancel them.
   const timersRef = useRef<Map<string, number[]> | null>(null);
@@ -130,8 +181,10 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover' }: CoverAnimLa
   // A ResizeObserver covers window resizes AND the dial-driven hero rect moving
   // under it, without this component having to know about either.
   const measure = useCallback(() => {
-    const el = rootRef.current;
+    const el = rootRef.current?.parentElement;
     if (!el || !data) return;
+    // The PARENT's box, which is this layer's box untransformed: the layer
+    // itself is turned by the boil, and its bounding rect grows with the turn.
     const r = el.getBoundingClientRect();
     const next = fitCover(r.width, r.height, data.w, data.h);
     setFit((prev) =>
@@ -188,14 +241,21 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover' }: CoverAnimLa
 
     const onMove = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return;
-      const el = rootRef.current;
+      const el = rootRef.current?.parentElement;
       if (!el) return;
       const box = el.getBoundingClientRect();
-      const p = toCover(e.clientX - box.left, e.clientY - box.top, fit);
+      const x = e.clientX - box.left;
+      const y = e.clientY - box.top;
+      // In the reader the host is the whole book; the page is this box.
+      setPageHover(x >= 0 && y >= 0 && x <= box.width && y <= box.height);
+      const p = toCover(x, y, fit);
       const found = p ? hitTest(data.objects, p.x, p.y) : null;
       setHovered((prev) => (prev === (found?.id ?? null) ? prev : (found?.id ?? null)));
     };
-    const onLeave = () => setHovered(null);
+    const onLeave = () => {
+      setHovered(null);
+      setPageHover(false);
+    };
 
     host.addEventListener('pointermove', onMove);
     host.addEventListener('pointerleave', onLeave);
@@ -207,69 +267,144 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover' }: CoverAnimLa
     };
   }, [data, fit, listen]);
 
-  // Drive the state machine off the hovered id.
-  const previous = useRef<string | null>(null);
+  // Drive the state machine off the set of objects that should be playing:
+  // every object on the face while the page is hovered (`allOnHover`), else
+  // the one under the pointer. Objects enter and leave that set; nothing else
+  // matters to them, so hovering one object while all are playing does nothing.
+  const activeKey = pageHover && allOnHover ? '*' : (hovered ?? '');
+  const previous = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!data) return;
-    const byId = new Map(data.objects.map((o) => [o.id, o]));
-    const leaving = previous.current;
-    previous.current = hovered;
-
+    const ids = data.objects.map((o) => o.id);
+    const next = new Set(activeKey === '*' ? ids : activeKey ? [activeKey] : []);
+    const prev = previous.current;
+    previous.current = next;
     const timers = getTimers();
 
-    if (leaving && leaving !== hovered) {
-      clearTimers(leaving);
-      setRuntime((prev) => {
-        const rt = prev[leaving];
-        if (!rt) return prev;
-        const o = byId.get(leaving);
-        const plan = o
-          ? leavePlan(performance.now() - rt.startedAt, o)
-          : { wait: 0, fade: 0 };
-        const toRest = () => {
-          setRuntime((r) => {
-            if (!r[leaving]) return r;
-            const next = { ...r };
-            delete next[leaving];
-            return next;
-          });
-          timers.delete(leaving);
-        };
-        const after = window.setTimeout(() => {
-          if (plan.fade === 0) {
-            toRest();
-            return;
-          }
-          setRuntime((r) =>
-            r[leaving] ? { ...r, [leaving]: { ...r[leaving], phase: 'fading' } } : r,
-          );
-          timers.set(leaving, [window.setTimeout(toRest, plan.fade)]);
-        }, plan.wait);
-        timers.set(leaving, [after]);
-        return { ...prev, [leaving]: { ...rt, phase: 'waiting', fadeMs: plan.fade } };
-      });
+    const leaving = ids.filter((id) => prev.has(id) && !next.has(id));
+    // A whole face leaving at once is staggered, so twenty loops that started
+    // together do not fade back on one frame; a single object leaves on time.
+    const group = leaving.length > 1;
+    for (const id of leaving) {
+      clearTimers(id);
+      const rt = runtimeRef.current[id];
+      if (!rt) continue;
+      const i = ids.indexOf(id);
+      const o = data.objects[i];
+      const plan = leavePlan(performance.now() - rt.startedAt, o);
+      const hold = group ? staggerMs(i, coverLife.stagger) : 0;
+      const toRest = () => {
+        setRuntime((r) => {
+          if (!r[id]) return r;
+          const out = { ...r };
+          delete out[id];
+          return out;
+        });
+        timers.delete(id);
+      };
+      const after = window.setTimeout(() => {
+        if (plan.fade === 0) {
+          toRest();
+          return;
+        }
+        setRuntime((r) => (r[id] ? { ...r, [id]: { ...r[id], phase: 'fading' } } : r));
+        timers.set(id, [window.setTimeout(toRest, plan.fade)]);
+      }, plan.wait + hold);
+      timers.set(id, [after]);
+      setRuntime((r) => (r[id] ? { ...r, [id]: { ...r[id], phase: 'waiting', fadeMs: plan.fade } } : r));
     }
 
-    if (hovered) {
-      // Cancel any pending return and take it back to `playing`. `startedAt` is
-      // KEPT when the element is already mounted: the animation never stopped,
-      // so restarting its clock would misplace the next loop boundary.
-      clearTimers(hovered);
-      setRuntime((prev) =>
-        prev[hovered]
-          ? { ...prev, [hovered]: { ...prev[hovered], phase: 'playing' } }
-          : {
-              ...prev,
-              [hovered]: { phase: 'playing', startedAt: performance.now(), fadeMs: 0 },
-            },
-      );
-    }
-  }, [hovered, data, clearTimers, getTimers]);
+    const entering = ids.filter((id) => next.has(id) && !prev.has(id));
+    if (entering.length === 0) return;
+    // Cancel any pending return and take it back to `playing`. `startedAt` is
+    // KEPT when the element is already mounted: the animation never stopped,
+    // so restarting its clock would misplace the next loop boundary.
+    for (const id of entering) clearTimers(id);
+    const now = performance.now();
+    setRuntime((r) => {
+      const out = { ...r };
+      for (const id of entering) {
+        out[id] = r[id]
+          ? { ...r[id], phase: 'playing' }
+          : { phase: 'playing', startedAt: now, fadeMs: 0 };
+      }
+      return out;
+    });
+  }, [activeKey, data, clearTimers, getTimers, setRuntime]);
+
+  // THE BOIL. One signal per face (coverLife.ts), stepped at boilFps, its
+  // amplitude ramping with the page hover. This layer is its only driver: on
+  // every change it writes the same translate/rotate to itself and to
+  // `boilWith`, and publishes it for the paper plane, all in one task — so
+  // whatever draws the plate and the sprites drawn over it move on the same
+  // frame and stay registered. The loop only runs while there is a boil.
+  const boilRef = useRef<Boil | null>(null);
+  const fitRef = useRef(fit);
+  const boilWithRef = useRef(boilWith);
+  useEffect(() => {
+    fitRef.current = fit;
+    boilWithRef.current = boilWith;
+  });
+  const rafRef = useRef(0);
+  const shownRef = useRef<BoilSample>(BOIL_REST);
+  const tickRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const host = listen;
+    const apply = (b: BoilSample) => {
+      const root = rootRef.current;
+      if (root) applyBoilStyle(root, b);
+      for (const el of boilWithRef.current?.() ?? []) if (el) applyBoilStyle(el, b);
+      if (host) publishBoil(host, b);
+      lastBoil.set(face, b);
+    };
+    const tick = () => {
+      rafRef.current = 0;
+      const boil = boilRef.current;
+      if (!boil) return;
+      const now = performance.now();
+      const f = fitRef.current;
+      const scale = data ? (f.scale * data.w) / HERO_REF_W : 0;
+      const hold = import.meta.env.DEV ? boilHoldFor(face) : null;
+      const b = boil.sample(now, scale, coverLife, hold);
+      const was = shownRef.current;
+      if (b.dx !== was.dx || b.dy !== was.dy || b.deg !== was.deg || b.amp !== was.amp) {
+        shownRef.current = b;
+        apply(b);
+      }
+      if (boil.active(now) || hold) rafRef.current = requestAnimationFrame(tick);
+    };
+    tickRef.current = () => {
+      if (!rafRef.current) rafRef.current = requestAnimationFrame(tick);
+    };
+    const unsubHold = import.meta.env.DEV ? subscribeBoilHold(() => tickRef.current()) : () => {};
+    return () => {
+      unsubHold();
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      // Gone mid-boil (a slide, a turn lifting the cover): everything it moved
+      // goes back exactly where it was.
+      shownRef.current = BOIL_REST;
+      apply(BOIL_REST);
+    };
+  }, [listen, face, data]);
+
+  useEffect(() => {
+    boilRef.current ??= new Boil(BOIL_SEED[face]);
+    // Reduced motion: no boil. The objects still play.
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    boilRef.current.hover(pageHover && !reduced, performance.now());
+    tickRef.current();
+  }, [pageHover, face]);
 
   const show = data !== null && ready && fit.scale > 0;
 
   return (
-    <div className="cover-anim" ref={rootRef} aria-hidden="true">
+    <div
+      className="cover-anim"
+      ref={rootRef}
+      aria-hidden="true"
+      data-page-hover={pageHover ? '' : undefined}
+    >
       {show && data && (
         <>
           <img className="cover-anim__plate" src={data.plate} alt="" draggable={false} />
@@ -281,6 +416,8 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover' }: CoverAnimLa
               <div
                 key={o.id}
                 className="cover-anim__obj"
+                data-id={o.id}
+                data-phase={rt?.phase ?? 'rest'}
                 style={{
                   left: `${box.left}px`,
                   top: `${box.top}px`,
