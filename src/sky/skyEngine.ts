@@ -537,12 +537,12 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
 
   function resize(): void {
     let dpr = Math.min(window.devicePixelRatio || 1, 2) * config.skyResolution;
-    // THE PIXEL CAP. The sky's cost is per pixel and nothing else, so on a big
-    // retina window it is the backing store that decides the frame — measured
-    // honestly (see `benchmark`), a foggy 5K @2x is 5–6ms on its own. Above
-    // `skyMaxMegapixels` the store is scaled down to that many pixels and the
-    // compositor scales it up; the sky is soft noise and the grain covers it.
-    // 5.5 leaves 1440×900 @2x (5.2 MP) untouched; 0 turns the cap off.
+    // THE PIXEL CAP — off by default, the lever for a slower machine. The sky's
+    // cost is per pixel and nothing else, so on a big retina window it is the
+    // backing store that decides the frame (a foggy 5K @2x is 5–6ms on an M1
+    // Max). Above `skyMaxMegapixels` the store is scaled down to that many
+    // pixels and the compositor scales it up; the sky is soft noise and the
+    // grain covers it. 5.5 leaves 1440×900 @2x (5.2 MP) untouched. 0 = no cap.
     const cap = config.skyMaxMegapixels * 1e6;
     const area = window.innerWidth * window.innerHeight * dpr * dpr;
     if (cap > 0 && area > cap) dpr *= Math.sqrt(cap / area);

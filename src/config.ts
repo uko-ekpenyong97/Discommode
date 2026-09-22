@@ -162,8 +162,8 @@ export interface LiveConfig {
   skyResolution: number;
   /**
    * The most pixels the sky's backing store may have, in millions; above it the
-   * store is scaled down (after `skyResolution`). 0 = no cap. See "Frame time"
-   * in `docs/sky.md` for the measurement that set it.
+   * store is scaled down (after `skyResolution`). 0 = no cap, which ships: it is
+   * the lever for a machine slower than the one in "Frame time" in `docs/sky.md`.
    */
   skyMaxMegapixels: number;
   // SKY · FLUID — the wake the pointer and the page's moving cards leave in the
@@ -248,7 +248,7 @@ export const DEFAULTS: LiveConfig = {
   skySaturation: 1,
   skyGrain: 0.03,
   skyResolution: 1,
-  skyMaxMegapixels: 5.5,
+  skyMaxMegapixels: 0,
   fluidOn: true,
   fluidRadius: 0.08,
   fluidStrength: 1,

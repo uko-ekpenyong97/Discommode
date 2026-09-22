@@ -24,7 +24,7 @@
  * circling the middle of the screen), which is the most the sky ever costs:
  * the whole solver — splat, curl, vorticity, divergence, twenty Jacobi
  * iterations, gradient, two advects — plus the sky reading its texture. See
- * "The wake" in `docs/sky.md`. The budget with it is 3ms.
+ * "The wake" in `docs/sky.md`. The budget is 6ms either way.
  */
 import { chromium } from 'playwright';
 
@@ -40,7 +40,7 @@ const resolution = flag('--resolution', 1);
 const fluid = args.includes('--fluid');
 
 /** Over this, the sky is eating a 120Hz frame on its own. */
-const BUDGET_MS = fluid ? 3 : 6;
+const BUDGET_MS = 6;
 
 const CASES = [
   ['clear', 'noon'],

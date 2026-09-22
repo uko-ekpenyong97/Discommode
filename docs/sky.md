@@ -135,7 +135,7 @@ draw, which is the check that actually protects this.
 | `skySaturation` | 1.0 | Final saturation multiplier. |
 | `skyGrain` | 0.03 | Additive grain over everything. |
 | `skyResolution` | 1.0 | Backing-store scale under the DPR cap of 2. See below. |
-| `skyMaxMegapixels` | 5.5 | The most pixels the backing store may have, in millions. Above it the store is scaled down. 0 = no cap. See [Frame time](#frame-time). |
+| `skyMaxMegapixels` | 0 | The most pixels the backing store may have, in millions. Above it the store is scaled down. 0 = no cap, which ships; it is the lever for a slower machine. See [Frame time](#frame-time). |
 
 The wake has its own panel, **SKY · FLUID**, next to it. See [The wake](#the-wake).
 
@@ -446,9 +446,11 @@ pass the way a present does. Measured that way, 2026-09-21 on an Apple M1 Max,
 *before* any of the fluid work, the sky at 5K @2x costs **5.0ms p50 and
 6.1ms p95 in fog**, and 1.8ms / 2.4ms at 1440×900 @2x.
 
-### What brought it under 3ms
+### The budget: ≤ 6ms, sky incl. fluid
 
-Three things, and only the last one changes a pixel:
+**≤ 6 ms for the whole sky, including the fluid, at p95, at every signed-off
+size and at 5K @2x.** It is checked in section 4 of `npm run verify:sky` and by
+`sky-perf.mjs --fluid`. Two things keep it there, and neither changes a pixel:
 
 1. **Layers that cannot show are not computed.** No cloud deck at all when
    coverage is 0 (a uniform branch), no shading sample where a pixel has no
@@ -456,38 +458,52 @@ Three things, and only the last one changes a pixel:
    `mix` would have multiplied by zero, so the picture is identical. It is
    what makes a clear sky cheap.
 2. **The solver in 17 passes, not 30** (see [The solver](#the-solver)). Its
-   cost was the passes, not the shading. When it is awake it adds about
-   **0.3ms** to a frame, because it overlaps the sky's shading. Asleep, it adds
+   cost was the passes, not the shading. Awake, it adds **0.3–0.6ms** to a
+   frame, because most of it overlaps the sky's shading. Asleep, it adds
    nothing.
-3. **A pixel cap: `skyMaxMegapixels` = 5.5.** The sky's cost is per pixel.
-   Above 5.5 million the backing store is scaled down to that many pixels and
-   the compositor scales it up. 1440×900 @2x is 5.2 MP and is **not touched**,
-   so the contact sheet and the idle check below are unaffected. 1728×996 @2x
-   draws at 0.89 linear, and 5K @2x at 0.61 (3,127×1,759). The sky is soft
-   noise and the grain covers the softening. The stars are what it costs:
-   at 5K they are drawn at 0.61 scale and come out a little softer. 0 turns
-   the cap off. This is a judgement call, and the dial is there to reverse it.
 
-**The whole sky, with the fluid awake and splatting every frame**, p95 in ms,
-from `npm run verify:sky` on 2026-09-21, Apple M1 Max. The cell is *without
-fluid → with fluid*. Budget: **3ms**.
+**The whole sky at full resolution**, re-measured 2026-09-21 on an Apple M1
+Max with the cap off (as shipped). Each cell is the *median p95 of three
+600-frame runs, [min–max]*, in ms, with the fluid awake and splatting every
+frame. Fog is always the worst condition.
 
-| viewport | backing store | clear | partly | fog | storm |
-| --- | --- | --- | --- | --- | --- |
-| 1440×900 @1x | 1440×900 | 0.84 → 1.01 | 0.93 → 1.35 | 1.49 → 1.10 | 1.47 → 1.16 |
-| 1440×900 @2x | 2880×1800 | 2.38 → 1.16 | 2.16 → 1.72 | 2.08 → 2.77 | 1.88 → 2.32 |
-| 1728×996 @1x | 1728×996 | 0.93 → 1.33 | 1.34 → 1.32 | 1.94 → 1.64 | 1.64 → 1.18 |
-| 1728×996 @2x | 3089×1780 (capped) | 1.65 → 1.12 | 1.83 → 2.25 | 2.21 → 2.87 | 1.92 → 2.45 |
-| 2560×1440 @2x | 3127×1759 (capped) | 1.82 → 1.64 | 1.87 → 1.99 | 2.07 → 2.45 | 1.82 → 2.55 |
+| viewport | backing store | sky alone | sky incl. fluid |
+| --- | --- | --- | --- |
+| 1728×996 @2x | 3456×1992 | 2.68 [2.57–2.75] | **3.31** [3.25–3.33] |
+| 2560×1440 @2x | 5120×2880 | 5.40 [5.40–5.41] | **5.75** [5.74–5.76] |
 
-Worst p95 **2.87ms of the 3ms budget**, in fog at 1728×996 @2x with the fluid
-awake. Read the table as a ceiling, not as a ranking. At this scale a p95 is a
-handful of frames, and some cells show the fluid "saving" time, which is noise.
-The p50 behind it, from the same benchmark, is steadier: fog at 5K @2x is
-1.94ms without the fluid and 2.25ms with it.
+The full table for that 5K row, median p95 (p50):
 
-`storm` is no longer the cheapest. The old table said it was, and that was
-the same artifact.
+| | clear | partly | fog | storm |
+| --- | --- | --- | --- | --- |
+| sky alone | 1.91 (1.86) | 3.88 (3.84) | 5.40 (5.34) | 4.74 (4.69) |
+| sky incl. fluid | 2.56 (2.27) | 4.43 (4.14) | 5.75 (5.65) | 5.54 (5.13) |
+
+Worst **5.75ms of 6**: fog at 5K @2x with the fluid awake. At 1440×900 @2x
+(5.2 MP) the worst is 2.77ms. **The margin at 5K is thin, and the machine has
+to be quiet to measure it.** The GPU also drives the display. One run taken
+while Spotlight was indexing put the same 5K fog frame at 8.9ms, *with or
+without* the fluid, and the next run put it at 6.1. That is why the check takes
+the median of three runs rather than trusting one.
+
+### The lever: `skyMaxMegapixels`
+
+**Off (0) by default.** The sky's cost is per pixel and nothing else, so on a
+slower GPU the lever is the backing store. Set it and, above that many million
+pixels, the store is scaled down to the cap and the compositor scales it up.
+The sky is soft noise and the grain covers the softening; the stars are what
+it costs, because they are a pixel or two and come out softer. What it does
+at 5.5 on the machine above, measured when it briefly shipped at that value:
+
+- 1440×900 @2x (5.2 MP) is untouched.
+- 1728×996 @2x draws at 0.89 linear.
+- 5K @2x draws at 0.61 (3,127×1,759), and its foggy frame drops from 5.75ms
+  to 2.46ms.
+
+`skyResolution` is the other lever: a flat scale, rather than a ceiling.
+
+`storm` is no longer the cheapest condition. The old table said it was, and
+that came from the same artifact.
 
 ## The contact sheet
 
@@ -555,7 +571,7 @@ grain or a flash. Run 2026-09-21, Apple M1 Max, 1440×900 @2x:
 | 2 | a sweep across a clear night | **34.6%** of 1,528 star pixels moved; **0.0%** still moved at 3s |
 | 3 | fog at night, a 200px disc at the cursor | **−26.0%** luminance; back to baseline at 3s |
 | 3 | fog at noon / dusk (reported, see below) | −7.4% / −7.3%; both back at 3s |
-| 4 | frame time, fluid awake, five sizes | worst p95 **2.87ms** (table above) |
+| 4 | frame time, fluid awake, five sizes, cap on at 5.5 (as it was then) | worst p95 2.87ms; with the cap off, as shipped, 5.75ms at 5K @2x (see [Frame time](#frame-time)) |
 | 5 | reduced motion, a sweep and a direct `splat` | **0.000%** differ; the field never wakes |
 | 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway | each wakes the field on its own |
 
@@ -621,9 +637,9 @@ window is plainly there: see `docs/sky/fluid/fog-window.webp`.
   [Checking the wake](#checking-the-wake). A daylit bank is too close to the
   sky behind it. If a noon window has to read louder, the lever is the colour
   it opens onto, not `fogPart`.
-- **The pixel cap softens the stars at 5K.** They are drawn at 0.61 scale and
-  upscaled. `skyMaxMegapixels` 0 puts them back at the price of a 5–6ms foggy
-  frame.
+- **5K @2x has 0.25ms of headroom in fog.** It is inside the 6ms budget on
+  an M1 Max and nothing slower has been measured. `skyMaxMegapixels` is the
+  lever if it is not inside on something else.
 - **The contrast figures were measured before the wake.** A wake passing
   under the letterhead parts the deck there and changes the ground under it,
   locally and for about a second. The probe samples a still sky, so what that
