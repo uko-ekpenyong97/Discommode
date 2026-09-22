@@ -3,6 +3,7 @@ import { DialRoot, DialStore, useDialKit } from 'dialkit';
 import 'dialkit/styles.css';
 import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
+import { useDetailPaperDials } from './detailPaperDials';
 
 /**
  * Dev-only DialKit panel for live feel/layout tuning. This whole module is
@@ -98,6 +99,9 @@ function Dials() {
     skyGrain: [start.skyGrain, 0, 0.1, 0.005],
     skyResolution: [start.skyResolution, 0.5, 1, 0.05],
   });
+
+  // The detail cards' paper has its own store (paperDials.ts), not LiveConfig.
+  useDetailPaperDials();
 
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
   // Reads the live `config` singleton directly, so it needs no stale-closure ref.

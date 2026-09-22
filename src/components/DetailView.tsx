@@ -8,6 +8,9 @@ import { openReader } from '../reader/readerNav';
 import { openPortfolio } from '../portfolio/portfolioNav';
 import { issueAnims } from '../reader/issue-01';
 import { CoverAnimLayer } from './CoverAnimLayer';
+import { DetailPaperLayer } from './DetailPaperLayer';
+import type { DetailPaperHandle, PaperPanel } from './DetailPaperLayer';
+import { afterHandOut } from './detailPaper/handoff';
 import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
 import { panelStepFor } from '../detailLayout';
 import type { HeroRect } from '../layout/hero';
@@ -75,6 +78,9 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   // the ticker fades + drifts these while `doorway.clear` > 0. See below.
   const backRef = useRef<HTMLButtonElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
+  // The paper canvas under the strip (DetailPaperLayer): told where every panel
+  // is at the end of each tick, from the same numbers that just laid them out.
+  const paperRef = useRef<DetailPaperHandle>(null);
   const targetRef = useRef(activeIndex);
   const posRef = useRef(activeIndex);
   const [center, setCenter] = useState(activeIndex);
@@ -95,6 +101,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
     const k = 1 - Math.exp(-dt / (config.detailSlideMs / 1000 / SETTLE_DECAY));
     let pos = posRef.current + (target - posRef.current) * k;
     if (Math.abs(target - pos) < 0.0005) pos = target;
+    const dpos = pos - posRef.current;
     posRef.current = pos;
 
     // The doorway CLEAR channel (reader layer above): 0 normally, → 1 as the
@@ -104,6 +111,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
     const clear = doorway.clear;
 
     const track = trackRef.current;
+    const paperPanels: PaperPanel[] = [];
     if (track) {
       track.style.transform = `translateX(${centerX - pos * panelStep}px)`;
 
@@ -128,9 +136,30 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         const driftX = clear === 0 ? 0 : Math.sign(i - pos) * clear * CLEAR_DRIFT_PX * d;
         el.style.transform = `translate(-50%, -50%) translateX(${driftX.toFixed(2)}px) scale(${scale})`;
         el.style.opacity = String(op * (1 - clear * d)); // sides fade; centre stays
-        el.style.zIndex = String(Math.round(100 - Math.abs(i - pos) * 10));
+        const z = Math.round(100 - Math.abs(i - pos) * 10);
+        el.style.zIndex = String(z);
+        // The same panel, as the paper canvas draws it. The centre is the hero
+        // rect (hero.ts); every panel is that rect moved along the strip and
+        // scaled about its centre, which is what the transform above does.
+        paperPanels.push({
+          key: i,
+          idx: Number(el.dataset.idx),
+          el,
+          rect: {
+            cx: centerX - pos * panelStep + i * panelStep + driftX,
+            cy: hero.y + hero.h / 2,
+            w: panelW * scale,
+            h: panelH * scale,
+          },
+          scale,
+          opacity: op * (1 - clear * d),
+          z,
+          dist: Math.abs(i - pos),
+          slot: Math.abs(i - Math.round(pos)),
+        });
       });
     }
+    paperRef.current?.frame({ panels: paperPanels, dpos, dt, panelStep });
 
     // Detail chrome (back pill / bottom bar): fade + drift out with CLEAR. Driven
     // imperatively (transition off) so DialKit scrubbing stays instant; restored
@@ -209,6 +238,17 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
 
   const activeItem = CONTENT[activeIndex];
 
+  // Leaving for the reader or the project view hands the cards back to the DOM
+  // first: the doorway settles its cover onto the DOM panel. See handoff.ts.
+  const read = (issue: string) => afterHandOut(() => openReader(issue));
+  const openProject = (project: string) => afterHandOut(() => openPortfolio(project));
+
+  // The canvas may carry the cards once the view has settled and nothing above
+  // it wants them — except under the dev doorway dock (`#item-NN?intro`), which
+  // suspends the view on purpose and is where the paper's own dials live.
+  const authoring = import.meta.env.DEV && window.location.hash.includes('?intro');
+  const paperLive = phase === 'active' && (!suspended || authoring);
+
   return (
     <div
       className="detail"
@@ -224,6 +264,14 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
       onPointerUp={onPointerUp}
       onClick={close} // click on the empty backdrop dismisses (panels/bar stop propagation)
     >
+      <DetailPaperLayer
+        ref={paperRef}
+        live={paperLive}
+        interactive={!suspended && phase === 'active'}
+        hero={hero}
+        sideScale={config.detailSideScale}
+      />
+
       <button
         ref={backRef}
         type="button"
@@ -258,6 +306,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               ref={isCenter ? setCenterEl : undefined}
               type="button"
               data-i={p.i}
+              data-idx={p.idx}
               className={
                 canOpen
                   ? 'detail__panel detail__panel--center detail__panel--readable'
@@ -273,8 +322,8 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               onClick={(e) => {
                 e.stopPropagation(); // a card is not backdrop — don't dismiss
                 if (!isCenter) goto(p.idx);
-                else if (item.issue) openReader(item.issue);
-                else if (item.project) openPortfolio(item.project);
+                else if (item.issue) read(item.issue);
+                else if (item.project) openProject(item.project);
               }}
               onPointerEnter={(e) => e.pointerType !== 'touch' && (hoveredRef.current = p.i)}
               onPointerLeave={(e) => e.pointerType !== 'touch' && (hoveredRef.current = null)}
@@ -351,7 +400,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           <button
             type="button"
             className="detail__btn detail__btn--read"
-            onClick={() => openReader(activeItem.issue!)}
+            onClick={() => read(activeItem.issue!)}
           >
             Read issue
           </button>
@@ -359,7 +408,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           <button
             type="button"
             className="detail__btn detail__btn--read"
-            onClick={() => openPortfolio(activeItem.project!)}
+            onClick={() => openProject(activeItem.project!)}
           >
             Open project
           </button>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CONTENT, CONTENT_COUNT, indexForSlug } from '../content';
 import { mod } from '../grid';
+import { afterHandOut } from '../components/detailPaper/handoff';
 
 export type DetailMode = 'grid' | 'detail';
 /** 'enter' / 'exit' are the transition phases; 'active' is settled in detail. */
@@ -118,10 +119,16 @@ export function useDetail(suspended = false): DetailController {
   const next = useCallback(() => goto(mod(activeRef.current + 1, CONTENT_COUNT)), [goto]);
   const prev = useCallback(() => goto(mod(activeRef.current - 1, CONTENT_COUNT)), [goto]);
 
+  // Every in-app way out (the pill, Escape, the backdrop, a swipe) waits for the
+  // paper canvas to hand the cards back to the DOM, which the exit morph
+  // carries. Immediate when the DOM already has them.
   const close = useCallback(() => {
     if (modeRef.current !== 'detail') return;
-    pushGrid();
-    startExit();
+    afterHandOut(() => {
+      if (modeRef.current !== 'detail') return;
+      pushGrid();
+      startExit();
+    });
   }, [startExit]);
 
   // Browser back/forward: reconcile state to the hash.

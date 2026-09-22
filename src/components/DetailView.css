@@ -226,3 +226,48 @@
   outline: 1px solid #fff;
   outline-offset: 2px;
 }
+
+/* THE PAPER — the canvas that carries the cards once the view has settled
+   (DetailPaperLayer, docs/detail-paper.md). It is the first child of `.detail`,
+   so it paints under the strip; `pointer-events: none`, so every panel keeps its
+   clicks and the hover sprites keep resolving from the panel. Hidden until the
+   layer hands in. */
+.detail__paper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* While the canvas carries the cards it also draws their shadows (a DOM shadow
+   from a panel with its face hidden would fall ON TOP of the canvas), so the
+   DOM's go — and without the panel's 240ms box-shadow transition, which would
+   double them for its length. In `out` the DOM's shadow is back on the frame
+   the canvas stops drawing its own. */
+.detail[data-paper] .detail__panel {
+  transition: none;
+}
+.detail[data-paper='in'] .detail__panel,
+.detail[data-paper='on'] .detail__panel {
+  box-shadow: none;
+}
+
+/* The faces: the panel's image, and the hover layer's plate (the canvas draws
+   that too, under the sprites). ONLY THE DOM'S ALPHA MOVES — the canvas is
+   underneath at full alpha, and these dissolve off it (`in`) and back over it
+   (`out`). Two surfaces at half alpha would let the sky through between them. */
+.detail[data-paper='in'] :is(.detail__media, .cover-anim__plate) {
+  opacity: 0;
+  transition: opacity 120ms linear;
+}
+.detail[data-paper='on'] :is(.detail__media, .cover-anim__plate) {
+  opacity: 0;
+  visibility: hidden;
+}
+.detail[data-paper='out'] :is(.detail__media, .cover-anim__plate) {
+  opacity: 1;
+  transition: opacity 120ms linear;
+}
