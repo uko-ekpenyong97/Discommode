@@ -316,6 +316,20 @@ the density threshold went from 0.978 to 0.972 and star brightness ×1.3
 (Uko wants them more prominent). It is the one intended difference from
 the sky before this change. See the idle check below.
 
+**What it does to the letterhead.** The contrast probe measures the brightest
+pixel under the band, and on a clear night that pixel is now a star.
+`scripts/sky-contrast.mjs`, 2026-09-21, against `main` on the same machine:
+
+| clear night | before | after |
+| --- | --- | --- |
+| 1728×996 @2x | 10.20:1 | 9.60:1 |
+| 1440×900 @2x | 9.75:1 | 9.16:1 |
+
+Every other state is within ±0.1 of `main`, which is the twinkle phase and
+the lightning moving between runs. The worst state anywhere is unchanged:
+partly/overcast noon at **7.65:1**, with all 24 states over 7:1. The clear night
+is not close to being the binding state.
+
 ### The page disturbs the sky
 
 Anything on the page that moves across the screen pushes air through the sky
