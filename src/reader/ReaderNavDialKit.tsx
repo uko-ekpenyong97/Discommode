@@ -6,6 +6,7 @@ import { DialRoot, useDialKit } from 'dialkit';
 import 'dialkit/styles.css';
 import { JUMP } from './jump';
 import type { JumpMode, RiffleCurve } from './jump';
+import { useCoverLifeDials } from '../dev/coverLifeDials';
 
 /** The shipped values, so leaving the dock puts them back. */
 const SHIPPED = { ...JUMP };
@@ -52,6 +53,9 @@ export default function ReaderNavDialKit() {
     nav.riffleHalfResBelowMs,
     nav.jumpMode,
   ]);
+
+  // The closed cover's and back's page hover and boil (coverLife.ts).
+  useCoverLifeDials();
 
   useEffect(
     () => () => {

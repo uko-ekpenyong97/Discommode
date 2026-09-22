@@ -33,6 +33,16 @@
  *              2×: no frame over 20ms.
  *   reduced    prefers-reduced-motion: with the pointer on the hero, two frames
  *              two seconds apart are identical inside the cards.
+ *   life       COVER LIFE on the hero (src/reader/coverLife.ts), 1× and 2×:
+ *              hovering the page — a point on no object — has all 20 objects
+ *              playing within 200ms; during the boil, sampled 10 times, every
+ *              DOM sprite sits where the PLATE's own transform (the paper's
+ *              uniforms) puts it, to ≤ 0.5px; the canvas plate held boiled
+ *              matches the DOM plate boiled the same way, in pixels; no frame
+ *              over 20ms; leaving, each object is home within its pass + stagger
+ *              + fade, and then nothing is moved at all. Under reduced motion
+ *              the objects still play and nothing boils. Writes
+ *              docs/detail-paper/boil-steps.webp (two consecutive steps).
  *
  * Pixel checks hide the sky and the dev overlays first: the sky drifts, the
  * neighbours are 85% opaque over it, and the env readout's numbers tick.
@@ -42,11 +52,12 @@
  */
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
-const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,nav,leave,frames,reduced').split(',');
+const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,nav,leave,frames,reduced,life').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -302,6 +313,9 @@ async function checkSprites(browser) {
     const i = objs.indexOf(o.el);
     return { i, x: o.b.x + o.b.width / 2, y: o.b.y + o.b.height / 2 };
   });
+  // The boil moves every pixel of the cover; take it out, so "animates" below
+  // is about the loop and nothing else.
+  await page.evaluate(() => window.__coverLife.set({ boilPx: 0, boilDeg: 0 }));
   await page.mouse.move(target.x, target.y, { steps: 5 });
   await page.waitForTimeout(400);
   const s = await page.evaluate((t) => {
@@ -345,11 +359,13 @@ async function checkRegistration(browser) {
     const rest = await uni();
     const hero = rest.find((u) => u.slot === 0);
     const sides = rest.filter((u) => u.slot === 1);
-    const flat = hero.ripple === 0 && hero.hover === 0 && hero.velocity === 0 && hero.fold === 0;
+    const flat =
+      hero.ripple === 0 && hero.hover === 0 && hero.velocity === 0 && hero.fold === 0 &&
+      hero.boil.x === 0 && hero.boil.y === 0 && hero.boil.rad === 0;
     check(
       flat && hero.sprites > 0 && sides.length === 2 && sides.every((u) => u.ripple > 0),
       `@${dpr}× at rest: hero flat under ${hero.sprites} sprites, neighbours rippled`,
-      `hero ripple ${hero.ripple} dent ${hero.hover} squash ${hero.velocity} fold ${hero.fold}; neighbours ripple ${sides.map((u) => u.ripple.toFixed(4)).join(', ')}`,
+      `hero ripple ${hero.ripple} dent ${hero.hover} squash ${hero.velocity} fold ${hero.fold} boil ${hero.boil.x},${hero.boil.y},${hero.boil.rad}; neighbours ripple ${sides.map((u) => u.ripple.toFixed(4)).join(', ')}`,
     );
     // The dent still applies on the hero — and only while it is hovered.
     const r = await page.evaluate(() => window.__paper.rects().find((q) => q.slot === 0));
@@ -546,6 +562,131 @@ async function checkReduced(browser) {
   await page.context().close();
 }
 
+
+// ── cover life ───────────────────────────────────────────────────────────
+
+const HERO_FACE = {
+  layer: '.detail__panel--center .cover-anim',
+  which: 'cover',
+  // The plate's transform, from the plate: the hero plane's boil uniforms,
+  // about the plane's own centre.
+  plate: `() => {
+    const u = window.__paper.uniforms().find((q) => q.slot === 0);
+    const r = window.__paper.rects().find((q) => q.slot === 0);
+    return { cx: r.cx, cy: r.cy, dx: u.boil.x, dy: u.boil.y, rad: u.boil.rad };
+  }`,
+};
+
+const max = (xs) => Math.max(...xs);
+
+async function checkLife(browser) {
+  console.log('\ncover life: page hover and the boil, on the hero');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    await open(page, '01');
+    await page.waitForSelector(`${HERO_FACE.layer} .cover-anim__plate`, { state: 'attached' });
+    await settleFrames(page, 4);
+    const rest0 = await atRest(page, HERO_FACE);
+    check(
+      rest0.still && rest0.styles === '' && rest0.phases.every((p) => p === 'rest'),
+      `@${dpr}× at rest: nothing boiled, nothing playing`,
+      `plate boil ${rest0.plate.dx},${rest0.plate.dy},${rest0.plate.rad}; layer style "${rest0.styles}"`,
+    );
+
+    const at = await emptyPoint(page, HERO_FACE);
+    const h = await hoverAll(page, HERO_FACE, at);
+    check(
+      h.ms !== null && h.ms <= 200 && h.n === 20,
+      `@${dpr}× hovering the page, on no object: all ${h.n} objects play`,
+      `all playing ${h.ms === null ? 'never' : `${h.ms.toFixed(1)}ms`} after the pointer arrived`,
+    );
+
+    const reg = await registration(page, HERO_FACE, 10);
+    const steps = new Set(reg.map((r) => r.step)).size;
+    const moved = reg.filter((r) => r.moved > 0.05 || Math.abs(r.deg) > 0.01).length;
+    check(
+      max(reg.map((r) => r.worst)) <= 0.5 && moved >= 8 && steps >= 4,
+      `@${dpr}× during the boil, plate and sprites move together`,
+      `worst sprite vs plate ${max(reg.map((r) => r.worst)).toFixed(3)}px over 10 samples × 20 sprites; ${moved}/10 samples boiled (up to ${max(reg.map((r) => r.moved)).toFixed(2)}px, ${max(reg.map((r) => Math.abs(r.deg))).toFixed(2)}°), ${steps} distinct steps`,
+    );
+
+    const fr = await frameTimes(page, async () => {
+      for (let k = 0; k < 60; k++) {
+        await page.mouse.move(at.x + (k % 9), at.y + (k % 7));
+        await page.waitForTimeout(50);
+      }
+    });
+    check(max(fr) <= FRAME_BUDGET_MS, `@${dpr}× frames during the boil`, `worst ${max(fr).toFixed(1)}ms over ${fr.length} frames`);
+
+    const L = await leaveAll(page, HERO_FACE, { x: 3, y: 3 });
+    const j = judgeLeave(L);
+    check(
+      j.all && j.ids.length === 20 && j.over.length === 0,
+      `@${dpr}× leaving, every object finishes its pass and fades home`,
+      `slowest home ${j.worst.toFixed(0)}ms (bound: its pass + ${L.dials.stagger} + 120 + 60); fades begin ${j.fades[0]?.toFixed(0)}–${j.fades.at(-1)?.toFixed(0)}ms, ${j.distinct} distinct 8ms slots${j.over.length ? `; late: ${j.over.map((x) => `${x.id} ${x.t.toFixed(0)}>${x.bound}`).join(', ')}` : ''}`,
+    );
+    await page.waitForTimeout(500); // past boilOutMs
+    const rest1 = await atRest(page, HERO_FACE);
+    check(rest1.still && rest1.styles === '', `@${dpr}× after the leave, everything exactly where it was`, `plate boil ${rest1.plate.dx},${rest1.plate.dy},${rest1.plate.rad}; layer style "${rest1.styles}"`);
+
+    // Pixels: the canvas plate, held boiled, against the DOM plate boiled the
+    // same way (paper off) — sprites at rest in both, so only the plate can
+    // differ. Every paper effect off (`zero`) for the canvas side.
+    await quiet(page);
+    await page.evaluate(() => window.__paper.override({ zero: true }));
+    await settleFrames(page, 3);
+    const rs = (await cards(page)).filter((r) => r.slot === 0);
+    const still = await shot(page);
+    await page.evaluate(() => window.__coverLife.hold('cover', { step: 7, amp: 1 }));
+    await page.waitForTimeout(150);
+    const canvas = await shot(page);
+    await page.evaluate(() => window.__paper.set({ paper: 'off' }));
+    await page.waitForTimeout(350);
+    const dom = await shot(page);
+    const held = await page.evaluate(() => window.__coverLife.sample('cover'));
+    await page.evaluate(() => {
+      window.__coverLife.hold('cover', null);
+      window.__paper.override({});
+      window.__paper.set({ paper: 'on' });
+    });
+    const dReg = diffIn(canvas, dom, rs[0], dpr);
+    const dMove = diffIn(still, canvas, rs[0], dpr);
+    check(
+      dReg <= CARD01_IDENTITY.hero && dMove > 3 * dReg,
+      `@${dpr}× held boiled, the canvas plate is the DOM plate`,
+      `canvas vs DOM ${pct(dReg)} (card 01 hero budget ${pct(CARD01_IDENTITY.hero)}); boiled vs rest ${pct(dMove)} — step ${held.step}, ${held.dx.toFixed(2)},${held.dy.toFixed(2)}px ${held.deg.toFixed(2)}°`,
+    );
+
+    if (dpr === 2) {
+      await page.waitForFunction(() => window.__paper.state() === 'on', null, { timeout: 5000 });
+      await page.evaluate(() => window.__paper.override({ zero: false }));
+      await settleFrames(page, 3);
+      const s = await boilSteps(page, HERO_FACE, 'docs/detail-paper/boil-steps.webp');
+      ok('wrote docs/detail-paper/boil-steps.webp', s.map((x) => `step ${x.step}: ${x.dx.toFixed(2)},${x.dy.toFixed(2)}px ${x.deg.toFixed(2)}°`).join(' | '));
+    }
+    await page.context().close();
+  }
+
+  // Reduced motion: the objects still play; nothing boils.
+  const page = await newPage(browser, VIEWPORTS[0], 1, { reducedMotion: 'reduce' });
+  await open(page, '01');
+  await page.waitForSelector(`${HERO_FACE.layer} .cover-anim__plate`, { state: 'attached' });
+  const at = await emptyPoint(page, HERO_FACE);
+  const h = await hoverAll(page, HERO_FACE, at);
+  let worst = 0;
+  for (let k = 0; k < 10; k++) {
+    await page.waitForTimeout(100);
+    const r = await atRest(page, HERO_FACE);
+    worst = Math.max(worst, Math.abs(r.plate.dx), Math.abs(r.plate.dy), Math.abs(r.plate.rad), r.styles.length);
+  }
+  check(
+    h.ms !== null && h.ms <= 200 && worst === 0,
+    'reduced motion: the page hover plays all 20, nothing boils',
+    `all playing ${h.ms?.toFixed(1)}ms; largest boil seen over 1s: ${worst}`,
+  );
+  await page.context().close();
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   try {
@@ -558,6 +699,7 @@ async function run() {
     if (ONLY.includes('leave')) await checkLeave(browser);
     if (ONLY.includes('frames')) await checkFrames(browser);
     if (ONLY.includes('reduced')) await checkReduced(browser);
+    if (ONLY.includes('life')) await checkLife(browser);
   } finally {
     await browser.close();
   }

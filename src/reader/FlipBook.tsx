@@ -60,6 +60,13 @@ export function FlipBook({
   const engineRef = useRef<FlipEngine | null>(null);
   const leftImgRef = useRef<HTMLImageElement>(null);
   const rightImgRef = useRef<HTMLImageElement>(null);
+  const leftSlotRef = useRef<HTMLDivElement>(null);
+  const rightSlotRef = useRef<HTMLDivElement>(null);
+  // The closed face under each hover layer, which boils with it (the layer's
+  // plate covers it, but not its table shadow or its edge): the cover sits in
+  // the right slot at data-pos="cover", the back in the left at "back".
+  const coverSlot = useCallback(() => [rightSlotRef.current], []);
+  const backSlot = useCallback(() => [leftSlotRef.current], []);
 
   // The engine reads these through getters so it always sees live values
   // without being torn down and rebuilt on every spread change.
@@ -141,12 +148,12 @@ export function FlipBook({
   return (
     <div className="book-stage">
       <div className="book" ref={setBook} data-pos={pos}>
-        <div className="book__page book__page--left">
+        <div className="book__page book__page--left" ref={leftSlotRef}>
           {left && (
             <img ref={leftImgRef} src={left.src} alt={altFor(left)} draggable={false} />
           )}
         </div>
-        <div className="book__page book__page--right">
+        <div className="book__page book__page--right" ref={rightSlotRef}>
           {right && (
             <img ref={rightImgRef} src={right.src} alt={altFor(right)} draggable={false} />
           )}
@@ -165,7 +172,7 @@ export function FlipBook({
           leaf has moved, so the layer is gone by the first frame of the lift. */}
       {anims && spread === 0 && !turning && (
         <div className="book-anim">
-          <CoverAnimLayer manifest={anims} listen={bookEl} />
+          <CoverAnimLayer manifest={anims} listen={bookEl} boilWith={coverSlot} />
         </div>
       )}
       {/* The back cover's, on exactly the mirrored rule: the last spread, nothing
@@ -174,7 +181,7 @@ export function FlipBook({
           same `.book-anim` placement holds. */}
       {anims && spread === spreads.length - 1 && !turning && (
         <div className="book-anim">
-          <CoverAnimLayer manifest={anims} listen={bookEl} face="back" />
+          <CoverAnimLayer manifest={anims} listen={bookEl} face="back" boilWith={backSlot} />
         </div>
       )}
     </div>

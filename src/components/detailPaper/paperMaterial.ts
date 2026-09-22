@@ -1,4 +1,4 @@
-import { ShaderMaterial, Vector2, Vector4 } from 'three';
+import { ShaderMaterial, Vector2, Vector3, Vector4 } from 'three';
 import type { IUniform, Texture } from 'three';
 
 /**
@@ -12,7 +12,7 @@ import type { IUniform, Texture } from 'three';
  * ── THE INVARIANT ─────────────────────────────────────────────────────────
  *
  * With every effect at zero — `uCreaseBlend`, `uCreaseDisplacement`, `uHover`,
- * `uVelocity`, `uRipple`, `uFold` — the plane draws exactly the DOM image it
+ * `uVelocity`, `uRipple`, `uFold`, `uBoil` — the plane draws exactly the DOM image it
  * replaces: its rect is the card's rect, its texture is the card's face resized
  * to the card's device pixels (so it samples 1:1), and every term below either
  * multiplies by one of those uniforms or is exactly 0 or 1 when they are 0. That
@@ -70,6 +70,13 @@ export interface PaperUniforms {
   uRipple: IUniform<number>;
   uFold: IUniform<number>;
   uFoldAmp: IUniform<number>;
+  /**
+   * The cover's BOIL (src/reader/coverLife.ts): a rigid offset (x, y down, CSS
+   * px on screen) and rotation (z, radians, clockwise on screen) about the
+   * card's centre — the very translate/rotate the CoverAnimLayer's sprites are
+   * given, so plate and sprites move together.
+   */
+  uBoil: IUniform<Vector3>;
   /** UV rects (y up) where the crease displacement is held at 0. */
   uSprites: IUniform<Vector4[]>;
   uSpriteCount: IUniform<number>;
@@ -98,6 +105,7 @@ const VERTEX = /* glsl */ `
   uniform float uRipple;
   uniform float uFold;
   uniform float uFoldAmp;
+  uniform vec3 uBoil;
 
   varying vec2 vUv;
 
@@ -135,6 +143,14 @@ const VERTEX = /* glsl */ `
     float zpx = z * uRect.w;
     vec2 c = uViewport * 0.5;
     css = c + (css - c) * (uPerspective / (uPerspective - zpx));
+
+    // The boil, last and in screen space: exactly what CSS does to the DOM
+    // sprites over this plate (rotate about the centre, then translate), on top
+    // of the dent. At uBoil = 0 it is exactly the identity (cos 0 = 1, sin 0 = 0).
+    vec2 rel = css - uRect.xy;
+    float bc = cos(uBoil.z);
+    float bs = sin(uBoil.z);
+    css = uRect.xy + vec2(rel.x * bc - rel.y * bs, rel.x * bs + rel.y * bc) + uBoil.xy;
 
     gl_Position = projectionMatrix * viewMatrix * vec4(css.x, -css.y, 0.0, 1.0);
   }
@@ -241,6 +257,7 @@ export function createPaperMaterial(creases: Texture | null): PaperMaterial {
     uRipple: { value: 0 },
     uFold: { value: 0 },
     uFoldAmp: { value: 1 },
+    uBoil: { value: new Vector3() },
     uSprites: { value: Array.from({ length: MAX_SPRITES }, () => new Vector4()) },
     uSpriteCount: { value: 0 },
   };
