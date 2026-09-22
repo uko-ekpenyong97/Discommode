@@ -97,11 +97,21 @@ function SkyLayer({ env }: SkyLayerProps) {
   useEffect(() => {
     if (!import.meta.env.DEV || !env) return;
     const w = window as unknown as {
-      __skyBenchmark?: (n?: number, b?: number) => number[];
+      __skyBenchmark?: (n?: number, b?: number, withFluid?: boolean) => number[];
       __skyRenderer?: () => string;
+      __skyPinTime?: (s: number | null) => void;
+      __skyFluidAwake?: () => boolean;
+      __skyHoldFluid?: (hold: boolean) => void;
+      __skySplat?: (x: number, y: number, dx: number, dy: number, strength?: number) => void;
     };
-    w.__skyBenchmark = (n, b) => skyEngine()?.benchmark(n, b) ?? [];
+    w.__skyBenchmark = (n, b, f) => skyEngine()?.benchmark(n, b, f) ?? [];
     w.__skyRenderer = () => skyEngine()?.renderer() ?? 'none';
+    // For `scripts/sky-fluid-verify.mjs`: a still clock, so two captures differ
+    // only by what the wake did, and whether the wake has gone back to sleep.
+    w.__skyPinTime = (s) => skyEngine()?.pinTime(s);
+    w.__skyFluidAwake = () => skyEngine()?.fluidAwake() ?? false;
+    w.__skyHoldFluid = (hold) => skyEngine()?.holdFluid(hold);
+    w.__skySplat = (x, y, dx, dy, s) => skyEngine()?.splat(x, y, dx, dy, s);
   }, [env]);
 
   // The fallback wash under the canvas, in the current sky's own colours.

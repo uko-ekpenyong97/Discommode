@@ -17,6 +17,7 @@ import { releaseVelocity, settleTauSeconds } from '../motion';
 import type { PointerSample } from '../motion';
 import type { FlipOrigin } from './useDetail';
 import { useTicker } from './useTicker';
+import { rectEdges, skyWake } from '../sky/skyStage';
 
 /** Once both axes are within this many cells of target, finish the snap. */
 const SNAP_EPSILON = 0.0008;
@@ -330,6 +331,17 @@ export function usePanController(options: PanOptions = {}): PanController {
         const scale = (len - dragDeadZonePx) / len;
         posRef.current.col = originRef.current.pos.col - (dx * scale) / cellSpanX();
         posRef.current.row = originRef.current.pos.row - (dy * scale) / cellSpanY();
+        // The card under the finger drags air with it: its edges splat into
+        // the sky's wake at the speed they are moving. Keyed by the card's
+        // absolute cell, so crossing onto the next card starts a new wake
+        // rather than splatting the jump between them.
+        const hit = cardHitAt(pointerRef.current.x, pointerRef.current.y);
+        if (hit) {
+          skyWake(
+            `grid:${hit.dc + viewRef.current.cc},${hit.dr + viewRef.current.cr}`,
+            rectEdges(hit.cx, hit.cy, hit.w, hit.h),
+          );
+        }
       }
       cardFaceDirtyRef.current = true; // grid moves under the cursor
     } else if (settlingRef.current) {

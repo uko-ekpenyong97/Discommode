@@ -19,6 +19,12 @@
  *
  * `--resolution` re-runs the whole table at a `skyResolution` below 1, which is
  * the lever if a condition comes out over budget.
+ *
+ * `--fluid` measures every frame with the WAKE awake and splatting (a pointer
+ * circling the middle of the screen), which is the most the sky ever costs:
+ * the whole solver — splat, curl, vorticity, divergence, twenty Jacobi
+ * iterations, gradient, two advects — plus the sky reading its texture. See
+ * "The wake" in `docs/sky.md`. The budget is 6ms either way.
  */
 import { chromium } from 'playwright';
 
@@ -31,6 +37,7 @@ const width = flag('--width', 2560);
 const height = flag('--height', 1440);
 const scale = flag('--scale', 2);
 const resolution = flag('--resolution', 1);
+const fluid = args.includes('--fluid');
 
 /** Over this, the sky is eating a 120Hz frame on its own. */
 const BUDGET_MS = 6;
@@ -74,7 +81,8 @@ async function main() {
   });
   console.log(`  ${renderer}`);
   console.log(
-    `  ${width}×${height} @${scale}x, skyResolution ${resolution} → backing store ${backing}\n`,
+    `  ${width}×${height} @${scale}x, skyResolution ${resolution} → backing store ${backing}` +
+      `${fluid ? ', fluid awake' : ''}\n`,
   );
   console.log(`  ${'condition'.padEnd(10)}${'mean'.padStart(8)}${'p95'.padStart(8)}${'max'.padStart(8)}   budget ${BUDGET_MS}ms`);
 
@@ -83,8 +91,8 @@ async function main() {
     await page.evaluate(([c, t]) => window.__skyPreview(c, t), [condition, time]);
     await page.waitForTimeout(SETTLE_MS);
     const times = await page.evaluate(
-      ([n, b]) => window.__skyBenchmark(n, b),
-      [FRAMES, BATCH],
+      ([n, b, f]) => window.__skyBenchmark(n, b, f),
+      [FRAMES, BATCH, fluid],
     );
     times.sort((a, b) => a - b);
     const mean = times.reduce((a, b) => a + b, 0) / times.length;

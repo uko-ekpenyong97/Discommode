@@ -15,6 +15,7 @@ import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
 import { panelStepFor } from '../detailLayout';
 import type { HeroRect } from '../layout/hero';
 import { useTicker } from '../hooks/useTicker';
+import { skySplat } from '../sky/skyStage';
 import type { DetailController } from '../hooks/useDetail';
 import './DetailView.css';
 
@@ -160,6 +161,21 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
       });
     }
     paperRef.current?.frame({ panels: paperPanels, dpos, dt, panelStep });
+
+    // PREV / NEXT pushes air. The card in the hero slot is the one sliding
+    // through the middle of the screen, and its two side edges splat into the
+    // sky's wake at the strip's speed — the cloud behind it parts and swirls.
+    if (dpos !== 0 && dt > 0) {
+      const vx = (-dpos * panelStep) / dt;
+      let lead: PaperPanel | null = null;
+      for (const p of paperPanels) if (!lead || p.dist < lead.dist) lead = p;
+      if (lead) {
+        const { cx, cy, w, h } = lead.rect;
+        for (const x of [cx - w / 2, cx + w / 2]) {
+          for (const y of [cy - h / 3, cy, cy + h / 3]) skySplat(x, y, vx, 0);
+        }
+      }
+    }
 
     // Detail chrome (back pill / bottom bar): fade + drift out with CLEAR. Driven
     // imperatively (transition off) so DialKit scrubbing stays instant; restored
