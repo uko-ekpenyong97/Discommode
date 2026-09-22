@@ -19,7 +19,7 @@ const maxInAir = (p: RiffleLeaf[]) =>
 describe('riffle settings', () => {
   it('ship as specified', () => {
     expect(JUMP).toEqual({
-      riffleMsPer20: 1600,
+      riffleMsPer20: 4000,
       riffleMinMs: 900,
       riffleOverlap: 0.45,
       riffleMaxInAir: 3,
@@ -32,10 +32,10 @@ describe('riffle settings', () => {
 });
 
 describe('riffleMs', () => {
-  it('is 1600ms for twenty spreads, sub-linear either side, floored at 900', () => {
-    expect(riffleMs(20, JUMP)).toBeCloseTo(1600, 6);
-    expect(riffleMs(10, JUMP)).toBeCloseTo(1600 * 0.5 ** 0.7, 6);
-    expect(riffleMs(40, JUMP)).toBeCloseTo(1600 * 2 ** 0.7, 6);
+  it('is 4000ms for twenty spreads, sub-linear either side, floored at 900', () => {
+    expect(riffleMs(20, JUMP)).toBeCloseTo(4000, 6);
+    expect(riffleMs(10, JUMP)).toBeCloseTo(4000 * 0.5 ** 0.7, 6);
+    expect(riffleMs(40, JUMP)).toBeCloseTo(4000 * 2 ** 0.7, 6);
     expect(riffleMs(2, JUMP)).toBe(900);
     expect(riffleMs(0, JUMP)).toBe(0);
   });
@@ -99,7 +99,7 @@ describe('planRiffle', () => {
 
   it('leaves only the fast middle under the half-res threshold on 20→0', () => {
     const slow = planRiffle(20, 0, JUMP).map((l, k) => [k, l.duration] as const).filter(([, d]) => d >= JUMP.riffleHalfResBelowMs);
-    expect(slow.map(([k]) => k)).toEqual([0, 1, 17, 18, 19]);
+    expect(slow.map(([k]) => k)).toEqual([0, 1, 2, 3, 4, 14, 15, 16, 17, 18, 19]);
   });
 
   it('is empty for a jump to where the book already is', () => {

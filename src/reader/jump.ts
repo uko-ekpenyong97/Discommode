@@ -20,6 +20,7 @@ export type RiffleCurve = 'easeInOutCubic' | 'easeInOutSine' | 'easeInOutQuint' 
 
 export interface JumpSettings {
   /** How long a 20-spread riffle takes, first lift to last landing, in ms.
+   *  4000 is Uko's tuning from the READER NAV dock (2026-09-21).
    *  Other distances scale by (n / 20) ^ RIFFLE_DISTANCE_EXP. */
   riffleMsPer20: number;
   /** No riffle is shorter than this, however near the target. */
@@ -36,7 +37,7 @@ export interface JumpSettings {
 }
 
 export const JUMP: JumpSettings = {
-  riffleMsPer20: 1600,
+  riffleMsPer20: 4000,
   riffleMinMs: 900,
   riffleOverlap: 0.45,
   riffleMaxInAir: 3,

@@ -732,13 +732,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
    * `JUMP.riffleHalfResBelowMs` — too fast to be seen at any resolution. Every
    * slower leaf, and the page the book comes to rest on, is full size, so there
    * is no softness anywhere the eye can follow. With the shipped dials on 20→0
-   * that is the middle sixteen leaves; the first (370ms), the second and
-   * second-to-last (166ms) and the last two (513ms) are full size.
+   * that is the middle nine leaves (107–143ms); the first five and last six —
+   * 925ms down to 169ms, and the last two at 1283ms — are full size.
    *
    * The cost of full size is a page decoded at a new scale while other leaves
-   * are moving. At 150 the riffle drops a single frame in roughly 1 run of 10
-   * (the last leaf lifting while the full-size penultimate one is in the air);
-   * see docs/reader.md for the measurements.
+   * are moving; see docs/reader.md for what that costs in frames.
    */
   const isFast = (l: RiffleLeaf): boolean => l.duration < JUMP.riffleHalfResBelowMs;
 

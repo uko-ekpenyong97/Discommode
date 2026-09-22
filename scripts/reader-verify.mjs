@@ -216,9 +216,13 @@ async function checkZOrder(browser) {
       let overlap = 0;
       let wrong = 0;
       let pairs = 0;
-      for (let ms = 0; ms <= 2000; ms += 1000 / 60) {
+      // Every frame until the last leaf has landed, however long the dials make
+      // the run (capped, so a riffle that never lands fails rather than hangs).
+      for (let ms = 0; ms <= 10000; ms += 1000 / 60) {
         await page.evaluate((ms) => window.__flip.probe.hold(ms), ms);
-        const air = await page.evaluate(() => window.__flip.probe.leaves().filter((l) => l.phase === 'air'));
+        const leaves = await page.evaluate(() => window.__flip.probe.leaves());
+        if (leaves.length > 0 && leaves.every((l) => l.phase === 'landed')) break;
+        const air = leaves.filter((l) => l.phase === 'air');
         if (air.length < 2) continue;
         await page.waitForTimeout(30);
         const all = await grab();

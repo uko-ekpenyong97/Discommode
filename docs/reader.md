@@ -190,7 +190,7 @@ Every spread between here and the target turns — no folding — with several
 leaves in the air at once and one curve over the whole run. The schedule is a
 pure function (`planRiffle` in `jump.ts`); the engine runs it.
 
-1. **Length.** `max(riffleMinMs, riffleMsPer20 · (n / 20)^0.7)` — 1600ms for 20
+1. **Length.** `max(riffleMinMs, riffleMsPer20 · (n / 20)^0.7)` — 4000ms for 20
    spreads, sub-linear either side, never under 900ms.
 2. **Lift times** are the run curve's inverse sampled evenly (`riffleCurve`,
    default `cubic-bezier(0.65, 0, 0.35, 1)`): the curve says what share of the
@@ -204,10 +204,12 @@ pure function (`planRiffle` in `jump.ts`); the engine runs it.
    under 320ms, on an ease-out; it lands through the ordinary landing plate and
    handoff, so the book comes to rest exactly as after a Prev/Next.
 
-20→0 with the shipped dials: first leaf 370ms, the middle ~43ms each, the last
-two 513ms each, landing 240ms apart; at most 3 up at once.
-`docs/reader-nav/riffle-20-0.png` is every 4th frame of it at 60Hz, from the
-probe below.
+20→0 with the shipped dials: first leaf 925ms, the middle 107–143ms each, the
+last two 1283ms each, landing 600ms apart; at most 3 up at once. (4000ms is
+Uko's tuning from the dock; the first cut shipped 1600.)
+`docs/reader-nav/riffle-20-0.png` is every 4th frame of a 20→0 riffle at 60Hz,
+from the probe below — captured at the earlier 1600ms, so it shows the same
+choreography at 2.5× the speed.
 
 **How the engine runs it.** The riffle has its own turn layer and one rAF
 clock: two page slots (`near`, under the stack still to lift, and `far`, the top
@@ -226,24 +228,28 @@ Three decisions, each measured (2026-09-21, 20→0 and 0→20):
   20→0; wrapped, 55 / 0, all on the shared hinge.
 - **Leaves too fast to see use half-resolution pages** (`riffle/NN.webp`,
   1000px, from `npm run pages`): any leaf scheduled under
-  `riffleHalfResBelowMs` (150ms). On 20→0 that is the middle sixteen; the first
-  (370ms), second and second-to-last (166ms) and last two (513ms) leaves, and the
-  page the book lands on, are full size, so nothing the eye follows is soft. Full
+  `riffleHalfResBelowMs` (150ms). On 20→0 that is the middle nine (107–143ms);
+  the first five and last six leaves (169ms up to 1283ms), and the page the book
+  lands on, are full size, so nothing the eye follows is soft. Full
   size throughout dropped 1–6 frames of 33–50ms per run, all paint (none with the
   leaves painted flat colours).
 - **Pages are decoded ahead**: the first six leaves' before the clock starts,
   then six ahead of each lift — and the chains the riffle will need are built in
   that same wait, not as leaves lift.
 
-**What full size on the slow leaves costs.** `npm run verify:reader`, 10 runs
-each (2026-09-21): 20→0 at 1× and 2× and 0→20 at 1× each dropped a frame in 1–2
-of 10 runs (a single 33 or 50ms frame); 0→20 at 2× in none. Profiled, the 2×
-misses land at ~1.1s — the last leaf lifting two full-size pages while the
-full-size penultimate leaf is still in the air. So the 513ms leaves at full size
-DO push the riffle over 20ms now and then; the earlier rule (half size for every
-leaf but the first and last) dropped 1 in 30. For scale, an ordinary Next from
-the cover dropped a frame in 6 of 10 runs at 1× and 5 of 10 at 2× in the same
-session. The threshold is a dial; this is the trade it sets.
+**What full size on the slow leaves costs.** Measured with `npm run
+verify:reader` (2026-09-21). At the first cut's 1600ms, 10 runs each: 20→0 at
+1× and 2× and 0→20 at 1× each dropped a frame in 1–2 of 10 runs (a single 33 or
+50ms frame), 0→20 at 2× in none — the misses at the last leaf lifting two
+full-size pages while the full-size penultimate leaf was still in the air. At
+the shipped 4000ms, 5 runs each: 19 of 20 never went over 16.8ms; the one miss
+was a single 33ms frame on 2× 20→0 — with eleven of the twenty leaves full size
+now rather than five, because the longer run is also a slower one. For scale,
+an ordinary Next from the cover dropped a frame in 3 of 5 runs at 1× and 0 of 5
+at 2× in that session. The threshold is a dial; this is the trade it sets.
+
+Z-order at 4000ms: 54 / 28 (1×) and 158 / 73 (2×) wrong-order pixels out of
+3.9–15.9M overlap pixels over 180 pairs per run, all on the shared hinge.
 
 **The dev probe.** In dev, `window.__flip` is the engine and `__flip.probe`
 holds a running riffle at any ms (`hold(ms)`, `hold(null)` resumes), paints its
@@ -257,7 +263,7 @@ READER NAV dock at `#read-NN?intro`; `jump.ts` is the source of truth.
 
 | dial | shipped | |
 | --- | --- | --- |
-| `riffleMsPer20` | 1600 | run length for a 20-spread jump |
+| `riffleMsPer20` | 4000 | run length for a 20-spread jump (Uko's tuning) |
 | `riffleMinMs` | 900 | floor on the run length |
 | `riffleOverlap` | 0.45 | how far a leaf has turned when the next lifts |
 | `riffleMaxInAir` | 3 | most leaves up at once |
