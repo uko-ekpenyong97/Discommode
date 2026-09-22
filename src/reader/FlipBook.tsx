@@ -14,9 +14,9 @@ interface FlipBookProps {
   /** Dev-only frozen-t scrub, from `#read-NN?debug`. */
   debug?: boolean;
   /**
-   * Dev-only: hands the freshly-created engine to a caller that drives it
-   * externally (the `?intro` entrance prototype). A no-op when absent, so the
-   * ordinary reader path is unchanged.
+   * Hands the freshly-created engine up. The reader's chrome drives it (Prev /
+   * Next, the Cover and Back cover jumps, finishing a jump on Escape), and the
+   * doorway drives the cover turn through it.
    */
   onEngineReady?: (engine: FlipEngine) => void;
   /** Cover-animation manifest URL (`Issue.anims`), if the issue has one. */
@@ -31,8 +31,9 @@ const altFor = (page: Page): string => page.label ?? `Page ${pageLabel(page)}`;
  * into — and nothing else. React never re-renders per frame; it only hears back
  * from the engine once a turn has completed, via `onSpreadChange`.
  *
- * The prev/next buttons live outside `.book` on purpose: `.book *` has
- * `pointer-events: none` so the book element itself can own the drag.
+ * The controls live in the reader's bar (ReaderPage), which drives the engine
+ * handed up through `onEngineReady`: `.book *` has `pointer-events: none` so the
+ * book element itself can own the drag, and nothing here competes for it.
  */
 export function FlipBook({
   spreads,
@@ -84,6 +85,8 @@ export function FlipBook({
     });
     engineRef.current = engine;
     onEngineReady?.(engine);
+    // Dev-only handle for the browser checks (the riffle probe among them).
+    if (import.meta.env.DEV) (window as unknown as { __flip?: FlipEngine }).__flip = engine;
 
     return () => {
       engine.destroy();
@@ -128,9 +131,6 @@ export function FlipBook({
     }
   }, [spread, spreads]);
 
-  const turnPrev = useCallback(() => engineRef.current?.turn('prev'), []);
-  const turnNext = useCallback(() => engineRef.current?.turn('next'), []);
-
   // Guard the index: a caller that hasn't clamped shouldn't throw here.
   const [left, right] = spreads[spread] ?? [null, null];
 
@@ -140,16 +140,6 @@ export function FlipBook({
 
   return (
     <div className="book-stage">
-      <button
-        type="button"
-        className="book-nav book-nav--prev"
-        aria-label="Previous spread"
-        disabled={spread === 0}
-        onClick={turnPrev}
-      >
-        &lsaquo;
-      </button>
-
       <div className="book" ref={setBook} data-pos={pos}>
         <div className="book__page book__page--left">
           {left && (
@@ -178,16 +168,15 @@ export function FlipBook({
           <CoverAnimLayer manifest={anims} listen={bookEl} />
         </div>
       )}
-
-      <button
-        type="button"
-        className="book-nav book-nav--next"
-        aria-label="Next spread"
-        disabled={spread >= spreads.length - 1}
-        onClick={turnNext}
-      >
-        &rsaquo;
-      </button>
+      {/* The back cover's, on exactly the mirrored rule: the last spread, nothing
+          in the air. At data-pos="back" the book slides the other way and its
+          LEFT slot lands on the hero rect — the same box as the cover's, so the
+          same `.book-anim` placement holds. */}
+      {anims && spread === spreads.length - 1 && !turning && (
+        <div className="book-anim">
+          <CoverAnimLayer manifest={anims} listen={bookEl} face="back" />
+        </div>
+      )}
     </div>
   );
 }

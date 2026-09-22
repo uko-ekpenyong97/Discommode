@@ -20,8 +20,22 @@
  * checkout are invisible to every git safety net, and `git reset --hard` will
  * happily destroy them. Only the WebPs are committed and deployed.
  *
+ * Every NUMBERED page also gets a half-resolution copy,
+ *
+ *   public/issues/<issue>/riffle/NN.webp   1000px wide
+ *
+ * which the reader's riffle draws on every leaf but its first and last
+ * (flipEngine `isFast`): a riffle crosses too many pages too fast for each one
+ * to be decoded at full size at a new scale. The cover and back only ever ride
+ * a first or last leaf, so they have none.
+ *
  *   npm run pages           # only rebuilds pages whose PNG is newer
  *   npm run pages -- --force
+ *
+ * A fresh worktree converts NOTHING on the plain run: checkout stamps every
+ * committed WebP newer than its PNG. Use --force there — the encoder is
+ * deterministic, so unchanged pages come out byte for byte and only real
+ * changes show in git.
  */
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -36,6 +50,9 @@ const OUTPUT_DIR = fileURLToPath(new URL('../public/issues/', import.meta.url));
 
 /** WebP quality. 82 is visually lossless on these scans at 2000px wide. */
 const QUALITY = 82;
+/** The riffle copies: width and quality. Seen for a frame or two at speed. */
+const RIFFLE_W = 1000;
+const RIFFLE_QUALITY = 72;
 /** Every page must be exactly this. A wrong export size is caught here first. */
 const PAGE_W = 2000;
 const PAGE_H = 2600;
@@ -105,6 +122,20 @@ async function alphaNote(issue, name, pngPath, webpPath) {
   return '   hasAlpha: true';
 }
 
+let riffleWritten = 0;
+
+/** The half-resolution copy of a numbered page, on the same up-to-date rule. */
+async function riffleCopy(issue, name, pngPath, pngStat) {
+  if (!/^\d{2}\.png$/.test(name)) return;
+  const dir = join(OUTPUT_DIR, issue, 'riffle');
+  const out = join(dir, name.replace(/\.png$/, '.webp'));
+  const outStat = await statOrNull(out);
+  if (!force && outStat && outStat.mtimeMs > pngStat.mtimeMs) return;
+  await mkdir(dir, { recursive: true });
+  await sharp(pngPath).resize(RIFFLE_W).webp({ quality: RIFFLE_QUALITY }).toFile(out);
+  riffleWritten += 1;
+}
+
 async function convert(issue, name) {
   const pngPath = join(SOURCE_DIR, issue, name);
   const webpName = name.replace(/\.png$/, '.webp');
@@ -119,6 +150,8 @@ async function convert(issue, name) {
   if (width !== PAGE_W || height !== PAGE_H) {
     warnings.push(`${issue}/${name} is ${width}x${height}, expected ${PAGE_W}x${PAGE_H}`);
   }
+
+  await riffleCopy(issue, name, pngPath, pngStat);
 
   if (!force && webpStat && webpStat.mtimeMs > pngStat.mtimeMs) {
     pngTotal += pngStat.size;
@@ -167,7 +200,7 @@ for (const issue of issues) {
   for (const name of files) await convert(issue, name);
 }
 
-console.log(`\n${converted} converted, ${skipped} up to date`);
+console.log(`\n${converted} converted, ${skipped} up to date, ${riffleWritten} riffle copies written`);
 console.log(`total  ${mb(pngTotal)} PNG → ${mb(webpTotal)} WebP   ${Math.round((1 - webpTotal / pngTotal) * 100)}% smaller`);
 
 if (warnings.length > 0) {

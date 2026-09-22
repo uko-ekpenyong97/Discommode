@@ -3,8 +3,8 @@
    --bw (the book's live pixel width), so a resize needs no rebuild. */
 
 /* Absolutely centred on the viewport (vw/2, vh/2) so the book sits on the hero
-   rect regardless of the caption below — the cover then lands exactly on the
-   detail card. Full width so the nav buttons still flank near the viewport edges. */
+   rect regardless of the chrome above and below it — the cover then lands
+   exactly on the detail card. */
 .book-stage {
   position: absolute;
   top: 50%;
@@ -14,46 +14,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-/* Nav sits OUTSIDE .book (which disables pointer events on its subtree) and is
-   absolutely positioned, so it flanks the book without competing for its width. */
-.book-nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 44px;
-  height: 64px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-  /* A quiet dark chip: the old near-transparent white fill vanished on wood. */
-  background: rgba(0, 0, 0, 0.28);
-  color: rgba(255, 255, 255, 0.78);
-  font-family: var(--mono);
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  /* Fades in with the reader chrome (--doorway-chrome); 1 for the plain reader. */
-  opacity: var(--doorway-chrome, 1);
-  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
-}
-.book-nav:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.42);
-  border-color: rgba(255, 255, 255, 0.3);
-  color: #fff;
-}
-.book-nav:disabled {
-  /* Still gated by the chrome fade, so a disabled ‹ isn't visible at REST. */
-  opacity: calc(0.22 * var(--doorway-chrome, 1));
-  cursor: default;
-}
-.book-nav--prev {
-  left: 16px;
-}
-.book-nav--next {
-  right: 16px;
 }
 
 .book {
@@ -183,6 +143,13 @@
   z-index: 7;
 }
 
+/* A cut's incoming spread (flipEngine `cutTo`): above the static slots it fades
+   in over, and — unlike the landing plate — it casts the table shadow, because
+   the static slots' shadows are fading out with them underneath. */
+.book__page--cut {
+  z-index: 7;
+}
+
 /* Permanently empty as far as React is concerned; the engine owns its subtree.
    Both this and .book__turn must carry preserve-3d — see DEVIATION 1 above. */
 .book__turn-host,
@@ -193,6 +160,17 @@
 }
 
 /* ── the curl ───────────────────────────────────────────────────────────── */
+
+/* A riffle leaf's own box (flipEngine `takeCurl`): the book's perspective, but
+   FLAT, so each leaf renders its curl in 3D inside it and the leaves stack by
+   z-index rather than by Chrome's depth sort, which gets curled leaves sharing a
+   hinge partly wrong (see the measurement at `takeCurl`). Same box and perspective origin as the book, so a leaf in here
+   is pixel-for-pixel where it would be without it. */
+.flip-leaf {
+  position: absolute;
+  inset: 0;
+  perspective: 2600px;
+}
 
 .flip-curl {
   position: absolute;

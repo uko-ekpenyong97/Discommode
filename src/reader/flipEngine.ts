@@ -11,7 +11,9 @@
  * the chain, so a single scalar `t` bends the whole leaf into a curve.
  */
 import { animate } from 'motion';
-import type { Spread } from './issue-01';
+import type { Page, Spread } from './issue-01';
+import { CUT_MS, INNER_LEAF_EASE, JUMP, LAST_LEAF_EASE, cubicBezier, planRiffle } from './jump';
+import type { RiffleLeaf } from './jump';
 
 export type TurnDir = 'next' | 'prev';
 
@@ -60,6 +62,7 @@ const PLATE_T = 0.985;
 /** Crossfade from the chain to the flat plate, in ms. */
 const PLATE_FADE_MS = 80;
 
+
 /** Fraction of the book's width that a full 0->1 drag covers. */
 const DRAG_SPAN = 0.62;
 /** Movement below this reads as a tap, which flips. */
@@ -107,6 +110,33 @@ export interface FlipEngine {
   /** Start and complete a turn in one call (buttons, arrow keys). */
   turn: (dir: TurnDir, duration?: number) => void;
   /**
+   * Jump to any spread — a riffle of leaves or a cut, per `JUMP.mode`. False
+   * (and nothing happens) if the book is busy: a turn, a drag or another jump
+   * is in flight. A one-spread jump is a riffle of one leaf.
+   */
+  turnTo: (index: number) => boolean;
+  /** True from a jump's first frame until its last leaf lands. */
+  jumping: () => boolean;
+  /**
+   * Land a running jump NOW: drop whatever is in the air and hand React the
+   * target. Returns whether there was one. Escape runs this before the exit.
+   */
+  finishJump: () => boolean;
+  /** Fetch and decode the pages a jump to `index` would show, ahead of it —
+   *  the Cover / Back cover buttons call this on hover and focus. */
+  prepareJump: (index: number) => void;
+  /**
+   * Dev-only probe for the riffle checks: `hold(ms)` renders the running riffle
+   * at `ms` from its start and freezes it there (`null` resumes the clock);
+   * `colours` paints each leaf a flat hue so their order can be read off the
+   * pixels; `leaves` reports every leaf's phase, t, chain angle and z-index.
+   */
+  probe: {
+    hold: (ms: number | null) => void;
+    colours: (on: boolean) => void;
+    leaves: () => { k: number; from: number; to: number; phase: string; t: number; tt: number; z: string }[];
+  };
+  /**
    * Called from a layout effect once React has committed the new spread, with
    * the newly-mounted static <img> elements. Removal is deferred until those
    * have decoded — see the implementation.
@@ -133,6 +163,46 @@ interface TurnState {
    *  cover/back turn (half a page), 0 otherwise. `applyTurn` lerps between them. */
   slideFromK: number;
   slideToK: number;
+}
+
+/** A jump in progress: from its first frame until it has landed. */
+interface Jump {
+  target: number;
+}
+
+/** One leaf of a riffle, as the engine runs it. */
+interface LiveLeaf extends RiffleLeaf {
+  k: number;
+  phase: 'pending' | 'air' | 'landed';
+  curl: Curl | null;
+  ease: (x: number) => number;
+  /** The leaf's current t and chain angle, for ordering and the dev probe. */
+  t: number;
+  tt: number;
+}
+
+/**
+ * A riffle: its own turn layer, driven by one clock. The layer holds two page
+ * slots — `near`, the page showing under the stack still to lift, and `far`, the
+ * top of the landed stack — and one strip chain per leaf in the air.
+ */
+interface Riffle {
+  dir: TurnDir;
+  origin: number;
+  target: number;
+  leaves: LiveLeaf[];
+  layer: HTMLDivElement;
+  near: HTMLDivElement;
+  far: HTMLDivElement;
+  t0: number | null;
+  raf: number;
+  /** Dev probe: render this ms and hold, instead of the clock. */
+  held: number | null;
+  frame: number;
+  /** A near-slot swap waiting for its leaf's faces to have painted. */
+  pendingNear: { src: string | null; frame: number } | null;
+  plated: boolean;
+  done: boolean;
 }
 
 /** A built strip chain, cached per direction and reused across turns. */
@@ -217,6 +287,19 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   /** Bumped by every startTurn, so a deferred handoff can tell it was superseded. */
   let turnSeq = 0;
   let destroyed = false;
+  /** Set for the whole of a jump, first frame to landing. Locks drag and turns. */
+  let jump: Jump | null = null;
+  /** The riffle in flight, if the jump is one. */
+  let riffle: Riffle | null = null;
+  /** Spare strip chains for riffle leaves, per direction — each already in its
+   *  own `.flip-leaf` wrapper (see `takeCurl`). */
+  const pool: Record<TurnDir, Curl[]> = { next: [], prev: [] };
+  const wraps = new WeakMap<Curl, HTMLDivElement>();
+  /** Dev probe: paint riffle leaves as flat colours, to check their order. */
+  let debugColours = false;
+  /** A cut's fades — the plates in, the static slots out. Cancelled by clearTurn,
+   *  which is what puts the static slots back to full opacity. */
+  let cutFades: Animation[] = [];
   /** Whether a turn layer is currently up. Reported on edges only, so a caller
    *  can treat `onTurnActive` as a state change rather than a stream. */
   let turnActive = false;
@@ -280,15 +363,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   // --- the curl math ------------------------------------------------------
   function applyTurn(t: number): void {
     if (state) state.t = t;
-
-    const th = Math.PI * t; // true half-turn
-    const beta = BETA * Math.sin(Math.PI * t); // overshoot: 0 at both ends
-    const tt = th + beta; // chain rotation, runs past 180deg and back
-    const td = (2 * beta) / STRIP_COUNT; // per-strip hinge
-
-    book.style.setProperty('--tt', `${(tt * DEG).toFixed(2)}deg`);
-    book.style.setProperty('--td', `${(td * DEG).toFixed(3)}deg`);
-    book.style.setProperty('--shade', Math.sin(Math.PI * t).toFixed(3));
+    bend(book, strips, t);
 
     // Book slide, tied to t so it tracks a drag and springs back on cancel. Only
     // written for a cover/back turn; other turns leave the CSS data-pos value.
@@ -296,6 +371,23 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       const k = state.slideFromK + (state.slideToK - state.slideFromK) * t;
       book.style.setProperty('--book-slide', `${(k * book.clientWidth).toFixed(2)}px`);
     }
+  }
+
+  /**
+   * The curl at `t`, written onto `host` (whose descendants read `--tt`, `--td`
+   * and `--shade`) and the chain's own strips. An ordinary turn writes onto the
+   * book; a riffle writes onto each leaf's own chain root, since several are in
+   * the air at once. Returns the chain angle.
+   */
+  function bend(host: HTMLElement, strips: HTMLDivElement[], t: number): number {
+    const th = Math.PI * t; // true half-turn
+    const beta = BETA * Math.sin(Math.PI * t); // overshoot: 0 at both ends
+    const tt = th + beta; // chain rotation, runs past 180deg and back
+    const td = (2 * beta) / STRIP_COUNT; // per-strip hinge
+
+    host.style.setProperty('--tt', `${(tt * DEG).toFixed(2)}deg`);
+    host.style.setProperty('--td', `${(td * DEG).toFixed(3)}deg`);
+    host.style.setProperty('--shade', Math.sin(Math.PI * t).toFixed(3));
 
     const last = strips.length - 1;
     for (let i = 0; i < strips.length; i++) {
@@ -311,6 +403,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       st.setProperty('--a1', ((1 - l1) * 0.55 * taper).toFixed(3));
       st.setProperty('--a2', ((1 - l2) * 0.55 * taper).toFixed(3));
     }
+    return tt;
   }
 
   // --- turn control -------------------------------------------------------
@@ -328,6 +421,16 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   function clearTurn(): void {
     fade?.cancel();
     fade = null;
+    // A cut faded the static slots; they come back in the same step the plates
+    // go, which is the step React has already put the target spread in them.
+    for (const a of cutFades) a.cancel();
+    cutFades = [];
+    if (riffle) {
+      cancelAnimationFrame(riffle.raf);
+      riffle.done = true;
+      for (const l of riffle.leaves) if (l.curl) giveCurl(riffle.dir, l.curl);
+      riffle = null;
+    }
     turnHost.replaceChildren(); // detaches the cached curl; it is reused as-is
     // Dropped in the SAME synchronous step as the layer, so the static page
     // reappears in the very frame the thing covering it goes away.
@@ -413,12 +516,22 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   }
 
   function startTurn(dir: TurnDir): boolean {
+    const from = getSpread();
+    return startTurnBetween(from, dir === 'next' ? from + 1 : from - 1);
+  }
+
+  /**
+   * Build a turn layer from spread `from` to spread `to`. Adjacent for every
+   * ordinary turn; a riffle's first leaf may skip spreads, lifting the current
+   * page and landing on one further on — the chain does not care which two pages
+   * it carries.
+   */
+  function startTurnBetween(from: number, to: number): boolean {
     killTween();
     clearTurn();
     const spreads = getSpreads();
-    const from = getSpread();
-    const to = dir === 'next' ? from + 1 : from - 1;
-    if (to < 0 || to >= spreads.length) return false; // no wraparound
+    if (to === from || to < 0 || to >= spreads.length) return false; // no wraparound
+    const dir: TurnDir = to > from ? 'next' : 'prev';
 
     // next: lift the current right page, its back is the new left, and the new
     // right is revealed underneath. prev is the mirror of that.
@@ -576,10 +689,424 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
 
   function turn(dir: TurnDir, duration = TURN_S): void {
     // A turn already completing owns the layer — restarting it from t=0 reads as
-    // a snap-back. Drags are different: they take the running turn OVER.
-    if (tween) return;
+    // a snap-back. Drags are different: they take the running turn OVER. A jump
+    // owns the book outright until it lands.
+    if (tween || jump) return;
     if (!startTurn(dir)) return;
     commitTurn(duration);
+  }
+
+  // --- jumps --------------------------------------------------------------
+  /**
+   * Busy is anything that owns the layer: a tween, a drag, a live turn held by
+   * something else (the doorway's cover turn drives applyTurn with no tween), a
+   * commit React has not painted yet, or another jump.
+   */
+  function busy(): boolean {
+    return !!(tween || drag || jump || pendingCommit !== null || (state && !state.committed));
+  }
+
+  /** Decodes in flight or done, by src. A page decoded once is warm in the
+   *  image cache for the next jump that needs it. */
+  const decodes = new Map<string, Promise<void>>();
+  function decode(src: string): Promise<void> {
+    const cached = decodes.get(src);
+    if (cached) return cached;
+    const img = new Image();
+    img.src = src;
+    // A failed decode is not cached (the next jump retries) and does not hold
+    // the riffle: the leaf goes, as an ordinary turn would on a cold page.
+    const p = img.decode().catch(() => {
+      decodes.delete(src);
+    });
+    decodes.set(src, p);
+    return p;
+  }
+
+  const slideKOf = (i: number): number =>
+    i === 0 ? -0.25 : i === getSpreads().length - 1 ? 0.25 : 0;
+
+  /**
+   * Which leaves draw their pages from the half-resolution riffle set
+   * (`Page.riffle`, 1000px wide): those scheduled to cross in under
+   * `JUMP.riffleHalfResBelowMs` — too fast to be seen at any resolution. Every
+   * slower leaf, and the page the book comes to rest on, is full size, so there
+   * is no softness anywhere the eye can follow. With the shipped dials on 20→0
+   * that is the middle nine leaves (107–143ms); the first five and last six —
+   * 925ms down to 169ms, and the last two at 1283ms — are full size.
+   *
+   * The cost of full size is a page decoded at a new scale while other leaves
+   * are moving; see docs/reader.md for what that costs in frames.
+   */
+  const isFast = (l: RiffleLeaf): boolean => l.duration < JUMP.riffleHalfResBelowMs;
+
+  /** The image a leaf should use for `page`. */
+  const srcFor = (page: Page | null, fast: boolean): string | null =>
+    page ? (fast && page.riffle ? page.riffle : page.src) : null;
+
+  /** The pages a riffle leaf puts on screen: its back and what it reveals. */
+  function leafPages(l: RiffleLeaf): string[] {
+    const fast = isFast(l);
+    const s = getSpreads()[l.to];
+    return [srcFor(s[0], fast), srcFor(s[1], fast)].filter((x): x is string => !!x);
+  }
+
+  /** How many leaves ahead of the one lifting are decoded in advance. */
+  const DECODE_AHEAD = 6;
+
+  function prepareJump(index: number): void {
+    const from = getSpread();
+    if (JUMP.mode === 'cut' || index === from || index < 0 || index >= getSpreads().length) return;
+    for (const l of planRiffle(from, index, JUMP).slice(0, DECODE_AHEAD)) for (const src of leafPages(l)) void decode(src);
+  }
+
+  function turnTo(index: number): boolean {
+    const spreads = getSpreads();
+    const from = getSpread();
+    if (busy() || index === from || index < 0 || index >= spreads.length) return false;
+    if (JUMP.mode === 'cut') return cutTo(from, index);
+
+    const plan = planRiffle(from, index, JUMP);
+    const dir: TurnDir = index > from ? 'next' : 'prev';
+    const near = dir === 'next' ? 1 : 0; // the side leaves lift from
+    const nearSide = near === 1 ? 'right' : 'left';
+    const farSide = near === 1 ? 'left' : 'right';
+    const inner = cubicBezier(INNER_LEAF_EASE);
+    const lastEase = cubicBezier(LAST_LEAF_EASE);
+
+    killTween();
+    clearTurn();
+    const layer = document.createElement('div');
+    layer.className = 'book__turn';
+    const nearSlot = buildPlate(nearSide, spreads[from][near]?.src ?? null);
+    const farSlot = buildPlate(farSide, spreads[from][1 - near]?.src ?? null);
+    // Slots, not landing plates: under every leaf, and casting the table shadow.
+    for (const slot of [nearSlot, farSlot]) slot.classList.replace('book__page--plate', 'book__page--slot');
+    layer.append(nearSlot, farSlot);
+    turnHost.append(layer);
+    turnSeq++;
+    setTurnActive(true);
+
+    const r: Riffle = {
+      dir,
+      origin: from,
+      target: index,
+      leaves: plan.map((l, k) => ({ ...l, k, phase: 'pending', curl: null, ease: l.last ? lastEase : inner, t: 0, tt: 0 })),
+      layer,
+      near: nearSlot,
+      far: farSlot,
+      t0: null,
+      raf: 0,
+      held: null,
+      frame: 0,
+      pendingNear: null,
+      plated: false,
+      done: false,
+    };
+    jump = { target: index };
+    riffle = r;
+    // The chains the riffle will need, built now — in the decode wait — rather
+    // than as leaves lift: 196 nodes each is not something to allocate mid-run.
+    const want = Math.max(1, Math.round(JUMP.riffleMaxInAir)) + 1;
+    for (let i = pool[dir].length; i < want; i++) giveCurl(dir, takeCurl(dir));
+
+    // The static spread goes under the slots once they have painted — they show
+    // exactly what it shows, so until then it is what the reader sees.
+    const seq = turnSeq;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (destroyed || turnSeq !== seq) return;
+        book.classList.add(LIFTING_CLASS.next, LIFTING_CLASS.prev);
+      }),
+    );
+
+    // The first leaves' pages decoded before the clock starts; the rest follow
+    // ahead of the lifts as the riffle runs (see `render`).
+    void Promise.all(plan.slice(0, DECODE_AHEAD).flatMap(leafPages).map(decode)).then(() => {
+      if (destroyed || riffle !== r || r.held !== null) return;
+      r.raf = requestAnimationFrame(tickOf(r));
+    });
+    return true;
+  }
+
+  function tickOf(r: Riffle): FrameRequestCallback {
+    const tick = (now: number) => {
+      if (riffle !== r || r.done || r.held !== null) return;
+      r.t0 ??= now;
+      render(r, now - r.t0);
+      if (!r.done) r.raf = requestAnimationFrame(tick);
+    };
+    return tick;
+  }
+
+  const probe: FlipEngine['probe'] = {
+    hold(ms) {
+      const r = riffle;
+      if (!import.meta.env.DEV || !r) return;
+      cancelAnimationFrame(r.raf);
+      if (ms === null) {
+        const at = r.held ?? 0;
+        r.held = null;
+        r.t0 = performance.now() - at;
+        r.raf = requestAnimationFrame(tickOf(r));
+        return;
+      }
+      r.held = ms;
+      // Twice: a near-slot swap waits one render for its leaf's faces.
+      render(r, ms);
+      if (!r.done) render(r, ms);
+    },
+    colours(on) {
+      if (import.meta.env.DEV) debugColours = on;
+    },
+    leaves() {
+      return (riffle?.leaves ?? []).map((l) => ({
+        k: l.k,
+        from: l.from,
+        to: l.to,
+        phase: l.phase,
+        t: l.t,
+        tt: l.tt,
+        z: l.curl ? wrapOf(l.curl).style.zIndex : '',
+      }));
+    },
+  };
+
+  /**
+   * A spare chain for a riffle leaf. The pool grows to the most ever in the air.
+   *
+   * Each chain lives in its own `.flip-leaf` wrapper, which carries the book's
+   * perspective and is itself FLAT. That is load-bearing: with every chain in
+   * the book's one 3D rendering context, Chrome depth-sorts the curled strips
+   * of leaves that share a hinge and gets some of it wrong. Measured on 20→0
+   * with each leaf painted a flat hue and its coverage taken from renders of it
+   * alone: 2,499 (1x) and 13,075 (2x) overlap pixels drew the lower leaf on top,
+   * worst as the last two leaves come down together. Wrapped, each leaf renders
+   * its curl in 3D inside its own box and the boxes composite as coplanar
+   * layers, where z-index decides — and `render` sets it by the physical rule:
+   * 55 and 0, all of them on the shared hinge.
+   */
+  function takeCurl(dir: TurnDir): Curl {
+    const curl = pool[dir].pop() ?? buildCurl(dir);
+    if (!wraps.has(curl)) {
+      const wrap = document.createElement('div');
+      wrap.className = 'flip-leaf';
+      wrap.append(curl.root);
+      wraps.set(curl, wrap);
+    }
+    return curl;
+  }
+  const wrapOf = (curl: Curl): HTMLDivElement => wraps.get(curl)!;
+  function giveCurl(dir: TurnDir, curl: Curl): void {
+    const wrap = wrapOf(curl);
+    wrap.remove();
+    wrap.style.zIndex = '';
+    pool[dir].push(curl);
+  }
+
+  const DEBUG_HUES = ['#e02020', '#20b040', '#2050e0', '#e0c020', '#c020c0', '#20c0c0'];
+
+  /** Swap a slot's page for another, on top of the old one until it decodes. */
+  function swapSlot(slot: HTMLDivElement, src: string | null): void {
+    const old = [...slot.querySelectorAll('img')];
+    if (!src) {
+      for (const img of old) img.remove();
+      return;
+    }
+    if (old.at(-1)?.getAttribute('src') === src) return;
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = '';
+    img.draggable = false;
+    slot.append(img);
+    const drop = () => old.forEach((o) => o.remove());
+    void img.decode().then(drop, drop);
+  }
+
+  /**
+   * The riffle at `ms` from its start. Pure in the schedule — every leaf's t is
+   * a function of `ms` — so the dev probe can hold any moment of it; the side
+   * effects (lifting, landing) happen in leaf order, once each, as `ms` passes
+   * them.
+   */
+  function render(r: Riffle, ms: number): void {
+    r.frame++;
+    const spreads = getSpreads();
+    const near = r.dir === 'next' ? 1 : 0;
+    const farSide = near === 1 ? 'left' : 'right';
+
+    // A near swap waits one frame after its leaf lifted, so the leaf's faces
+    // have painted over the page before the page under it changes.
+    if (r.pendingNear && r.frame > r.pendingNear.frame) {
+      swapSlot(r.near, r.pendingNear.src);
+      r.pendingNear = null;
+    }
+
+    for (const l of r.leaves) {
+      if (l.phase === 'landed') continue;
+      const local = (ms - l.start) / l.duration;
+      if (local <= 0) continue;
+      if (l.phase === 'pending') {
+        l.phase = 'air';
+        l.curl = takeCurl(r.dir);
+        const fast = isFast(l);
+        // The lifting page is whatever the near slot showed — so it is fast only
+        // if the leaf before this one was (the slot swapped to it at that size).
+        const prev = r.leaves[l.k - 1];
+        const liftFast = prev ? isFast(prev) : false;
+        const lift = srcFor(spreads[l.from][near], liftFast && fast);
+        const back = srcFor(spreads[l.to][1 - near], fast);
+        if (import.meta.env.DEV && debugColours) {
+          const hue = DEBUG_HUES[l.k % DEBUG_HUES.length];
+          for (const f of [...l.curl.fronts, ...l.curl.backs]) {
+            f.style.backgroundImage = 'none';
+            f.style.backgroundColor = hue;
+          }
+        } else {
+          for (const f of [...l.curl.fronts, ...l.curl.backs]) f.style.backgroundColor = '';
+          paintCurl(l.curl, lift, back);
+        }
+        r.layer.append(wrapOf(l.curl));
+        r.pendingNear = { src: srcFor(spreads[l.to][near], fast), frame: r.frame };
+        // Keep the decode ahead of the lifts.
+        for (const ahead of r.leaves.slice(l.k + 1, l.k + 1 + DECODE_AHEAD)) {
+          for (const src of leafPages(ahead)) void decode(src);
+        }
+      }
+      if (local < 1) {
+        l.t = l.ease(local);
+        l.tt = bend(l.curl!.root, l.curl!.strips, l.t);
+        if (l.last && l.t >= PLATE_T) plateRiffle(r, farSide, spreads[l.to][1 - near]?.src ?? null);
+        continue;
+      }
+      // Landed.
+      l.t = 1;
+      l.phase = 'landed';
+      if (l.last) {
+        bend(l.curl!.root, l.curl!.strips, 1);
+        plateRiffle(r, farSide, spreads[l.to][1 - near]?.src ?? null);
+        r.done = true;
+        jump = null;
+        // An ordinary commit from here: React is handed the target, and the
+        // handoff drops the layer (after the plate's crossfade) in the frame it
+        // paints — exactly as a Prev/Next turn lands.
+        pendingCommit = r.target;
+        opts.onSpreadChange(r.target);
+        continue;
+      }
+      // An inner leaf lies flat on the landed stack: the far slot takes its page
+      // and the chain goes back to the pool. React hears the spread, so the
+      // caption and the hash count along with the pages.
+      swapSlot(r.far, srcFor(spreads[l.to][1 - near], isFast(l)));
+      giveCurl(r.dir, l.curl!);
+      l.curl = null;
+      opts.onSpreadChange(l.to);
+    }
+
+    // Front to back: the leaf standing more upright is higher off the table,
+    // whichever side of the spine it leans to — sin of its chain angle.
+    const air = r.leaves.filter((l) => l.phase === 'air' && l.curl);
+    air.sort((a, b) => Math.sin(a.tt) - Math.sin(b.tt));
+    air.forEach((l, i) => {
+      wrapOf(l.curl!).style.zIndex = String(10 + i);
+    });
+
+    // The book slides with whichever leaf leaves or reaches a closed end.
+    let slide: number | null = null;
+    for (const l of r.leaves) {
+      const a = slideKOf(l.from);
+      const b = slideKOf(l.to);
+      if (a === b || l.phase === 'pending') continue;
+      slide = a + (b - a) * (l.phase === 'landed' ? 1 : l.t);
+    }
+    if (slide !== null) book.style.setProperty('--book-slide', `${(slide * book.clientWidth).toFixed(2)}px`);
+  }
+
+  /** The last leaf's landing plate, crossfaded in over it exactly as a turn's. */
+  function plateRiffle(r: Riffle, side: 'left' | 'right', src: string | null): void {
+    if (r.plated) return;
+    r.plated = true;
+    const plate = buildPlate(side, src);
+    plate.style.zIndex = '50';
+    plate.style.opacity = '0';
+    r.layer.append(plate);
+    const anim = plate.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: PLATE_FADE_MS,
+      easing: 'linear',
+      fill: 'forwards',
+    });
+    fade = anim;
+    void anim.finished.then(
+      () => {
+        if (fade === anim) fade = null;
+      },
+      () => {
+        if (fade === anim) fade = null;
+      },
+    );
+  }
+
+  /**
+   * The cut: the target spread fades in over the current one. The plates sit
+   * where the target spread will rest — offset by the change in book slide, since
+   * the cover and back spreads rest half a page off-centre — and the static slots
+   * fade out under them on an ease-in, so the pair never dips far below opaque
+   * where they overlap. Landing is an ordinary commit: React is handed the
+   * target, and the handoff drops the plates in the frame it paints.
+   */
+  function cutTo(from: number, to: number): boolean {
+    killTween();
+    clearTurn();
+    const spreads = getSpreads();
+    const lastSpread = spreads.length - 1;
+    const slideK = (i: number): number => (i === 0 ? -0.25 : i === lastSpread ? 0.25 : 0);
+    jump = { target: to };
+
+    const layer = document.createElement('div');
+    layer.className = 'book__turn';
+    const dx = (slideK(to) - slideK(from)) * book.clientWidth;
+    if (dx !== 0) layer.style.transform = `translateX(${dx.toFixed(2)}px)`;
+    const [left, right] = spreads[to];
+    const plates = [buildPlate('left', left?.src ?? null), buildPlate('right', right?.src ?? null)];
+    for (const plate of plates) {
+      // Not a landing plate: these cast the table shadow, since the static slots
+      // (and their shadows) are fading out underneath.
+      plate.classList.replace('book__page--plate', 'book__page--cut');
+      layer.append(plate);
+    }
+    turnHost.append(layer);
+    turnSeq++;
+    setTurnActive(true);
+
+    const current = jump;
+    const timing = { duration: CUT_MS, fill: 'forwards' as const };
+    const incoming = layer.animate([{ opacity: 0 }, { opacity: 1 }], { ...timing, easing: 'linear' });
+    cutFades = [incoming];
+    for (const slot of book.querySelectorAll<HTMLElement>(':scope > .book__page')) {
+      cutFades.push(
+        slot.animate([{ opacity: 1 }, { opacity: 0 }], { ...timing, easing: 'cubic-bezier(0.55, 0, 1, 0.45)' }),
+      );
+    }
+    void incoming.finished
+      .then(() => {
+        if (destroyed || jump !== current) return;
+        jump = null;
+        pendingCommit = to;
+        opts.onSpreadChange(to);
+      })
+      .catch(() => {});
+    return true;
+  }
+
+  function finishJump(): boolean {
+    const j = jump;
+    if (!j) return false;
+    killTween();
+    clearTurn();
+    jump = null;
+    pendingCommit = null;
+    if (getSpread() !== j.target) opts.onSpreadChange(j.target);
+    return true;
   }
 
   /**
@@ -626,7 +1153,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
 
   // --- pointer ------------------------------------------------------------
   function onPointerDown(e: PointerEvent): void {
-    if (!e.isPrimary || e.button !== 0 || drag) return;
+    if (!e.isPrimary || e.button !== 0 || drag || jump) return;
 
     const rect = book.getBoundingClientRect();
     const dir: TurnDir = e.clientX - rect.left > rect.width / 2 ? 'next' : 'prev';
@@ -678,6 +1205,12 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       turn('prev');
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      turnTo(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      turnTo(getSpreads().length - 1);
     }
   }
 
@@ -703,8 +1236,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     fade?.cancel();
     fade = null;
     clearTurn();
+    jump = null;
     curls.next = null;
     curls.prev = null;
+    pool.next = [];
+    pool.prev = [];
     pendingCommit = null;
     book.style.removeProperty('--bw');
     book.style.removeProperty('--tt');
@@ -712,5 +1248,19 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     book.style.removeProperty('--shade');
   }
 
-  return { startTurn, applyTurn, clearTurn, commitTurn, cancelTurn, turn, handoff, destroy };
+  return {
+    startTurn,
+    applyTurn,
+    clearTurn,
+    commitTurn,
+    cancelTurn,
+    turn,
+    turnTo,
+    jumping: () => jump !== null,
+    finishJump,
+    prepareJump,
+    probe,
+    handoff,
+    destroy,
+  };
 }

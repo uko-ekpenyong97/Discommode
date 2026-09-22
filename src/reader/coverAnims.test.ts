@@ -3,6 +3,7 @@ import {
   ENTER_FADE_MS,
   LEAVE_FADE_MS,
   enterFadeMs,
+  faceOf,
   fitCover,
   hitTest,
   leavePlan,
@@ -198,5 +199,30 @@ describe('leavePlan', () => {
     // Played out, but it rests on frame 1 — the last frame is something else, so
     // the still genuinely has to come back over it.
     expect(leavePlan(9000, onceFirst)).toEqual({ wait: 0, fade: LEAVE_FADE_MS });
+  });
+});
+
+describe('faceOf', () => {
+  const base: CoverAnimManifest = {
+    issue: '01',
+    coverW: 2000,
+    coverH: 2600,
+    plate: '/issues/01/cover-plate.webp',
+    rest: '/issues/01/cover-rest.webp',
+    objects: [anim('bed', 1, [0, 0, 1, 1]), { ...anim('riddim', 1, [0, 0, 1, 1]), face: 'back' }],
+  };
+
+  it('reads an object with no face as a cover object', () => {
+    expect(faceOf(base, 'cover')?.objects.map((o) => o.id)).toEqual(['bed']);
+  });
+
+  it('gives the back its own space and plate', () => {
+    const m = { ...base, back: { backW: 2000, backH: 2600, plate: '/b-plate.webp', rest: '/b-rest.webp' } };
+    expect(faceOf(m, 'back')).toEqual({ w: 2000, h: 2600, plate: '/b-plate.webp', objects: [m.objects[1]] });
+  });
+
+  it('is null for a face with no objects, or a back with no plate', () => {
+    expect(faceOf({ ...base, objects: [base.objects[0]] }, 'back')).toBeNull();
+    expect(faceOf(base, 'back')).toBeNull();
   });
 });

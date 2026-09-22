@@ -13,6 +13,13 @@ export interface Page {
   src: string;
   /** Caption override. Numbered pages leave this unset and fall back to `n`. */
   label?: string;
+  /**
+   * The same page at half resolution (1000px wide), for the inner leaves of a
+   * riffle — every leaf but the first and last (flipEngine `isFast`): a riffle
+   * crosses too many pages too fast for each to be decoded at full size at a new
+   * scale. Written by `npm run pages`; absent on the cover and back.
+   */
+  riffle?: string;
 }
 
 export interface Issue {
@@ -46,6 +53,13 @@ export interface Issue {
    */
   coverRest?: string;
   /**
+   * The back cover at REST — `coverRest`'s counterpart, for an issue whose back
+   * carries hover objects: the back plate with each object's first frame
+   * composited on (`npm run anims`). The reader's closed book shows it, so the
+   * back's hover layer mounting and unmounting is invisible.
+   */
+  backRest?: string;
+  /**
    * URL of the cover-animation manifest written by `npm run anims`. It is
    * FETCHED rather than bundled: it is generated output living in `public/`
    * beside the WebPs it indexes, and only the two views that mount the hover
@@ -78,11 +92,13 @@ export const issue01: Issue = {
     ...Array.from({ length: PAGE_COUNT }, (_, i) => ({
       n: i + 1,
       src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
+      riffle: `/issues/01/riffle/${String(i + 1).padStart(2, '0')}.webp`,
     })),
     { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
   ],
   overlay: '/issues/01/overlay.webp',
   coverRest: '/issues/01/cover-rest.webp',
+  backRest: '/issues/01/back-rest.webp',
   anims: '/issues/01/anim/manifest.json',
 };
 
@@ -157,6 +173,8 @@ export function buildSpreads(issue: Issue): Spread[] {
   let back: Page | null = null;
   if (issue.hasBack && rest.length) {
     back = rest[rest.length - 1];
+    // Same substitution as the cover, same reason.
+    if (issue.backRest) back = { ...back, src: issue.backRest };
     rest = rest.slice(0, -1);
   }
 
