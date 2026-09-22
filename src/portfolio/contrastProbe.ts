@@ -88,6 +88,11 @@ export const WORST_CASE_SKY: SkyTarget = {
   rain: 0,
   storm: 0,
   wind: 0,
+  // Daylit, so the moon is not drawn at all and this is not the state the
+  // moon can fail. The state where it CAN is a clear night with a full moon
+  // in the band — see `bandTop` below, and `docs/sky.md`.
+  moonFraction: 1,
+  moonWaxing: true,
 };
 
 /** Every run of type on the PAPER, and the name it is reported under. */
@@ -152,6 +157,21 @@ export type SurfaceOverride = Partial<
 > & {
   /** Measure the ground against this sky rather than {@link WORST_CASE_SKY}. */
   sky?: SkyTarget;
+  /**
+   * CENTRE the sampled band on this row instead of leaving it at the top of
+   * the screen, where the letterhead actually sits. 0..1 of the viewport
+   * height, from the top.
+   *
+   * THE STRIP DOES NOT MOVE; this moves the SAMPLE. There is one thing in
+   * the sky that is small, bright and in a fixed place — the moon — and the
+   * question "would the letterhead read if it were over the moon" cannot be
+   * asked of a band the moon is not in. Same band height, different row.
+   *
+   * The caller gets the row from `skyEngine().moonAt().y` rather than writing
+   * the constant down a second time. See the moon section of `docs/sky.md`,
+   * and section 8 of `scripts/sky-fluid-verify.mjs`, which is what passes it.
+   */
+  bandCenter?: number;
 };
 
 /* ── colour ──────────────────────────────────────────────────────────────── */
@@ -245,7 +265,11 @@ function scrimmed(c: [number, number, number], overrides: SurfaceOverride): [num
 function groundColor(overrides: SurfaceOverride): [number, number, number] {
   const engine = skyEngine();
   const band = Math.min(1, look.letterheadHPx / Math.max(window.innerHeight, 1));
-  const sampled = engine?.sampleBand(0, band, overrides.sky ?? WORST_CASE_SKY) ?? null;
+  const top =
+    overrides.bandCenter === undefined
+      ? 0
+      : Math.max(0, Math.min(1 - band, overrides.bandCenter - band / 2));
+  const sampled = engine?.sampleBand(top, top + band, overrides.sky ?? WORST_CASE_SKY) ?? null;
   if (sampled) return scrimmed(sampled, overrides);
   const el = document.querySelector<HTMLElement>('.pv-ground');
   const [r, g, b] = parseColor(el ? getComputedStyle(el).backgroundColor : 'rgb(0,0,0)');

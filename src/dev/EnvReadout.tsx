@@ -2,8 +2,16 @@ import { memo, useCallback, useEffect, useState } from 'react';
 import { ATTRIBUTION, setEnvOverride } from '../env';
 import type { Condition, EnvSnapshot } from '../env';
 import { envToTarget } from '../sky/envToTarget';
-import { CONDITIONS, SUN_PRESETS, SUN_PRESET_NAMES, previewEnv } from './skyPreview';
-import type { SunPreset } from './skyPreview';
+import {
+  CONDITIONS,
+  MOON_PRESETS,
+  MOON_PRESET_NAMES,
+  PREVIEW_MOON,
+  SUN_PRESETS,
+  SUN_PRESET_NAMES,
+  previewEnv,
+} from './skyPreview';
+import type { MoonPreset, SunPreset } from './skyPreview';
 import './EnvReadout.css';
 
 /**
@@ -25,20 +33,36 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
   const { env, status, overridden } = snapshot;
   const [condition, setCondition] = useState<Condition>('clear');
   const [preset, setPreset] = useState<SunPreset>('noon');
+  // The moon is its own row because it is its own axis: any of five shapes can
+  // be over any of the twenty-four states, and San Francisco will cooperate
+  // with exactly one of them on any given night.
+  const [moon, setMoon] = useState<MoonPreset>('full');
+  const [waxing, setWaxing] = useState(PREVIEW_MOON.waxing);
   const [on, setOn] = useState(false);
 
   const apply = useCallback(
-    (next: { on?: boolean; condition?: Condition; preset?: SunPreset }) => {
+    (next: {
+      on?: boolean;
+      condition?: Condition;
+      preset?: SunPreset;
+      moon?: MoonPreset;
+      waxing?: boolean;
+    }) => {
       const active = next.on ?? on;
       const c = next.condition ?? condition;
       const p = next.preset ?? preset;
+      const m = next.moon ?? moon;
+      const w = next.waxing ?? waxing;
       if (next.on !== undefined) setOn(next.on);
       if (next.condition) setCondition(next.condition);
       if (next.preset) setPreset(next.preset);
+      if (next.moon) setMoon(next.moon);
+      if (next.waxing !== undefined) setWaxing(next.waxing);
       const { sun, phase } = SUN_PRESETS[p];
-      setEnvOverride(active ? previewEnv(sun, c, phase) : null);
+      const mo = { fraction: MOON_PRESETS[m], waxing: w };
+      setEnvOverride(active ? previewEnv(sun, c, phase, undefined, mo) : null);
     },
-    [on, condition, preset],
+    [on, condition, preset, moon, waxing],
   );
 
   // Test hooks: `__setEnvOverride` is the raw one (any EnvState at all), and
@@ -48,13 +72,17 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
   useEffect(() => {
     const w = window as unknown as {
       __setEnvOverride?: typeof setEnvOverride;
-      __skyPreview?: (c: Condition, p: SunPreset) => void;
+      __skyPreview?: (c: Condition, p: SunPreset, m?: MoonPreset, waxing?: boolean) => void;
       __skyStates?: () => { condition: Condition; time: SunPreset; target: unknown }[];
     };
     w.__setEnvOverride = setEnvOverride;
-    w.__skyPreview = (c, p) => {
+    // The moon defaults to PREVIEW_MOON (full), so every caller that does not
+    // ask for one — the contact sheet, the contrast sweep — gets the same moon
+    // every time it runs. Pass a preset to step the shapes.
+    w.__skyPreview = (c, p, m, waxing) => {
       const { sun, phase } = SUN_PRESETS[p];
-      setEnvOverride(previewEnv(sun, c, phase));
+      const mo = m ? { fraction: MOON_PRESETS[m], waxing: waxing ?? true } : PREVIEW_MOON;
+      setEnvOverride(previewEnv(sun, c, phase, undefined, mo));
     };
     // Every state the sky has, as the targets the engine would be given —
     // what `scripts/sky-contrast.mjs` hands the probe, one at a time, so the
@@ -94,6 +122,10 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
       {row('dayPhase', env.dayPhase)}
       {row('cloud / precip', `${env.cloudiness.toFixed(2)} / ${env.precipitation.toFixed(2)}`)}
       {row('wind', env.windSpeed.toFixed(2))}
+      {row(
+        'moon',
+        `${env.moonFraction.toFixed(2)} ${env.moonWaxing ? 'waxing' : 'waning'}`,
+      )}
       {row('wmo', String(env.rawWeatherCode))}
 
       <div className="env-readout__sep">override</div>
@@ -129,6 +161,28 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
           onClick={() => apply({ on: false })}
         >
           live
+        </button>
+      </div>
+      <div className="env-readout__grid">
+        {MOON_PRESET_NAMES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            className="env-readout__btn"
+            data-on={(on && moon === m) || undefined}
+            onClick={() => apply({ on: true, moon: m })}
+          >
+            {m}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="env-readout__btn"
+          data-on={(on && !waxing) || undefined}
+          onClick={() => apply({ on: true, waxing: !waxing })}
+          title="which limb the light is on"
+        >
+          {waxing ? 'wax' : 'wane'}
         </button>
       </div>
     </div>

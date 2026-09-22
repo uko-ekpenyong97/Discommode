@@ -40,6 +40,24 @@ void main() {
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
+/**
+ * WHERE THE MOON IS. One place, because three things need it: the shader
+ * draws it here, the contrast probe has to sample the letterhead band over
+ * it (see MOON_CENTRE_Y in contrastProbe.ts), and the verify script has to
+ * find the disc in a screenshot to count its lit pixels.
+ *
+ * `x`/`y` are uv — x from the left, y from the BOTTOM. `r` is the disc
+ * radius in screen HEIGHTS (the metric the shader measures in, so the moon
+ * is round at any aspect); `edge0`/`edge1` are the soft edge either side of
+ * it. The sun's position is a mapping and lives in the shader; the moon's is
+ * a constant and lives here.
+ */
+const MOON = { x: 0.7, y: 0.8, r: 0.036, edge0: 0.04, edge1: 0.032 } as const;
+
+/** Where the moon is on SCREEN: x from the left, y from the TOP, radius in
+ *  heights out to the far side of its soft edge. What consumers want. */
+export interface MoonAt { x: number; y: number; r: number }
+
 const FRAG = `#version 300 es
 precision highp float;
 in vec2 vUv;
@@ -62,6 +80,11 @@ uniform float uFogHeight;
 uniform float uSat;
 uniform float uGrain;
 uniform float uStarSize;   // star disc radius; 1 = the old dot, 2 = twice it
+uniform float uMoonFrac;   // illuminated fraction, 0 new .. 1 full
+uniform float uMoonWax;    // 1 waxing (lit on the right), 0 waning
+uniform float uMoonSize;   // disc radius; 1 = the flat disc this replaced
+uniform float uMoonEarth;  // earthshine: what the unlit side still gives back
+uniform float uMoonSoft;   // terminator softness, in cosine of incidence
 // ---- the wake (see fluid.ts): xy velocity in screen heights / s, z density
 uniform sampler2D tFluid;
 uniform float uFluidOn;    // 0 while the field is asleep: no fetch, no effect
@@ -185,11 +208,57 @@ void main(){
     float star = smoothstep(0.972,1.0,h)
                * mix(smoothstep(sz,0.0,d)*0.45, 1.0, smoothstep(sz*0.45,0.0,d))
                * twinkle*1.3*stir;
-    vec2 mp=vec2(0.70,0.80); float md=length((uv-mp)*vec2(aspect,1.0));
-    float moon=smoothstep(0.040,0.032,md); float mglow=exp(-md*7.0)*(0.22 + fz*0.3);
+    // ---- the moon, with the shape it actually has tonight.
+    //
+    // Below 2% lit there is nothing to draw and the whole thing is skipped —
+    // a new moon is not a faint disc, it is an absence. (A uniform branch:
+    // uMoonFrac is one number for the frame.)
     vec3 sky = col;
     col += vec3(0.85,0.92,1.0)*star*nightAmt;
-    col += mix(vec3(0.70,0.78,0.95),vec3(0.96,0.97,1.0),moon)*(moon*0.85+mglow)*nightAmt;
+    if (uMoonFrac > 0.02) {
+    vec2 mp=vec2(${MOON.x},${MOON.y}); float md=length((uv-mp)*vec2(aspect,1.0));
+    float moon=smoothstep(${MOON.edge0}*uMoonSize,${MOON.edge1}*uMoonSize,md);
+    // THE TERMINATOR. Disc-local coords, x right and y up, radius 1 — then
+    // treat the disc as what it is, the projection of a sphere, and light it:
+    //
+    //   z   = the sphere's height at this pixel, sqrt(1 - x² - y²)
+    //   ct  = cos of the phase angle = 1 - 2·fraction  (+1 new, 0 quarter, -1 full)
+    //   st  = |sin| of it, which is how far round the sun has swung
+    //   lam = cos of the angle of incidence = s·x·st - ct·z
+    //
+    // lam > 0 is the lit hemisphere. The boundary it draws is the same
+    // half-ellipse as the flat form (x·s = ct·sqrt(1-y²) — the two are
+    // algebraically identical on the terminator), but the QUANTITY is a
+    // cosine rather than a distance in x, and that is what makes the soft
+    // edge behave at the ends of the month: at full the terminator IS the
+    // limb, and a softness measured in x would dim the whole left rim of a
+    // full moon by half. Measured in incidence it does not.
+    //
+    // s = +1 waxing, -1 waning. Waxing is lit on the RIGHT, which is the
+    // Northern-hemisphere view and the only one this sky has.
+    vec2 q = (uv-mp)*vec2(aspect,1.0)/(${MOON.r}*uMoonSize);
+    // Outside |q| = 1 the pixel is not a point on the moon, it is the
+    // antialiasing skirt of the silhouette — and there z is 0, which is
+    // grazing incidence, which at FULL hands the whole outer rim to the
+    // earthshine floor and draws a dark ring round a full moon. Sample the
+    // skirt just inside the limb instead, so it takes the lighting of the edge
+    // it is feathering. Everywhere inside the disc this does nothing.
+    vec2 qc = q*min(1.0, 0.985/max(length(q), 1e-5));
+    float z = sqrt(max(0.0, 1.0 - dot(qc,qc)));
+    float ct = 1.0 - 2.0*uMoonFrac;
+    float st = sqrt(max(0.0, 1.0 - ct*ct));
+    float sgn = 2.0*uMoonWax - 1.0;
+    float lam = sgn*qc.x*st - ct*z;
+    // The dark side is not black: earthshine — sunlight off the Earth — is
+    // what keeps a crescent reading as a whole sphere rather than a sliver.
+    float face = mix(uMoonEarth, 1.0, smoothstep(-uMoonSoft, uMoonSoft, lam));
+    float mdisc = moon*face;
+    // The halo is the lit disc's own light scattered by the air, so it goes
+    // with the fraction: full keeps the halo this always had, a crescent has
+    // almost none. The wake's response to it (fz) is unchanged.
+    float mglow = exp(-md*7.0)*(0.22 + fz*0.3)*uMoonFrac;
+    col += mix(vec3(0.70,0.78,0.95),vec3(0.96,0.97,1.0),mdisc)*(mdisc*0.85+mglow)*nightAmt;
+    }
     // A deck or a bank the wake has parted shows the stars behind it.
     col = mix(sky, col, (1.0-uCloud*0.9*(1.0-fz*uCloudPart))*(1.0-uFog*0.9*(1.0-fz*uFogPart)));
   }
@@ -304,12 +373,17 @@ export interface SkyTarget {
   storm: number;
   /** Normalized wind: slants the rain, blows the deck, rolls the bank. */
   wind: number;
+  /** Illuminated fraction of the moon, 0 (new) .. 1 (full). Under 0.02 the
+   *  moon is not drawn at all. */
+  moonFraction: number;
+  /** Waxing → the lit limb is the right one. Eased as 0..1, like `dayPhase`. */
+  moonWaxing: boolean;
 }
 
 /** The numeric form the engine eases (dayPhase collapsed to 0 rising / 1 setting). */
-type EasedSky = { sun: number; phase: number; cloud: number; fog: number; rain: number; storm: number; wind: number };
+type EasedSky = { sun: number; phase: number; cloud: number; fog: number; rain: number; storm: number; wind: number; moonFraction: number; moonWaxing: number };
 
-const KEYS = ['sun', 'phase', 'cloud', 'fog', 'rain', 'storm', 'wind'] as const;
+const KEYS = ['sun', 'phase', 'cloud', 'fog', 'rain', 'storm', 'wind', 'moonFraction', 'moonWaxing'] as const;
 
 function toEased(t: SkyTarget): EasedSky {
   return {
@@ -320,6 +394,11 @@ function toEased(t: SkyTarget): EasedSky {
     rain: t.rain,
     storm: t.storm,
     wind: t.wind,
+    moonFraction: t.moonFraction,
+    // Eased as 0..1 like `phase`. A flip only ever happens AT new or full,
+    // where the terminator is off the disc either way, so the cross-fade
+    // through 0.5 has nothing to show.
+    moonWaxing: t.moonWaxing ? 1 : 0,
   };
 }
 
@@ -354,6 +433,9 @@ export interface SkyEngine {
   benchmark(frames?: number, batch?: number, withFluid?: boolean): number[];
   /** The GL renderer string, for a perf table that says what it ran on. */
   renderer(): string;
+  /** Where the moon is drawn, in screen terms — see {@link MoonAt}. Scales
+   *  with `moonSize`, so a caller looking for the disc finds it. */
+  moonAt(): MoonAt;
   /**
    * DISTURB THE SKY at a point: push air through it at `(x, y)` — CSS pixels
    * from the viewport's top-left — moving at `(dx, dy)` CSS px / s, scaled by
@@ -468,6 +550,11 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     fluidOn: loc('uFluidOn'),
     fluidWarp: loc('uFluidWarp'),
     starSize: loc('uStarSize'),
+    moonFrac: loc('uMoonFrac'),
+    moonWax: loc('uMoonWax'),
+    moonSize: loc('uMoonSize'),
+    moonEarth: loc('uMoonEarth'),
+    moonSoft: loc('uMoonSoft'),
     starPush: loc('uStarPush'),
     starGlow: loc('uStarGlow'),
     gradPush: loc('uGradPush'),
@@ -479,7 +566,9 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   };
 
   // --- eased state ---
-  const cur: EasedSky = { sun: 0, phase: 0, cloud: 0, fog: 0, rain: 0, storm: 0, wind: 0 };
+  // moonFraction starts at 0 — an unknown moon is no moon, and it eases up to
+  // whatever tonight's is with everything else.
+  const cur: EasedSky = { sun: 0, phase: 0, cloud: 0, fog: 0, rain: 0, storm: 0, wind: 0, moonFraction: 0, moonWaxing: 1 };
   const tgt: EasedSky = { ...cur };
   let reduced = false;
   const startTime = performance.now();
@@ -648,6 +737,11 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     gl!.uniform1f(u.sat, config.skySaturation);
     gl!.uniform1f(u.grain, config.skyGrain);
     gl!.uniform1f(u.starSize, config.starSize);
+    gl!.uniform1f(u.moonFrac, state.moonFraction);
+    gl!.uniform1f(u.moonWax, state.moonWaxing);
+    gl!.uniform1f(u.moonSize, config.moonSize);
+    gl!.uniform1f(u.moonEarth, config.moonEarthshine);
+    gl!.uniform1f(u.moonSoft, config.moonTerminatorSoft);
     // The wake. Asleep (or off, or reduced), uFluidOn is 0 and the shader never
     // fetches it — every fluid term is an exact zero.
     const wake = fluid !== null && fluidLive() && fluid.awake() && state === cur;
@@ -728,6 +822,9 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
       requestRender();
     },
     syncSize: resize,
+    moonAt() {
+      return { x: MOON.x, y: 1 - MOON.y, r: MOON.edge0 * config.moonSize };
+    },
     sampleBand(y0, y1, at) {
       if (width === 0 || height === 0) return null;
       // `readPixels` measures from the BOTTOM of the buffer; the arguments are

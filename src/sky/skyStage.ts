@@ -45,6 +45,10 @@ let target: SkyTarget = {
   rain: 0,
   storm: 0,
   wind: 0,
+  // No moon until the data layer says otherwise, which is also what the shader
+  // draws below its 0.02 gate: nothing.
+  moonFraction: 0,
+  moonWaxing: true,
 };
 const listeners = new Set<() => void>();
 
