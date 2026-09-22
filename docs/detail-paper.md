@@ -3,9 +3,10 @@
 Once the detail view has settled, its three cards (the hero and the Prev/Next
 neighbours) are no longer `<img>`s. A WebGL canvas draws them as sheets of paper.
 A crease texture refracts and lights the artwork, the sheet dents under the
-cursor, the row squashes with its own velocity, every card carries a faint
+cursor, the row squashes with its own velocity, the neighbours carry a faint
 resting ripple, and a card arriving in a neighbour slot un-crumples into it.
-Reference: <https://justinesoulie.fr/>. Its behaviour is ported, its numbers are
+The hero lies flat at rest (`heroRipple` 0) so its cover stays registered with
+the DOM sprites drawn over it. Reference: <https://justinesoulie.fr/>. Its behaviour is ported, its numbers are
 not.
 
 The grid, the reader, the doorway and the portfolio view are untouched. The DOM
@@ -14,8 +15,9 @@ canvas only takes over in between, and gives the cards back before anything
 else moves them.
 
 > **On the numbers in this file.** Architecture and dials are as shipped.
-> Every *measurement* comes from `npm run verify:detail` on 2026-09-21: headless
-> Chrome, at 1728×996 and 1440×900, 1× and 2×, on an Apple M1 Max.
+> Every *measurement* comes from `npm run verify:detail` on 2026-09-21 (46/46,
+> re-run after `heroRipple`): headless Chrome, at 1728×996 and 1440×900, 1× and
+> 2×, on an Apple M1 Max.
 
 | | rest, paper on | rest, paper off |
 | --- | --- | --- |
@@ -156,7 +158,7 @@ Vertex (all in card heights, then to CSS px, then the perspective above):
 | --- | --- |
 | dent | `z −= (1 − smoothstep(0, uHoverRadius, ‖uv − 0.5 − uHit‖)) · uHover · uHoverDepth` |
 | squash | `z += max(|v| · −uSquash, −0.1)`; the card scales by `1 + min(|v| / 10, uSquashScale)` about its centre |
-| ripple | `z −= sin(uv.y·10 + uIndex) · uRipple`; `y −= cos(uv.x·10 + uIndex + 100) · uRipple · 0.35` |
+| ripple | `z −= sin(uv.y·10 + uIndex) · uRipple`; `y −= cos(uv.x·10 + uIndex + 100) · uRipple · 0.35`. `uRipple` is `mix(heroRipple, ripple, min(1, |i − pos|))`: the hero's own dial in the centre slot, the neighbours' one slot out, blended in between so a slide has no step. |
 | fold | `f = uFold · uFoldAmp`; `a = uv.x·0.4 + uv.y·2π + uIndex·0.05`; `z += 0.4f − 0.15f·cos a`; `y −= 0.35f·cos a` |
 
 Fragment:
@@ -212,7 +214,8 @@ value the other opens with. `paperDials.ts` is the source of truth.
 | `hoverMs` | 300 | dent in and out, cubic out |
 | `squash` | 0.7 | push-back per unit velocity |
 | `squashScale` | 0.185 | cap on the velocity swell |
-| `ripple` | 0.01 | resting ripple, card heights |
+| `ripple` | 0.01 | resting ripple on the neighbours, card heights |
+| `heroRipple` | 0 | resting ripple on the hero. 0 keeps the cover registered with its DOM hover sprites at rest (a ripple puts it 2–3px off them); the dent still applies while hovered |
 | `foldMs` | 700 | un-crumple, ease out |
 | `foldAmp` | 1.0 | fold vertex amplitude (the reveal edge ignores it) |
 | `segments` | 40 | plane subdivisions per side |
@@ -236,20 +239,24 @@ the script replaces it, with no code change.
 The CoverAnimLayer's sprites are DOM, drawn on top of the canvas's plate. They
 stay registered with it because, inside every sprite's rect (read from the
 sprites' inline px, passed as up to 24 UV rects), the crease displacement is 0.
-That holds the refraction still. It does **not** hold the geometry still: the
-dent, the ripple and the squash move the plate under a sprite by a few pixels,
-and the sprite does not move with it.
+That holds the refraction still. **At rest the geometry is still too**: the hero
+has no ripple (`heroRipple` 0), and with nothing hovered and the row still, its
+dent, squash and fold are all 0, so every vertex term is 0 and the plate is
+exactly where the sprites expect it. `verify:detail` asserts this
+(`registration`). What does move the plate under the sprites is the dent while
+the hero is hovered, and the squash while the row slides. Both are transient,
+and the sprite does not move with them.
 
 ## Running the checks
 
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,nav,leave,frames,reduced
+npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,nav,leave,frames,reduced
 ```
 
 About two minutes. It drives the layer through `window.__paper` (dev only):
-`state`, `presence`, `rects`, `projected`, `folds`, `override({ zero })`,
+`state`, `presence`, `rects`, `projected`, `uniforms`, `folds`, `override({ zero })`,
 `freezePresence`, `holdOut`, `handOut`, `set`. Pixel checks hide the sky and the
 dev overlays first. A pixel counts as different past 32 levels, the portfolio
 view's tolerance and for its reason.
@@ -275,6 +282,11 @@ That is layout's 1/64px grid against doubles: zero, for any purpose.
 **Hand-off**, at presence 0, *is* the identity. In and out agree to 0.04%:
 `#item-04` @1× is in 5.723%, out 5.765% (card 01 on the right), and cards 02–04
 are at most 0.225%.
+
+**Registration**, at 1× and 2×: at rest with nothing hovered, the hero plane's
+ripple, dent, squash and fold are all exactly 0 under its 20 sprites, and the
+neighbours ripple at 0.01. Hovering the hero takes the dent to 1.000, and
+leaving takes it back to 0.
 
 **Also checked:** hovering a cover object still mounts and plays its animation
 with the canvas underneath, and the point under the pointer is the panel, never
@@ -316,7 +328,8 @@ are identical (0 levels).
    quality), or promoting the neighbour panels to their own layers so that the
    DOM side is the one whose resampling is known.
 2. **The sprites should be in the texture.** The sprite caveat above is a
-   workaround. The proper fix is to draw the CoverAnimLayer's current frames
+   workaround: `heroRipple` 0 registers them at rest, but not under a dent or
+   a squash. The proper fix is to draw the CoverAnimLayer's current frames
    into the plate texture (or as their own quads in this canvas) so the sprites
    bend with the paper. It was not done: animated WebP frames are not
    addressable from WebGL without decoding them ourselves (`ImageDecoder`), and

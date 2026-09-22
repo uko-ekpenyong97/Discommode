@@ -27,8 +27,15 @@ export interface PaperDials {
   squash: number;
   /** Cap on the velocity-driven scale-up. */
   squashScale: number;
-  /** The resting ripple's amplitude, in card heights. */
+  /** The resting ripple's amplitude on the NEIGHBOURS, in card heights. */
   ripple: number;
+  /**
+   * The resting ripple on the HERO. 0: the hero's plate carries Issue 01's hover
+   * sprites, which are DOM and flat, and any ripple under them puts the cover
+   * 2–3px off its own objects at rest. The dent still applies — that is a
+   * hover, and it ends when the hover does.
+   */
+  heroRipple: number;
   /** How long a neighbour takes to un-crumple into its slot (ease-out). */
   foldMs: number;
   /** The fold's vertex amplitude; the reveal edge ignores it. */
@@ -47,6 +54,7 @@ export const PAPER_DEFAULTS: PaperDials = {
   squash: 0.7,
   squashScale: 0.185,
   ripple: 0.01,
+  heroRipple: 0,
   foldMs: 700,
   foldAmp: 1.0,
   segments: 40,

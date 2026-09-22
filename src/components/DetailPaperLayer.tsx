@@ -660,7 +660,12 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       u.uVelocity.value = zero ? 0 : vel;
       u.uSquash.value = paper.squash;
       u.uSquashScale.value = paper.squashScale;
-      u.uRipple.value = zero || still ? 0 : paper.ripple * P;
+      // The hero's ripple is its own dial (0 by default, so the plate stays
+      // registered with the DOM sprites at rest); a panel sliding between the
+      // hero slot and a neighbour's blends the two by its distance, so the
+      // slide has no step in it.
+      const ripple = paper.heroRipple + (paper.ripple - paper.heroRipple) * Math.min(1, p.dist);
+      u.uRipple.value = zero || still ? 0 : ripple * P;
       u.uFold.value = zero ? 0 : fold;
       u.uFoldAmp.value = paper.foldAmp;
       c.mesh.visible = tex !== null;
@@ -743,6 +748,22 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       /** Every plane's rect as the shader is told it, keyed by content idx. */
       rects: () =>
         (last?.panels ?? []).map((p) => ({ key: p.key, idx: p.idx, slot: p.slot, ...p.rect })),
+      /** Every plane's vertex-stage inputs — the terms that can move it off
+       *  the DOM sprites drawn over it. */
+      uniforms: () =>
+        (last?.panels ?? []).map((p) => {
+          const u = cards.get(p.key)?.mesh.material.uniforms;
+          return {
+            key: p.key,
+            idx: p.idx,
+            slot: p.slot,
+            ripple: u?.uRipple.value,
+            hover: u?.uHover.value,
+            velocity: u?.uVelocity.value,
+            fold: u?.uFold.value,
+            sprites: u?.uSpriteCount.value,
+          };
+        }),
       folds: () =>
         [...cards.entries()].map(([key, c]) => ({ key, fold: c.mesh.material.uniforms.uFold.value })),
       presence: () => sampleTween(presence, performance.now()),

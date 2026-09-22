@@ -19,6 +19,11 @@
  *   sprites    at #item-01 with the canvas carrying the cover, hovering a
  *              CoverAnimLayer object still mounts and plays its animation, and
  *              the point under the pointer is never the canvas.
+ *   registration  at rest, nothing hovered, the hero plane's vertex terms —
+ *              ripple, dent, squash, fold — are all exactly 0, so the plate sits
+ *              where the DOM sprites over it expect (`heroRipple` 0); the
+ *              neighbours keep `ripple`; hovering the hero still dents it, and
+ *              leaving takes the dent back to 0.
  *   nav        Next / Prev (including the wrap) land with the hash, the jump
  *              list, the centre panel and the centre PLANE agreeing.
  *   leave      Read issue and Back to the grid: the canvas hands the cards back
@@ -41,7 +46,7 @@ import sharp from 'sharp';
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
-const ONLY = arg('--only', 'rects,identity,handoff,sprites,nav,leave,frames,reduced').split(',');
+const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,nav,leave,frames,reduced').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -327,6 +332,42 @@ async function checkSprites(browser) {
   await page.context().close();
 }
 
+// ── registration ─────────────────────────────────────────────────────────
+
+async function checkRegistration(browser) {
+  console.log('\nregistration: the hero plate under its DOM sprites');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    await open(page, '01');
+    await page.waitForSelector('.detail__panel--center .cover-anim__plate', { state: 'attached' });
+    await settleFrames(page, 4);
+    const uni = () => page.evaluate(() => window.__paper.uniforms().filter((u) => u.slot <= 1));
+    const rest = await uni();
+    const hero = rest.find((u) => u.slot === 0);
+    const sides = rest.filter((u) => u.slot === 1);
+    const flat = hero.ripple === 0 && hero.hover === 0 && hero.velocity === 0 && hero.fold === 0;
+    check(
+      flat && hero.sprites > 0 && sides.length === 2 && sides.every((u) => u.ripple > 0),
+      `@${dpr}× at rest: hero flat under ${hero.sprites} sprites, neighbours rippled`,
+      `hero ripple ${hero.ripple} dent ${hero.hover} squash ${hero.velocity} fold ${hero.fold}; neighbours ripple ${sides.map((u) => u.ripple.toFixed(4)).join(', ')}`,
+    );
+    // The dent still applies on the hero — and only while it is hovered.
+    const r = await page.evaluate(() => window.__paper.rects().find((q) => q.slot === 0));
+    await page.mouse.move(r.cx + r.w * 0.3, r.cy + r.h * 0.35, { steps: 4 });
+    await page.waitForTimeout(450);
+    const on = (await uni()).find((u) => u.slot === 0);
+    await page.mouse.move(3, 3, { steps: 4 });
+    await page.waitForTimeout(700);
+    const off = (await uni()).find((u) => u.slot === 0);
+    check(
+      on.hover > 0.9 && off.hover === 0 && on.ripple === 0,
+      `@${dpr}× hovering the hero dents it; leaving flattens it again`,
+      `dent ${on.hover.toFixed(3)} hovered → ${off.hover} after`,
+    );
+    await page.context().close();
+  }
+}
+
 // ── navigation ───────────────────────────────────────────────────────────
 
 async function checkNav(browser) {
@@ -512,6 +553,7 @@ async function run() {
     if (ONLY.includes('identity')) await checkIdentity(browser);
     if (ONLY.includes('handoff')) await checkHandoff(browser);
     if (ONLY.includes('sprites')) await checkSprites(browser);
+    if (ONLY.includes('registration')) await checkRegistration(browser);
     if (ONLY.includes('nav')) await checkNav(browser);
     if (ONLY.includes('leave')) await checkLeave(browser);
     if (ONLY.includes('frames')) await checkFrames(browser);
