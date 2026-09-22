@@ -13,6 +13,7 @@ import {
   resetDoorwayValues,
 } from './doorway';
 import { useDetailPaperDials } from '../dev/detailPaperDials';
+import { useCoverLifeDials } from '../dev/coverLifeDials';
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
 const s = (ms: number): number => ms / 1000;
@@ -125,6 +126,8 @@ export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKi
 
   // The detail view's paper, tuned from the same dock (docs/detail-paper.md).
   useDetailPaperDials();
+  // Page hover and the boil, on the cover this dock sits over.
+  useCoverLifeDials();
 
   // REST on mount; restore the normal reader / detail baseline on unmount.
   useLayoutEffect(() => {

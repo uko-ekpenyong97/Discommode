@@ -6,7 +6,9 @@ A crease texture refracts and lights the artwork, the sheet dents under the
 cursor, the row squashes with its own velocity, the neighbours carry a faint
 resting ripple, and a card arriving in a neighbour slot un-crumples into it.
 The hero lies flat at rest (`heroRipple` 0) so its cover stays registered with
-the DOM sprites drawn over it. Reference: <https://justinesoulie.fr/>. Its behaviour is ported, its numbers are
+the DOM sprites drawn over it. Hovered, Issue 01's hero comes alive: every
+object on the cover loops and the whole sheet BOILS, plate and sprites together
+(see [the boil](#the-boil)). Reference: <https://justinesoulie.fr/>. Its behaviour is ported, its numbers are
 not.
 
 The grid, the reader, the doorway and the portfolio view are untouched. The DOM
@@ -16,7 +18,7 @@ else moves them.
 
 > **On the numbers in this file.** Architecture and dials are as shipped.
 > Every *measurement* comes from `npm run verify:detail` on 2026-09-21 (46/46,
-> re-run after `heroRipple`): headless Chrome, at 1728×996 and 1440×900, 1× and
+> re-run after `heroRipple`; 62/62 with the cover-life checks): headless Chrome, at 1728×996 and 1440×900, 1× and
 > 2×, on an Apple M1 Max.
 
 | | rest, paper on | rest, paper off |
@@ -24,7 +26,8 @@ else moves them.
 | #item-01 | `docs/detail-paper/rest-paper-on.webp` | `docs/detail-paper/rest-paper-off.webp` |
 
 `hover-dent-mid.webp`, `prev-squash-mid.webp` and `neighbour-unfold-mid.webp`
-sit beside them.
+sit beside them, and `boil-steps.webp`: two consecutive boil steps side by
+side, held at full amplitude, with a 4× crop of the top corner under each.
 
 ## Map
 
@@ -36,6 +39,9 @@ sit beside them.
 | `src/components/detailPaper/paperDials.ts` | Every dial, as a module store (`paper`, `setPaper`, `subscribePaper`). |
 | `src/components/detailPaper/handoff.ts` | `afterHandOut`: the gate every leave path waits on. |
 | `src/dev/detailPaperDials.ts` | The DETAIL PAPER DialKit panel. |
+| `src/reader/coverLife.ts` | Page hover and the boil (docs/reader.md): the dials, the stepped signal, and the registry this layer reads the hero's boil from. |
+| `src/dev/coverLifeDials.ts` | The COVER LIFE DialKit panel. |
+| `scripts/cover-life-checks.mjs` | The page-hover and boil checks `verify:detail` and `verify:reader` share. |
 | `scripts/make-crease-map.mjs` | `npm run creases`, which writes `public/textures/paper-creases.webp`. |
 | `scripts/detail-verify.mjs` | `npm run verify:detail`, the browser suite. |
 
@@ -160,6 +166,7 @@ Vertex (all in card heights, then to CSS px, then the perspective above):
 | squash | `z += max(|v| · −uSquash, −0.1)`; the card scales by `1 + min(|v| / 10, uSquashScale)` about its centre |
 | ripple | `z −= sin(uv.y·10 + uIndex) · uRipple`; `y −= cos(uv.x·10 + uIndex + 100) · uRipple · 0.35`. `uRipple` is `mix(heroRipple, ripple, min(1, |i − pos|))`: the hero's own dial in the centre slot, the neighbours' one slot out, blended in between so a slide has no step. |
 | fold | `f = uFold · uFoldAmp`; `a = uv.x·0.4 + uv.y·2π + uIndex·0.05`; `z += 0.4f − 0.15f·cos a`; `y −= 0.35f·cos a` |
+| boil | last, after the perspective, in screen px: `css = c + R(uBoil.z)·(css − c) + uBoil.xy`, `c` the card's centre. A rigid move, on top of the dent: exactly what CSS's `rotate` then `translate` do to the sprites. |
 
 Fragment:
 
@@ -173,9 +180,12 @@ Fragment:
 | alpha | `uAlpha` = the panel's own opacity (hover-dim, side fade, doorway clear), premultiplied |
 
 **The invariant.** With `uCreaseBlend`, `uCreaseDisplacement`, `uHover`,
-`uVelocity`, `uRipple` and `uFold` all at 0, every term above is exactly 0 or 1,
-and the plane is the DOM image. The identity check tests this, and every new
-term has to keep it.
+`uVelocity`, `uRipple`, `uFold` and `uBoil` all at 0, every term above is
+exactly 0 or 1, and the plane is the DOM image. The identity check tests this,
+and every new term has to keep it. `override({ zero })` zeroes the first six
+and leaves the boil alone: the boil is registration, not a paper effect, and
+the boil check compares a boiled canvas plate with the DOM plate boiled the
+same way.
 
 ### Driving it
 
@@ -193,12 +203,20 @@ term has to keep it.
   So Prev/Next brings a card into a neighbour slot folded and it opens out, and
   the card leaving folds away. The drawn fold is multiplied by `min(1, |i − pos|)`,
   so **the hero never folds**, even when a double Next catches a card mid-tween.
-- **Reduced motion.** No dent, squash, ripple or fold. The creases stay, static.
-  Presence arrives at once.
+- **Boil.** Not driven here. The hero's CoverAnimLayer drives it and publishes
+  every change (`publishBoil`, keyed by the panel element); this layer is
+  subscribed and repaints in that same task, reading `boilFor(panel)` for each
+  plane, times the panel's scale. So the canvas plate and the DOM sprites are
+  given the same value on the same frame. It is not multiplied by `presence`:
+  the sprites boil whether or not the paper has settled, and the plate has to
+  go where they go.
+- **Reduced motion.** No dent, squash, ripple, fold or boil. The creases stay,
+  static. Presence arrives at once.
 
 ## Dials
 
-DETAIL PAPER panel. It is at `#item-01?intro` (the doorway dock), and also in the
+The boil's dials are on the COVER LIFE panel, in the same docks (see
+docs/reader.md). DETAIL PAPER panel. It is at `#item-01?intro` (the doorway dock), and also in the
 app's own dev dock at plain `#item-NN`, where the hero is uncovered and can be
 hovered: under the doorway dock the reader's cover sits over the hero and the app
 is inert. It is the same panel id, persisted, so a value set in one dock is the
@@ -219,6 +237,24 @@ value the other opens with. `paperDials.ts` is the source of truth.
 | `foldMs` | 700 | un-crumple, ease out |
 | `foldAmp` | 1.0 | fold vertex amplitude (the reveal edge ignores it) |
 | `segments` | 40 | plane subdivisions per side |
+
+## The boil
+
+Hovering the hero card makes every object on Issue 01's cover loop, and boils
+the card: every 1/6s a new offset (±1.5px at this hero size, scaled with the
+card) and rotation (±0.5°), held until the next step, ramped in over 250ms and
+out over 400ms. The signal, the stagger on leave and the COVER LIFE dials are
+the reader's — [docs/reader.md, page hover and the boil](reader.md#page-hover-and-the-boil)
+— and so is the rule that makes it register: ONE driver per face, writing the
+same value to everything that has to move.
+
+Here that is two things. The CoverAnimLayer's own root (`translate` /
+`rotate`), which carries the sprites, and this canvas's hero plane
+(`uBoil`), which carries the plate. Both turn about the card's centre, and
+the boil is applied to the plane last, in screen space, so a boiled plane is
+the flat plane moved exactly as CSS moves the sprites. The dent still bends the
+plate under the sprites while the hero is hovered (the caveat below); the boil
+adds nothing to that. The DOM labels (number, name) do not boil.
 
 ## The crease texture
 
@@ -245,14 +281,16 @@ dent, squash and fold are all 0, so every vertex term is 0 and the plate is
 exactly where the sprites expect it. `verify:detail` asserts this
 (`registration`). What does move the plate under the sprites is the dent while
 the hero is hovered, and the squash while the row slides. Both are transient,
-and the sprite does not move with them.
+and the sprite does not move with them. The boil, on the other hand, moves
+both: the plane and the sprites' layer are given the same rigid transform in
+the same task (see [the boil](#the-boil)).
 
 ## Running the checks
 
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,nav,leave,frames,reduced
+npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,nav,leave,frames,reduced,life
 ```
 
 About two minutes. It drives the layer through `window.__paper` (dev only):
@@ -287,6 +325,27 @@ are at most 0.225%.
 ripple, dent, squash and fold are all exactly 0 under its 20 sprites, and the
 neighbours ripple at 0.01. Hovering the hero takes the dent to 1.000, and
 leaving takes it back to 0.
+
+**Cover life** (`life`), 1728×996 at 1× and 2×, identical at both:
+
+| | measured | bar |
+| --- | --- | --- |
+| page hover (a point on no object) → all 20 `playing` | 16.6–16.7ms (one frame) | ≤ 200ms |
+| sprite vs plate during the boil, 10 samples × 20 sprites | worst 0.029px | ≤ 0.5px |
+| boil seen in those samples | 10/10, up to 1.22px and 0.48°, 7 distinct steps | |
+| worst frame while boiling, 240 frames | 16.8ms | ≤ 20ms |
+| leave → every object home | slowest 1692ms (freewrite, a 2338ms pass); fades spread 53–1571ms over 18 distinct 8ms slots | each ≤ its pass + stagger + fade + 60ms |
+| 500ms after the leave | uBoil 0, 0, 0; no translate or rotate anywhere | exactly 0 |
+| canvas plate vs DOM plate, both held at step 7 (0.66, 1.23px, −0.25°) | 0.892% (1×), 0.743% (2×) | card 01's hero budget, 1% |
+| the same boiled canvas vs the canvas at rest | 13.6% | > 3 × the above |
+| reduced motion | all 20 play in 16.7ms; boil 0 over 1s | no boil |
+
+The 0.029px is the layout grid: `offsetWidth` is rounded to a whole pixel,
+and reading the host's scale from it first put a 0.31px error on the far
+sprites, at rest too; the check reads the computed width. The pixel check is
+the one that sees the canvas: the boiled canvas plate agrees with the boiled
+DOM plate as closely as the flat ones do (identity, 0.954% / 0.570%), so the
+boil adds no misregistration of its own.
 
 **Also checked:** hovering a cover object still mounts and plays its animation
 with the canvas underneath, and the point under the pointer is the panel, never

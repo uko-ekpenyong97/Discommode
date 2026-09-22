@@ -1,7 +1,7 @@
 /**
  * The reader, in Chrome. `npm run verify:reader` with the dev server running
  * (`npm run dev`; `--url` for another origin, `--runs N` for the frame budget,
- * `--only frames,zorder,nav,exit,hover` for a subset).
+ * `--only frames,zorder,nav,exit,hover,life` for a subset).
  *
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
@@ -29,19 +29,29 @@
  *                         for more than three passes while hovered; on leave the
  *                         pass in flight finishes before the still returns. And
  *                         the back layer exists only at rest on the last spread.
+ *   cover life            the closed cover and the closed back, 1× and 2×
+ *                         (src/reader/coverLife.ts): hovering the page on no
+ *                         object has every object on the face playing within
+ *                         200ms; during the boil, sampled 10 times, the book's
+ *                         static slot (the face) and every sprite sit where the
+ *                         slot's own transform puts them, to ≤ 0.5px; no frame
+ *                         over 20ms; leaving, each object is home within its
+ *                         pass + stagger + fade and nothing is moved at all.
+ *                         Writes docs/reader-nav/boil-steps.webp.
  *
  * It drives the reader through `window.__flip`, the dev-only engine handle, and
  * its `probe` (hold a riffle at any ms, paint leaves flat hues, read their state).
  */
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,exit,hover` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,exit,hover').split(',');
+/** `--only frames,zorder,nav,exit,hover,life` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,exit,hover,life').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORT = { width: 1728, height: 996 };
 const FRAME_BUDGET_MS = 20;
@@ -451,6 +461,9 @@ async function checkExit(browser) {
 
 async function hoverLoop(page, spread, face, id) {
   await open(page, spread);
+  // The boil moves every pixel of the face; take it out, so a frame change
+  // below is the loop and nothing else.
+  await page.evaluate(() => window.__coverLife.set({ boilPx: 0, boilDeg: 0 }));
   const geo = await page.evaluate(
     async ({ face, id }) => {
       const m = await (await fetch('/issues/01/anim/manifest.json')).json();
@@ -541,6 +554,88 @@ async function checkHover(browser) {
   await page.context().close();
 }
 
+
+// ── cover life ───────────────────────────────────────────────────────────────
+
+/** A closed face: its layer, and the book's static slot under it, whose own
+ *  laid-out transform is what the sprites are checked against. */
+const readerFace = (which) => {
+  const slot = which === 'cover' ? '.book[data-pos="cover"] > .book__page--right' : '.book[data-pos="back"] > .book__page--left';
+  return {
+    which,
+    layer: '.book-anim .cover-anim',
+    plateBox: slot,
+    boiled: '.book > .book__page',
+    plate: `() => {
+      const el = document.querySelector('${slot}');
+      const cs = getComputedStyle(el);
+      const t = cs.translate === 'none' ? [0, 0] : cs.translate.split(' ').map(parseFloat);
+      const rad = cs.rotate === 'none' ? 0 : (parseFloat(cs.rotate) * Math.PI) / 180;
+      // Its rotation centre is its own, which is the hover layer's box's.
+      const hb = document.querySelector('.book-anim').getBoundingClientRect();
+      return { cx: hb.x + hb.width / 2, cy: hb.y + hb.height / 2, dx: t[0], dy: t[1] ?? 0, rad };
+    }`,
+  };
+};
+
+async function checkLife(browser) {
+  console.log('\ncover life: page hover and the boil, closed cover and back');
+  const max = (xs) => Math.max(...xs);
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, dpr);
+    for (const [spread, which, count] of [
+      [0, 'cover', 20],
+      [21, 'back', 1],
+    ]) {
+      const face = readerFace(which);
+      await open(page, spread);
+      const rest0 = await atRest(page, face);
+      check(
+        rest0.still && rest0.styles === '' && rest0.phases.every((p) => p === 'rest'),
+        `@${dpr}× ${which} at rest: nothing boiled, nothing playing`,
+        `slot boil ${rest0.plate.dx},${rest0.plate.dy},${rest0.plate.rad}; styles "${rest0.styles}"`,
+      );
+      const at = await emptyPoint(page, face);
+      const h = await hoverAll(page, face, at);
+      check(
+        h.ms !== null && h.ms <= 200 && h.n === count,
+        `@${dpr}× ${which}: hovering the page, on no object, plays all ${h.n}`,
+        `all playing ${h.ms === null ? 'never' : `${h.ms.toFixed(1)}ms`} after the pointer arrived`,
+      );
+      const reg = await registration(page, face, 10);
+      const moved = reg.filter((r) => r.moved > 0.05 || Math.abs(r.deg) > 0.01).length;
+      const steps = new Set(reg.map((r) => r.step)).size;
+      check(
+        max(reg.map((r) => r.worst)) <= 0.5 && max(reg.map((r) => r.box)) <= 0.5 && moved >= 8 && steps >= 4,
+        `@${dpr}× ${which}: during the boil, the face and its sprites move together`,
+        `worst sprite ${max(reg.map((r) => r.worst)).toFixed(3)}px, slot ${max(reg.map((r) => r.box)).toFixed(3)}px over 10 samples; ${moved}/10 boiled (up to ${max(reg.map((r) => r.moved)).toFixed(2)}px, ${max(reg.map((r) => Math.abs(r.deg))).toFixed(2)}°), ${steps} distinct steps`,
+      );
+      const fr = await frameTimes(page, async () => {
+        for (let k = 0; k < 60; k++) {
+          await page.mouse.move(at.x + (k % 9), at.y + (k % 7));
+          await page.waitForTimeout(50);
+        }
+      });
+      check(max(fr) <= FRAME_BUDGET_MS, `@${dpr}× ${which}: frames during the boil`, `worst ${max(fr).toFixed(1)}ms over ${fr.length} frames`);
+      const L = await leaveAll(page, face, { x: 5, y: 500 });
+      const j = judgeLeave(L);
+      check(
+        j.all && j.ids.length === count && j.over.length === 0,
+        `@${dpr}× ${which}: leaving, every object finishes its pass and fades home`,
+        `slowest home ${j.worst.toFixed(0)}ms; fades begin ${j.fades[0]?.toFixed(0)}–${j.fades.at(-1)?.toFixed(0)}ms${j.over.length ? `; late: ${j.over.map((x) => `${x.id} ${x.t.toFixed(0)}>${x.bound}`).join(', ')}` : ''}`,
+      );
+      await page.waitForTimeout(500);
+      const rest1 = await atRest(page, face);
+      check(rest1.still && rest1.styles === '', `@${dpr}× ${which}: after the leave, everything exactly where it was`, `styles "${rest1.styles}"`);
+      if (dpr === 2 && which === 'cover') {
+        const s = await boilSteps(page, face, 'docs/reader-nav/boil-steps.webp');
+        ok('wrote docs/reader-nav/boil-steps.webp', s.map((x) => `step ${x.step}: ${x.dx.toFixed(2)},${x.dy.toFixed(2)}px ${x.deg.toFixed(2)}°`).join(' | '));
+      }
+    }
+    await page.context().close();
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   const probe = await newPage(browser);
@@ -558,6 +653,7 @@ async function run() {
   if (ONLY.includes('nav')) await checkNavigation(browser);
   if (ONLY.includes('exit')) await checkExit(browser);
   if (ONLY.includes('hover')) await checkHover(browser);
+  if (ONLY.includes('life')) await checkLife(browser);
 
   check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
   await browser.close();

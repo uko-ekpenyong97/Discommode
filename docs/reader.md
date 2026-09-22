@@ -25,6 +25,7 @@ numbers that decided how they work.
 | `readerNav.ts` | `openReader` / `closeReader`: the opener, and how the reader leaves. |
 | `issue-01.ts` | The issue: pages in reading order, `buildSpreads`, the resting cover and back. |
 | `coverAnims.ts` | The hover-animation manifest's types and geometry (`faceOf`, `fitCover`, `hitTest`, leave timing). |
+| `coverLife.ts` | Page hover and the boil: the COVER LIFE dials, the stepped boil signal, the stagger, and the registry the detail view's paper reads the boil from. |
 | `cover-anim-placements.json` | INPUT to `npm run anims`: every animated object's rect, z and face. |
 
 ## Layers
@@ -121,8 +122,10 @@ placed at fractional offsets antialias differently from the flattened image —
 
 **The hover layer** (`CoverAnimLayer`, `face` prop) draws the plate and each
 object's still, resolves hover from one `pointermove` on the book against the
-hit rects (highest z wins), plays the animated WebP while hovered, and on leave
-runs out the pass in flight before crossfading the still back (`leavePlan`). An
+hit rects (highest z wins), plays the animated WebP while active, and on leave
+runs out the pass in flight before crossfading the still back (`leavePlan`).
+With the page hovered every object on the face is active — see
+[page hover and the boil](#page-hover-and-the-boil). An
 object that rests on its LAST frame (`rest: "last"` — libros, the shelf that
 rests full) dissolves in and out rather than cutting, since its still and its
 frame 1 differ by design.
@@ -130,6 +133,72 @@ frame 1 differ by design.
 Per-object options live beside the frames in `fps.json`: `fps` (default 6),
 `mode` (`loop` | `once`), `rest` (`first` | `last`). Editing `fps.json` now counts
 as a change to the object; before, it rebuilt nothing.
+
+### Page hover and the boil
+
+`src/reader/coverLife.ts`. The pointer anywhere on a closed face (the cover
+at spread 0, the back at the last spread, both at rest) brings the whole face
+alive: every object on it loops, and the face itself **boils**, the stepped
+wobble of hand-drawn animation.
+
+**All on hover.** Each object is either in the active set or not, and the
+active set is every object on the face while the page is hovered
+(`allOnHover`), else the one under the pointer. Entering the set plays it (a
+`rest: "last"` object uses its enter fade, as before); leaving it runs the
+ordinary leave rule. So hovering one object while all are playing does
+nothing extra, and with `allOnHover` off the layer is exactly what it was.
+"The page" is the hover layer's own box, not the book: at `data-pos="cover"`
+the book is two pages wide and its empty half is not the cover.
+
+**The stagger.** When the whole face leaves at once, each object's fade is
+held back by `staggerMs(i)`: the golden-ratio sequence over `[0, stagger)`,
+so twenty loops that started on one frame fade home on twenty different ones.
+Why a hold after the pass, and why it cannot be seen: a pass ends on frame 1,
+which is the still, and every object on Issue 01 runs at 6fps, so frame 1 is on
+screen for the first 167ms of each pass. A hold under that keeps the loop on
+the very image the still fades in over. Only the moment of the fade moves.
+A single object leaving (per-object hover) is not held.
+
+**The boil.** One signal per face, stepped at `boilFps`: every 1/boilFps s a
+new offset within ±`boilPx` (scaled with the card: `boilPx` is at the hero's
+width at 1728×996, `HERO_REF_W` = 628.25px) and a rotation within
+±`boilDeg`, held until the next step, no easing. The steps come from a
+seeded sequence (mulberry32) in which each step is redrawn until it is at least
+0.5 from the last in offset and 0.25 in rotation (both in units of the range),
+so no two consecutive steps are ever the same drawing. The AMPLITUDE ramps,
+linearly, in over `boilInMs` and out over `boilOutMs`; the steps do not. A
+new hover restarts the step clock and continues the sequence where the last
+boil stopped.
+
+**Where it is applied.** The layer drives its face's boil in its own rAF, which
+runs only while there is a boil. Each change is written, in one task, to the
+layer (`translate` / `rotate`, CSS's individual properties, which compose
+with and never overwrite a `transform`), to `boilWith` — in the reader, the
+book's static slot under the face, whose table shadow and edge the plate does
+not cover — and to the registry, for the detail view's paper plane. Layer and
+slot are the same rect and turn about their own centres, so they turn about
+one point. At rest the properties are removed outright, and so is everything
+when the layer unmounts mid-boil (a turn lifting the cover): rest is the page
+exactly as it was.
+
+**Reduced motion:** no boil. The objects still play on hover.
+
+| dial | shipped | |
+| --- | --- | --- |
+| `allOnHover` | on | page hover plays every object on the face |
+| `boilFps` | 6 | boil steps per second — the sprites' own frame rate |
+| `boilPx` | 1.5 | largest offset either axis, CSS px at the hero size |
+| `boilDeg` | 0.5 | largest rotation either way |
+| `boilInMs` | 250 | amplitude ramp in |
+| `boilOutMs` | 400 | amplitude ramp out |
+| `stagger` | 120 | most extra hold before an object's fade on a page leave |
+
+COVER LIFE panel, in the READER NAV dock at `#read-NN?intro`, the doorway dock
+at `#item-NN?intro` and the app's dev dock at plain `#item-NN`: one panel id,
+persisted, so all three open on the same values. `coverLife.ts` is the source
+of truth. `docs/reader-nav/boil-steps.webp` is two consecutive steps of the
+closed cover side by side, held at full amplitude, with a 4× crop of the top
+corner under each.
 
 ### The registration step
 
@@ -304,7 +373,7 @@ magenta.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                  # in another shell
-npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,exit,hover
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,exit,hover,life
 ```
 
 `scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
@@ -340,8 +409,34 @@ exits non-zero on any ✗.
   says nothing about the exits. (Playwright's fake clock does not hold Motion's
   frame loop either, so pairing by time is out.)
 - **Hover loops.** libros (cover) and riddim (back) keep changing frames for
-  more than three passes while hovered; on leave the animation is still
-  running, and the still is back within one pass. And the back's layer exists
-  only at rest on the last spread — not at spread 20, not while turning in or out.
+  more than three passes while hovered (with the boil dialled to 0, so a
+  changing frame is the loop); on leave the animation is still running, and
+  the still is back within one pass. And the back's layer exists only at rest
+  on the last spread — not at spread 20, not while turning in or out.
+- **Cover life** (`life`), the closed cover and the closed back at 1× and 2×.
+  At rest nothing is boiled or playing. Hovering the page on a point no hit
+  rect covers has every object on the face (20; the back's 1) `playing` within
+  200ms. During the boil, sampled 10 times ~110ms apart, the slot's laid-out
+  transform (its computed `translate` / `rotate`) is taken as the face's, and
+  every sprite's box and the slot's own box must sit where it puts them, to
+  ≤ 0.5px. No frame over 20ms while boiling. On leave each object must be home
+  within its pass + `stagger` + the 120ms fade (+60ms for timers), and 500ms
+  later nothing carries a translate or a rotate. Writes
+  `docs/reader-nav/boil-steps.webp`.
+
+  Measured 2026-09-21, identical at 1× and 2×: all 20 cover objects `playing`
+  16.6–16.8ms after the pointer reached the page (riddim 16.2–16.3ms); worst
+  sprite 0.029px and slot 0.014px from where the slot's transform puts them
+  (back: 0.014 / 0.002px), 10/10 samples boiled across 7 steps; worst frame
+  16.8ms; slowest object home 1690–1707ms (freewrite's pass is 2338ms), fades
+  spread from ~60ms to ~1580ms; nothing moved 500ms after.
 
 A full run takes about fifteen minutes, most of it the z-order check.
+
+**The riffle frame budget is not reliably green on this machine.** On
+2026-09-21, with the cover-life change, a full run missed 3 of the 4 riffle
+frame checks (single 33–50ms frames in 1–3 of 5 runs each) and a re-run missed
+2 of 4. `origin/main` without the change, same machine, same session, missed 3
+of 4. The riffle unmounts the hover layers before it lifts, and nothing boils
+during one. So these misses are the ones described under [what full size on
+the slow leaves costs](#the-riffle), not a new cost.
