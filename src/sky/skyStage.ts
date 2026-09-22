@@ -24,7 +24,7 @@
  * — or a browser with no WebGL2 at all — still paints the right colours in the
  * right places instead of a hole.
  */
-import { subscribeConfig } from '../config';
+import { config, subscribeConfig } from '../config';
 import { createSkyEngine } from './skyEngine';
 import type { SkyEngine, SkyTarget } from './skyEngine';
 
@@ -134,6 +134,119 @@ export function setSkyTarget(next: SkyTarget, immediate = false): void {
   if (!changed) return;
   target = next;
   listeners.forEach((fn) => fn());
+}
+
+/**
+ * THE PAGE DISTURBS THE SKY. A sliding card, the portfolio sheet rolling in or
+ * tearing off, the reader's doorway — anything on the page that moves pushes
+ * air through the weather behind it, the way the pointer does.
+ *
+ * `(x, y)` in CSS px from the viewport's top-left, `(vx, vy)` its velocity in
+ * CSS px / s; scaled by the `pageSplat` dial (0 turns the page's wake off and
+ * leaves the pointer's). A no-op before the engine exists, with no WebGL2, and
+ * wherever the engine drops splats (fluid off, reduced motion).
+ */
+export function skySplat(x: number, y: number, vx: number, vy: number, strength = 1): void {
+  const k = config.pageSplat * strength;
+  if (!engine || !(k > 0)) return;
+  engine.splat(x, y, vx, vy, k);
+}
+
+/** Where each `skyWake` key was last seen: its points and when. */
+const wakes = new Map<string, { pts: [number, number][]; t: number }>();
+/** A key not seen for this long starts over rather than splatting a jump. */
+const WAKE_STALE_MS = 100;
+
+/**
+ * {@link skySplat} for a thing that only knows where it IS: pass the same `key`
+ * every frame with the points along its moving edge, and each point splats with
+ * the velocity it has had since the last call. The first call for a key (or the
+ * first after a gap) only records where it is.
+ */
+export function skyWake(key: string, pts: [number, number][], strength = 1): void {
+  const now = performance.now();
+  const prev = wakes.get(key);
+  // Keys are cheap and callers mint them freely (one per grid card); forget
+  // the ones that have gone quiet.
+  if (!prev && wakes.size > 32) {
+    for (const [k, w] of wakes) if (now - w.t > WAKE_STALE_MS) wakes.delete(k);
+  }
+  wakes.set(key, { pts, t: now });
+  if (!prev || prev.pts.length !== pts.length) return;
+  const dt = (now - prev.t) / 1000;
+  if (dt <= 0 || dt * 1000 > WAKE_STALE_MS) return;
+  for (let i = 0; i < pts.length; i++) {
+    const [x, y] = pts[i];
+    const vx = (x - prev.pts[i][0]) / dt;
+    const vy = (y - prev.pts[i][1]) / dt;
+    if (vx !== 0 || vy !== 0) skySplat(x, y, vx, vy, strength);
+  }
+}
+
+/**
+ * {@link skyWake} for a surface with several edges, only ONE of which is moving
+ * into the air: pass every candidate edge as a list of points, and only the edge
+ * furthest along the surface's own direction of travel splats. The sheet's roll
+ * and tear use it — a sheet climbing the screen pushes with its top edge, one
+ * leaving pushes with whichever edge is leading it out.
+ */
+export function skyWakeLeading(key: string, edges: [number, number][][], strength = 1): void {
+  const now = performance.now();
+  const flat = edges.flat();
+  const prev = wakes.get(key);
+  wakes.set(key, { pts: flat, t: now });
+  if (!prev || prev.pts.length !== flat.length) return;
+  const dt = (now - prev.t) / 1000;
+  if (dt <= 0 || dt * 1000 > WAKE_STALE_MS) return;
+  // The surface's velocity and centre, from every point on it.
+  let vx = 0;
+  let vy = 0;
+  let cx = 0;
+  let cy = 0;
+  flat.forEach(([x, y], i) => {
+    vx += x - prev.pts[i][0];
+    vy += y - prev.pts[i][1];
+    cx += x;
+    cy += y;
+  });
+  const n = flat.length;
+  vx /= n;
+  vy /= n;
+  cx /= n;
+  cy /= n;
+  if (vx === 0 && vy === 0) return;
+  let best = 0;
+  let bestAlong = -Infinity;
+  edges.forEach((edge, e) => {
+    let ex = 0;
+    let ey = 0;
+    for (const [x, y] of edge) {
+      ex += x;
+      ey += y;
+    }
+    const along = (ex / edge.length - cx) * vx + (ey / edge.length - cy) * vy;
+    if (along > bestAlong) {
+      bestAlong = along;
+      best = e;
+    }
+  });
+  let offset = 0;
+  for (let e = 0; e < best; e++) offset += edges[e].length;
+  edges[best].forEach(([x, y], i) => {
+    const [px, py] = prev.pts[offset + i];
+    skySplat(x, y, (x - px) / dt, (y - py) / dt, strength);
+  });
+}
+
+/** The four edge midpoints of a CSS-px rect given by its centre and size —
+ *  where a moving card pushes the air in front of it and pulls it in behind. */
+export function rectEdges(cx: number, cy: number, w: number, h: number): [number, number][] {
+  return [
+    [cx - w / 2, cy],
+    [cx + w / 2, cy],
+    [cx, cy - h / 2],
+    [cx, cy + h / 2],
+  ];
 }
 
 export function skyTarget(): SkyTarget {

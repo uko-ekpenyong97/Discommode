@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { animate } from 'motion';
+import { config } from '../config';
+import { panelStepFor } from '../detailLayout';
+import { computeHeroRect } from '../layout/hero';
+import { rectEdges, skyWake } from '../sky/skyStage';
 import type { FlipEngine } from './flipEngine';
 import {
+  CLEAR_DRIFT_PX,
   EXIT_RATE,
   TOTAL_MS,
   applyDoorwayValues,
@@ -32,6 +37,34 @@ interface DoorwayMotionOptions {
  * the cover turn. `requestExit` reverses from wherever the playhead is (so
  * Escape mid-entrance reverses cleanly), then runs the caller's completion.
  */
+/**
+ * The doorway moving air through the sky. Two things in it move across the
+ * screen: the detail view's NEIGHBOURS, drifting outward and away as CLEAR goes
+ * to 1 (and back in on the way out), and the COVER's free edge swinging over
+ * the spine as the book OPENS. Each splats its edges into the wake at the speed
+ * it is moving; neither is a real rect in this module, so both are rebuilt from
+ * the hero rect the way `DetailView` and the reader lay them out.
+ */
+function doorwayWake(clear: number, open: number): void {
+  const hero = computeHeroRect(window.innerWidth, window.innerHeight);
+  const cx = hero.x + hero.w / 2;
+  const cy = hero.y + hero.h / 2;
+  const step = panelStepFor(hero.w, config.detailGap, config.detailSideScale);
+  const sw = hero.w * config.detailSideScale;
+  const sh = hero.h * config.detailSideScale;
+  const drift = clear * CLEAR_DRIFT_PX;
+  skyWake('doorway:left', rectEdges(cx - step - drift, cy, sw, sh));
+  skyWake('doorway:right', rectEdges(cx + step + drift, cy, sw, sh));
+  // The cover hinges on its left edge; its free edge's shadow on the screen
+  // sweeps from the right edge, over the spine, to a page-width left of it.
+  const edgeX = hero.x + hero.w * Math.cos(Math.PI * open);
+  skyWake('doorway:cover', [
+    [edgeX, hero.y + hero.h * 0.2],
+    [edgeX, cy],
+    [edgeX, hero.y + hero.h * 0.8],
+  ]);
+}
+
 export function useDoorwayMotion({
   engine,
   resetToCover,
@@ -57,6 +90,7 @@ export function useDoorwayMotion({
     msRef.current = ms;
     const v = sampleDoorway(ms, autoOpenRef.current);
     applyDoorwayValues(v);
+    doorwayWake(v.clear, v.open);
     driveFlipOpen(engineRef.current, v.open, forward, autoOpenRef.current, flipRef.current, () =>
       resetRef.current(),
     );

@@ -39,6 +39,7 @@ import {
   settleRevealsNearEnd,
 } from './revealState';
 import { ScrollerContext } from './scrollerContext';
+import { skyWakeLeading } from '../sky/skyStage';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
 
@@ -117,6 +118,9 @@ const flatOf = (kind: SheetKind) =>
 const snap = (v: number, dpr: number): number => Math.round(v * dpr) / dpr;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/** Where along the sheet's edge (u, 0..1) it splats into the sky's wake. */
+const SHEET_WAKE_U = [0.1, 0.5, 0.9];
 
 /**
  * THE RESIDENT WINDOW: the section being read and its two neighbours, and
@@ -560,8 +564,21 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         paint(shown, scrollTop, opacity, exiting);
 
         if (handoff) canvas?.show(handoff.index, flatOf(handoff.kind));
-        else if (l.sheet) canvas?.show(l.sheet.index, l.sheet.pose);
-        else canvas?.hide();
+        else if (l.sheet) {
+          canvas?.show(l.sheet.index, l.sheet.pose);
+          // The sheet moving — rolling in, tearing off — pushes air through
+          // the sky behind it with its leading edge, bent as the shader bends
+          // it (`sheetPoint` is the CPU port of that geometry).
+          if (canvas) {
+            const edge = (v: number) =>
+              SHEET_WAKE_U.map((u) => canvas.sheetPoint(u, v)).filter((p) => p !== null).map((p) => [p.x, p.y] as [number, number]);
+            const bottom = edge(0);
+            const top = edge(1);
+            if (bottom.length === SHEET_WAKE_U.length && top.length === SHEET_WAKE_U.length) {
+              skyWakeLeading('pv-sheet', [bottom, top]);
+            }
+          }
+        } else canvas?.hide();
       }
 
       if (l.activeIndex !== activeRef.current) {

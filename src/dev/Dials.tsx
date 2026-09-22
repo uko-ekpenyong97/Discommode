@@ -98,7 +98,32 @@ function Dials() {
     skySaturation: [start.skySaturation, 0.4, 1.6, 0.01],
     skyGrain: [start.skyGrain, 0, 0.1, 0.005],
     skyResolution: [start.skyResolution, 0.5, 1, 0.05],
+    skyMaxMegapixels: [start.skyMaxMegapixels, 0, 16, 0.5],
   });
+
+  // SKY · FLUID — the wake (docs/sky.md, "The wake"). The solver's five, then
+  // what each layer does with it, then the page's share. `fluidDebug` is on F:
+  // it draws the field itself in the bottom-left corner.
+  const fluid = useDialKit(
+    'SKY · FLUID',
+    {
+      fluidOn: start.fluidOn,
+      fluidRadius: [start.fluidRadius, 0.02, 0.25, 0.005],
+      fluidStrength: [start.fluidStrength, 0, 3, 0.05],
+      fluidCurl: [start.fluidCurl, 0, 50, 1],
+      velocityDissipation: [start.velocityDissipation, 0.9, 0.999, 0.001],
+      densityDissipation: [start.densityDissipation, 0.85, 0.999, 0.001],
+      fluidWarp: [start.fluidWarp, 0, 0.1, 0.001],
+      starPush: [start.starPush, 0, 2, 0.05],
+      starGlow: [start.starGlow, 0, 4, 0.05],
+      cloudPart: [start.cloudPart, 0, 1, 0.01],
+      fogPart: [start.fogPart, 0, 1, 0.01],
+      rainBend: [start.rainBend, 0, 0.6, 0.01],
+      pageSplat: [start.pageSplat, 0, 3, 0.05],
+      fluidDebug: start.fluidDebug,
+    },
+    { shortcuts: { fluidDebug: { key: 'f' } } },
+  );
 
   // The detail cards' paper has its own store (paperDials.ts), not LiveConfig.
   useDetailPaperDials();
@@ -180,6 +205,21 @@ function Dials() {
       skySaturation: sky.skySaturation,
       skyGrain: sky.skyGrain,
       skyResolution: sky.skyResolution,
+      skyMaxMegapixels: sky.skyMaxMegapixels,
+      fluidOn: fluid.fluidOn,
+      fluidRadius: fluid.fluidRadius,
+      fluidStrength: fluid.fluidStrength,
+      fluidCurl: fluid.fluidCurl,
+      velocityDissipation: fluid.velocityDissipation,
+      densityDissipation: fluid.densityDissipation,
+      fluidWarp: fluid.fluidWarp,
+      starPush: fluid.starPush,
+      starGlow: fluid.starGlow,
+      cloudPart: fluid.cloudPart,
+      fogPart: fluid.fogPart,
+      rainBend: fluid.rainBend,
+      pageSplat: fluid.pageSplat,
+      fluidDebug: fluid.fluidDebug,
     };
     setConfig(next);
     try {
@@ -187,7 +227,7 @@ function Dials() {
     } catch {
       // best effort
     }
-  }, [motion, grid, depth, layout, focus, detail, overlay, sky, start.miniMapSpan]);
+  }, [motion, grid, depth, layout, focus, detail, overlay, sky, fluid, start.miniMapSpan]);
 
   // Test hooks (dev only; this module never ships to production).
   useEffect(() => {

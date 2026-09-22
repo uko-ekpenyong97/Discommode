@@ -18,6 +18,7 @@
     "verify:gpu": "node scripts/pv-gpu-loop.mjs",
     "verify:reader": "node scripts/reader-verify.mjs",
     "verify:detail": "node scripts/detail-verify.mjs",
+    "verify:sky": "node scripts/sky-fluid-verify.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -160,6 +160,43 @@ export interface LiveConfig {
    * the frame-time table in `docs/sky.md` for what set the shipped value.
    */
   skyResolution: number;
+  /**
+   * The most pixels the sky's backing store may have, in millions; above it the
+   * store is scaled down (after `skyResolution`). 0 = no cap. See "Frame time"
+   * in `docs/sky.md` for the measurement that set it.
+   */
+  skyMaxMegapixels: number;
+  // SKY · FLUID — the wake the pointer and the page's moving cards leave in the
+  // weather. See "The wake" in `docs/sky.md`; the solver is `src/sky/fluid.ts`.
+  /** Master switch. Off, the sky is exactly the sky without a wake. */
+  fluidOn: boolean;
+  /** Splat radius, as a fraction of the viewport height (the gaussian's 1/e). */
+  fluidRadius: number;
+  /** Multiplier on what the POINTER puts in — its push and its density. */
+  fluidStrength: number;
+  /** Vorticity confinement: how much the wake curls into eddies. */
+  fluidCurl: number;
+  /** Velocity kept per 60 Hz frame. 0.98 ≈ a wake that lives a few seconds. */
+  velocityDissipation: number;
+  /** Density kept per 60 Hz frame. 0.94 ≈ a parting that closes in about one. */
+  densityDissipation: number;
+  /** How far every noise sample (deck, bank, base warp) moves with the wake. */
+  fluidWarp: number;
+  /** How far the stars are carried along the wake on a clear night. */
+  starPush: number;
+  /** How much brighter, and harder-twinkling, a star in the wake gets. */
+  starGlow: number;
+  /** How much of the cloud deck the wake's density parts. */
+  cloudPart: number;
+  /** How much of the fog bank the wake's density clears. */
+  fogPart: number;
+  /** How far a gust bends the rain streaks. */
+  rainBend: number;
+  /** Multiplier on what the PAGE puts in (a sliding card, the sheet, the
+   *  doorway). 0 turns the page's splats off and leaves the pointer's. */
+  pageSplat: number;
+  /** Dev: draw the fluid texture in the bottom-left corner (F in the dock). */
+  fluidDebug: boolean;
 }
 
 /** Production defaults — also the starting point for every dial. */
@@ -211,6 +248,21 @@ export const DEFAULTS: LiveConfig = {
   skySaturation: 1,
   skyGrain: 0.03,
   skyResolution: 1,
+  skyMaxMegapixels: 5.5,
+  fluidOn: true,
+  fluidRadius: 0.08,
+  fluidStrength: 1,
+  fluidCurl: 20,
+  velocityDissipation: 0.98,
+  densityDissipation: 0.94,
+  fluidWarp: 0.02,
+  starPush: 0.6,
+  starGlow: 1.5,
+  cloudPart: 0.5,
+  fogPart: 0.7,
+  rainBend: 0.15,
+  pageSplat: 1,
+  fluidDebug: false,
 };
 
 // --- Mini-map / pagination squares static sizes (px) -------------------------
@@ -233,7 +285,7 @@ export function setConfig(patch: Partial<LiveConfig>): void {
   for (const key of Object.keys(patch) as (keyof LiveConfig)[]) {
     const next = patch[key];
     if (next !== undefined && config[key] !== next) {
-      config[key] = next;
+      (config as unknown as Record<string, unknown>)[key] = next;
       changed = true;
     }
   }
