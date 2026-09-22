@@ -12,6 +12,7 @@ import {
   makeFlipDriveState,
   resetDoorwayValues,
 } from './doorway';
+import { useDetailPaperDials } from '../dev/detailPaperDials';
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
 const s = (ms: number): number => ms / 1000;
@@ -121,6 +122,9 @@ export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKi
     },
     { id: 'doorway-panel', onAction },
   );
+
+  // The detail view's paper, tuned from the same dock (docs/detail-paper.md).
+  useDetailPaperDials();
 
   // REST on mount; restore the normal reader / detail baseline on unmount.
   useLayoutEffect(() => {

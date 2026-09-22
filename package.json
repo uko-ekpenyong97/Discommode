@@ -11,11 +11,13 @@
     "projects": "node scripts/optimize-projects.mjs",
     "backgrounds": "node scripts/optimize-backgrounds.mjs",
     "placeholders": "node scripts/make-placeholders.mjs",
+    "creases": "node scripts/make-crease-map.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "verify:pv": "node scripts/pv-verify.mjs",
     "verify:gpu": "node scripts/pv-gpu-loop.mjs",
     "verify:reader": "node scripts/reader-verify.mjs",
+    "verify:detail": "node scripts/detail-verify.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
