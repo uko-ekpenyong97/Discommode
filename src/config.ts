@@ -152,6 +152,13 @@ export interface LiveConfig {
   fogHeight: number;
   /** Final saturation multiplier over the whole sky. */
   skySaturation: number;
+  /**
+   * Star disc radius, as a multiple of the one-device-pixel dot the field
+   * started as. 2 ships. The disc is a bright core over its inner 45% and a
+   * faint halo out to the rest; the PEAK does not change with it, so what
+   * the dial grows is the light around a star and not the star.
+   */
+  starSize: number;
   /** Additive grain over the sky, which is also what hides `skyResolution`. */
   skyGrain: number;
   /**
@@ -192,6 +199,19 @@ export interface LiveConfig {
   fogPart: number;
   /** How far a gust bends the rain streaks. */
   rainBend: number;
+  /**
+   * How far the wake drags the BASE GRADIENT — the point it is sampled at,
+   * and the position along the zenith→horizon ramp that point reads, so the
+   * two compound. Much larger than `fluidWarp`, which only moves noise: this
+   * is the paint-in-water term, and at dusk it pulls the warm horizon up
+   * into the zenith blue. Seen only where the gradient is — clear and partly
+   * skies, and the sky above the bank in fog; the deck paints over it
+   * everywhere else.
+   */
+  gradientPush: number;
+  /** How far the wake's DENSITY drifts the gradient's hue toward the horizon
+   *  colour: the stain the drag leaves behind it. */
+  gradientSwirl: number;
   /** Multiplier on what the PAGE puts in (a sliding card, the sheet, the
    *  doorway). 0 turns the page's splats off and leaves the pointer's. */
   pageSplat: number;
@@ -247,6 +267,7 @@ export const DEFAULTS: LiveConfig = {
   fogHeight: 0.85,
   skySaturation: 1,
   skyGrain: 0.03,
+  starSize: 2,
   skyResolution: 1,
   skyMaxMegapixels: 0,
   fluidOn: true,
@@ -261,6 +282,8 @@ export const DEFAULTS: LiveConfig = {
   cloudPart: 0.5,
   fogPart: 0.7,
   rainBend: 0.15,
+  gradientPush: 0.35,
+  gradientSwirl: 0.15,
   pageSplat: 1,
   fluidDebug: false,
 };

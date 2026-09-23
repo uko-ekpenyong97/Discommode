@@ -13,8 +13,13 @@ from, and anything argued about here should be argued about there first.
 > **On the numbers in this file.** Architecture and dials are as shipped.
 > Anything reported as a *measurement* names the run that produced it. The
 > frame-time table comes from a run on 2026-09-21 on an Apple M1 Max, and the one
-> it replaced was wrong (see [Frame time](#frame-time)); the
-> contact sheet is `scripts/sky-sheet.mjs` from 2026-09-20; the contrast
+> it replaced was wrong (see [Frame time](#frame-time)); the figures under
+> [Bigger stars](#bigger-stars) and [The gradient is paint](#the-gradient-is-paint)
+> are 2026-09-22 on the same machine, each one paired with a run of `main`
+> taken in the same session, because that session was a noisy one; the
+> contact sheet is `scripts/sky-sheet.mjs`, eighteen frames from 2026-09-20 and
+> the six nights re-shot 2026-09-22 (see
+> [One column at a time](#one-column-at-a-time)); the contrast
 > figures are `scripts/sky-contrast.mjs` and live in
 > [docs/portfolio-view.md](portfolio-view.md#two-washes-because-there-are-two-questions),
 > which is where the ground they are measured on is documented.
@@ -52,9 +57,9 @@ each layer composites over what is under it.
 
 | # | Layer | What drives it |
 | --- | --- | --- |
-| 1 | **Base gradient** | `uZenith` → `uHorizon` up the screen, the sample point warped by a 3-octave fbm so it reads painted rather than printed. Warm lift along the horizon at golden hour. |
+| 1 | **Base gradient** | `uZenith` → `uHorizon` up the screen, the sample point warped by a 3-octave fbm so it reads painted rather than printed. Warm lift along the horizon at golden hour. Wherever it is what you can see, the wake **pushes it around like paint in water** — see [The gradient is paint](#the-gradient-is-paint). |
 | 2 | **Sun glow** | Position: `x` by phase (0.24 rising → 0.76 setting), `y` by elevation (−0.06 → 0.86). Three exponentials — a broad wash, a near glow, a disc. Occluded by cloud, fog and storm. |
-| 3 | **Stars + moon** | Only at `nightAmt`; a hashed star field with a per-star twinkle, and a moon with its own halo. Mixed back out by cloud and fog — an overcast night has no stars. |
+| 3 | **Stars + moon** | Only at `nightAmt`, and skipped outright above it; a hashed star field, each star with its own size and twinkle and a two-tier falloff, and a moon with its own halo. Mixed back out by cloud and fog — an overcast night has no stars. |
 | 4 | **Cloud deck** | `coverage = max(cloud, storm)` thresholds a 5-octave fbm. Above 0.72 coverage the ceiling **closes** and the texture comes from the shading instead. A second fbm sample shades lit against shadow; lit goes sun-coloured at golden hour and the deck is **underlit** from below. Blown sideways by wind. |
 | 5 | **Fog bank** | A 5-octave fbm gated by a vertical falloff at `fogHeight`: a **bright** bank sitting low and rolling, not a grey tint. Its colour goes from a cold slate at night to near-white in daylight, and takes the sun's colour at golden hour; the sun bleeds through it. |
 | 6 | **Rain** | Two layers of hashed streaks at different scales and speeds, both slanted by wind. |
@@ -134,6 +139,7 @@ draw, which is the check that actually protects this.
 | `fogHeight` | 0.85 | How far up the screen the bank reaches. |
 | `skySaturation` | 1.0 | Final saturation multiplier. |
 | `skyGrain` | 0.03 | Additive grain over everything. |
+| `starSize` | 2.0 | Star disc radius, as a multiple of the one-device-pixel dot the field started as. See [Bigger stars](#bigger-stars). |
 | `skyResolution` | 1.0 | Backing-store scale under the DPR cap of 2. See below. |
 | `skyMaxMegapixels` | 0 | The most pixels the backing store may have, in millions. Above it the store is scaled down. 0 = no cap, which ships; it is the lever for a slower machine. See [Frame time](#frame-time). |
 
@@ -153,6 +159,8 @@ The wake has its own panel, **SKY · FLUID**, next to it. See [The wake](#the-wa
 | `cloudPart` | 0.5 | How much of the deck its density parts. |
 | `fogPart` | 0.7 | How much of the bank its density clears. |
 | `rainBend` | 0.15 | How far a gust bends the rain. |
+| `gradientPush` | 0.35 | How far the wake drags the base gradient itself. Seventeen times `fluidWarp`, and it is not the same kind of thing: see [The gradient is paint](#the-gradient-is-paint). |
+| `gradientSwirl` | 0.15 | How far the wake's density drifts the gradient's hue toward the horizon colour. |
 | `pageSplat` | 1.0 | What the page's moving cards put in. 0 turns them off. |
 | `fluidDebug` | off | Draw `tFluid` in the bottom-left corner. On **F**. |
 
@@ -272,10 +280,11 @@ density clamped to 1.
 | Layer | Response | Dial |
 | --- | --- | --- |
 | **Every noise sample** (base warp, deck, bank) | read at `uv − fv × fluidWarp`, so what it draws is carried along the wake | `fluidWarp` 0.02 |
-| **Base gradient, by day** | a heat-shimmer: the gradient's sample point moves by `fv × 0.01` in the horizon band (bottom 35%), scaled by daylight | — |
+| **Base gradient** | the gradient itself is dragged: sampled at `uv − fv × gradientPush`, with the ramp position slid a further `fv.y × gradientPush` on top, and the hue pulled `fz × gradientSwirl` toward the horizon colour. Fades out below 0.7 heights/s | `gradientPush` 0.35, `gradientSwirl` 0.15 |
+| **Base gradient, by day** | a heat-shimmer on top of that: the sample point moves a further `fv × 0.01` in the horizon band (bottom 35%), scaled by daylight | — |
 | **Golden hour** | the warm horizon lift gains `fz × 0.1` | — |
 | **Sun** | nothing. Its glow is positioned in unwarped UV and does not follow the cursor | — |
-| **Stars** | the star field is sampled at `p − fv × starPush × 0.05` (heights), so stars are carried along the wake; brightness and twinkle amplitude × `1 + fz × starGlow` | `starPush` 0.6, `starGlow` 1.5 |
+| **Stars** | the star field is sampled at `p − fv × starPush × 0.05` (heights), so stars are carried along the wake; brightness and twinkle amplitude × `1 + fz × starGlow`. The whole block is skipped by day | `starPush` 0.6, `starGlow` 1.5, `starSize` 2.0 |
 | **Moon** | its halo gains `fz × 0.3` where the wake passes it | — |
 | **Clouds** | coverage `cd *= 1 − fz × cloudPart` (in fog, by `fogPart`: see below); the lit/shadow sample is read a further `2 × fluidWarp` upstream, so the shading slides across the shapes and the deck looks blown | `cloudPart` 0.5 |
 | **Fog** | `fd *= 1 − fz × fogPart`; the bank's drift gains `fv × 0.05` | `fogPart` 0.7 |
@@ -283,7 +292,7 @@ density clamped to 1.
 | **Rain** | streak coordinates bent by `fv × rainBend × 0.1`, capped at 0.03 heights | `rainBend` 0.15 |
 | **Lightning** | unchanged | — |
 
-Four things here differ from the spec as first written. Each was found by
+Five things here differ from the spec as first written. Each was found by
 looking at the result or measuring it:
 
 - **Sign.** "uv += fluid.xy × k" moves a texture *against* the flow. Every
@@ -304,6 +313,18 @@ looking at the result or measuring it:
   marine layer, so the wake parts it by `fogPart` too
   (`mix(cloudPart, max(cloudPart, fogPart), uFog)`), and the window opens
   onto sky.
+- **The gradient's push takes the stars' fade, and needs it more.** The same
+  `smoothstep` window (0.2 → 0.7 heights/s here, against the stars' 0.3 → 0.8)
+  for the same reason: the vorticity floor of ~0.15 heights/s outlives the
+  sweep by seconds. On a star that floor is worth a pixel. On the gradient, at
+  `gradientPush` 0.35 and with the ramp position sliding by it a second time,
+  it is worth a tenth of the ramp. Measured on the dusk sweep below, without
+  the fade: **0.42% of the frame is still 8 levels out at 3s, 0.52% at 5s and
+  0.49% at 7s** — it does not decay, it plateaus, and then the field sleeps and
+  it snaps. With the fade it is 0.00% at all three. The fade also keeps the
+  effect *where the cursor went*: the same sweep moves about **47%** of the
+  frame without it and **30%** with it, and the difference is a weak wash over
+  everything else. Mid-sweep, where the wake is fast, it does nothing.
 - **Rain reads the gust, not the eddies.** A streak follows the curve the bend
   draws, so what leans a drop is how fast the bend *changes*, not how big it
   is. Read per pixel at the full `fv × 0.15`, the solver's fine curl tied every
@@ -311,24 +332,125 @@ looking at the result or measuring it:
   of the height across, at a tenth of the scale, capped. The drops lean and
   kink around the cursor, and the rest of the rain is left alone.
 
-The night also got more stars, and this has nothing to do with the wake:
-the density threshold went from 0.978 to 0.972 and star brightness ×1.3
-(Uko wants them more prominent). It is the one intended difference from
-the sky before this change. See the idle check below.
+### The gradient is paint
+
+`fluidWarp` moves a *noise sample*: the fbm that makes the gradient look
+painted is read 0.02 heights upstream, and what you see is the texture sliding.
+`gradientPush` is a different thing and seventeen times the size. Where the
+gradient is what is on screen — a clear or partly sky at any hour, and the sky
+above the bank in fog — the wake drags **the colour itself**:
+
+- the gradient is sampled at `uv − fv × gradientPush`, so the paint moves;
+- the position along the zenith→horizon ramp that point lands on slides by
+  `fv.y × gradientPush` **again**, so the drag also re-reads the palette
+  further down it. The two compound, and that is what makes a sweep carry the
+  warm horizon a long way rather than nudging it;
+- and the hue drifts `fz × gradientSwirl` toward the horizon colour wherever
+  the wake has been, which is the stain it leaves behind.
+
+A fast diagonal at dusk therefore pulls the orange horizon up through the
+purple zenith in a plume, and the plume relaxes as the field decays.
+`docs/sky/fluid/gradient-mid-sweep.webp` is one, mid-sweep.
+
+**This is not what air does.** Air carries water and dust; it does not carry
+the colour of the sky, which is scattering and is a function of where you are
+looking. Every other layer's response to the wake was argued from "what would
+moving air do to this", and this one is argued from ponpon-mania: it is the
+reference's look, on purpose, and the one place in this sky where the picture
+wins over the weather.
+
+It needs no gate. The gradient is layer 1 and the deck, the bank and the rain
+composite over it, so an overcast sky has none of this without a line of code
+saying so — and the check below says so in pixels: with the field asleep, the
+**eighteen daylit states are 0.000%** different from the sky before this
+change. The six nights are the ones that differ, and they differ by their
+stars, not by this.
+
+### Bigger stars
+
+The star was a disc of radius 0.10 of its cell — about 1.2 device pixels at
+1440×900 @2x — with a hard `smoothstep` edge. At that size it is a dot, and
+the eye reads a dot as a speck of dirt rather than as light. Three changes,
+all in the same expression:
+
+- **`starSize`**, 2.0, scales the radius. The shipped value is twice what it
+  was.
+- **Two tiers.** A bright core over the inner 45% of the disc, then a faint
+  halo out to the full radius:
+  `mix(smoothstep(sz,0,d)×0.45, 1.0, smoothstep(0.45·sz,0,d))`. The **peak is
+  exactly what it was** — what grew is the light around a star, not the star.
+  That is deliberate, and it is why the letterhead barely moved (below).
+- **±35% per star**, from a fourth hash of the cell, so a field of them is not
+  a field of identical dots.
+
+`docs/sky/fluid/stars-at-rest.webp` is the same clear night at the old size
+(left) and the shipped one (right), 1:1 and brightened, with the field asleep.
+It is written by section 2 of `npm run verify:sky --shots`, which is also the
+section that then sweeps them.
+
+The one thing that had to be held: the shape is evaluated against its **own
+cell only**, so a disc that reached past the cell edge would be cut off square.
+The jitter is therefore clamped to `0.5 − sz`, and a big star wanders a little
+less than a small one. The alternative is sampling the eight neighbouring
+cells, which is thirty-two more hashes per pixel on a full-screen pass, for a
+lattice nobody can see at 2.8% density.
+
+The night also got more stars before this, and that had nothing to do with the
+wake either: the density threshold went from 0.978 to 0.972 and star brightness
+×1.3 (Uko wants them more prominent). See the idle check below.
 
 **What it does to the letterhead.** The contrast probe measures the brightest
-pixel under the band, and on a clear night that pixel is now a star.
-`scripts/sky-contrast.mjs`, 2026-09-21, against `main` on the same machine:
+pixel under the band, and on a clear night that pixel is a star.
+`scripts/sky-contrast.mjs`, against `main` on the same machine:
 
-| clear night | before | after |
-| --- | --- | --- |
-| 1728×996 @2x | 10.20:1 | 9.60:1 |
-| 1440×900 @2x | 9.75:1 | 9.16:1 |
+| clear night | before the wake | + the wake (09-21) | + bigger stars (09-22) | `main` re-run (09-22) |
+| --- | --- | --- | --- | --- |
+| 1728×996 @2x | 10.20:1 | 9.60:1 | **9.34:1** | 9.60:1 |
+| 1440×900 @2x | 9.75:1 | 9.16:1 | **9.16:1** | 9.10:1 |
 
-Every other state is within ±0.1 of `main`, which is the twinkle phase and
-the lightning moving between runs. The worst state anywhere is unchanged:
-partly/overcast noon at **7.65:1**, with all 24 states over 7:1. The clear night
-is not close to being the binding state.
+**Doubling the star did not cost the letterhead anything worth measuring**, and
+the reason is that the two-tier falloff left the *peak* alone: the brightest
+pixel under the band is as bright as it was, there is simply more light around
+it, and the probe reads the brightest pixel. The last column is `main` measured
+in the same session as the fourth, and the two differ by less than the twinkle
+phase does between runs — at 1440 the branch reads *higher* than `main`.
+
+**No cap in the strip band was needed.** The worst state anywhere is still
+partly / overcast / fog noon at **7.65:1** — a ceiling, not a sample, because
+the lit top of the deck clips to white — and all 24 states are over 7:1 at both
+viewports. A clear night is nowhere near binding.
+
+#### …and the day stopped paying for them
+
+The star block ran on **every pixel of every frame**, at noon included, and
+every term in it is multiplied by `nightAmt`. It is now inside
+`if (nightAmt > 0.0)`, which is a uniform branch and the same trick the cloud
+deck and the fog bank already use. It is what pays for the bigger star, and it
+pays several times over: at 5K @2x with the fluid awake, median p95 of three
+600-frame runs, 2026-09-22, each figure paired with a run of `main` in the
+same session:
+
+| 5K @2x, fluid awake | `main` | + stars & gradient | + the night branch |
+| --- | --- | --- | --- |
+| clear noon | 3.65 | 3.61 | **1.82** |
+| partly noon | 4.22 | 4.42 | **3.78** |
+| fog noon | 5.50 | 5.76 | **5.14** |
+| storm noon | 6.16 | 6.34 | **5.83** |
+
+The two effects cost about **0.2ms**; the branch gives back 0.4 to 1.8. Read
+the columns against each other and not against
+[the table above](#the-budget--6ms-sky-incl-fluid): that session had three dev
+servers and a browser on the machine, and `main`'s own storm measures over
+6ms in it, which is exactly why the comparison is paired. The number that
+decides is section 4 of `npm run verify:sky`, which ends a render pass the way
+a present does rather than with a `finish`: **worst p95 4.89ms**, fog at 5K,
+against 5.75 before.
+
+The branch has to be free of pixels as well as of cost, because
+`mix(sky, col, a)` with `sky == col` is not *obviously* the identity in
+floating point. It is: the eighteen daylit states measure **0.000%** against
+`main` with it in, the same as without it — and dawn and dusk take the branch
+too, because `nightAmt` is already 0 at both.
 
 ### The page disturbs the sky
 
@@ -468,9 +590,11 @@ size and at 5K @2x.** It is checked in section 4 of `npm run verify:sky` and by
 
 1. **Layers that cannot show are not computed.** No cloud deck at all when
    coverage is 0 (a uniform branch), no shading sample where a pixel has no
-   cloud, and no fog bank when there is no fog. Each skips exactly the work a
-   `mix` would have multiplied by zero, so the picture is identical. It is
-   what makes a clear sky cheap.
+   cloud, no fog bank when there is no fog, and — since the stars grew —
+   **no star field by day**. Each skips exactly the work a `mix` would have
+   multiplied by zero, so the picture is identical. It is what makes a clear
+   sky cheap, and the star branch alone takes a clear 5K noon from 3.6ms to
+   1.8 (see [the day stopped paying for them](#and-the-day-stopped-paying-for-them)).
 2. **The solver in 17 passes, not 30** (see [The solver](#the-solver)). Its
    cost was the passes, not the shading. Awake, it adds **0.3–0.6ms** to a
    frame, because most of it overlaps the sky's shading. Asleep, it adds
@@ -492,6 +616,12 @@ The full table for that 5K row, median p95 (p50):
 | --- | --- | --- | --- | --- |
 | sky alone | 1.91 (1.86) | 3.88 (3.84) | 5.40 (5.34) | 4.74 (4.69) |
 | sky incl. fluid | 2.56 (2.27) | 4.43 (4.14) | 5.75 (5.65) | 5.54 (5.13) |
+
+**Every noon figure in the two tables above predates the star branch** and is
+now high by 0.4–1.8ms; the 2026-09-22 paired run is
+[here](#and-the-day-stopped-paying-for-them), and the checked worst is 4.89ms.
+What the tables are still good for is the shape — fog is the worst condition,
+the cost is per pixel, and 5K is where it is spent.
 
 Worst **5.75ms of 6**: fog at 5K @2x with the fluid awake. At 1440×900 @2x
 (5.2 MP) the worst is 2.77ms. **The margin at 5K is thin, and the machine has
@@ -542,6 +672,28 @@ The sheet is shot from the **grid**, where the sky is bare. The project view
 puts it under a wash; see
 [Two washes](portfolio-view.md#two-washes-because-there-are-two-questions).
 
+### One column at a time
+
+The six **night** frames were re-shot on 2026-09-22 for
+[the bigger stars](#bigger-stars):
+
+    node scripts/sky-sheet.mjs --times night
+
+`--times` exists because a full run `rm -rf`s the directory and re-renders all
+twenty-four, and the eighteen frames that had nothing to do with the change
+would have come back a few levels different for nothing but a new noise phase —
+eighteen files of diff saying nothing, in a review whose whole job is to make
+one difference visible. A partial run does not wipe. The other eighteen are
+still the 2026-09-20 sheet, and nothing in this change touches a daylit pixel
+(the [idle check](#checking-the-wake) puts all eighteen daylit states at
+0.000% against `main`).
+
+Zenith luma of the six, this run: clear 40.6, partly 39.3, cloudy 46.5,
+fog 46.2, rain 43.3, storm 31.8. Night still measures **27.8%** of noon's mean
+luminance against `pv-verify`'s 35% bar — the same figure `main` measures,
+because the peak star brightness did not change and the discs cover about a
+third of a percent of the frame.
+
 ### The sheet is not a check, and one was needed
 
 A contact sheet is an eye test. It is driven by `window.__skyPreview`, a handle
@@ -573,21 +725,29 @@ of the twenty-four, and `clear-noon` is twenty levels behind them.
 
 `npm run verify:sky` (`scripts/sky-fluid-verify.mjs`), with the dev server up.
 `--before <url>` points at a dev server of the branch this came from, and
-`--shots docs/sky/fluid` writes the four captures. Every claim is made in
+`--shots docs/sky/fluid` writes the captures. Every claim is made in
 pixels, with the shader's clock **pinned** (`__skyPinTime`), so that two
 captures differ only by what the wake did, not by the drift, the twinkle, the
-grain or a flash. Run 2026-09-21, Apple M1 Max, 1440×900 @2x:
+grain or a flash. Run 2026-09-22, Apple M1 Max, 1440×900 @2x:
 
 | # | Check | Result |
 | --- | --- | --- |
-| 1 | 24 states, sim on, a sweep put through and left to decay, against sim off | **0.000%** of pixels differ in every state; the solver asleep after 7.2s every time |
-| 1 | …and against the sky before this change (`main` under reduced motion, both clocks at 0) | worst **0.062%** (clear night, the denser stars); every daytime state ≤ 0.004% |
-| 2 | a sweep across a clear night | **34.6%** of 1,528 star pixels moved; **0.0%** still moved at 3s |
-| 3 | fog at night, a 200px disc at the cursor | **−26.0%** luminance; back to baseline at 3s |
-| 3 | fog at noon / dusk (reported, see below) | −7.4% / −7.3%; both back at 3s |
-| 4 | frame time, fluid awake, five sizes, cap on at 5.5 (as it was then) | worst p95 2.87ms; with the cap off, as shipped, 5.75ms at 5K @2x (see [Frame time](#frame-time)) |
+| 1 | 24 states, sim on, a sweep put through and left to decay, against sim off | **0.000%** of pixels differ in every state; the solver asleep after 7.2–7.3s every time |
+| 1 | …and against the sky before this change (`main` under reduced motion, both clocks at 0) | worst **0.255%** (clear night, the bigger stars); **every one of the twenty daylit states is 0.000%** — the gradient push leaves nothing behind |
+| 2 | a sweep across a clear night | **33.9%** of 3,936 star pixels moved; **0.0%** still moved at 3s |
+| 3 | fog at night, a 200px disc at the cursor | **−27.5%** luminance; back to baseline at 3s |
+| 3 | fog at noon / dusk (reported, see below) | −8.6% / −9.5%; both back at 3s |
+| 4 | frame time, fluid awake, five sizes, cap off as shipped | worst p95 **4.89ms**, fog at 5K @2x, against 5.75 before (see [Frame time](#frame-time)) |
 | 5 | reduced motion, a sweep and a direct `splat` | **0.000%** differ; the field never wakes |
 | 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway | each wakes the field on its own |
+| 7 | a diagonal sweep across a clear **dusk** | **30.6%** of the frame moved by ≥ 8 levels; **0.00%** still shifted at 3s |
+
+Check 7 is at dusk because dusk is the state that can answer it. Its ramp runs
+from a deep purple zenith to an orange horizon, so displacing the gradient *is*
+a change of colour; the same push at noon, over blue to pale blue, would barely
+print. The frame is the denominator: a clear dusk is gradient edge to edge but
+for the sun's disc, which is a fraction of a percent of it, and the glow is
+added *over* a gradient that moves under it anyway.
 
 Three things about how it measures, each of which was a wrong result first:
 
@@ -609,7 +769,7 @@ Three things about how it measures, each of which was a wrong result first:
 a 15% drop in a 200px disc. At night the lit bank sits over a dark sky and the
 window takes 27% off. At noon and dusk the bank is only about 13% brighter
 than the sky behind it, so no hole in it, however clean, can take 15% off a
-disc. The measured drops (7–8%) are printed rather than asserted, and the
+disc. The measured drops (8–10%) are printed rather than asserted, and the
 window is plainly there: see `docs/sky/fluid/fog-window.webp`.
 
 ## Where this is wired
@@ -654,7 +814,26 @@ window is plainly there: see `docs/sky/fluid/fog-window.webp`.
 - **5K @2x has 0.25ms of headroom in fog.** It is inside the 6ms budget on
   an M1 Max and nothing slower has been measured. `skyMaxMegapixels` is the
   lever if it is not inside on something else.
-- **The contrast figures were measured before the wake.** A wake passing
-  under the letterhead parts the deck there and changes the ground under it,
-  locally and for about a second. The probe samples a still sky, so what that
-  does to the ratio has not been measured.
+- **Sweep-time letterhead contrast has never been measured.** Every ratio in
+  this file and in [portfolio-view.md](portfolio-view.md) is a *still* sky:
+  `sky-contrast.mjs` hands the probe a target and reads a settled frame out of
+  the back buffer, so **none of the 7.65:1 through 10.77:1 is a measurement of
+  the sky with a cursor moving through it.** A wake under the band parts the
+  deck there, and since `gradientPush` it can also drag a clear dusk's orange
+  horizon up under the type — locally, and for about a second. It mattered less
+  when the wake only thinned a deck; at 0.35 it is the open question this
+  change leaves, and it is **deliberately not in this change**, because it is a
+  new instrument and not a tuning of an old one.
+
+  What it needs: a probe that **splats and reads on the next frame**, sampling
+  at the worst phase of a sweep rather than an average one — which means
+  driving `__skySplat` directly (a pointer sweep is too slow and too coarse to
+  land the peak under the band), pinning the clock, and stepping the phase to
+  find the minimum rather than taking one shot. The bar it should be held to is
+  the same 7:1. If a state fails it, the lever is still `letterheadScrim` and
+  never `groundScrim`; the other lever this change adds is `gradientPush`
+  itself.
+- **`gradientPush` is the one dial argued from the reference and not the
+  weather.** See [The gradient is paint](#the-gradient-is-paint). If the sky
+  ever has to justify itself as San Francisco's weather rather than as a
+  picture, this is the line that does not.

@@ -98,6 +98,7 @@ function Dials() {
     fogHeight: [start.fogHeight, 0.3, 1.2, 0.01],
     skySaturation: [start.skySaturation, 0.4, 1.6, 0.01],
     skyGrain: [start.skyGrain, 0, 0.1, 0.005],
+    starSize: [start.starSize, 0.5, 4, 0.05],
     skyResolution: [start.skyResolution, 0.5, 1, 0.05],
     skyMaxMegapixels: [start.skyMaxMegapixels, 0, 16, 0.5],
   });
@@ -120,6 +121,8 @@ function Dials() {
       cloudPart: [start.cloudPart, 0, 1, 0.01],
       fogPart: [start.fogPart, 0, 1, 0.01],
       rainBend: [start.rainBend, 0, 0.6, 0.01],
+      gradientPush: [start.gradientPush, 0, 1, 0.01],
+      gradientSwirl: [start.gradientSwirl, 0, 0.6, 0.01],
       pageSplat: [start.pageSplat, 0, 3, 0.05],
       fluidDebug: start.fluidDebug,
     },
@@ -206,6 +209,7 @@ function Dials() {
       fogHeight: sky.fogHeight,
       skySaturation: sky.skySaturation,
       skyGrain: sky.skyGrain,
+      starSize: sky.starSize,
       skyResolution: sky.skyResolution,
       skyMaxMegapixels: sky.skyMaxMegapixels,
       fluidOn: fluid.fluidOn,
@@ -220,6 +224,8 @@ function Dials() {
       cloudPart: fluid.cloudPart,
       fogPart: fluid.fogPart,
       rainBend: fluid.rainBend,
+      gradientPush: fluid.gradientPush,
+      gradientSwirl: fluid.gradientSwirl,
       pageSplat: fluid.pageSplat,
       fluidDebug: fluid.fluidDebug,
     };

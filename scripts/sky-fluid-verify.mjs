@@ -41,9 +41,17 @@
  *      only the page can be what put anything in: the detail view's Next, a
  *      grid drag, the portfolio sheet's roll-in and the reader's doorway each
  *      wake the field on their own.
+ *   7  THE GRADIENT IS PUSHED AROUND, AND SETTLES BACK. A sweep across a clear
+ *      dusk — where the gradient is the whole picture, nothing painted over it
+ *      — moves at least 20% of the frame by at least 8 levels on some channel,
+ *      and within 3s it is back. A clear dusk is the state that asks the
+ *      question: its ramp runs from a deep purple zenith to an orange horizon,
+ *      so a displacement of the gradient IS a change of colour, where at noon
+ *      the same push over a blue-to-pale-blue ramp would barely print.
  *
- * `--shots` writes the four PR captures: star scatter mid-sweep, the fog
- * window, the deck parting, the rain bending.
+ * `--shots` writes the PR captures: the stars at rest at both sizes, the star
+ * scatter mid-sweep, the gradient mid-sweep, the fog window, the deck parting,
+ * the rain bending.
  */
 import { chromium } from 'playwright';
 import sharp from 'sharp';
@@ -56,7 +64,7 @@ const URL = opt('--url', process.env.PV_URL ?? 'http://localhost:5173/');
 const BEFORE = opt('--before', null);
 const SHOTS = opt('--shots', null);
 /** `--only 23` runs sections 2 and 3 and nothing else. */
-const ONLY = opt('--only', '123456');
+const ONLY = opt('--only', '1234567');
 
 const CONDITIONS = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'storm'];
 const TIMES = ['night', 'dawn', 'noon', 'dusk'];
@@ -68,6 +76,10 @@ const STAR_MOVED_PCT = 30;
 const STAR_BACK_PCT = 2;
 const FOG_DROP_PCT = 15;
 const FOG_BACK_PCT = 2;
+const GRAD_MOVED_PCT = 20;
+const GRAD_BACK_PCT = 2;
+/** "Moved" for a gradient pixel: this many 8-bit levels on any channel. */
+const GRAD_LEVELS = 8;
 const RETURN_MS = 3000;
 const BUDGET_MS = 6;
 /** The clock every capture is pinned to. */
@@ -145,6 +157,21 @@ function starPixels(img, moon) {
 
 const movedPct = (stars, a, b) =>
   (100 * stars.filter((i) => Math.abs(luma(b.data, i) - luma(a.data, i)) > 15).length) / stars.length;
+
+/** Percentage of pixels whose worst channel moved by at least `levels`. */
+function shiftedPct(a, b, levels) {
+  let n = 0;
+  const c = a.info.channels;
+  for (let i = 0; i < a.data.length; i += c) {
+    const d = Math.max(
+      Math.abs(a.data[i] - b.data[i]),
+      Math.abs(a.data[i + 1] - b.data[i + 1]),
+      Math.abs(a.data[i + 2] - b.data[i + 2]),
+    );
+    if (d >= levels) n++;
+  }
+  return (100 * n) / (a.data.length / c);
+}
 
 function discLuma(img, cx, cy, r) {
   const { data, info } = img;
@@ -294,6 +321,22 @@ async function main() {
     await page.evaluate((s) => window.__skyPinTime(s), PIN_S);
     await page.waitForTimeout(100);
     const base = await shot(page);
+    // What the size dial does, at REST, before any of the wake: the same sky at
+    // the one-device-pixel dot the field started as (left) and at what ships
+    // (right). It is the one change here that is nothing to do with the wake,
+    // so it is shot with the field asleep and the clock pinned.
+    //
+    // The 2 below is DEFAULTS.starSize written out — there is no getter on the
+    // page to read it back from — and the rest of this section depends on it
+    // being put back, so it has to track src/config.ts.
+    if (SHOTS) {
+      await page.evaluate(() => window.__setConfig({ starSize: 1 }));
+      await page.waitForTimeout(200);
+      const small = await shot(page);
+      await page.evaluate(() => window.__setConfig({ starSize: 2 }));
+      await page.waitForTimeout(200);
+      await saveStars(small, await shot(page), 'stars-at-rest');
+    }
     // The moon: (0.70, 0.80) of the viewport from the bottom-left, and its
     // halo, which the wake brightens on purpose.
     const moon = { x: 0.7 * W * 2, y: 0.2 * H * 2, r: 0.12 * H * 2 };
@@ -469,6 +512,39 @@ async function main() {
       check(!before && woke, `${label} wakes the field`, `asleep before: ${!before}, awake after: ${woke}`);
       await context.close();
     }
+  }
+
+  // ── 7  the gradient ─────────────────────────────────────────────────────────
+  if (ONLY.includes('7')) {
+    console.log('\n── 7  a sweep across a clear dusk pushes the gradient itself');
+    const page = await open(browser, URL);
+    await state(page, 'clear', 'dusk');
+    await page.evaluate((s) => window.__skyPinTime(s), PIN_S);
+    await page.waitForTimeout(100);
+    // A clear dusk has no deck and no bank: the gradient is the frame, edge to
+    // edge, but for the sun's disc — a fraction of a percent of it, and the
+    // glow is ADDED over a gradient that moves under it anyway.
+    const base = await shot(page);
+    // Diagonally up the screen, which is the drag the effect is for: it carries
+    // the warm horizon into the zenith blue rather than along its own band.
+    await sweep(page, [W * 0.12, H * 0.8], [W * 0.88, H * 0.3], 800);
+    await page.evaluate(() => window.__skyHoldFluid(true));
+    const mid = await shot(page);
+    await page.evaluate(() => window.__skyHoldFluid(false));
+    const moved = shiftedPct(base, mid, GRAD_LEVELS);
+    check(
+      moved >= GRAD_MOVED_PCT,
+      `the sweep moves ≥ ${GRAD_MOVED_PCT}% of the gradient by ≥ ${GRAD_LEVELS} levels`,
+      `${moved.toFixed(1)}%`,
+    );
+    await save(mid, 'gradient-mid-sweep');
+    const back = shiftedPct(base, await after(page, RETURN_MS), GRAD_LEVELS);
+    check(
+      back <= GRAD_BACK_PCT,
+      `…and it is back (≤ ${GRAD_BACK_PCT}% still shifted) within ${RETURN_MS / 1000}s`,
+      `${back.toFixed(1)}% shifted at ${RETURN_MS / 1000}s`,
+    );
+    await page.context().close();
   }
 
   await browser.close();

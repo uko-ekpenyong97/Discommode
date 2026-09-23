@@ -61,12 +61,15 @@ uniform float uCloudScale;
 uniform float uFogHeight;
 uniform float uSat;
 uniform float uGrain;
+uniform float uStarSize;   // star disc radius; 1 = the old dot, 2 = twice it
 // ---- the wake (see fluid.ts): xy velocity in screen heights / s, z density
 uniform sampler2D tFluid;
 uniform float uFluidOn;    // 0 while the field is asleep: no fetch, no effect
 uniform float uFluidWarp;  // every noise sample moves with the wake
 uniform float uStarPush;   // stars are carried along it…
 uniform float uStarGlow;   // …and brighten and twinkle harder in it
+uniform float uGradPush;   // the base gradient itself is dragged by it…
+uniform float uGradSwirl;  // …and drifts toward the horizon colour in its wake
 uniform float uCloudPart;  // the deck thins under it
 uniform float uFogPart;    // the bank opens under it
 uniform float uRainBend;   // rain streaks are bent by it
@@ -111,12 +114,38 @@ void main(){
 
   // ---- base sky: soft vertical gradient, gently warped so it reads painted, not printed
   // …with a heat-shimmer in the horizon band by day: the low air is what moves.
+  //
+  // …and the wake pushes the GRADIENT ITSELF around, like paint pulled through
+  // water. Three things ride the flow, and they compound:
+  //   · the point the gradient is sampled at  (uv − push),
+  //   · the position along the ramp that point lands on (again, − push.y), so
+  //     a drag both moves the paint and re-reads it further down the palette,
+  //   · the hue, drifting toward the horizon colour by the wake's own density.
+  // A fast sweep at dusk therefore drags the warm horizon up into the zenith
+  // blue, and it relaxes back as the field decays. This is not what air does —
+  // air does not carry colour — and it is the reference's look, deliberately.
+  // It is only ever SEEN where the gradient is: the deck and the bank paint
+  // over it, so an overcast sky has none of it without a line of code saying so.
   vec2 shim = fv*0.01*(1.0-smoothstep(0.0,0.35,uv.y))*dayAmt;
-  float warp = (fbm3(vec2(nuv.x*aspect,nuv.y)*1.4 - shim + vec2(t*0.02,-t*0.01))-0.5)*0.16;
-  float yy = clamp(uv.y - shim.y + warp,0.0,1.0);
-  vec3 col = mix(uHorizon,uZenith,smoothstep(0.0,1.0,yy));
-  // horizon warmth at golden hour — stirred, it glows a little
-  col += sunCol*pow(1.0-uv.y,3.0)*lowAmt*(0.45 + 0.1*fz);
+  // The push fades out below 0.7 heights a second and is gone below 0.2 — the
+  // same fade the stars take, for the same reason. A wake does not simply
+  // decay: at fluidCurl 20 the vorticity confinement keeps its eddies turning
+  // at about 0.15 heights/s for as long as the field is awake, and at this
+  // strength that floor is a tenth of the ramp. Without the fade, 0.5% of a
+  // dusk frame is still 8 levels out at 3s, 5s and 7s — it plateaus, it does
+  // not decay, and then the field sleeps and it snaps back. The fade also
+  // keeps the drag WHERE THE CURSOR WENT: the same sweep moves 47% of the
+  // frame without it and 30% with it. Mid-sweep, where the wake is fast, it
+  // does nothing.
+  vec2 gpush = fv*smoothstep(0.2,0.7,length(fv))*uGradPush/vec2(aspect,1.0);
+  float warp = (fbm3(vec2(nuv.x*aspect,nuv.y)*1.4 - gpush - shim + vec2(t*0.02,-t*0.01))-0.5)*0.16;
+  float gy = uv.y - gpush.y - shim.y;
+  float yy = clamp(gy + warp,0.0,1.0);
+  float gpos = clamp(smoothstep(0.0,1.0,yy) - gpush.y,0.0,1.0);
+  vec3 col = mix(uHorizon,uZenith,gpos);
+  col = mix(col, uHorizon, clamp(fz*uGradSwirl,0.0,1.0));
+  // horizon warmth at golden hour — dragged with the gradient, and stirred it glows
+  col += sunCol*pow(1.0-clamp(gy,0.0,1.0),3.0)*lowAmt*(0.45 + 0.1*fz);
 
   // ---- sun glow (position: side by phase, height by elevation)
   vec2 sunPos = vec2(mix(0.24,0.76,uPhase), mix(-0.06,0.86,sun));
@@ -126,17 +155,36 @@ void main(){
   col += sunCol*glow*smoothstep(0.0,0.10,sun)*occl*0.75;
 
   // ---- stars + moon (clear nights)
-  {
+  // Skipped where they cannot show, the same way the deck and the bank are: a
+  // uniform branch on nightAmt. Every term inside is scaled by it, so by day
+  // this skips exactly the work a multiply by zero would have thrown away —
+  // and it is what pays for the bigger star, which is not free.
+  if (nightAmt > 0.0) {
     // Read upstream of the wake, so a star is carried along it and comes back
     // as it decays. The push is in screen heights per (height / s), ×0.05, and
     // it fades out below half a height a second: a star is a pixel, and the
     // last few percent of a wake would otherwise hold it a pixel off for seconds.
     vec2 push = fv*smoothstep(0.3,0.8,length(fv))*uStarPush*0.05;
     vec2 sp = (uv*vec2(aspect,1.0) - push)*150.0; vec2 id=floor(sp); vec2 f=fract(sp)-0.5;
-    float h=hash(id); vec2 off=(vec2(hash(id+3.1),hash(id+7.7))-0.5)*0.6;
+    float h=hash(id);
+    // Every star has a size of its own: uStarSize × ±35% from the cell's own
+    // hash, so a field of them is not a field of identical dots.
+    float sz = 0.10*uStarSize*(0.65 + 0.70*hash(id+11.3));
+    // The jitter is held inside the cell, less the disc. The shape is only
+    // ever evaluated against its OWN cell, so a star reaching past the edge
+    // would be cut off square; a big one wanders a little less instead.
+    float room = max(0.5 - sz, 0.0);
+    vec2 off=clamp((vec2(hash(id+3.1),hash(id+7.7))-0.5)*0.6, -room, room);
+    float d = length(f-off);
     float stir = 1.0 + fz*uStarGlow;
     float twinkle = max(0.0, 0.55+0.45*stir*sin(uTime*1.7+h*80.0));
-    float star = smoothstep(0.972,1.0,h)*smoothstep(0.10,0.0,length(f-off))*twinkle*1.3*stir;
+    // Two tiers, which is what makes it read as a point of light rather than a
+    // dot: a bright core over the inner 45% of the disc, then a faint halo out
+    // to the full radius. The PEAK is exactly what it was — a star is no
+    // brighter than it was, there is just more light around it.
+    float star = smoothstep(0.972,1.0,h)
+               * mix(smoothstep(sz,0.0,d)*0.45, 1.0, smoothstep(sz*0.45,0.0,d))
+               * twinkle*1.3*stir;
     vec2 mp=vec2(0.70,0.80); float md=length((uv-mp)*vec2(aspect,1.0));
     float moon=smoothstep(0.040,0.032,md); float mglow=exp(-md*7.0)*(0.22 + fz*0.3);
     vec3 sky = col;
@@ -419,8 +467,11 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     fluid: loc('tFluid'),
     fluidOn: loc('uFluidOn'),
     fluidWarp: loc('uFluidWarp'),
+    starSize: loc('uStarSize'),
     starPush: loc('uStarPush'),
     starGlow: loc('uStarGlow'),
+    gradPush: loc('uGradPush'),
+    gradSwirl: loc('uGradSwirl'),
     cloudPart: loc('uCloudPart'),
     fogPart: loc('uFogPart'),
     rainBend: loc('uRainBend'),
@@ -596,6 +647,7 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     gl!.uniform1f(u.fogHeight, config.fogHeight);
     gl!.uniform1f(u.sat, config.skySaturation);
     gl!.uniform1f(u.grain, config.skyGrain);
+    gl!.uniform1f(u.starSize, config.starSize);
     // The wake. Asleep (or off, or reduced), uFluidOn is 0 and the shader never
     // fetches it — every fluid term is an exact zero.
     const wake = fluid !== null && fluidLive() && fluid.awake() && state === cur;
@@ -606,6 +658,8 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     gl!.uniform1f(u.fluidWarp, config.fluidWarp);
     gl!.uniform1f(u.starPush, config.starPush);
     gl!.uniform1f(u.starGlow, config.starGlow);
+    gl!.uniform1f(u.gradPush, config.gradientPush);
+    gl!.uniform1f(u.gradSwirl, config.gradientSwirl);
     gl!.uniform1f(u.cloudPart, config.cloudPart);
     gl!.uniform1f(u.fogPart, config.fogPart);
     gl!.uniform1f(u.rainBend, config.rainBend);

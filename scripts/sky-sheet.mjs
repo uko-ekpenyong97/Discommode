@@ -9,11 +9,17 @@
  * second definition of them.
  *
  *   npm run dev              # in another shell
- *   node scripts/sky-sheet.mjs [--out docs/sky] [--png]
+ *   node scripts/sky-sheet.mjs [--out docs/sky] [--png] [--times night,dusk]
  *
  * WebP by default and committed, because they are the review: a PR that says
  * "fog and overcast are different states now" has to show it. `--png` writes
  * the raw captures instead, for looking at locally.
+ *
+ * `--times` re-shoots one column and leaves the rest of the sheet alone, which
+ * is what a change to one time of day wants: a full run wipes the directory and
+ * re-renders all twenty-four, so every unrelated frame comes back a few levels
+ * different for nothing but a new noise phase. A partial run does not wipe, and
+ * the six night frames were re-shot this way when the stars grew.
  *
  * The wait before each shutter is deliberate and it is two things. The sky
  * EASES to a new target over `skyTransitionMs`, so a capture taken too early is
@@ -34,13 +40,22 @@ const asPng = args.includes('--png');
 const CONDITIONS = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'storm'];
 const TIMES = ['night', 'dawn', 'noon', 'dusk'];
 
+/** Which columns to shoot. Anything short of all four leaves the sheet in place. */
+const times = args.includes('--times')
+  ? args[args.indexOf('--times') + 1].split(',').map((t) => t.trim())
+  : TIMES;
+const unknown = times.filter((t) => !TIMES.includes(t));
+if (unknown.length) throw new Error(`no such time of day: ${unknown.join(', ')}`);
+const partial = times.length !== TIMES.length;
+
 /** Long enough for the ease to land (tau 1500ms) and for the noise to move. */
 const SETTLE_MS = 5200;
 
 const VIEWPORT = { width: 1440, height: 900 };
 
 async function main() {
-  await rm(outDir, { recursive: true, force: true });
+  // A full run is the sheet; a partial one is a patch to it.
+  if (!partial) await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
 
   const browser = await chromium.launch({
@@ -59,7 +74,7 @@ async function main() {
 
   const rows = [];
   for (const condition of CONDITIONS) {
-    for (const time of TIMES) {
+    for (const time of times) {
       await page.evaluate(([c, t]) => window.__skyPreview(c, t), [condition, time]);
       await page.waitForTimeout(SETTLE_MS);
       const png = await page.screenshot();
@@ -87,10 +102,10 @@ async function main() {
 
   await browser.close();
 
-  console.log('\n  zenith luma, by condition and time of day');
-  console.log(`  ${''.padEnd(9)}${TIMES.map((t) => t.padStart(8)).join('')}`);
+  console.log(`\n  zenith luma, by condition and time of day${partial ? ' (shot this run)' : ''}`);
+  console.log(`  ${''.padEnd(9)}${times.map((t) => t.padStart(8)).join('')}`);
   for (const condition of CONDITIONS) {
-    const cells = TIMES.map((t) =>
+    const cells = times.map((t) =>
       String(rows.find((r) => r.condition === condition && r.time === t).luma).padStart(8),
     );
     console.log(`  ${condition.padEnd(9)}${cells.join('')}`);
