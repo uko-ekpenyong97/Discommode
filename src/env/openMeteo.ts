@@ -9,9 +9,10 @@
  * continuously, the weather does not need frequent polling.
  */
 import type { EnvState, GeoLocation } from './types';
+import { DEFAULT_LOCATION } from './types';
 import { classifyWeather } from './wmo';
 import { clamp01, dayPhaseAt, estimateSunDays, isDaytime, sunElevation } from './sun';
-import { moonPhase } from './moon';
+import { moonSky } from './moon';
 import type { SunDay } from './sun';
 
 export const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -120,10 +121,15 @@ export function fallbackBase(nowMs: number): EnvBase {
 /**
  * Derive the normalized {@link EnvState} from an {@link EnvBase} at a moment in
  * time. The sun fields are recomputed from `nowMs` (continuous), everything
- * else carries through from the last fetch.
+ * else carries through from the last fetch. `loc` is where the moon is seen
+ * from: its phase is the same everywhere, its place in the sky is not.
  */
-export function computeEnvState(base: EnvBase, nowMs: number): EnvState {
-  const moon = moonPhase(nowMs);
+export function computeEnvState(
+  base: EnvBase,
+  nowMs: number,
+  loc: GeoLocation = DEFAULT_LOCATION,
+): EnvState {
+  const moon = moonSky(nowMs, loc.latitude, loc.longitude);
   return {
     sunElevation: sunElevation(nowMs, base.days),
     isDay: base.isDayApi ?? isDaytime(nowMs, base.days),
@@ -136,6 +142,9 @@ export function computeEnvState(base: EnvBase, nowMs: number): EnvState {
     // nothing to say about it and the API was never asked.
     moonFraction: moon.fraction,
     moonWaxing: moon.waxing,
+    moonAltitude: moon.altitude,
+    moonAzimuth: moon.azimuth,
+    moonLimbAngle: moon.limbAngle,
     rawWeatherCode: base.rawWeatherCode,
     fetchedAt: base.fetchedAt,
   };

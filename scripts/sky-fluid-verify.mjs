@@ -18,8 +18,11 @@
  *      with the fluid switched off, no more than 0.5% of pixels may differ. The
  *      field has to decay to NOTHING, and the solver has to have gone to sleep.
  *      With `--before` pointing at a dev server of the branch this came from,
- *      each state is also compared with the sky as it was — which differs, by
- *      design, in exactly one place: the night's stars are denser and brighter.
+ *      each state is also compared with the sky as it was. The eighteen daylit
+ *      states are asserted as they are. The six NIGHTS are asserted with
+ *      `moonGlow` at 0: the preview moon is where the fixed one was and lit
+ *      from the same side, so without its moonlight a night is the sky it was.
+ *      What the moonlight itself changes, by design, is reported beside it.
  *   2  STARS SCATTER, AND COME BACK. A pointer swept across a clear night moves
  *      at least 30% of the star pixels; within 3s they are back.
  *   3  THE FOG OPENS, AND CLOSES. A sweep through the bank opens a window at
@@ -52,7 +55,9 @@
  *      It also puts the LETTERHEAD over the moon: the contrast probe's band is
  *      moved to the moon's row (it is normally at the top of the screen, where
  *      there is no moon) and a clear night with a full moon in it has to stay
- *      over 7:1.
+ *      over 7:1. And BELOW THE HORIZON THERE IS NO MOON: forced to −1° the
+ *      disc is not drawn at all, and at 1.5° — half way through its 3° fade —
+ *      it stands off the sky by about half what it does at 45°.
  *   7  THE GRADIENT IS PUSHED AROUND, AND SETTLES BACK. A sweep across a clear
  *      dusk — where the gradient is the whole picture, nothing painted over it
  *      — moves at least 20% of the frame by at least 8 levels on some channel,
@@ -102,6 +107,10 @@ const RETURN_MS = 3000;
 const BUDGET_MS = 6;
 /** The clock every capture is pinned to. */
 const PIN_S = 3;
+/** `moonGlow` as shipped (DEFAULTS in src/config.ts) — put back after the
+ *  nights are compared with it off. A fresh browser profile has no persisted
+ *  dials, so this is what the page starts at. */
+const MOON_GLOW = 0.12;
 
 const HIDE = '.grid-stage, .minimap-wrap, .env-readout, [class*="dialkit"] { display: none !important; }';
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu'];
@@ -333,6 +342,7 @@ async function main() {
         const pct = diffPct(off, on);
         worst = Math.max(worst, pct);
         let vsBefore = null;
+        let moonlight = null;
         if (before) {
           // The branch this came from, under reduced motion — its uTime is
           // pinned at 0 there, so this one is pinned at 0 for the comparison.
@@ -340,14 +350,25 @@ async function main() {
           await page.evaluate(() => window.__skyPinTime(0));
           await page.waitForTimeout(100);
           const now0 = await shot(page);
+          const then = await shot(before);
+          vsBefore = diffPct(then, now0);
+          if (t === 'night') {
+            // The moonlight is the one thing this change adds to a night. Off,
+            // the night has to be the night it was.
+            await page.evaluate(() => window.__setConfig({ moonGlow: 0 }));
+            await page.waitForTimeout(100);
+            moonlight = vsBefore;
+            vsBefore = diffPct(then, await shot(page));
+            await page.evaluate((g) => window.__setConfig({ moonGlow: g }), MOON_GLOW);
+          }
           await page.evaluate((s) => window.__skyPinTime(s), PIN_S);
-          vsBefore = diffPct(await shot(before), now0);
           worstBefore = Math.max(worstBefore, vsBefore);
         }
-        rows.push({ c, t, pct, vsBefore, sleptMs: slept.ms, slept: slept.ok });
+        rows.push({ c, t, pct, vsBefore, moonlight, sleptMs: slept.ms, slept: slept.ok });
         console.log(
           `    ${`${c}-${t}`.padEnd(14)} on vs off ${pct.toFixed(3)}%` +
-            `${vsBefore === null ? '' : `   vs before ${vsBefore.toFixed(3)}%`}   asleep after ${(slept.ms / 1000).toFixed(1)}s`,
+            `${vsBefore === null ? '' : `   vs before ${vsBefore.toFixed(3)}%`}` +
+            `${moonlight === null ? '' : ` (moonlight on: ${moonlight.toFixed(2)}%)`}   asleep after ${(slept.ms / 1000).toFixed(1)}s`,
         );
       }
     }
@@ -356,11 +377,11 @@ async function main() {
     if (before) {
       check(
         worstBefore <= IDLE_PCT,
-        `…and within ${IDLE_PCT}% of the sky before this change — night's denser stars included`,
+        `…and within ${IDLE_PCT}% of the sky before this change — the nights with moonGlow at 0`,
         `worst ${worstBefore.toFixed(3)}%`,
       );
-      const nights = rows.filter((r) => r.t === 'night').map((r) => `${r.c} ${r.vsBefore.toFixed(2)}%`);
-      console.log(`    nights vs before (the denser, brighter stars): ${nights.join(', ')}`);
+      const nights = rows.filter((r) => r.t === 'night').map((r) => `${r.c} ${r.moonlight.toFixed(2)}%`);
+      console.log(`    nights vs before with the moonlight on (by design, reported): ${nights.join(', ')}`);
       await before.context().close();
     }
     await page.context().close();
@@ -675,6 +696,44 @@ async function main() {
     const onLeft = (100 * leftOf.reduce((a, b) => a + b, 0)) / leftOf.length;
     check(onLeft >= MOON_SIDE_PCT, `last quarter: ≥ ${MOON_SIDE_PCT}% of the lit half is on the LEFT`, `${onLeft.toFixed(1)}%`);
 
+    // ── below the horizon, there is no moon ─────────────────────────────────
+    // FORCE UP's azimuth (useEnvState.ts), at three altitudes. The disc moves
+    // with the altitude, so each capture asks the engine where it is.
+    const forcedAt = async (altitude) => {
+      await page.evaluate((a) => window.__setMoonForce({ altitude: a, azimuth: 249.23 }), altitude);
+      await page.waitForTimeout(900);
+      const m = await page.evaluate(() => window.__skyMoonAt());
+      return { img: await shot(page), x: m.x * W2, y: m.y * H2, r: at.r * H2 };
+    };
+    // How far the disc stands off the sky beside it: the median inside 0.9 of
+    // the disc, less the median of a ring at 2.5–3 radii.
+    const lift = ({ img, x, y, r }) => {
+      const { data, info } = img;
+      const inside = [];
+      const ring = [];
+      for (let py = Math.max(0, Math.round(y - 3 * r)); py < Math.min(info.height, y + 3 * r); py++) {
+        for (let px = Math.max(0, Math.round(x - 3 * r)); px < Math.min(info.width, x + 3 * r); px++) {
+          const d = Math.hypot(px - x, py - y) / r;
+          const l = luma(data, (py * info.width + px) * info.channels);
+          if (d <= 0.9) inside.push(l);
+          else if (d >= 2.5 && d <= 3) ring.push(l);
+        }
+      }
+      const med = (a) => a.sort((u, v) => u - v)[Math.floor(a.length / 2)] ?? 0;
+      return med(inside) - med(ring);
+    };
+    await page.evaluate(() => window.__skyPreview('clear', 'night'));
+    const up = lift(await forcedAt(45));
+    const fading = lift(await forcedAt(1.5));
+    const down = lift(await forcedAt(-1));
+    await page.evaluate(() => window.__setMoonForce(null));
+    check(down <= 2, 'forced to −1°: the moon is not drawn', `disc stands ${down.toFixed(1)} levels off the sky (45°: ${up.toFixed(0)})`);
+    check(
+      fading >= up * 0.35 && fading <= up * 0.65,
+      '…at 1.5°, half way through its 3° fade, about half of it is',
+      `${fading.toFixed(0)} of ${up.toFixed(0)} levels (${((100 * fading) / up).toFixed(0)}%)`,
+    );
+
     // The four shapes, as 2× crops, for the review.
     if (SHOTS) {
       const tiles = [];
@@ -696,7 +755,9 @@ async function main() {
     await pvPage.waitForTimeout(3500);
     const moonBand = await pvPage.evaluate(() => {
       const night = window.__skyStates().find((s) => s.condition === 'clear' && s.time === 'night');
-      const y = window.__skyMoonAt().y;
+      // The moon MOVES now, so the row is asked of the sky being measured —
+      // the preview moon's — and not of wherever the live moon happens to be.
+      const y = window.__skyMoonAt(night.target).y;
       const worst = (opts) =>
         (window.__pvProbe(opts)?.samples ?? [])
           .filter((s) => s.surface === 'ground')

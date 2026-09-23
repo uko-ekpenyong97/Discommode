@@ -179,6 +179,13 @@ export interface LiveConfig {
    * having a dim rim down its left side.
    */
   moonTerminatorSoft: number;
+  /**
+   * MOONLIGHT: how much a moon that is up lifts the sky round it — a broad,
+   * cool brightening, scaled by the lit fraction and by sin(altitude), which
+   * also washes out the stars near it. One dial for the lot. 0 is a moon
+   * that lights nothing but itself.
+   */
+  moonGlow: number;
   /** Additive grain over the sky, which is also what hides `skyResolution`. */
   skyGrain: number;
   /**
@@ -291,6 +298,7 @@ export const DEFAULTS: LiveConfig = {
   moonSize: 1,
   moonEarthshine: 0.06,
   moonTerminatorSoft: 0.03,
+  moonGlow: 0.12,
   skyResolution: 1,
   skyMaxMegapixels: 0,
   fluidOn: true,

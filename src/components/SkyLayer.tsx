@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { EnvState } from '../env';
 import { claimSky, releaseSky, setSkyTarget, skyEngine, skyTarget, subscribeSky } from '../sky/skyStage';
 import { envToTarget } from '../sky/envToTarget';
+import type { MoonAt, SkyTarget } from '../sky/skyEngine';
 import { skyFallbackCss, skyGradientAt } from '../sky/palette';
 import './SkyLayer.css';
 
@@ -103,7 +104,7 @@ function SkyLayer({ env }: SkyLayerProps) {
       __skyFluidAwake?: () => boolean;
       __skyHoldFluid?: (hold: boolean) => void;
       __skySplat?: (x: number, y: number, dx: number, dy: number, strength?: number) => void;
-      __skyMoonAt?: () => { x: number; y: number; r: number } | null;
+      __skyMoonAt?: (at?: SkyTarget) => MoonAt | null;
     };
     w.__skyBenchmark = (n, b, f) => skyEngine()?.benchmark(n, b, f) ?? [];
     w.__skyRenderer = () => skyEngine()?.renderer() ?? 'none';
@@ -115,7 +116,7 @@ function SkyLayer({ env }: SkyLayerProps) {
     w.__skySplat = (x, y, dx, dy, s) => skyEngine()?.splat(x, y, dx, dy, s);
     // Where the disc is, so a screenshot can be told where to look for it and
     // the contrast probe can centre its band on it. One constant, one owner.
-    w.__skyMoonAt = () => skyEngine()?.moonAt() ?? null;
+    w.__skyMoonAt = (at) => skyEngine()?.moonAt(at) ?? null;
   }, [env]);
 
   // The fallback wash under the canvas, in the current sky's own colours.

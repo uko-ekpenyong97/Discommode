@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { moonAge, moonPhase, NEW_MOON_EPOCH, SYNODIC_MONTH } from './moon';
+import {
+  brightLimbAngle,
+  moonAge,
+  moonEcliptic,
+  moonPhase,
+  moonPosition,
+  moonRiseSet,
+  moonSky,
+  NEW_MOON_EPOCH,
+  SYNODIC_MONTH,
+} from './moon';
+import { sunLongitude } from './astro';
 
 /**
  * The moon model, against the almanac.
@@ -124,5 +135,106 @@ describe('moonPhase, whatever day it is', () => {
     expect(q(3).fraction).toBeCloseTo(0.5, 6);
     expect(q(1).waxing).toBe(true);
     expect(q(3).waxing).toBe(false);
+  });
+});
+
+/**
+ * WHERE THE MOON IS, against the almanac.
+ *
+ * The published figures are the US Naval Observatory's (aa.usno.navy.mil,
+ * "Rise, Set, and Transit Times" for 37.77 N, 122.42 W, fetched 2026-09-23),
+ * written here in UTC. Its definition is the one `moonRiseSet` uses: the
+ * upper limb on the horizon, with refraction. The bar is ±10 minutes; the
+ * model lands within about two on every one of these.
+ */
+const SF = { lat: 37.77, lon: -122.42 };
+const MIN = 60_000;
+
+describe('moonRiseSet against the USNO almanac for San Francisco (±10 min)', () => {
+  const almanac: { date: string; type: 'rise' | 'set'; utc: string; local: string }[] = [
+    { date: '2026-09-23', type: 'set', utc: '2026-09-23T10:47:00Z', local: '03:47 PDT' },
+    { date: '2026-09-23', type: 'rise', utc: '2026-09-24T00:40:00Z', local: '17:40 PDT' },
+    { date: '2026-09-26', type: 'set', utc: '2026-09-26T14:01:00Z', local: '07:01 PDT, the morning of the full moon' },
+    { date: '2026-09-26', type: 'rise', utc: '2026-09-27T01:54:00Z', local: '18:54 PDT' },
+    { date: '2026-10-03', type: 'set', utc: '2026-10-03T21:56:00Z', local: '14:56 PDT, last quarter' },
+    { date: '2026-10-10', type: 'rise', utc: '2026-10-10T14:20:00Z', local: '07:20 PDT, new moon' },
+  ];
+
+  for (const a of almanac) {
+    it(`${a.type} on ${a.date} at ${a.local}`, () => {
+      const t = at(a.utc);
+      const found = moonRiseSet(t - 3 * 60 * MIN, t + 3 * 60 * MIN, SF.lat, SF.lon).filter((e) => e.type === a.type);
+      expect(found).toHaveLength(1);
+      expect(Math.abs(found[0].at - t) / MIN).toBeLessThanOrEqual(10);
+    });
+  }
+
+  it('is up between a rise and the next set, and down after it', () => {
+    const rise = at('2026-09-24T00:40:00Z');
+    expect(moonPosition(rise + 60 * MIN, SF.lat, SF.lon).alt).toBeGreaterThan(5);
+    expect(moonPosition(at('2026-09-23T10:47:00Z') + 60 * MIN, SF.lat, SF.lon).alt).toBeLessThan(-5);
+  });
+
+  it('rises in the east and sets in the west, and culminates in the south', () => {
+    expect(moonPosition(at('2026-09-24T00:40:00Z'), SF.lat, SF.lon).az).toBeGreaterThan(60);
+    expect(moonPosition(at('2026-09-24T00:40:00Z'), SF.lat, SF.lon).az).toBeLessThan(135);
+    expect(moonPosition(at('2026-09-23T10:47:00Z'), SF.lat, SF.lon).az).toBeGreaterThan(225);
+    expect(moonPosition(at('2026-09-23T10:47:00Z'), SF.lat, SF.lon).az).toBeLessThan(300);
+    // USNO's upper transit that night: 23:11 PDT on the 23rd.
+    const transit = moonPosition(at('2026-09-24T06:11:00Z'), SF.lat, SF.lon);
+    expect(Math.abs(transit.az - 180)).toBeLessThan(3);
+  });
+});
+
+/**
+ * The published phase INSTANTS, against where the model puts the sun and the
+ * moon: at full the moon is opposite the sun in ecliptic longitude, at new it
+ * is with it. The moon gains half a degree an hour on the sun, so ±0.25° is
+ * ±30 minutes of the almanac's instant — measured, it is within 0.015°.
+ */
+describe('the moon and the sun at the almanac phase instants', () => {
+  const elongation = (iso: string) => {
+    const t = at(iso);
+    const d = (moonEcliptic(t).lon - sunLongitude(t)) % 360;
+    return d < 0 ? d + 360 : d;
+  };
+
+  it('full moon, 2026-09-26 16:49 UTC: opposite the sun', () => {
+    expect(Math.abs(elongation('2026-09-26T16:49:00Z') - 180)).toBeLessThan(0.25);
+  });
+
+  it('new moon, 2026-10-10 15:50 UTC: with the sun', () => {
+    const e = elongation('2026-10-10T15:50:00Z');
+    expect(Math.min(e, 360 - e)).toBeLessThan(0.25);
+  });
+});
+
+describe('brightLimbAngle', () => {
+  it('faces the sun: sun due west on the horizon lights the right limb', () => {
+    const a = brightLimbAngle({ alt: 0, az: 180 }, { alt: 0, az: 270 });
+    expect(Math.cos(a)).toBeCloseTo(1, 6);
+  });
+
+  it('an evening crescent, with the sun set below and west of it, is lit lower right', () => {
+    const a = brightLimbAngle({ alt: 20, az: 240 }, { alt: -10, az: 280 });
+    expect(Math.cos(a)).toBeGreaterThan(0);
+    expect(Math.sin(a)).toBeLessThan(0);
+  });
+
+  it('a pre-dawn crescent, with the sun under it in the east, is lit from below and to the left', () => {
+    const a = brightLimbAngle({ alt: 25, az: 100 }, { alt: -12, az: 90 });
+    expect(Math.cos(a)).toBeLessThan(0);
+    expect(Math.sin(a)).toBeLessThan(-0.8);
+  });
+
+  it('agrees with the phase over a real month: waxing is lit on the west side', () => {
+    // Every evening at 21:00 PDT the moon is up, from first quarter to full.
+    for (let d = 19; d <= 25; d++) {
+      const t = at(`2026-09-${d + 1}T04:00:00Z`);
+      const sky = moonSky(t, SF.lat, SF.lon);
+      if (sky.altitude < 5) continue;
+      expect(sky.waxing).toBe(true);
+      expect(Math.cos(sky.limbAngle)).toBeGreaterThan(0);
+    }
   });
 });

@@ -102,6 +102,7 @@ function Dials() {
     moonSize: [start.moonSize, 0.3, 3, 0.05],
     moonEarthshine: [start.moonEarthshine, 0, 0.3, 0.005],
     moonTerminatorSoft: [start.moonTerminatorSoft, 0.002, 0.2, 0.002],
+    moonGlow: [start.moonGlow, 0, 0.5, 0.005],
     skyResolution: [start.skyResolution, 0.5, 1, 0.05],
     skyMaxMegapixels: [start.skyMaxMegapixels, 0, 16, 0.5],
   });
@@ -216,6 +217,7 @@ function Dials() {
       moonSize: sky.moonSize,
       moonEarthshine: sky.moonEarthshine,
       moonTerminatorSoft: sky.moonTerminatorSoft,
+      moonGlow: sky.moonGlow,
       skyResolution: sky.skyResolution,
       skyMaxMegapixels: sky.skyMaxMegapixels,
       fluidOn: fluid.fluidOn,

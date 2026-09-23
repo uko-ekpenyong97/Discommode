@@ -92,6 +92,17 @@ export interface EnvState {
   /** True from new to full: the lit limb is the RIGHT one (Northern
    *  hemisphere). What the shader draws the terminator on which side of. */
   moonWaxing: boolean;
+  /**
+   * Where the moon is: APPARENT altitude in degrees from San Francisco
+   * (topocentric, with refraction), and azimuth from north through east.
+   * Below 0 the moon is under the horizon and the sky does not draw it.
+   * Local, from the clock, like the phase — see `moon.ts`.
+   */
+  moonAltitude: number;
+  moonAzimuth: number;
+  /** Which way the moon's bright limb faces ON SCREEN, radians: 0 right, π/2
+   *  up. Toward the sun, from the moon — see `brightLimbAngle`. */
+  moonLimbAngle: number;
   /** The original WMO weathercode, kept for debugging (-1 in clock-only fallback). */
   rawWeatherCode: number;
   /** When the underlying weather was fetched (ms epoch). */

@@ -64,12 +64,21 @@ export function sunHeight(nowMs: number, days: SunDay[]): number {
 }
 
 /**
+ * A height in [-1, 1] (0 = the horizon, 1 = as high as it gets) to the 0..1
+ * elevation scale, twilight band and all. The sky places the SUN on screen by
+ * this number, and the moon by the same function of its own altitude, so the
+ * two share a horizon and a top of the sky.
+ */
+export function elevationFromHeight(h: number): number {
+  return clamp01((h + TWILIGHT_DEPTH) / (1 + TWILIGHT_DEPTH));
+}
+
+/**
  * Continuous sun elevation in [0, 1]: 0 = deep night, 1 = high noon, with a
  * twilight band so sunrise/sunset read as low (not mid) values.
  */
 export function sunElevation(nowMs: number, days: SunDay[]): number {
-  const h = sunHeight(nowMs, days);
-  return clamp01((h + TWILIGHT_DEPTH) / (1 + TWILIGHT_DEPTH));
+  return elevationFromHeight(sunHeight(nowMs, days));
 }
 
 /** True while the sun is above the horizon. */

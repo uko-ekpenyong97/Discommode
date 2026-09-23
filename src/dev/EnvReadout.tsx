@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react';
-import { ATTRIBUTION, setEnvOverride } from '../env';
+import { ATTRIBUTION, FORCE_UP, setEnvOverride, setMoonForce } from '../env';
 import type { Condition, EnvSnapshot } from '../env';
 import { envToTarget } from '../sky/envToTarget';
 import {
@@ -9,6 +9,8 @@ import {
   PREVIEW_MOON,
   SUN_PRESETS,
   SUN_PRESET_NAMES,
+  daySweepStates,
+  envAt,
   previewEnv,
 } from './skyPreview';
 import type { MoonPreset, SunPreset } from './skyPreview';
@@ -39,6 +41,16 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
   const [moon, setMoon] = useState<MoonPreset>('full');
   const [waxing, setWaxing] = useState(PREVIEW_MOON.waxing);
   const [on, setOn] = useState(false);
+  // FORCE UP is its own override, on top of whichever env is showing — live
+  // or forced — so it pins the moon's place and not its phase. The slider is
+  // the altitude it is pinned at; moving it turns the force on.
+  const [forced, setForced] = useState(false);
+  const [forceAlt, setForceAlt] = useState(FORCE_UP.altitude);
+  const force = useCallback((next: boolean, altitude = forceAlt) => {
+    setForced(next);
+    setForceAlt(altitude);
+    setMoonForce(next ? { ...FORCE_UP, altitude } : null);
+  }, [forceAlt]);
 
   const apply = useCallback(
     (next: {
@@ -74,7 +86,11 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
       __setEnvOverride?: typeof setEnvOverride;
       __skyPreview?: (c: Condition, p: SunPreset, m?: MoonPreset, waxing?: boolean) => void;
       __skyStates?: () => { condition: Condition; time: SunPreset; target: unknown }[];
+      __skyDayStates?: (date: string) => ReturnType<typeof daySweepStates>;
+      __setMoonForce?: typeof setMoonForce;
+      __skyAt?: (ms: number, c: Condition) => void;
     };
+    w.__setMoonForce = setMoonForce;
     w.__setEnvOverride = setEnvOverride;
     // The moon defaults to PREVIEW_MOON (full), so every caller that does not
     // ask for one — the contact sheet, the contrast sweep — gets the same moon
@@ -87,6 +103,13 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
     // Every state the sky has, as the targets the engine would be given —
     // what `scripts/sky-contrast.mjs` hands the probe, one at a time, so the
     // contrast sweep walks the same twenty-four states the contact sheet does.
+    // The contrast sweep's states: every five minutes of one day, for every
+    // condition, with the moon where it really was and at FORCE UP. See
+    // `daySweepStates` and `scripts/sky-contrast.mjs`.
+    w.__skyDayStates = (date) => daySweepStates(date);
+    // …and one real instant under one preview weather, forced: tonight's moon
+    // on a clear night whatever San Francisco is actually doing.
+    w.__skyAt = (ms, c) => setEnvOverride(envAt(ms, c));
     w.__skyStates = () =>
       CONDITIONS.flatMap((c) =>
         SUN_PRESET_NAMES.map((p) => {
@@ -98,7 +121,13 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
 
   // Drop the override when the readout unmounts, so a hot reload cannot leave
   // the app stuck in a forced sky with nothing on screen saying so.
-  useEffect(() => () => setEnvOverride(null), []);
+  useEffect(
+    () => () => {
+      setEnvOverride(null);
+      setMoonForce(null);
+    },
+    [],
+  );
 
   const row = (key: string, value: string, cls = '') => (
     <div className="env-readout__row">
@@ -125,6 +154,10 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
       {row(
         'moon',
         `${env.moonFraction.toFixed(2)} ${env.moonWaxing ? 'waxing' : 'waning'}`,
+      )}
+      {row(
+        'moon alt / az',
+        `${env.moonAltitude.toFixed(1)}° / ${env.moonAzimuth.toFixed(0)}°${env.moonAltitude < 0 ? ' (down)' : ''}`,
       )}
       {row('wmo', String(env.rawWeatherCode))}
 
@@ -184,6 +217,28 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
         >
           {waxing ? 'wax' : 'wane'}
         </button>
+      </div>
+      <div className="env-readout__grid">
+        <button
+          type="button"
+          className="env-readout__btn env-readout__btn--wide"
+          data-on={forced || undefined}
+          onClick={() => force(!forced)}
+          title="pin the moon up, in whatever phase it is showing"
+        >
+          force up
+        </button>
+        <input
+          type="range"
+          className="env-readout__range"
+          min={-10}
+          max={90}
+          step={1}
+          value={forceAlt}
+          onChange={(e) => force(true, Number(e.target.value))}
+          aria-label="forced moon altitude"
+          title={`moon altitude ${forceAlt}°`}
+        />
       </div>
     </div>
   );

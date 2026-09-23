@@ -170,6 +170,27 @@ The three that tie at the floor are the three that have a lit cloud deck at
 noon. Storm is the *safest* daylit state, because a storm dims the whole scene
 before the deck is shaded.
 
+### …and every sky in a day, with a hand in it
+
+The twenty-four are **still** skies at one twinkle phase, with the preview
+moon. `scripts/sky-contrast.mjs` now runs **the sweep** after them: every
+condition × every five minutes of a whole day, with the moon where it really
+is and at FORCE UP, and with a synthetic swipe through the band while the wake's
+dials are held at their maxima. It needs no page captures and takes about a
+minute for both viewports. It is documented, with its table, in
+[docs/sky.md](sky.md#the-sweep-the-letterhead-under-a-moving-sky).
+
+What it found corrects one sentence above. **The cloud tops are not the
+ceiling. A pure white pixel is**, and at the shipped washes a pure white band
+reads **7.50:1**. The cloud tops clip just short of white, which is why they
+read 7.65. A star at the top of its twinkle reaches white, and so does a hard
+swipe with the dials at their maxima. With a hand in the sky, every condition
+reaches 7.50 at some minute of the day. That is still over 7, so **nothing
+failed and neither wash moved.** It also means the bar no longer depends on
+the sky: at `letterheadScrim` 0.72 no sky the shader can paint can take the
+letterhead under 7:1. That holds only while a white band clears the bar. Below
+about 0.70 it stops holding, and the sweep is the check that would say so.
+
 **If a state ever fails, `letterheadScrim` goes up and `groundScrim` does not.**
 Paying a contrast bar with a wash that covers things nothing is printed on is
 how this ended up at 0.78 the first time.
@@ -1962,6 +1983,7 @@ npm run projects     # re-encode a project's media from ~/Discommode-pages (need
 npm run placeholders # regenerate the captures after a page change (needs the dev server)
 npm run verify:pv    # the same view, in Chrome, at both viewports and both DPRs
 npm run verify:gpu   # 20 open/close cycles, watching the GPU process
+node scripts/sky-contrast.mjs  # the letterhead: 24 still skies, then the sweep (~1 min)
 ```
 
 `scripts/pv-verify.mjs` is the browser suite, and it exists because the unit

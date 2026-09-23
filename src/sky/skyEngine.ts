@@ -26,10 +26,13 @@
  * the hexes in it, so `palette.ts` stays the single editable place for a colour.
  */
 import { config } from '../config';
+import type { LiveConfig } from '../config';
+import { createBandSweep } from './bandSweep';
 import { MAX_SPLATS, createFluid } from './fluid';
 import type { Splat } from './fluid';
 import { skyGradientAt } from './palette';
 import type { DayPhase } from '../env/types';
+import { elevationFromHeight } from '../env/sun';
 
 const VERT = `#version 300 es
 out vec2 vUv;
@@ -41,22 +44,57 @@ void main() {
 }`;
 
 /**
- * WHERE THE MOON IS. One place, because three things need it: the shader
- * draws it here, the contrast probe has to sample the letterhead band over
- * it (see MOON_CENTRE_Y in contrastProbe.ts), and the verify script has to
- * find the disc in a screenshot to count its lit pixels.
+ * THE ARC THE SKY IS DRAWN ON — where a body sits on screen, for the sun and
+ * the moon alike. In uv, x from the left and y from the BOTTOM:
  *
- * `x`/`y` are uv — x from the left, y from the BOTTOM. `r` is the disc
- * radius in screen HEIGHTS (the metric the shader measures in, so the moon
- * is round at any aspect); `edge0`/`edge1` are the soft edge either side of
- * it. The sun's position is a mapping and lives in the shader; the moon's is
- * a constant and lives here.
+ *   x  x0 on the rising side (east) → x1 on the setting side (west). The sky
+ *      is drawn looking SOUTH, so east is on the left.
+ *   y  y0 → y1 over the 0..1 ELEVATION scale of `sun.ts`, twilight band and
+ *      all — so a body on the horizon (height 0) sits at the same row
+ *      whichever body it is.
+ *
+ * The sun takes x from its phase (rising / setting) and y from its elevation,
+ * in the shader. The moon takes x from its AZIMUTH (90° → x0, 270° → x1) and
+ * y from sin(altitude) through the same elevation function, on the CPU — see
+ * {@link moonScreen}. One set of numbers, so the two cannot drift apart.
  */
-const MOON = { x: 0.7, y: 0.8, r: 0.036, edge0: 0.04, edge1: 0.032 } as const;
+const ARC = { x0: 0.24, x1: 0.76, y0: -0.06, y1: 0.86 } as const;
+
+/** The moon's disc: radius in screen HEIGHTS (the metric the shader measures
+ *  in, so it is round at any aspect), and the soft edge either side of it. */
+const MOON = { r: 0.036, edge0: 0.04, edge1: 0.032 } as const;
+
+/** The last few degrees over the horizon, over which the moon fades in (and,
+ *  setting, out) rather than popping. Below 0° it is not drawn at all. */
+const MOON_FADE_DEG = 3;
+
+const DEG = Math.PI / 180;
+
+/** How fast a star twinkles, radians of its sine per shader second. One
+ *  number for the shader and for the sweep that has to cover its cycle. */
+const TWINKLE_RATE = 1.7;
+
+/** Where a moon at (altitude, azimuth) sits on screen, in uv (y from the
+ *  BOTTOM) — the sun's mapping, fed the moon's real place. */
+export function moonScreen(altitude: number, azimuth: number): { x: number; y: number } {
+  const side = (azimuth - 90) / 180; // 0 east … 1 west, off the edges beyond
+  return {
+    x: ARC.x0 + (ARC.x1 - ARC.x0) * side,
+    y: ARC.y0 + (ARC.y1 - ARC.y0) * elevationFromHeight(Math.sin(altitude * DEG)),
+  };
+}
+
+/** How much of the moon is drawn at an apparent altitude: 0 below the
+ *  horizon, 1 from {@link MOON_FADE_DEG} up, smoothstepped between. */
+export function moonVisibility(altitude: number): number {
+  const t = Math.min(1, Math.max(0, altitude / MOON_FADE_DEG));
+  return t * t * (3 - 2 * t);
+}
 
 /** Where the moon is on SCREEN: x from the left, y from the TOP, radius in
- *  heights out to the far side of its soft edge. What consumers want. */
-export interface MoonAt { x: number; y: number; r: number }
+ *  heights out to the far side of its soft edge — what consumers want — and
+ *  its altitude, so a caller can tell a moon that is up from one that is not. */
+export interface MoonAt { x: number; y: number; r: number; altitude: number; visible: boolean }
 
 const FRAG = `#version 300 es
 precision highp float;
@@ -81,7 +119,10 @@ uniform float uSat;
 uniform float uGrain;
 uniform float uStarSize;   // star disc radius; 1 = the old dot, 2 = twice it
 uniform float uMoonFrac;   // illuminated fraction, 0 new .. 1 full
-uniform float uMoonWax;    // 1 waxing (lit on the right), 0 waning
+uniform vec2  uMoonPos;    // uv of the disc's centre (y from the bottom)
+uniform float uMoonVis;    // 0 under the horizon … 1 from 3° up
+uniform vec2  uMoonLimb;   // direction of the bright limb on screen (toward the sun)
+uniform float uMoonLight;  // moonGlow × fraction × sin(altitude) × visibility
 uniform float uMoonSize;   // disc radius; 1 = the flat disc this replaced
 uniform float uMoonEarth;  // earthshine: what the unlit side still gives back
 uniform float uMoonSoft;   // terminator softness, in cosine of incidence
@@ -171,7 +212,7 @@ void main(){
   col += sunCol*pow(1.0-clamp(gy,0.0,1.0),3.0)*lowAmt*(0.45 + 0.1*fz);
 
   // ---- sun glow (position: side by phase, height by elevation)
-  vec2 sunPos = vec2(mix(0.24,0.76,uPhase), mix(-0.06,0.86,sun));
+  vec2 sunPos = vec2(mix(${ARC.x0},${ARC.x1},uPhase), mix(${ARC.y0},${ARC.y1},sun));
   float sd = length((uv-sunPos)*vec2(aspect,1.0));
   float occl = (1.0-uCloud*0.55)*(1.0-uFog*0.75)*(1.0-uStorm*0.7);
   float glow = (exp(-sd*2.2)*0.32 + exp(-sd*8.0)*0.30 + exp(-sd*70.0)*0.75);
@@ -200,7 +241,7 @@ void main(){
     vec2 off=clamp((vec2(hash(id+3.1),hash(id+7.7))-0.5)*0.6, -room, room);
     float d = length(f-off);
     float stir = 1.0 + fz*uStarGlow;
-    float twinkle = max(0.0, 0.55+0.45*stir*sin(uTime*1.7+h*80.0));
+    float twinkle = max(0.0, 0.55+0.45*stir*sin(uTime*${TWINKLE_RATE}+h*80.0));
     // Two tiers, which is what makes it read as a point of light rather than a
     // dot: a bright core over the inner 45% of the disc, then a faint halo out
     // to the full radius. The PEAK is exactly what it was — a star is no
@@ -208,15 +249,23 @@ void main(){
     float star = smoothstep(0.972,1.0,h)
                * mix(smoothstep(sz,0.0,d)*0.45, 1.0, smoothstep(sz*0.45,0.0,d))
                * twinkle*1.3*stir;
-    // ---- the moon, with the shape it actually has tonight.
+    // ---- the moon, where it actually is and with the shape it actually has.
     //
-    // Below 2% lit there is nothing to draw and the whole thing is skipped —
-    // a new moon is not a faint disc, it is an absence. (A uniform branch:
-    // uMoonFrac is one number for the frame.)
+    // Below 2% lit there is nothing to draw, and below the horizon there is
+    // nothing to see: either way the whole thing is skipped — a new moon, or a
+    // set one, is not a faint disc, it is an absence. (Uniform branches: both
+    // are one number for the frame.) A clear night with no moon up is stars.
     vec3 sky = col;
-    col += vec3(0.85,0.92,1.0)*star*nightAmt;
-    if (uMoonFrac > 0.02) {
-    vec2 mp=vec2(${MOON.x},${MOON.y}); float md=length((uv-mp)*vec2(aspect,1.0));
+    bool moonUp = uMoonFrac > 0.02 && uMoonVis > 0.0;
+    vec2 mp = uMoonPos;
+    float md = length((uv-mp)*vec2(aspect,1.0));
+    // MOONLIGHT: the air round a bright moon is lit by it — a broad, cool lift
+    // of the sky, by how much disc is lit and how high it is (uMoonLight is
+    // both, and the dial). The stars under it wash out by the same measure.
+    float mlit = moonUp ? uMoonLight*exp(-md*2.2) : 0.0;
+    col += vec3(0.85,0.92,1.0)*star*nightAmt*(1.0 - min(0.6, mlit*3.0));
+    col += vec3(0.42,0.52,0.78)*mlit*nightAmt;
+    if (moonUp) {
     float moon=smoothstep(${MOON.edge0}*uMoonSize,${MOON.edge1}*uMoonSize,md);
     // THE TERMINATOR. Disc-local coords, x right and y up, radius 1 — then
     // treat the disc as what it is, the projection of a sphere, and light it:
@@ -234,8 +283,10 @@ void main(){
     // limb, and a softness measured in x would dim the whole left rim of a
     // full moon by half. Measured in incidence it does not.
     //
-    // s = +1 waxing, -1 waning. Waxing is lit on the RIGHT, which is the
-    // Northern-hemisphere view and the only one this sky has.
+    // The axis the light comes along is the BRIGHT LIMB's direction on screen,
+    // toward the sun (moon.ts, brightLimbAngle). It used to be x, with a sign
+    // for waxing / waning; lit straight from the right, L = (1, 0) and this is
+    // the same expression, term for term.
     vec2 q = (uv-mp)*vec2(aspect,1.0)/(${MOON.r}*uMoonSize);
     // Outside |q| = 1 the pixel is not a point on the moon, it is the
     // antialiasing skirt of the silhouette — and there z is 0, which is
@@ -247,8 +298,8 @@ void main(){
     float z = sqrt(max(0.0, 1.0 - dot(qc,qc)));
     float ct = 1.0 - 2.0*uMoonFrac;
     float st = sqrt(max(0.0, 1.0 - ct*ct));
-    float sgn = 2.0*uMoonWax - 1.0;
-    float lam = sgn*qc.x*st - ct*z;
+    vec2 L = uMoonLimb / max(length(uMoonLimb), 1e-4);
+    float lam = dot(qc, L)*st - ct*z;
     // The dark side is not black: earthshine — sunlight off the Earth — is
     // what keeps a crescent reading as a whole sphere rather than a sliver.
     float face = mix(uMoonEarth, 1.0, smoothstep(-uMoonSoft, uMoonSoft, lam));
@@ -257,7 +308,9 @@ void main(){
     // with the fraction: full keeps the halo this always had, a crescent has
     // almost none. The wake's response to it (fz) is unchanged.
     float mglow = exp(-md*7.0)*(0.22 + fz*0.3)*uMoonFrac;
-    col += mix(vec3(0.70,0.78,0.95),vec3(0.96,0.97,1.0),mdisc)*(mdisc*0.85+mglow)*nightAmt;
+    // …and it fades over its last few degrees above the horizon, so a moon
+    // rising or setting does not pop.
+    col += mix(vec3(0.70,0.78,0.95),vec3(0.96,0.97,1.0),mdisc)*(mdisc*0.85+mglow)*nightAmt*uMoonVis;
     }
     // A deck or a bank the wake has parted shows the stars behind it.
     col = mix(sky, col, (1.0-uCloud*0.9*(1.0-fz*uCloudPart))*(1.0-uFog*0.9*(1.0-fz*uFogPart)));
@@ -376,16 +429,33 @@ export interface SkyTarget {
   /** Illuminated fraction of the moon, 0 (new) .. 1 (full). Under 0.02 the
    *  moon is not drawn at all. */
   moonFraction: number;
-  /** Waxing → the lit limb is the right one. Eased as 0..1, like `dayPhase`. */
-  moonWaxing: boolean;
+  /** Apparent altitude, degrees. Below 0 the moon is not drawn; it fades in
+   *  over the first {@link MOON_FADE_DEG}. */
+  moonAltitude: number;
+  /** Azimuth, degrees from north through east. Sets which side it is on. */
+  moonAzimuth: number;
+  /** The bright limb's direction on screen, radians: 0 right, π/2 up. */
+  moonLimb: number;
 }
 
-/** The numeric form the engine eases (dayPhase collapsed to 0 rising / 1 setting). */
-type EasedSky = { sun: number; phase: number; cloud: number; fog: number; rain: number; storm: number; wind: number; moonFraction: number; moonWaxing: number };
+/** The numeric form the engine eases (dayPhase collapsed to 0 rising / 1
+ *  setting; the moon as a screen position, an altitude for its fade, and its
+ *  bright limb as a vector so an angle never has to wrap). */
+type EasedSky = {
+  sun: number; phase: number; cloud: number; fog: number; rain: number; storm: number; wind: number;
+  moonFraction: number; moonX: number; moonY: number; moonAlt: number; moonLimbX: number; moonLimbY: number;
+};
 
-const KEYS = ['sun', 'phase', 'cloud', 'fog', 'rain', 'storm', 'wind', 'moonFraction', 'moonWaxing'] as const;
+const KEYS = [
+  'sun', 'phase', 'cloud', 'fog', 'rain', 'storm', 'wind',
+  'moonFraction', 'moonX', 'moonY', 'moonAlt', 'moonLimbX', 'moonLimbY',
+] as const;
 
 function toEased(t: SkyTarget): EasedSky {
+  // The moon eases on SCREEN, not in the sky: an azimuth would have to wrap
+  // at north, and the only moon that does that over San Francisco is one
+  // under the horizon. A forced moon glides to where it is sent.
+  const moon = moonScreen(t.moonAltitude, t.moonAzimuth);
   return {
     sun: t.sun,
     phase: t.dayPhase === 'setting' ? 1 : 0,
@@ -395,11 +465,55 @@ function toEased(t: SkyTarget): EasedSky {
     storm: t.storm,
     wind: t.wind,
     moonFraction: t.moonFraction,
-    // Eased as 0..1 like `phase`. A flip only ever happens AT new or full,
-    // where the terminator is off the disc either way, so the cross-fade
-    // through 0.5 has nothing to show.
-    moonWaxing: t.moonWaxing ? 1 : 0,
+    moonX: moon.x,
+    moonY: moon.y,
+    moonAlt: t.moonAltitude,
+    // The limb as a vector, so waxing → waning is a cross-fade and not an angle
+    // spinning the long way round. A flip only ever happens AT new or full,
+    // where the terminator is off the disc either way.
+    moonLimbX: Math.cos(t.moonLimb),
+    moonLimbY: Math.sin(t.moonLimb),
   };
+}
+
+/** A splat, as {@link SkyEngine.splat} takes it: CSS px and CSS px / s. */
+export interface SweepSplat { x: number; y: number; dx: number; dy: number }
+
+export interface SweepOptions {
+  /**
+   * The wake, frame by frame at 60 Hz: what is splatted into it on each
+   * frame (often nothing — the frames after a swipe are it decaying). The
+   * field is cleared first, so the sweep is the same wake every time.
+   */
+  frames: SweepSplat[][];
+  /** Measure after every Nth frame (and, before the first, at rest). */
+  sampleEvery: number;
+  /**
+   * The shader clock at the first measurement, seconds. Every measurement
+   * after it is taken a further 1/{@link phases} of a TWINKLE CYCLE on — not
+   * 1/60 s — because the stars twinkle in near-lockstep (every star cell's
+   * phase lies within about a third of a cycle of the others') and a single
+   * clock can put every star in the band at the bottom of its cycle at once.
+   * The drift those jumps also move is under a pixel.
+   */
+  time: number;
+  /** Clock phases per twinkle cycle; the still sky is measured at all of them. */
+  phases: number;
+  /** Dials to hold for the sweep — the worst the dock can set — and then
+   *  put back. */
+  config?: Partial<LiveConfig>;
+}
+
+export interface SweepResult {
+  /** Per state: the brightest pixel over every sampled frame, RGB 0..255. */
+  colors: [number, number, number][];
+  /** Per state: the brightest pixel with the field asleep — the still sky. */
+  rest: [number, number, number][];
+  /** Per state: the frame it was brightest at (−1 = at rest). */
+  frame: number[];
+  /** Frames measured, including the one at rest. */
+  samples: number;
+  ms: number;
 }
 
 export interface SkyEngine {
@@ -418,6 +532,13 @@ export interface SkyEngine {
    */
   sampleBand(y0: number, y1: number, at?: SkyTarget): [number, number, number] | null;
   /**
+   * DEV: THE SWEEP. The brightest pixel of the band `y0`–`y1` (fractions of
+   * the viewport from the TOP, as {@link sampleBand}) for every sky in
+   * `states`, at its WORST over a synthetic wake — see {@link SweepOptions}.
+   * Draws nothing to the screen; the live sky is put back when it is done.
+   */
+  sweepBand(y0: number, y1: number, states: SkyTarget[], opts: SweepOptions): SweepResult | null;
+  /**
    * Per-frame GPU cost, in ms — dev-only, for `scripts/sky-perf.mjs`. Returns
    * one mean per BATCH of `batch` frames.
    *
@@ -434,8 +555,10 @@ export interface SkyEngine {
   /** The GL renderer string, for a perf table that says what it ran on. */
   renderer(): string;
   /** Where the moon is drawn, in screen terms — see {@link MoonAt}. Scales
-   *  with `moonSize`, so a caller looking for the disc finds it. */
-  moonAt(): MoonAt;
+   *  with `moonSize`, so a caller looking for the disc finds it. Pass `at`
+   *  to ask where it is in THAT sky rather than in the live, eased one: the
+   *  moon moves now, and a caller measuring a forced sky wants that sky's. */
+  moonAt(at?: SkyTarget): MoonAt;
   /**
    * DISTURB THE SKY at a point: push air through it at `(x, y)` — CSS pixels
    * from the viewport's top-left — moving at `(dx, dy)` CSS px / s, scaled by
@@ -551,7 +674,10 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     fluidWarp: loc('uFluidWarp'),
     starSize: loc('uStarSize'),
     moonFrac: loc('uMoonFrac'),
-    moonWax: loc('uMoonWax'),
+    moonPos: loc('uMoonPos'),
+    moonVis: loc('uMoonVis'),
+    moonLimb: loc('uMoonLimb'),
+    moonLight: loc('uMoonLight'),
     moonSize: loc('uMoonSize'),
     moonEarth: loc('uMoonEarth'),
     moonSoft: loc('uMoonSoft'),
@@ -568,7 +694,10 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   // --- eased state ---
   // moonFraction starts at 0 — an unknown moon is no moon, and it eases up to
   // whatever tonight's is with everything else.
-  const cur: EasedSky = { sun: 0, phase: 0, cloud: 0, fog: 0, rain: 0, storm: 0, wind: 0, moonFraction: 0, moonWaxing: 1 };
+  const cur: EasedSky = {
+    sun: 0, phase: 0, cloud: 0, fog: 0, rain: 0, storm: 0, wind: 0,
+    moonFraction: 0, moonX: 0.5, moonY: -1, moonAlt: -90, moonLimbX: 1, moonLimbY: 0,
+  };
   const tgt: EasedSky = { ...cur };
   let reduced = false;
   const startTime = performance.now();
@@ -716,10 +845,10 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     return flashEnvelope((now - flashStartedAt) / 1000, cur.storm);
   }
 
-  function render(nowMs: number, state: EasedSky = cur, flash = flashFor(nowMs)): void {
+  function render(nowMs: number, state: EasedSky = cur, flash = flashFor(nowMs), withWake = state === cur): void {
     const g = skyGradientAt(state.sun, state.phase);
-    gl!.uniform2f(u.res, width, height);
     gl!.useProgram(program);
+    gl!.uniform2f(u.res, width, height);
     gl!.uniform1f(u.time, reduced ? 0 : pinned ?? (nowMs - startTime) / 1000);
     gl!.uniform3f(u.zenith, g.zenith[0], g.zenith[1], g.zenith[2]);
     gl!.uniform3f(u.horizon, g.horizon[0], g.horizon[1], g.horizon[2]);
@@ -738,13 +867,20 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     gl!.uniform1f(u.grain, config.skyGrain);
     gl!.uniform1f(u.starSize, config.starSize);
     gl!.uniform1f(u.moonFrac, state.moonFraction);
-    gl!.uniform1f(u.moonWax, state.moonWaxing);
+    const moonVis = moonVisibility(state.moonAlt);
+    gl!.uniform2f(u.moonPos, state.moonX, state.moonY);
+    gl!.uniform1f(u.moonVis, moonVis);
+    gl!.uniform2f(u.moonLimb, state.moonLimbX, state.moonLimbY);
+    gl!.uniform1f(
+      u.moonLight,
+      config.moonGlow * state.moonFraction * Math.max(0, Math.sin(state.moonAlt * DEG)) * moonVis,
+    );
     gl!.uniform1f(u.moonSize, config.moonSize);
     gl!.uniform1f(u.moonEarth, config.moonEarthshine);
     gl!.uniform1f(u.moonSoft, config.moonTerminatorSoft);
     // The wake. Asleep (or off, or reduced), uFluidOn is 0 and the shader never
     // fetches it — every fluid term is an exact zero.
-    const wake = fluid !== null && fluidLive() && fluid.awake() && state === cur;
+    const wake = fluid !== null && fluidLive() && fluid.awake() && withWake;
     gl!.activeTexture(gl!.TEXTURE0);
     gl!.bindTexture(gl!.TEXTURE_2D, fluid ? fluid.texture() : null);
     gl!.uniform1i(u.fluid, 0);
@@ -822,8 +958,15 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
       requestRender();
     },
     syncSize: resize,
-    moonAt() {
-      return { x: MOON.x, y: 1 - MOON.y, r: MOON.edge0 * config.moonSize };
+    moonAt(at) {
+      const s = at ? toEased(at) : cur;
+      return {
+        x: s.moonX,
+        y: 1 - s.moonY,
+        r: MOON.edge0 * config.moonSize,
+        altitude: s.moonAlt,
+        visible: s.moonFraction > 0.02 && moonVisibility(s.moonAlt) > 0,
+      };
     },
     sampleBand(y0, y1, at) {
       if (width === 0 || height === 0) return null;
@@ -849,6 +992,62 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
       }
       if (at) render(performance.now()); // put the live sky back on screen
       return best;
+    },
+    sweepBand(y0, y1, states, opts) {
+      // Dev only, and constant-folded out of a production build with the
+      // reducer it builds.
+      if (!import.meta.env.DEV || width === 0 || height === 0 || !fluid) return null;
+      const t0 = performance.now();
+      const glY0 = Math.max(0, Math.min(height - 1, Math.round((1 - y1) * height)));
+      const glY1 = Math.max(glY0 + 1, Math.min(height, Math.round((1 - y0) * height)));
+      const saved = Object.fromEntries(Object.keys(opts.config ?? {}).map((k) => [k, config[k as keyof LiveConfig]]));
+      const savedPinned = pinned;
+      const savedHeld = held;
+      Object.assign(config, opts.config ?? {});
+      held = false;
+      const sweep = createBandSweep(gl, width, height, glY0, glY1 - glY0);
+      const eased = states.map(toEased);
+      const colors: [number, number, number][] = states.map(() => [0, 0, 0]);
+      const luma = states.map(() => -1);
+      const frame = states.map(() => -1);
+      let samples = 0;
+      const period = (2 * Math.PI) / TWINKLE_RATE;
+      const measure = (f: number) => {
+        pinned = opts.time + (samples % opts.phases) * (period / opts.phases);
+        const px = sweep.run(eased.length, (i) => render(0, eased[i], 0, true));
+        for (let i = 0; i < eased.length; i++) {
+          const l = 0.2126 * px[i * 3] + 0.7152 * px[i * 3 + 1] + 0.0722 * px[i * 3 + 2];
+          if (l > luma[i]) {
+            luma[i] = l;
+            colors[i] = [px[i * 3], px[i * 3 + 1], px[i * 3 + 2]];
+            frame[i] = f;
+          }
+        }
+        if (f < 0) rest = colors.map((c) => [...c] as [number, number, number]);
+        samples++;
+      };
+      let rest: [number, number, number][] = [];
+      try {
+        fluid.clear();
+        for (let k = 0; k < opts.phases; k++) measure(-1);
+        opts.frames.forEach((splatsNow, f) => {
+          for (const sp of splatsNow) queueSplat(sp.x, sp.y, sp.dx, sp.dy, config.fluidStrength);
+          stepFluid(1 / 60);
+          if ((f + 1) % opts.sampleEvery === 0) measure(f);
+        });
+      } finally {
+        sweep.dispose();
+        fluid.clear();
+        Object.assign(config, saved);
+        pinned = savedPinned;
+        held = savedHeld;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.useProgram(program);
+        gl.bindVertexArray(vao);
+        gl.viewport(0, 0, width, height);
+        render(performance.now());
+      }
+      return { colors, rest, frame, samples, ms: performance.now() - t0 };
     },
     benchmark(frames = 600, batch = 10, withFluid = false) {
       const out: number[] = [];
