@@ -41,6 +41,38 @@ export const SUN_PRESETS = {
 
 export type SunPreset = keyof typeof SUN_PRESETS;
 
+/**
+ * The five moon shapes, as illuminated fractions. Quarter is exactly a half
+ * disc; crescent and gibbous are the midpoints either side of it, which are
+ * the two shapes the terminator is hardest to get right on.
+ */
+export const MOON_PRESETS = {
+  new: 0,
+  crescent: 0.25,
+  quarter: 0.5,
+  gibbous: 0.75,
+  full: 1,
+} satisfies Record<string, number>;
+
+export type MoonPreset = keyof typeof MOON_PRESETS;
+
+export const MOON_PRESET_NAMES = Object.keys(MOON_PRESETS) as MoonPreset[];
+
+/**
+ * THE PREVIEW MOON IS ALWAYS FULL unless it is asked otherwise, and it is a
+ * fixed number rather than tonight's moon on purpose.
+ *
+ * Everything downstream of this table has to be reproducible: the contact
+ * sheet is committed and reviewed as a diff, and the contrast sweep's
+ * twenty-four figures are quoted in the docs. A preview that read the live
+ * moon would make all of it a function of the date it was run on — the six
+ * night frames would change shape every few days for no change to the code.
+ *
+ * Full is also the worst case for the letterhead, which is the other reason
+ * to pin it there rather than at new.
+ */
+export const PREVIEW_MOON = { fraction: MOON_PRESETS.full, waxing: true };
+
 export const SUN_PRESET_NAMES = Object.keys(SUN_PRESETS) as SunPreset[];
 
 /** Build a forced {@link EnvState} for the sky preview. */
@@ -49,6 +81,7 @@ export function previewEnv(
   condition: Condition,
   dayPhase: DayPhase,
   windSpeed = 0.35,
+  moon: { fraction: number; waxing: boolean } = PREVIEW_MOON,
 ): EnvState {
   const w = PREVIEW_WEATHER[condition];
   return {
@@ -59,6 +92,8 @@ export function previewEnv(
     cloudiness: w.cloudiness,
     precipitation: w.precipitation,
     windSpeed,
+    moonFraction: moon.fraction,
+    moonWaxing: moon.waxing,
     rawWeatherCode: -1,
     fetchedAt: Date.now(),
   };

@@ -7,4 +7,6 @@ export { ATTRIBUTION, DEFAULT_LOCATION } from './types';
 export { useEnvState, setEnvOverride, getEnvOverride } from './useEnvState';
 export type { EnvSnapshot } from './useEnvState';
 export { classifyWeather, WMO_TABLE } from './wmo';
+export { moonAge, moonPhase, NEW_MOON_EPOCH, SYNODIC_MONTH } from './moon';
+export type { MoonPhase, PhaseName } from './moon';
 export type { WeatherClass } from './wmo';

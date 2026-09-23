@@ -11,6 +11,7 @@
 import type { EnvState, GeoLocation } from './types';
 import { classifyWeather } from './wmo';
 import { clamp01, dayPhaseAt, estimateSunDays, isDaytime, sunElevation } from './sun';
+import { moonPhase } from './moon';
 import type { SunDay } from './sun';
 
 export const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -122,6 +123,7 @@ export function fallbackBase(nowMs: number): EnvBase {
  * else carries through from the last fetch.
  */
 export function computeEnvState(base: EnvBase, nowMs: number): EnvState {
+  const moon = moonPhase(nowMs);
   return {
     sunElevation: sunElevation(nowMs, base.days),
     isDay: base.isDayApi ?? isDaytime(nowMs, base.days),
@@ -130,6 +132,10 @@ export function computeEnvState(base: EnvBase, nowMs: number): EnvState {
     cloudiness: base.cloudiness,
     precipitation: base.precipitation,
     windSpeed: base.windSpeed,
+    // Local, from the clock, on the same minute tick as the sun. `base` has
+    // nothing to say about it and the API was never asked.
+    moonFraction: moon.fraction,
+    moonWaxing: moon.waxing,
     rawWeatherCode: base.rawWeatherCode,
     fetchedAt: base.fetchedAt,
   };

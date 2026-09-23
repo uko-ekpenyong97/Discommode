@@ -80,6 +80,18 @@ export interface EnvState {
   precipitation: number;
   /** Wind speed normalized to 0..1 from the reported windspeed. */
   windSpeed: number;
+  /**
+   * Illuminated fraction of the moon's disc, 0 (new) .. 1 (full).
+   *
+   * NOT FROM THE WEATHER API. The moon is a function of the clock and the
+   * same everywhere on Earth, so it is computed locally alongside the sun
+   * curve, on the same minute tick — see `moon.ts`. Open-Meteo is asked for
+   * nothing it does not already answer.
+   */
+  moonFraction: number;
+  /** True from new to full: the lit limb is the RIGHT one (Northern
+   *  hemisphere). What the shader draws the terminator on which side of. */
+  moonWaxing: boolean;
   /** The original WMO weathercode, kept for debugging (-1 in clock-only fallback). */
   rawWeatherCode: number;
   /** When the underlying weather was fetched (ms epoch). */

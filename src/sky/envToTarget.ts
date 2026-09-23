@@ -21,6 +21,7 @@ function clamp01(x: number): number {
  *   rain   precipitation
  *   storm  the CONDITION, 0 or 1
  *   wind   normalized windspeed
+ *   moon   the illuminated fraction, and which limb it is lit on
  *
  * FOG AND OVERCAST ARE DIFFERENT STATES and that is the point of the change.
  * They used to be one: `fog = clamp01((cloudiness - 0.85) / 0.15)`, which gave
@@ -36,5 +37,7 @@ export function envToTarget(env: EnvState): SkyTarget {
     rain: clamp01(env.precipitation),
     storm: env.condition === 'storm' ? 1 : 0,
     wind: clamp01(env.windSpeed),
+    moonFraction: clamp01(env.moonFraction),
+    moonWaxing: env.moonWaxing,
   };
 }

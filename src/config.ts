@@ -159,6 +159,26 @@ export interface LiveConfig {
    * the dial grows is the light around a star and not the star.
    */
   starSize: number;
+  /**
+   * The moon's disc radius, as a multiple of the flat disc it replaced. 1
+   * ships, and at 1 a FULL moon is the same pixels the flat one was — what
+   * changed is every other night of the month.
+   */
+  moonSize: number;
+  /**
+   * Earthshine: what the unlit side of the moon still gives back, as a
+   * fraction of the lit side. Sunlight off the Earth, and the reason a
+   * crescent reads as a whole sphere with a sliver lit rather than as a
+   * sliver floating on its own. 0 is a crescent and nothing else.
+   */
+  moonEarthshine: number;
+  /**
+   * How soft the terminator is, measured in COSINE OF INCIDENCE and not in
+   * disc radius — see the shader. At a quarter the two are the same thing;
+   * at the ends of the month measuring in cosine is what stops a full moon
+   * having a dim rim down its left side.
+   */
+  moonTerminatorSoft: number;
   /** Additive grain over the sky, which is also what hides `skyResolution`. */
   skyGrain: number;
   /**
@@ -268,6 +288,9 @@ export const DEFAULTS: LiveConfig = {
   skySaturation: 1,
   skyGrain: 0.03,
   starSize: 2,
+  moonSize: 1,
+  moonEarthshine: 0.06,
+  moonTerminatorSoft: 0.03,
   skyResolution: 1,
   skyMaxMegapixels: 0,
   fluidOn: true,

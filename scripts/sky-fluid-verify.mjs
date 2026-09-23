@@ -41,6 +41,18 @@
  *      only the page can be what put anything in: the detail view's Next, a
  *      grid drag, the portfolio sheet's roll-in and the reader's doorway each
  *      wake the field on their own.
+ *   8  THE MOON HAS THE SHAPE IT SHOULD. The disc is counted, pixel by pixel,
+ *      at three phases: full is at least 98% lit, new is at most 3% (the moon
+ *      is not drawn at all below 2% illumination, so what is counted there is
+ *      sky and the odd star), and a first quarter is 45–55% with effectively
+ *      all of the lit half on the RIGHT — the Northern-hemisphere orientation
+ *      this sky draws. "Lit" is one absolute threshold for every phase, taken
+ *      as half the full moon's own level in the same run, so the three
+ *      percentages are comparable rather than three different questions.
+ *      It also puts the LETTERHEAD over the moon: the contrast probe's band is
+ *      moved to the moon's row (it is normally at the top of the screen, where
+ *      there is no moon) and a clear night with a full moon in it has to stay
+ *      over 7:1.
  *   7  THE GRADIENT IS PUSHED AROUND, AND SETTLES BACK. A sweep across a clear
  *      dusk — where the gradient is the whole picture, nothing painted over it
  *      — moves at least 20% of the frame by at least 8 levels on some channel,
@@ -64,7 +76,7 @@ const URL = opt('--url', process.env.PV_URL ?? 'http://localhost:5173/');
 const BEFORE = opt('--before', null);
 const SHOTS = opt('--shots', null);
 /** `--only 23` runs sections 2 and 3 and nothing else. */
-const ONLY = opt('--only', '1234567');
+const ONLY = opt('--only', '12345678');
 
 const CONDITIONS = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'storm'];
 const TIMES = ['night', 'dawn', 'noon', 'dusk'];
@@ -76,6 +88,12 @@ const STAR_MOVED_PCT = 30;
 const STAR_BACK_PCT = 2;
 const FOG_DROP_PCT = 15;
 const FOG_BACK_PCT = 2;
+const MOON_FULL_LIT_PCT = 98;
+const MOON_NEW_LIT_PCT = 3;
+const MOON_QUARTER_LIT = [45, 55];
+/** How much of a quarter's lit half must be on the side it is lit from. */
+const MOON_SIDE_PCT = 95;
+const MOON_CONTRAST = 7;
 const GRAD_MOVED_PCT = 20;
 const GRAD_BACK_PCT = 2;
 /** "Moved" for a gradient pixel: this many 8-bit levels on any channel. */
@@ -234,6 +252,37 @@ async function save(img, name) {
   console.log(`    → ${file}`);
 }
 
+/** A 2× crop around the moon, for the contact strip below. */
+async function cropMoon(img, cx, cy, rPx) {
+  const pad = Math.round(rPx * 1.7);
+  return sharp(img.data, { raw: img.info })
+    .extract({
+      left: Math.max(0, Math.round(cx - pad)),
+      top: Math.max(0, Math.round(cy - pad)),
+      width: pad * 2,
+      height: pad * 2,
+    })
+    .png()
+    .toBuffer();
+}
+
+/** Lay tiles out in a row with a hairline between them. */
+async function saveTiles(tiles, name) {
+  if (!SHOTS) return;
+  await mkdir(SHOTS, { recursive: true });
+  const meta = await sharp(tiles[0]).metadata();
+  const w = meta.width;
+  const gap = 8;
+  const file = path.join(SHOTS, `${name}.webp`);
+  await sharp({
+    create: { width: w * tiles.length + gap * (tiles.length - 1), height: meta.height, channels: 3, background: '#000' },
+  })
+    .composite(tiles.map((input, i) => ({ input, left: i * (w + gap), top: 0 })))
+    .webp({ quality: 90 })
+    .toFile(file);
+  console.log(`    → ${file}`);
+}
+
 async function saveStars(a, b, name) {
   if (!SHOTS) return;
   await mkdir(SHOTS, { recursive: true });
@@ -255,6 +304,10 @@ async function main() {
   const browser = await chromium.launch({ args: GPU });
   const H = VIEWPORT.height;
   const W = VIEWPORT.width;
+  // Device pixels: every page here is opened at dpr 2, and a screenshot is in
+  // those, not in CSS px.
+  const W2 = W * 2;
+  const H2 = H * 2;
 
   // ── 1  asleep is invisible ──────────────────────────────────────────────────
   if (ONLY.includes('1')) {
@@ -545,6 +598,122 @@ async function main() {
       `${back.toFixed(1)}% shifted at ${RETURN_MS / 1000}s`,
     );
     await page.context().close();
+  }
+
+  // ── 8  the moon ─────────────────────────────────────────────────────────────
+  if (ONLY.includes('8')) {
+    console.log('\n── 8  the moon has the shape it should');
+    const page = await open(browser, URL);
+    await state(page, 'clear', 'night');
+    await page.evaluate((s) => window.__skyPinTime(s), PIN_S);
+    // The engine owns where the moon is; the script asks rather than repeating
+    // the constant. x/y are fractions of the viewport from the top-left, r is
+    // in screen HEIGHTS (the metric the shader measures the disc in).
+    const at = await page.evaluate(() => window.__skyMoonAt());
+    const cx = at.x * W2, cy = at.y * H2, rPx = at.r * H2;
+
+    const shoot = async (name, waxing = true) => {
+      await page.evaluate(([m, w]) => window.__skyPreview('clear', 'night', m, w), [name, waxing]);
+      await page.waitForTimeout(900);
+      return shot(page);
+    };
+
+    // Everything is counted inside 0.9 of the disc, which is comfortably inside
+    // the soft rim — the rim is a property of the EDGE and not of the phase,
+    // and it would be counted differently at every one of them.
+    const disc = (img, fn) => {
+      const { data, info } = img;
+      const rr = rPx * 0.9;
+      const out = [];
+      for (let y = Math.max(0, Math.round(cy - rr)); y < Math.min(info.height, cy + rr); y++) {
+        for (let x = Math.max(0, Math.round(cx - rr)); x < Math.min(info.width, cx + rr); x++) {
+          if (Math.hypot(x - cx, y - cy) > rr) continue;
+          out.push(fn(luma(data, (y * info.width + x) * info.channels), x, y));
+        }
+      }
+      return out;
+    };
+
+    // ONE THRESHOLD FOR EVERY PHASE, and it comes from the full moon in this
+    // same run: half of the level the fully lit disc sits at. Anything else
+    // (a threshold per capture, a midpoint between that capture's own min and
+    // max) asks a different question of each phase and cannot be compared —
+    // at full there IS no dark side for a midpoint to sit between.
+    const fullImg = await shoot('full');
+    const fullLumas = disc(fullImg, (l) => l).sort((a, b) => a - b);
+    const litLevel = fullLumas[Math.floor(fullLumas.length / 2)];
+    const T = litLevel * 0.5;
+    console.log(`    disc at (${Math.round(cx)}, ${Math.round(cy)}) r ${Math.round(rPx)}px; ` +
+      `full sits at luma ${litLevel.toFixed(0)}, so "lit" is ≥ ${T.toFixed(0)}`);
+
+    const litPct = (img) => {
+      const v = disc(img, (l) => (l >= T ? 1 : 0));
+      return (100 * v.reduce((a, b) => a + b, 0)) / v.length;
+    };
+
+    const full = litPct(fullImg);
+    check(full >= MOON_FULL_LIT_PCT, `full: ≥ ${MOON_FULL_LIT_PCT}% of the disc is lit`, `${full.toFixed(1)}%`);
+
+    const newPct = litPct(await shoot('new'));
+    check(newPct <= MOON_NEW_LIT_PCT, `new: ≤ ${MOON_NEW_LIT_PCT}% (the disc is not drawn at all)`, `${newPct.toFixed(1)}%`);
+
+    const qImg = await shoot('quarter', true);
+    const q = litPct(qImg);
+    check(
+      q >= MOON_QUARTER_LIT[0] && q <= MOON_QUARTER_LIT[1],
+      `first quarter: ${MOON_QUARTER_LIT[0]}–${MOON_QUARTER_LIT[1]}% lit`,
+      `${q.toFixed(1)}%`,
+    );
+    // …and the lit half is the RIGHT one. Waxing is lit on the right in the
+    // Northern hemisphere, which is the only hemisphere this sky is drawn for.
+    const rightOf = disc(qImg, (l, x) => (l >= T ? (x > cx ? 1 : 0) : -1)).filter((v) => v >= 0);
+    const onRight = (100 * rightOf.reduce((a, b) => a + b, 0)) / rightOf.length;
+    check(onRight >= MOON_SIDE_PCT, `…and ≥ ${MOON_SIDE_PCT}% of the lit half is on the RIGHT`, `${onRight.toFixed(1)}%`);
+    // The mirror, which is the check that the sign is a sign and not a constant.
+    const wImg = await shoot('quarter', false);
+    const leftOf = disc(wImg, (l, x) => (l >= T ? (x < cx ? 1 : 0) : -1)).filter((v) => v >= 0);
+    const onLeft = (100 * leftOf.reduce((a, b) => a + b, 0)) / leftOf.length;
+    check(onLeft >= MOON_SIDE_PCT, `last quarter: ≥ ${MOON_SIDE_PCT}% of the lit half is on the LEFT`, `${onLeft.toFixed(1)}%`);
+
+    // The four shapes, as 2× crops, for the review.
+    if (SHOTS) {
+      const tiles = [];
+      for (const name of ['crescent', 'quarter', 'gibbous', 'full']) {
+        tiles.push(await cropMoon(await shoot(name), cx, cy, rPx));
+      }
+      await saveTiles(tiles, 'moon-phases');
+    }
+    await page.context().close();
+
+    // ── the letterhead, over the moon ─────────────────────────────────────────
+    // The probe normally reads the band where the strip is, at the top of the
+    // screen. There is no moon there. This moves the SAMPLE to the moon's row
+    // and asks the same question of it.
+    const pv = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+    const pvPage = await pv.newPage();
+    await pvPage.goto(`${URL.replace(/\/$/, '')}/#view-01`, { waitUntil: 'networkidle' });
+    await pvPage.waitForFunction(() => typeof window.__skyStates === 'function', null, { timeout: 20_000 });
+    await pvPage.waitForTimeout(3500);
+    const moonBand = await pvPage.evaluate(() => {
+      const night = window.__skyStates().find((s) => s.condition === 'clear' && s.time === 'night');
+      const y = window.__skyMoonAt().y;
+      const worst = (opts) =>
+        (window.__pvProbe(opts)?.samples ?? [])
+          .filter((s) => s.surface === 'ground')
+          .sort((a, b) => a.ratio - b.ratio)[0];
+      return {
+        // The preview moon is full (see skyPreview.ts), so this IS the full-moon state.
+        overMoon: worst({ sky: night.target, bandCenter: y }),
+        whereTheStripIs: worst({ sky: night.target }),
+      };
+    });
+    check(
+      moonBand.overMoon.ratio >= MOON_CONTRAST,
+      `clear night, band moved onto a FULL moon: ≥ ${MOON_CONTRAST}:1`,
+      `${moonBand.overMoon.ratio.toFixed(2)}:1 on ${moonBand.overMoon.kind}` +
+        ` (where the strip really is: ${moonBand.whereTheStripIs.ratio.toFixed(2)}:1)`,
+    );
+    await pv.close();
   }
 
   await browser.close();
