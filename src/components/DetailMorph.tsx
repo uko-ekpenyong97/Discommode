@@ -16,6 +16,16 @@ export interface MorphCard {
  *  it is covering a substitution, not performing a transition of its own. */
 const FACE_CROSSFADE_MS = 200;
 
+/** The travel's easing. The chrome of a shader cover fades on it too, so the
+ *  chrome is always as far gone as the card is from the grid. */
+const TRAVEL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+/** A card's chrome (DetailMorph.css) and a shader cover's in the detail view:
+ *  none — the detail panel is `.detail__panel--bare` (docs/covers.md). The
+ *  shadow keeps its geometry and loses its alpha, so it fades, not shrinks. */
+const CHROME = { borderRadius: '6px', boxShadow: '0 24px 70px rgba(0, 0, 0, 0.55)' };
+const BARE = { borderRadius: '0px', boxShadow: '0 24px 70px rgba(0, 0, 0, 0)' };
+
 interface DetailMorphProps {
   cards: MorphCard[];
   durationMs: number;
@@ -59,8 +69,23 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
         const invert = `translate(${c.from.cx - c.to.cx}px, ${c.from.cy - c.to.cy}px) scale(${c.from.w / c.to.w})`;
         return el.animate(
           [{ transform: invert }, { transform: 'none' }],
-          { duration: durationMs, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'both' },
+          { duration: durationMs, easing: TRAVEL_EASING, fill: 'both' },
         );
+      })
+      .filter((a): a is Animation => a !== null);
+
+    // A shader cover sheds the card's chrome on the way in and takes it back on
+    // the way out, over the travel: the grid tile keeps its chrome and the detail
+    // view has none, and neither end snaps.
+    const chrome = cards
+      .map((c, i) => {
+        const el = refs.current[i];
+        if (!el || c.item.cover?.kind !== 'shader') return null;
+        return el.animate(entering ? [CHROME, BARE] : [BARE, CHROME], {
+          duration: durationMs,
+          easing: TRAVEL_EASING,
+          fill: 'both',
+        });
       })
       .filter((a): a is Animation => a !== null);
 
@@ -91,6 +116,7 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
       done = true;
       anims.forEach((a) => a.cancel());
       faces.forEach((a) => a.cancel());
+      chrome.forEach((a) => a.cancel());
     };
     // Run once on mount with the FROM/TO + onFinished captured at transition
     // start; the cards don't change mid-transition.

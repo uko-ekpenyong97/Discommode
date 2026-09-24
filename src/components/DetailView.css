@@ -105,6 +105,22 @@
   cursor: default;
 }
 
+/* A shader cover is not a card on the sky, it is ON the sky (docs/covers.md):
+   no rounded corners and no shadow, in any slot, so nothing lies between its
+   transparent ground and the sky — the shadow alone darkened the sky around it
+   into a lit card-shaped rect. The morph fades the grid tile's chrome out on
+   the way in (DetailMorph), and the paper draws neither (DetailPaperLayer).
+
+   The shadow is TRANSPARENT, not `none`, and that is not style: `none` on an
+   off-screen panel changes how Chrome layers the strip, and re-rasterises the
+   OTHER cards' images (#item-04, DOM faces: 8% of the pixels, up to 111
+   levels on line art). A transparent shadow paints nothing and leaves them
+   exactly as they were. It is also what the morph fades to. */
+.detail__panel--bare {
+  border-radius: 0;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0);
+}
+
 /* A readable issue's centre panel is the doorway into the reader. */
 .detail__panel--readable {
   cursor: pointer;

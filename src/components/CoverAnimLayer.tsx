@@ -180,13 +180,19 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover', boilWith }: C
   // Geometry: the layer fills the cover box, so its own size is the box size.
   // A ResizeObserver covers window resizes AND the dial-driven hero rect moving
   // under it, without this component having to know about either.
+  //
+  // The LAYOUT size, never a bounding rect: the sprites are positioned in this
+  // layer's own CSS px, and every transform above it scales them along with it.
+  // A bounding rect includes those transforms — the detail strip's panel scale,
+  // a page mid-flip, the boil's own turn — and a transform does not fire the
+  // ResizeObserver, so a layer that mounted on a panel still scaling up from a
+  // neighbour (Prev/Next) kept sprites 6% small for as long as it lived.
+  // getComputedStyle, not offsetWidth: that is rounded to a whole pixel.
   const measure = useCallback(() => {
-    const el = rootRef.current?.parentElement;
+    const el = rootRef.current;
     if (!el || !data) return;
-    // The PARENT's box, which is this layer's box untransformed: the layer
-    // itself is turned by the boil, and its bounding rect grows with the turn.
-    const r = el.getBoundingClientRect();
-    const next = fitCover(r.width, r.height, data.w, data.h);
+    const cs = getComputedStyle(el);
+    const next = fitCover(parseFloat(cs.width), parseFloat(cs.height), data.w, data.h);
     setFit((prev) =>
       prev.scale === next.scale && prev.offsetX === next.offsetX && prev.offsetY === next.offsetY
         ? prev
@@ -241,13 +247,19 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover', boilWith }: C
 
     const onMove = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return;
-      const el = rootRef.current?.parentElement;
-      if (!el) return;
+      const root = rootRef.current;
+      const el = root?.parentElement;
+      if (!root || !el) return;
+      // The pointer in this layer's own CSS px, where `fit` is: the parent's
+      // box on screen (untouched by the boil), undone by whatever scales it.
       const box = el.getBoundingClientRect();
-      const x = e.clientX - box.left;
-      const y = e.clientY - box.top;
+      const cs = getComputedStyle(root);
+      const w = parseFloat(cs.width);
+      const h = parseFloat(cs.height);
+      const x = ((e.clientX - box.left) * w) / box.width;
+      const y = ((e.clientY - box.top) * h) / box.height;
       // In the reader the host is the whole book; the page is this box.
-      setPageHover(x >= 0 && y >= 0 && x <= box.width && y <= box.height);
+      setPageHover(x >= 0 && y >= 0 && x <= w && y <= h);
       const p = toCover(x, y, fit);
       const found = p ? hitTest(data.objects, p.x, p.y) : null;
       setHovered((prev) => (prev === (found?.id ?? null) ? prev : (found?.id ?? null)));

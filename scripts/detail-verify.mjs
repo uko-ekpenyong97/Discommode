@@ -1,7 +1,8 @@
 /**
  * The detail view's paper, in Chrome. `npm run verify:detail` with the dev
  * server running (`npm run dev`; `--url` for another origin, `--only
- * rects,identity,handoff,sprites,nav,frames,reduced` for a subset).
+ * rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life`
+ * for a subset).
  *
  * Every check is about what the browser DRAWS, which no unit test can answer:
  *
@@ -25,6 +26,16 @@
  *              where the DOM sprites over it expect (`heroRipple` 0); the
  *              neighbours keep `ripple`; hovering the hero still dents it, and
  *              leaving takes the dent back to 0.
+ *   routes     card 01's cover registers the same however it is reached: a cold
+ *              load of #item-01, Prev from #item-02, Next from #item-04, and
+ *              01 → 02 → 01. On each, at 1× and 2×: every sprite's rect against
+ *              the cold load's, ≤ 1px; every sprite against where the PLATE puts
+ *              it — the paper plane's rect, the manifest's displayRect, fitted
+ *              as the layer fits it — ≤ 0.5px; and the boil check (plate and
+ *              sprites moving together, as in `life`). The layer used to size
+ *              its sprites from a bounding rect taken while the arriving panel
+ *              was still scaling up, and kept them 6% small; the boil check
+ *              alone cannot see that, since it predicts from the sprites' own px.
  *   nav        Next / Prev (including the wrap) land with the hash, the jump
  *              list, the centre panel and the centre PLANE agreeing.
  *   leave      Read issue and Back to the grid: the canvas hands the cards back
@@ -58,7 +69,7 @@ import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registra
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
-const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,nav,leave,frames,reduced,life').split(',');
+const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -428,6 +439,83 @@ async function checkRegistration(browser) {
   }
 }
 
+// ── routes into card 01 ──────────────────────────────────────────────────
+
+/** Every hero sprite's rect on screen, and where the plate puts it at rest:
+ *  the paper plane's rect, fitted to the cover as the layer fits it (contain,
+ *  centred), times the manifest's displayRect. Independent of the layer's own
+ *  measurement, which is what is under test. */
+const spritesVsPlate = (page) =>
+  page.evaluate(async () => {
+    const m = await (await fetch('/issues/01/anim/manifest.json')).json();
+    const byId = Object.fromEntries(m.objects.filter((o) => (o.face ?? 'cover') === 'cover').map((o) => [o.id, o]));
+    const p = window.__paper.rects().find((q) => q.slot === 0);
+    const scale = Math.min(p.w / m.coverW, p.h / m.coverH);
+    const x0 = p.cx - p.w / 2 + (p.w - m.coverW * scale) / 2;
+    const y0 = p.cy - p.h / 2 + (p.h - m.coverH * scale) / 2;
+    const out = [];
+    for (const el of document.querySelectorAll('.detail__panel--center .cover-anim__obj')) {
+      const r = el.getBoundingClientRect();
+      const d = byId[el.dataset.id].displayRect;
+      const e = { l: x0 + d.x * scale, t: y0 + d.y * scale, r: x0 + (d.x + d.w) * scale, b: y0 + (d.y + d.h) * scale };
+      out.push({
+        id: el.dataset.id,
+        rect: [r.left, r.top, r.right, r.bottom],
+        plate: Math.max(Math.abs(e.l - r.left), Math.abs(e.t - r.top), Math.abs(e.r - r.right), Math.abs(e.b - r.bottom)),
+      });
+    }
+    return out;
+  });
+
+async function checkRoutes(browser) {
+  console.log('\nroutes: card 01 registers the same however it is reached');
+  const ROUTES = [
+    ['cold load #item-01', '01', []],
+    ['Prev from #item-02', '02', ['Previous item']],
+    ['Next from #item-04', '04', ['Next item']],
+    ['01 → 02 → 01', '01', ['Next item', 'Previous item']],
+  ];
+  for (const dpr of [1, 2]) {
+    let cold = null;
+    for (const [label, start, clicks] of ROUTES) {
+      const page = await newPage(browser, VIEWPORTS[0], dpr);
+      await open(page, start);
+      for (const name of clicks) {
+        await page.getByRole('button', { name }).click();
+        await page.mouse.move(3, 3);
+        await page.waitForTimeout(1300);
+      }
+      await page.waitForFunction(
+        () => location.hash === '#item-01' && window.__paper.state() === 'on' && window.__paper.presence() >= 1,
+        null,
+        { timeout: 10000 },
+      );
+      await page.waitForSelector(`${HERO_FACE.layer} .cover-anim__plate`, { state: 'attached' });
+      await settleFrames(page, 4);
+      const sprites = await spritesVsPlate(page);
+      cold ??= sprites;
+      let vsCold = 0;
+      for (const sp of sprites) {
+        const c = cold.find((q) => q.id === sp.id);
+        vsCold = Math.max(vsCold, ...sp.rect.map((v, k) => Math.abs(v - c.rect[k])));
+      }
+      const plate = max(sprites.map((sp) => sp.plate));
+      // The boil: plate and sprites move together (the `life` check, here).
+      const at = await emptyPoint(page, HERO_FACE);
+      await hoverAll(page, HERO_FACE, at);
+      const reg = await registration(page, HERO_FACE, 6);
+      const moved = reg.filter((r) => r.moved > 0.05 || Math.abs(r.deg) > 0.01).length;
+      const boil = max(reg.map((r) => r.worst));
+      check(
+        sprites.length === 20 && vsCold <= 1 && plate <= 0.5 && boil <= 0.5 && moved >= 4,
+        `@${dpr}× ${label}`,
+        `${sprites.length} sprites: vs the cold load ${vsCold.toFixed(3)}px ≤ 1; vs the plate at rest ${plate.toFixed(3)}px ≤ 0.5; boiling ${boil.toFixed(3)}px ≤ 0.5 (${moved}/6 samples boiled)`,
+      );
+      await page.context().close();
+    }
+  }
+}
+
 // ── navigation ───────────────────────────────────────────────────────────
 
 async function checkNav(browser) {
@@ -739,6 +827,7 @@ async function run() {
     if (ONLY.includes('handoff')) await checkHandoff(browser);
     if (ONLY.includes('sprites')) await checkSprites(browser);
     if (ONLY.includes('registration')) await checkRegistration(browser);
+    if (ONLY.includes('routes')) await checkRoutes(browser);
     if (ONLY.includes('nav')) await checkNav(browser);
     if (ONLY.includes('leave')) await checkLeave(browser);
     if (ONLY.includes('frames')) await checkFrames(browser);

@@ -21,19 +21,35 @@ so what is tuned there is what ships.
 | the grid, card 02 live, the sky through its ground | `docs/covers/grid-row.webp` |
 | the detail hero, live on the paper | `docs/covers/hero.webp` |
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
+| the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
+| the grid→detail morph at 0 / 0.5 / 1, before and after | `docs/covers/bare-morph.webp` |
 
 ## Handoff
 
-**Where it stands (2026-09-24).** Branch `portfolio-card-covers`, open as
-[PR #29](https://github.com/uko-ekpenyong97/Discommode/pull/29) against `main`.
-The branch starts from `cover-shader-prototype`, which was never pushed on its
-own, so the PR also carries the prototype's three commits (the shader, the
-reference PNG, the retune). Everything below is on the branch. At the last run,
-every suite passed: `verify:cover`, `verify:detail`, `verify:pv` (320 checks),
-`npm test` (312), `tsc -b`, `lint`, `build`.
+**Where it stands (2026-09-24).** PR #29 (the live covers) is merged. Branch
+`shader-cover-detail-no-veil` takes the card chrome off a shader cover in the
+detail view and weights the paper's light by the cover's alpha — the
+[open issue](#the-veil-in-the-detail-view-resolved), now resolved. At its last
+run: `verify:cover` (with the new `ground` check), `verify:detail` (64),
+`npm test` (316), `tsc -b`, `lint`, `build`. Two misses in the full runs,
+each passing when re-run alone: the grid's shared tile draw at 1728×996 @2×
+(0.545ms, which put the grid total at 1.26 > 1.2; re-run 0.385ms, total 0.96),
+and one 33.4ms frame in a Prev slide (re-run: 16.8ms in all six). The grid is
+untouched here; that is the "take two runs" note below. The grid budget missed
+again in the next full run, straight after `verify:detail` (1.285ms), and
+passed alone again (0.63ms). If it keeps missing only after another GPU suite,
+the likely cause is the GPU's state after that suite, not the grid. `verify:pv` was not
+re-run: nothing it drives changed.
 
-**What is next:** the [open issue](#open-issue) below, then the
-[Not done](#not-done) list.
+The same PR fixes card 01's hover sprites misregistering after Prev/Next
+(docs/detail-paper.md, the sprite caveat). That bug was on `main` before this
+branch and is not a covers bug: the sprite layer sized itself from a panel that
+was still scaling.
+
+**What is next:** the [Not done](#not-done) list. And one call that is Uko's,
+not code's: what still reads as a pale sheet over the sky is the cover's OWN
+riso paper stock (`riso4.paper` #9FAFFF at `paperOpacity` 0.439), in the
+grid as much as the detail view. See [the veil](#the-veil-in-the-detail-view-resolved).
 
 **Starting a fresh workspace:**
 
@@ -53,8 +69,8 @@ npm run verify:detail -- --url http://localhost:5191
 
 | | |
 | --- | --- |
-| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h)`, `benchPresent(w, h)`, `setSite({...})` |
-| `window.__paper` | the paper's own hooks (docs/detail-paper.md), plus `coversDrawn()` and `benchCover()` for the hero |
+| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h)`, `benchPresent(w, h)`, `setSite({...})`; `dials(id)`, `patchDials(id, {folder: {dial: v}} \| null)` (null: back to the JSON) |
+| `window.__paper` | the paper's own hooks (docs/detail-paper.md), plus `coversDrawn()` and `benchCover()` for the hero, and `override({ hideCovers: true })`: the live-cover planes undrawn |
 
 **Gotchas that cost time:**
 
@@ -149,7 +165,8 @@ What that took, outside the covers:
 
 - **The tile has no fill.** A cover card's `.grid-card__face` has no background
   colour. Its `box-shadow` stays: a CSS box-shadow is only painted outside the
-  box.
+  box. That is the GRID. In the detail view a shader cover has no card chrome
+  at all — see the next section.
 - **The paper samples a premultiplied texture.** `uPremul` on the paper
   material: the crease lighting runs on the un-premultiplied colour and the
   texture's alpha carries through. An opaque face is exactly the old path.
@@ -163,6 +180,33 @@ What that took, outside the covers:
 
 `verify:cover`'s `sky` check: the cover ground inside the i's stem, over a clear
 NOON and a clear NIGHT: mean luminance 184.2 and 128.7, **30% apart**.
+
+### No card in the detail view
+
+In the grid a shader cover is a card: 4px corners, a shadow, the hover overlay.
+In the detail view it is not — nothing lies between it and the sky. For a card
+whose `cover.kind` is `'shader'`, in every detail slot:
+
+| | |
+| --- | --- |
+| the DOM panel | `.detail__panel--bare`: no corners, a TRANSPARENT shadow. Not `none`: `none` on an off-screen panel changes how Chrome layers the strip and re-rasterises the other cards' images (`#item-04`, DOM faces: 8% of pixels, up to 111 levels). |
+| the paper | `uRadius` 0 (no rounded clip), no shadow quad. |
+| the paper's light | the crease screen-blend and trough shading are weighted by `coverPaperShade × alpha`: the full paper under opaque ink, none where the ground is transparent. The dent, squash, ripple, fold and crease refraction move the sheet and are unchanged. |
+| the morph | the card's chrome (6px corners, `0 24px 70px` at .55) fades to none over the travel, on its easing, and back on the way out. |
+
+Every other card is untouched: `verify:detail` as before, and before/after
+captures of `#item-01/03/04` (paper on, paper off, the morph at 0.5; 1728×996
+@1×/@2×) are identical outside card 02's own rect — 0 levels on the DOM and the
+morph, ≤ 1 level on the paper, which is its run-to-run jitter.
+
+`verify:cover`'s `ground` check: the hero with the paper's effects ON, where
+the cover's alpha is ≈ 0, against the same pixels with the cover hidden
+(`hideCovers`), at a clear NOON with the sky's clock pinned — **mean
+0.15–0.16%, 0.00% of pixels past 32 levels** (floor, the sky against itself:
+0.07–0.08%). The tuned cover has no transparent ground (see below), so the
+check draws it with `riso4.paperOpacity` 0 and measures the alpha on the
+page; 15–21% of the hero is then ground. Its control, the stock back at 0.439,
+is 3.0–3.3%: the check sees a veil that size.
 
 ## Rendering: one new context, never one per tile
 
@@ -244,7 +288,9 @@ clock, so it lands on the hero's frame and needs no cross-fade: the morph's face
 cross-fade is 0 for a cover card (the path stays, for the cards whose grid and
 hero faces differ). The paper's own hand-off dissolve (120ms, DOM alpha only)
 stays too, and dissolves between two identical frames. Then the DOM hero, then
-the paper, each an identity:
+the paper, each an identity. A shader cover's card chrome fades out over the
+travel ([no card in the detail view](#no-card-in-the-detail-view)), so both ends
+of the hand-off are bare:
 
 | `verify:cover` `morph`, the clock pinned | 1× | 2× |
 | --- | --- | --- |
@@ -279,7 +325,9 @@ faces, so it has nothing to show.
 
 The COVER panel (`src/dev/coverDials.tsx`), one per cover: every dial the bench
 has, stage toggles included, plus the site's `coverBackdrop`,
-`coverBackdropColor` and `coverMaxDpr` (2). **Copy pastes into
+`coverBackdropColor`, `coverMaxDpr` (2) and `coverPaperShade` (1: in the
+detail view, the paper's light per unit of the cover's alpha; 0 is no paper
+light on the cover at all). **Copy pastes into
 `src/covers/covers/<id>.json`** (the site's three are not the JSON's). It is at
 `#item-02?intro`, as specified, and in the app's own dock everywhere else: DialKit's store is
 global, so the panel is registered from outside `src/reader` and appears in
@@ -306,7 +354,7 @@ message.
 | `dots3` | stage 3: the particle field (`cellK` / `density`, size, band, colour shift) and the mouse dome |
 | `riso4` | stage 4: paper, the four inks fitted to the reference, their opacities and misregistration; the grade (identity) |
 | `refraction5` | stage 5: the slug lenses (`slug*`, `minify`, `rimSmear`), the noise-blob fallback, the budget cuts (`noiseHalfRes`, `dispersionCut`) |
-| site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr` | not the cover's: in `coverDials.ts`, not the JSON |
+| site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr`, `coverPaperShade` | not the cover's: in `coverDials.ts`, not the JSON |
 
 The COVER panel persists (`dialkit:cover-rive-site-v1` in localStorage), as the other
 dev panels do. A value set there overrides the JSON in that browser until reset,
@@ -352,13 +400,13 @@ pixels of the 220 × 286 tile the prototype measured.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky
+npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground
 npm run verify:detail         # its identity and hand-off now cover card 02
 ```
 
 `verify:cover` checks `budgets`, `clock`, `morph`, `reduced`, `nogl`,
-`contexts` and `sky`, as above. Pixel checks hide the sky and the dev overlays,
-except `sky`; a pixel differs past 32 levels.
+`contexts`, `sky` and `ground`, as above. Pixel checks hide the sky and the dev
+overlays, except `sky` and `ground`; a pixel differs past 32 levels.
 
 **verify:detail** pins the cover clock where it opens a card, so its identity
 and hand-off checks compare one moment on both sides, and its hand-off check now
@@ -370,39 +418,43 @@ has two budgets of its own, documented in the script:
 | hero | 0.000–0.004%; **2.1–2.2%** at 1728×996 @2× | 2.5% | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour |
 | as a neighbour (the still) | 1.0–5.0% | 7% (card 01's) | Chrome's scale(0.85) resampling of the `<img>` against a texture resized to the card — card 01's documented problem, on pure noise |
 
-## Open issue
+## The veil in the detail view (resolved)
 
-Reported after PR #29 opened, not yet investigated. As reported, verbatim:
+Reported after PR #29: *a rounded, bordered rect with a light veil sits over
+the shader cover in the detail view; the cover reads washed out inside it.*
+Suspects: (a) the grid card's chrome carried by the morph; (b) the paper's
+shading lighting the transparent plane uniformly.
 
-> in the detail view a rounded, bordered rect with a light veil sits over the shader cover; suspects: (a) grid card chrome carried by the morph, (b) paper material shading (ambient/crease highlights) lighting the transparent plane uniformly; grid tile chrome is to stay
+**The cause was (a), and a smaller part of (b), and — most of what reads as a
+veil — neither.** Measured on the tuned cover at a clear NOON, 1728×996:
 
-Where each suspect lives. These are pointers, not conclusions:
+- **(a) the chrome: yes, the rect.** The morph card and the detail panel carry
+  the card's chrome, `border-radius: 6px` and `0 24px 70px rgba(0,0,0,.55)`,
+  and the paper draws the same shadow once it has the cards. A box-shadow is
+  only painted outside the box, so the sky AROUND the card was darkened by
+  ~25% (136,197,246 inside the edge, 104,149,183 just outside) and the sky
+  inside it was not: through a transparent cover, that is a lit, rounded,
+  hard-edged rect. There is no border and no fill in the CSS; the hover
+  overlay (`CardOverlay`) is grid-only and never reached the morph.
+- **(b) the paper: partly.** It did NOT light alpha-0 pixels — its output is
+  multiplied by the texture's alpha, and `ground` passes on the old code too
+  (0.15%). It DID light the cover's 0.439-opaque stock at full strength, in
+  un-premultiplied colour: the crease ridges screened in as pale lines across
+  the whole sheet. Weighted by alpha, its light on the stock went from a mean
+  of 0.39–0.41% to 0.19–0.23%. (`paperAmbient` and `backShade`, as the
+  report named them, are not terms in this material; its light is the
+  crease screen-blend and the trough shading.)
+- **Neither: the stock.** The cover's own riso paper, `riso4.paper` #9FAFFF
+  at `paperOpacity` 0.439, covers the whole frame under the inks — the
+  cover's alpha is 0.40 or more at every pixel, never ≈ 0. It was matched to
+  `cover-ref.png`'s 112/255 ground in the retune, and it is identical in the
+  grid tile. Over a clear NOON it is 3.0–3.3% off the bare sky. It was left
+  alone: it is the cover's tuning, and a dial (COVER · rive-site → riso4 →
+  paperOpacity) if it should go.
 
-- **(a) the morph.** `DetailMorph.tsx` / `.css`: the morph card is
-  `.detail-morph__card` (`border-radius: 6px`, `box-shadow: 0 24px 70px
-  rgba(0,0,0,.55)`). For a cover card it holds a `CoverTile` and no
-  `CardOverlay`. The detail panels are `.detail__panel` (`border-radius: 6px`,
-  the same shadow, taken off while the paper has the cards). The grid tile's
-  own chrome (`.grid-card__face` radius and shadow, `.grid-card__index`,
-  `CardOverlay`) is in `GridPlane.tsx` / `.css`. Per the report it stays.
-- **(b) the paper.** `paperMaterial.ts`, the fragment. With `uPremul` (cover
-  cards) the colour is un-premultiplied, lit, then multiplied by the texture's
-  alpha. The lighting is a screen blend with the crease texture
-  (`uCreaseBlend` 0.2) and a shading term. On the 44%-opaque ground that
-  lighting lands at full strength on the ground colour.
-- **Why the suites did not catch it.** Every pixel check of the hero runs with
-  `__paper.override({ zero: true })`, where creases, ripple and hover are all 0
-  (the hand-off identity: 0.00%). A veil made by the paper's EFFECTS at
-  presence 1 is invisible to them.
-- **Ways to split it.**
-  - `#item-02`, then `__paper.set({ paper: 'off' })`: the DOM face, no paper
-    material.
-  - `__paper.override({ zero: true })`: the paper with its effects off.
-  - `__paper.freezePresence(true)` at the hand-in: the paper at presence 0.
-  - The DETAIL PAPER panel's `creaseBlend` / `creaseDisplacement` to 0.
-  - Is the rect there during the morph itself (hold it with
-    `document.getAnimations()`, as `verify:cover`'s `morph` check does), or
-    only once the paper has the cards?
+**Why the suites did not catch it.** Every pixel check of the hero ran with
+`__paper.override({ zero: true })` and the sky hidden. `ground` runs with the
+paper's effects on and the sky there.
 
 ## Not done
 

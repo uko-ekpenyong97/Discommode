@@ -3,8 +3,22 @@ import { coverStageProbe } from './coverStage';
 import { coverCropOf } from './coverRenderer';
 import { benchCoverDraw, benchPresent } from './bench';
 import { COVERS } from './covers';
-import { setSiteCoverDials, siteCoverDials } from './coverDials';
+import { coverValues, setCoverValues, setSiteCoverDials, siteCoverDials } from './coverDials';
+import { dialDefaults } from './dialValues';
+import type { DialValues } from './dialValues';
 import type { Crop } from './types';
+
+function merge(base: DialValues, patch: DialValues): DialValues {
+  const out: DialValues = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    const b = base[k];
+    out[k] =
+      v && typeof v === 'object' && !Array.isArray(v) && b && typeof b === 'object'
+        ? merge(b as DialValues, v as DialValues)
+        : v;
+  }
+  return out;
+}
 
 /**
  * DEV ONLY (imported under import.meta.env.DEV): `window.__covers`, for
@@ -23,6 +37,11 @@ export function installCoverDevHooks() {
     lastMs: probe.lastMs,
     site: siteCoverDials,
     setSite: setSiteCoverDials,
+    /** A cover's live dial values, and a patch over them (folders merge), or
+     *  null to go back to its JSON's. */
+    dials: (id: string) => coverValues(id),
+    patchDials: (id: string, patch: DialValues | null) =>
+      setCoverValues(id, patch ? merge(coverValues(id), patch) : dialDefaults(COVERS[id].dials)),
     /** GPU ms for one stage draw of `id` at pxW × pxH (the shared tile draw). */
     benchStage: (id: string, pxW: number, pxH: number) => {
       const gl = probe.renderer;

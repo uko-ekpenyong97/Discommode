@@ -8,24 +8,32 @@ import type { DialValues } from './dialValues';
  * the dev COVER panel (src/dev/coverDials.ts, at #item-02?intro) writes here and
  * every renderer on the page rebinds.
  *
- * Plus two dials that belong to the SITE rather than to a cover:
+ * Plus dials that belong to the SITE rather than to a cover:
  *
  *   coverBackdrop  'sky' (default): nothing is drawn behind a cover — its ground
  *                  is 44% opaque and the SkyLayer shows through it, with no
  *                  scrim and no darkening between them. 'solid': one colour,
  *                  `coverBackdropColor`, laid under it.
  *   coverMaxDpr    the cap on a cover's backing store (2).
+ *   coverPaperShade  in the detail view, how much of the paper's light (the
+ *                  creases' screen-blend highlights and trough shading) a
+ *                  cover takes, per unit of its own alpha: 1 (default) is the
+ *                  full paper under opaque ink and none where the ground is
+ *                  transparent; 0 is no paper light on the cover at all. The
+ *                  dent, the squash and the fold are not light: unchanged.
  */
 export interface SiteCoverDials {
   coverBackdrop: 'sky' | 'solid';
   coverBackdropColor: string;
   coverMaxDpr: number;
+  coverPaperShade: number;
 }
 
 export const SITE_COVER_DEFAULTS: SiteCoverDials = {
   coverBackdrop: 'sky',
   coverBackdropColor: '#0b0b0e',
   coverMaxDpr: 2,
+  coverPaperShade: 1,
 };
 
 let site: SiteCoverDials = { ...SITE_COVER_DEFAULTS };

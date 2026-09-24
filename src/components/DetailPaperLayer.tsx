@@ -181,12 +181,15 @@ interface Card {
   slot: number;
 }
 
-/** DEV: forced uniforms for the verify suite — `zero` is the identity check. */
+/** DEV: forced uniforms for the verify suite — `zero` is the identity check;
+ *  `hideCovers` leaves the live-cover planes undrawn (verify:cover's `ground`
+ *  reference: the sky with the cover hidden and everything else as it was). */
 export interface PaperOverride {
   zero?: boolean;
   velocity?: number;
   hover?: number;
   fold?: number;
+  hideCovers?: boolean;
 }
 
 const hueFill = (hue: number): string => `hsl(${hue}, 28%, 32%)`;
@@ -690,6 +693,10 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       }
       u.uMap.value = tex;
       u.uPremul.value = item.cover ? 1 : 0;
+      // A shader cover lies on the sky with no card around it: no rounded
+      // corners, no shadow (below), and the paper's light only where its ink is.
+      const bare = item.cover?.kind === 'shader';
+      u.uCoverShade.value = siteCoverDials().coverPaperShade;
 
       // Sprite mask: every hover sprite's box, from its inline px in the panel.
       let sprites = 0;
@@ -726,7 +733,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       u.uViewport.value.set(vw, vh);
       u.uPerspective.value = PERSPECTIVE_VH * vh;
       u.uPixelRatio.value = dpr;
-      u.uRadius.value = CARD_RADIUS_PX * p.scale;
+      u.uRadius.value = bare ? 0 : CARD_RADIUS_PX * p.scale;
       u.uIndex.value = p.idx;
       // In 8-bit steps, as the compositor applies the DOM panel's opacity: the
       // strip's hover-dim eases forever in its last bits, and repainting on
@@ -758,7 +765,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       // The layer does not boil under reduced motion.
       const b = boilFor(p.el);
       u.uBoil.value.set(b.dx * p.scale, b.dy * p.scale, (b.deg * Math.PI) / 180);
-      c.mesh.visible = tex !== null;
+      c.mesh.visible = tex !== null && !(override.hideCovers && item.cover);
 
       // The shadow: the DOM panel's box-shadow, scaled with the panel, faded
       // with it, and gone with the card while it is crumpled away. In `out` the
@@ -768,11 +775,13 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       s.uSigma.value = (SHADOW.blur / 2) * p.scale;
       s.uMargin.value = SHADOW.blur * 1.5 * p.scale;
       s.uOffsetY.value = SHADOW.y * p.scale;
-      s.uAlpha.value = state === 'out' ? 0 : SHADOW.alpha * alpha * (1 - u.uFold.value);
+      // A shader cover has none: its DOM panel has none either (DetailView.css).
+      s.uAlpha.value = state === 'out' || bare ? 0 : SHADOW.alpha * alpha * (1 - u.uFold.value);
       // A live cover lets the sky through its ground: its shadow stays outside it.
       s.uHole.value = item.cover ? 1 : 0;
       s.uRadius.value = CARD_RADIUS_PX * p.scale;
 
+      c.shadow.visible = !bare;
       c.shadow.renderOrder = order++;
       c.mesh.renderOrder = order++;
 
@@ -790,6 +799,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
         u.uFold.value,
         u.uCreaseBlend.value,
         u.uCreaseDisplacement.value,
+        u.uCoverShade.value,
         u.uRipple.value,
         u.uHoverRadius.value,
         u.uHoverDepth.value,

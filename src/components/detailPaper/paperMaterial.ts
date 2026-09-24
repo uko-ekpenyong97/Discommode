@@ -59,6 +59,12 @@ export interface PaperUniforms {
   uAlpha: IUniform<number>;
   /** 1: uMap is PREMULTIPLIED and not opaque — a live cover (docs/covers.md). */
   uPremul: IUniform<number>;
+  /**
+   * A live cover's paper light, per unit of the cover's own alpha
+   * (`coverPaperShade`, the COVER panel): the creases light and shade the ink
+   * and leave the transparent ground to the sky. Ignored unless uPremul.
+   */
+  uCoverShade: IUniform<number>;
   uCreaseBlend: IUniform<number>;
   uCreaseDisplacement: IUniform<number>;
   uHover: IUniform<number>;
@@ -166,6 +172,7 @@ const FRAGMENT = /* glsl */ `
   uniform float uRadius;
   uniform float uAlpha;
   uniform float uPremul;
+  uniform float uCoverShade;
   uniform float uCreaseBlend;
   uniform float uCreaseDisplacement;
   uniform float uFold;
@@ -220,17 +227,22 @@ const FRAGMENT = /* glsl */ `
     vec3 col = uPremul > 0.5 ? texel4.rgb / max(ta, 1e-4) : texel4.rgb;
 
     // Light: the ridges screen into the artwork, the troughs shade it — and the
-    // shading sharpens under the cursor.
+    // shading sharpens under the cursor. On a live cover it is weighted by the
+    // cover's alpha: the full paper under the ink, none on a ground the sky
+    // shows through, so nothing lies between that ground and the sky. An opaque
+    // face has a weight of exactly 1.
+    float lit = uPremul > 0.5 ? uCoverShade * ta : 1.0;
     vec3 screen = 1.0 - (1.0 - col) * (1.0 - texel);
-    col = mix(col, screen, uCreaseBlend);
-    col -= (cmap(texel.g, 0.0, 0.1, 0.05, 0.0) - texel.g * hover * 0.1) * (uCreaseBlend / 0.2);
+    col = mix(col, screen, uCreaseBlend * lit);
+    col -= (cmap(texel.g, 0.0, 0.1, 0.05, 0.0) - texel.g * hover * 0.1) * (uCreaseBlend / 0.2) * lit;
 
     // The card's rounded corners, antialiased. Only inside the corner squares:
-    // the straight edges are the triangles' own, and multisampled.
+    // the straight edges are the triangles' own, and multisampled. A live cover
+    // has none (uRadius 0): it is not a card on the sky, it is on the sky.
     vec2 local = (vUv - 0.5) * uRect.zw;
     vec2 q = abs(local) - uRect.zw * 0.5 + uRadius;
     float corner = 1.0;
-    if (q.x > 0.0 && q.y > 0.0) {
+    if (uRadius > 0.0 && q.x > 0.0 && q.y > 0.0) {
       corner = clamp(0.5 - (length(q) - uRadius) * uPixelRatio, 0.0, 1.0);
     }
 
@@ -255,6 +267,7 @@ export function createPaperMaterial(creases: Texture | null): PaperMaterial {
     uIndex: { value: 0 },
     uAlpha: { value: 1 },
     uPremul: { value: 0 },
+    uCoverShade: { value: 1 },
     uCreaseBlend: { value: 0 },
     uCreaseDisplacement: { value: 0 },
     uHover: { value: 0 },
