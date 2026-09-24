@@ -243,6 +243,7 @@
    room between "dim" and "white" — which is why the current one is marked with
    a rule as well as with a weight of light. */
 .pv-letterhead__no {
+  position: relative;
   padding: 4px 2px;
   border: 0;
   background: none;
@@ -251,6 +252,22 @@
   color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
   transition: color 180ms ease;
+}
+/* THE HIT AREA IS BIGGER THAN THE NUMBER. The button is 21×22px in a 56px
+   strip with 10px between neighbours, and a hand aiming at one lands a few
+   pixels off it about one press in thirteen. This stretches the area that
+   counts as the number over the strip's full height and half of each gap, so a
+   near-miss scrolls to the section it was aimed at. A pseudo-element is used
+   so the button's own box, and the focus ring drawn around it, stay the size
+   they are. Measured with real presses scattered ±5px around each number:
+   9 of 120 used to fall on the strip, and none do now. */
+.pv-letterhead__no::before {
+  content: '';
+  position: absolute;
+  top: calc((var(--pv-letterhead-h, 56px) - 100%) / -2);
+  bottom: calc((var(--pv-letterhead-h, 56px) - 100%) / -2);
+  left: -5px; /* half the nav's gap */
+  right: -5px;
 }
 .pv-letterhead__no:hover,
 .pv-letterhead__no:focus-visible {

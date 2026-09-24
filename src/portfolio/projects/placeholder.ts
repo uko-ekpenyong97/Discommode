@@ -4,7 +4,7 @@ import ASSETS from './placeholder-assets.json';
 
 // The capture set moved to `captures.ts` — none of it was ever about
 // placeholders. Re-exported here so the existing imports still resolve.
-export { SHEET_SCALES, SHEET_SIZES, sheetSrc } from './captures';
+export { sheetSrc } from './captures';
 
 /**
  * The placeholder SECTIONS — so the paper's mechanics can be eye-tested before

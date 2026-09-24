@@ -1,4 +1,3 @@
-import type { PointerEvent as ReactPointerEvent } from 'react';
 import SkyLayer from '../components/SkyLayer';
 import type { Project } from './blocks/types';
 
@@ -64,23 +63,17 @@ import type { Project } from './blocks/types';
  * the right where it reads as a footnote to the strip rather than as the first
  * thing in it.
  *
- * EVERY BUTTON IN HERE STOPS ITS POINTER EVENTS. The strip is ground, and
- * clicking the ground leaves the view (`useDismissOnGround`) — so without this
- * a click on a section number scrolls to that section AND closes the view on
- * the way. That was already true before this item existed and nothing caught
- * it: the suite clicks with `element.click()`, which dispatches a bare `click`
- * and no pointer events at all. The dead parts of the strip still dismiss,
- * which is what the hook is for.
+ * THE STRIP IS CHROME, NOT GROUND. Clicking the ground leaves the view
+ * (`useDismissOnGround`), and the strip used to count as ground, with each
+ * button stopping its own pointer events so a click on a number did not also
+ * close the view. The space between and around the numbers still did, and a
+ * press a few pixels off a 21px number is an ordinary miss. The hook now treats
+ * the whole strip as chrome, so nothing in here needs to stop anything, and
+ * each number's hit area is stretched over the strip's height and half of each
+ * gap (`portfolio.css`) so a near-miss still lands on the number.
  */
 
 const pad = (n: number): string => String(n).padStart(2, '0');
-
-/** Pointer events on a control inside the strip are the control's, not the
- *  ground's — see the note above. */
-const keepPointer = {
-  onPointerDown: (e: ReactPointerEvent) => e.stopPropagation(),
-  onPointerUp: (e: ReactPointerEvent) => e.stopPropagation(),
-};
 
 interface GroundProps {
   project: Project;
@@ -115,7 +108,6 @@ export function Ground({ project, activeIndex, pendingIndex, onSelect, onClose }
           type="button"
           className="pv-letterhead__back"
           onClick={onClose}
-          {...keepPointer}
         >
           ESC / &larr; BACK
         </button>
@@ -130,7 +122,6 @@ export function Ground({ project, activeIndex, pendingIndex, onSelect, onClose }
               data-pending={k === pendingIndex || undefined}
               aria-current={k === activeIndex ? 'true' : undefined}
               onClick={() => onSelect(k)}
-              {...keepPointer}
             >
               <span className="pv-sr">{section.title}</span>
               <span aria-hidden="true">{pad(k + 1)}</span>

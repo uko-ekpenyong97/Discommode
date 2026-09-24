@@ -86,9 +86,17 @@ export interface CornerLift {
 }
 
 export interface SheetCanvasHandle {
-  /** Fit the plane to the page's rect, in VIEWPORT coordinates. Called from
+  /** Fit the plane to the page's rect, in VIEWPORT coordinates, and say which
+   *  bucket the page is laid out at (null below the smallest). Called from
    *  every measure, never from a frame. */
-  fit: (rect: ScreenRect) => void;
+  fit: (rect: ScreenRect, bucket: number | null) => void;
+  /**
+   * Where each section's LAST viewport starts inside its `tail` capture, in
+   * CSS pixels. The capture was taken with the page `CAPTURE_HEIGHT` tall and
+   * the live page is shorter, so the two were scrolled to different bottoms;
+   * this is the difference, and the sheet's uv crop starts there.
+   */
+  tailRows: (rows: number[]) => void;
   /** Paint one frame of section `index`'s entrance. */
   show: (index: number, pose: SheetPose) => void;
   /** Start fetching a capture without binding or painting it — the textures a
@@ -144,8 +152,8 @@ function blankTexture(): DataTexture {
   return tex;
 }
 
-/** One section's two captures, at every signed-off width: the first viewport of
- *  its page, and the last. */
+/** One section's two captures, at every bucket: the first viewport of its page,
+ *  and the last. */
 export interface SectionCaptures {
   sheet: SheetTexture[];
   tail: SheetTexture[];
@@ -175,11 +183,20 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
     const showRef = useRef<(index: number, pose: SheetPose) => void>(() => {});
     const capturesRef = useRef(captures);
     capturesRef.current = captures;
-    /** The live page's width in CSS pixels, which is what picks the capture. */
-    const pageWidthRef = useRef(0);
-    /** The capture currently bound, by src — the index alone is not enough now
-     *  that a resize can change which of a section's captures is the right one. */
+    /** The bucket the live page is laid out at, which is what picks the
+     *  capture; null below the smallest bucket. */
+    const bucketRef = useRef<number | null>(null);
+    /** The live page's rect height in CSS pixels, which is how much of the
+     *  capture the sheet shows. */
+    const pageHeightRef = useRef(0);
+    /** Per section, the row of its tail capture the live last viewport starts
+     *  at. See {@link SheetCanvasHandle.tailRows}. */
+    const tailRowsRef = useRef<number[]>([]);
+    /** The capture currently bound, by src, and which section and kind it is a
+     *  capture of. A bucket change binds a new capture for the same section,
+     *  and until that one has decoded the old one stays on. */
     const boundSrcRef = useRef('');
+    const boundForRef = useRef<{ index: number; kind: SheetKind; entry: SheetTexture } | null>(null);
 
     useEffect(() => {
       const canvas = canvasRef.current;
@@ -323,31 +340,26 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
     }, []);
 
     /**
-     * The capture for section `k` at the width AND the scale the page is
-     * actually at.
+     * The capture for section `k` at the bucket the page is laid out at.
      *
-     * The width first, and it is not negotiable: a page's type is a fixed size
-     * and its measure is not, so a capture taken at another width is a
-     * different document rather than the same one at another scale, and no
-     * resampling turns one into the other.
-     *
-     * The SCALE second, and it is the one the renderer is actually using rather
-     * than `devicePixelRatio` — `setPixelRatio` clamps at {@link MAX_DPR}, and
-     * the number that matters is the framebuffer's. A 1x capture in a 2x buffer
-     * is every glyph magnified two to one, next to an HTML page drawn at 2x;
-     * a 2x capture in a 1x buffer is the same mismatch the other way round, and
-     * with no mipmaps (see below) that one aliases rather than blurring.
+     * The bucket is not negotiable: a page's type is a fixed size and its
+     * measure is not, so a capture taken at another width is a different
+     * document rather than the same one at another scale, and no resampling
+     * turns one into the other. Below the smallest bucket the page is
+     * fluid, and the nearest capture is the least-wrong picture of it.
      */
     const captureFor = (k: number, kind: SheetKind): SheetTexture | null => {
       const list = capturesRef.current[k]?.[kind];
       if (!list || list.length === 0) return null;
-      const want = pageWidthRef.current;
-      const wantScale = gl.current?.renderer.getPixelRatio() ?? 1;
-      const worse = (a: SheetTexture, b: SheetTexture): boolean => {
-        const dw = Math.abs(a.width - want) - Math.abs(b.width - want);
-        return dw !== 0 ? dw > 0 : Math.abs(a.scale - wantScale) > Math.abs(b.scale - wantScale);
-      };
-      return list.reduce((best, next) => (worse(best, next) ? next : best));
+      const want = bucketRef.current;
+      if (want !== null) {
+        const exact = list.find((c) => c.bucket === want);
+        if (exact) return exact;
+      }
+      const target = want ?? 0;
+      return list.reduce((best, next) =>
+        Math.abs(next.bucket - target) < Math.abs(best.bucket - target) ? next : best,
+      );
     };
 
     /** The texture for a capture, kicked off the first time it is asked for.
@@ -367,21 +379,24 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         if (loaded.current.get(entry.src) !== tex) return;
         // A late arrival has to reach the screen, and it cannot wait for the
         // next scroll tick: a reader who has stopped mid-entrance would be
-        // looking at blank paper until they moved again.
-        if (!gl.current || boundSrcRef.current !== entry.src) return;
-        gl.current.materials.uniforms.uHasMap.value = 1;
+        // looking at blank paper until they moved again. That includes a
+        // capture that is WANTED but not yet bound, because the previous
+        // bucket's is being held on screen until this one arrives.
+        if (!gl.current || captureFor(k, kind)?.src !== entry.src) return;
         const last = lastRef.current;
         if (last && last.index === k && last.pose.kind === kind) {
           showRef.current(last.index, last.pose);
         }
       });
       tex.colorSpace = NoColorSpace;
-      // NO MIPMAPS. There is one capture per signed-off viewport PER SCALE, so
-      // the texture is never minified — it is sampled one texel to one pixel of
-      // the framebuffer — and a mipmap chain under that is a levels-of-detail
-      // calculation that can come back a hair above zero and blur every glyph on
-      // the page for it. Anisotropy below is at the renderer's own maximum, for
-      // the frames where the sheet is bent and the mapping is not 1:1.
+      // NO MIPMAPS. There is one capture per bucket, taken at the page's own
+      // width, so a flat sheet samples it at exactly one texel per device
+      // pixel on a 2x display and exactly two on a 1x one, which bilinear
+      // filtering at a pixel-aligned rect averages. A mipmap chain under that
+      // is a levels-of-detail calculation that can come back a hair above zero
+      // and blur every glyph on the page for it. Anisotropy below is at the
+      // renderer's own maximum, for the frames where the sheet is bent and the
+      // mapping is not 1:1.
       tex.generateMipmaps = false;
       tex.minFilter = LinearFilter;
       tex.magFilter = LinearFilter;
@@ -390,7 +405,9 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       return tex;
     };
 
-    const fit = (rect: ScreenRect): void => {
+    const fit = (rect: ScreenRect, bucket: number | null): void => {
+      bucketRef.current = bucket;
+      pageHeightRef.current = rect.height;
       const g = gl.current;
       const canvas = canvasRef.current;
       if (!g || !canvas) return;
@@ -407,7 +424,6 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         local,
       );
       fitRef.current = plane;
-      pageWidthRef.current = local.width;
       g.materials.uniforms.uAspect.value = plane.aspect;
       // One CSS pixel of the PAGE, in the plane's uv. The hairline has to be
       // the same width as the page's inset ring, not the same fraction of a
@@ -428,10 +444,39 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
 
       const capture = captureFor(index, pose.kind);
       if (boundSrcRef.current !== (capture?.src ?? '')) {
-        boundSrcRef.current = capture?.src ?? '';
         const tex = textureFor(index, pose.kind);
-        g.materials.uniforms.uMap.value = tex ?? g.blank;
-        g.materials.uniforms.uHasMap.value = tex?.image ? 1 : 0;
+        // A BUCKET CHANGE HOLDS THE OLD CAPTURE until the new one decodes. The
+        // resize that caused it has already re-laid the page, so the old
+        // capture is the wrong width, but it is the same section's picture.
+        // The alternative is blank paper for as long as a fetch takes, which is
+        // the one thing a sheet must never show.
+        const held = boundForRef.current;
+        const keep =
+          !tex?.image &&
+          held !== null &&
+          held.index === index &&
+          held.kind === pose.kind &&
+          Boolean(loaded.current.get(held.entry.src)?.image);
+        if (!keep) {
+          boundSrcRef.current = capture?.src ?? '';
+          boundForRef.current = capture ? { index, kind: pose.kind, entry: capture } : null;
+          g.materials.uniforms.uMap.value = tex ?? g.blank;
+          g.materials.uniforms.uHasMap.value = tex?.image ? 1 : 0;
+        }
+      } else if (!g.materials.uniforms.uHasMap.value && loaded.current.get(boundSrcRef.current)?.image) {
+        g.materials.uniforms.uHasMap.value = 1;
+      }
+      // THE CROP: the rows of the capture the live page is showing. The top of
+      // a `sheet`; for a `tail`, the band that starts where the live page's
+      // last viewport does. See `uUvCrop`.
+      const bound = boundForRef.current;
+      if (bound) {
+        const h = pageHeightRef.current;
+        const top = bound.kind === 'tail' ? (tailRowsRef.current[bound.index] ?? 0) : 0;
+        g.materials.uniforms.uUvCrop.value.set(
+          1 - (top + h) / bound.entry.height,
+          h / bound.entry.height,
+        );
       }
 
       // WHICH SHAPE, first: an entrance ROLLS and a tear FOLDS. It is a whole
@@ -573,6 +618,10 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       return out;
     };
 
+    const tailRows = (rows: number[]): void => {
+      tailRowsRef.current = rows;
+    };
+
     const hide = (): void => {
       lastRef.current = null;
       // NOTHING IS BOUND once the canvas is out of the paint order, and saying
@@ -582,6 +631,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       // reader two sections on from where the canvas was last painted held
       // SEVEN captures, the six of the window and one the hide had pinned.
       boundSrcRef.current = '';
+      boundForRef.current = null;
       const canvas = canvasRef.current;
       if (canvas) canvas.style.visibility = 'hidden';
     };
@@ -700,6 +750,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       ref,
       (): SheetCanvasHandle => ({
         fit,
+        tailRows,
         show,
         warm,
         evict,

@@ -39,6 +39,7 @@ import {
   settleRevealsNearEnd,
 } from './revealState';
 import { ScrollerContext } from './scrollerContext';
+import { CAPTURE_HEIGHT, bucketFor, pageWidthFor } from './pageBuckets';
 import { skyWakeLeading } from '../sky/skyStage';
 import { useReveal } from './useReveal';
 import type { Project } from './blocks/types';
@@ -118,6 +119,38 @@ const flatOf = (kind: SheetKind) =>
 const snap = (v: number, dpr: number): number => Math.round(v * dpr) / dpr;
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/**
+ * HOW FAR THE TRACK MAY MOVE UNDER A CROSSFADE, in pixels, before the crossfade
+ * is over.
+ *
+ * A hand-off crossfades two surfaces that show the same pixels at ONE track
+ * position, `origin`: the flat sheet is a capture of the page at its top (or at
+ * its bottom, for a tail), and nothing else. The crossfade runs on a CLOCK and
+ * the track does not stop for it. Under a real wheel Lenis is still gliding at
+ * 15–20px a frame when the swap starts, so over 120ms the page fading in scrolled
+ * up to 126px away from a sheet that stayed where it was. The reader saw two
+ * copies of the page, and the content jumped 75–92px in the frame the page
+ * crossed half alpha. A reverse hand-off froze both surfaces for 120ms while
+ * the track ran on, and then the tear jumped to where the track had got to.
+ * `seek` holds the track still, which is why no screenshot ever showed any of
+ * this.
+ *
+ * So the crossfade is as long as the clock says OR as far as the track may move
+ * away from `origin`, whichever runs out first. At rest (the open landing, a
+ * letterhead click arriving, a seek) nothing moves, the clock runs out first,
+ * and the swap is the 120ms crossfade it always was. Under a wheel the track
+ * runs out first, and the swap is a cut with the page already where the track
+ * says. A cut in the middle of a scroll does not show: every glyph on the page
+ * is moving 15px a frame, which hides the ≤2% of antialiasing the two surfaces
+ * disagree on. One pixel is the most the frozen surface can be off by while the
+ * crossfade lasts. That leaves room under the 2px `pv-verify` allows for the
+ * page's inner `scrollTop`, which the browser rounds.
+ */
+const HANDOFF_SLIP_PX = 1;
+
+/** How long a window resize has to be quiet before the page is re-laid. */
+const RESIZE_SETTLE_MS = 150;
 
 /** Where along the sheet's edge (u, 0..1) it splats into the sky's wake. */
 const SHEET_WAKE_U = [0.1, 0.5, 0.9];
@@ -227,6 +260,21 @@ export interface PortfolioProbe {
   /** Whether Lenis is still moving the scroll — its own smoothing runs on well
    *  past the last wheel event, and the settle waits for it. */
   scrolling: () => boolean;
+  /** The window-width bucket the page is laid out at; null below the
+   *  smallest. See `pageBuckets.ts`. */
+  bucket: () => number | null;
+  /** Lenis's own state — where it is heading, where it has got to, and how
+   *  fast — for the checks that drive the view with a real wheel or a real
+   *  pointer and have to know whether a glide was in flight when they did. */
+  lenis: () => {
+    target: number;
+    animated: number;
+    velocity: number;
+    scrolling: string | boolean;
+    userData: unknown;
+  } | null;
+  /** The crossfade in flight, if one is: which page, which way, how far. */
+  handoff: () => { index: number; into: 'page' | 'sheet'; kind: SheetKind; alpha: number } | null;
   /** Hand the position back to the scroller. */
   release: () => void;
   /** THE HAND-OFF INVARIANT: the flat plane's screen rect as three.js projects
@@ -343,6 +391,8 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   /** The live open tween, so an unmount can stop it. */
   const openClockRef = useRef<{ stop: () => void } | null>(null);
   const pageRectRef = useRef<ScreenRect | null>(null);
+  /** The bucket the page is laid out at; null below the smallest. */
+  const bucketRef = useRef<number | null>(null);
   /** The first-layout gate (rule 1 above). `armed` unlocks the scroller. */
   const readyRef = useRef({ fonts: false, measured: new Set<Element>(), armed: false, at: 0 });
   // Only read on the FIRST measure of a project; after that the position is
@@ -351,14 +401,17 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
   const reducedRef = useRef(false);
   /**
    * The 120ms crossfade at either end of a vertical run: which page, which way
-   * round, which capture the sheet under it is wearing, and how far in. Null
-   * when no swap is running.
+   * round, which capture the sheet under it is wearing, how far in, and the
+   * track position the two surfaces agree at. Null when no swap is running.
    */
   const handoffRef = useRef<{
     index: number;
     into: 'page' | 'sheet';
     kind: SheetKind;
     scrollTop: number;
+    /** The track position both surfaces show the same pixels at: the page's
+     *  top for a `sheet` capture and its bottom for a `tail`. */
+    origin: number;
     alpha: number;
     raf: number;
   } | null>(null);
@@ -481,7 +534,23 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       // open a probe is likely to be asked.
       dialsRef.current = d;
       const l = layout(track, position, d);
-      const handoff = handoffRef.current;
+      let handoff = handoffRef.current;
+      // THE CROSSFADE ENDS WHEN THE TRACK LEAVES IT BEHIND. See
+      // `HANDOFF_SLIP_PX`. Reduced motion is excluded because its swap happens
+      // halfway across a stretch where neither page moves, so there is no
+      // `origin` for the track to leave, and the fade is the only transition it
+      // has.
+      let ended = false;
+      if (handoff && !reducedRef.current) {
+        const slip = Math.abs(position - handoff.origin) / HANDOFF_SLIP_PX;
+        handoff.alpha = Math.max(handoff.alpha, Math.min(1, slip));
+      }
+      if (handoff && handoff.alpha >= 1) {
+        cancelAnimationFrame(handoff.raf);
+        handoffRef.current = null;
+        handoff = null;
+        ended = true;
+      }
       let shown: number;
 
       if (reducedRef.current) {
@@ -597,6 +666,11 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       // all is not a change.
       const last = lastRef.current;
       const nowShown = handoff ? last.shown : shown;
+      // Recorded BEFORE a hand-off is started, not after: starting one paints a
+      // frame, and that frame can end the crossfade at once (the track already
+      // past `HANDOFF_SLIP_PX`). It must find this change already seen, or it
+      // starts the same hand-off again from inside itself.
+      if (!handoff) lastRef.current = { shown, segment: l.segment };
       if (!handoff && last.shown !== -2 && nowShown !== last.shown) {
         const kind: SheetKind = (l.segment === 'exit' || last.segment === 'exit') ? 'tail' : 'sheet';
         if (nowShown >= 0) startHandoffRef.current(nowShown, 'page', kind, 0);
@@ -608,10 +682,26 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
           // frame late is a frame of the crossfade spent hiding a reveal.
           const leaving = pagesRef.current[last.shown];
           if (leaving) settleAllReveals(leaving);
-          startHandoffRef.current(last.shown, 'sheet', kind, track.pageScroll[last.shown]);
+          // The page leaves at the end it is leaving FROM. A tear leaves from
+          // its bottom, where the tail capture was taken. A rewind into the
+          // page's own entrance leaves from its TOP, where the sheet capture
+          // was taken. This used to be the bottom for both, so a rewind
+          // repainted the page a whole run further down for the length of the
+          // crossfade: 488–1404px, on every rewind of a card.
+          const from = kind === 'tail' ? track.pageScroll[last.shown] : 0;
+          startHandoffRef.current(last.shown, 'sheet', kind, from);
         }
       }
-      if (!handoff) lastRef.current = { shown, segment: l.segment };
+      // …AND PRUNE AGAIN, because a crossfade can outlive the window it started
+      // in. A hand-off paints the flat sheet of the section it was started for
+      // on every one of its frames, so a letterhead click across three sections
+      // re-creates a capture the eviction has just disposed, and nothing would
+      // take it away again until the reader next changed section. Measured,
+      // with the walk in `pv-verify` stepping a section every 80ms: seven
+      // captures resident where the window is six. It is the same call the
+      // section change makes, and whatever the crossfade is wearing is held by
+      // {@link SheetCanvasHandle.evict}'s guard.
+      if (ended) residentWindow(canvas, activeRef.current);
     },
     [paint],
   );
@@ -667,28 +757,20 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
 
       const ms = Math.max(1, look.handoffMs);
       const t0 = performance.now();
-      const state = { index, into, kind, scrollTop, alpha: 0, raf: 0 };
+      const track = trackRef.current;
+      const origin = track
+        ? track.start[index] + (kind === 'tail' ? track.pageScroll[index] : 0)
+        : positionRef.current;
+      const state = { index, into, kind, scrollTop, origin, alpha: 0, raf: 0 };
       handoffRef.current = state;
+      // The clock's half of the crossfade. `apply` owns the other half, the
+      // track's, and is what ends it, whichever runs out first; see
+      // `HANDOFF_SLIP_PX`.
       const frame = (now: number): void => {
-        state.alpha = Math.min(1, (now - t0) / ms);
-        if (state.alpha < 1) {
-          state.raf = requestAnimationFrame(frame);
-          apply(positionRef.current);
-        } else {
-          handoffRef.current = null;
-          apply(positionRef.current);
-          // …AND PRUNE AGAIN, because a crossfade can outlive the window it
-          // started in. A hand-off paints the flat sheet on every one of its
-          // frames, and a hand-off already in flight when the position jumps
-          // goes on painting the section it was started for — so a letterhead
-          // click across three sections re-creates a capture the eviction has
-          // just disposed, and nothing would take it away again until the
-          // reader next changed section. Measured, with the walk in `pv-verify`
-          // stepping a section every 80ms: seven captures resident where the
-          // window is six. It is the same call the section change makes, and
-          // whatever the crossfade is wearing is held by {@link evict}'s guard.
-          residentWindow(canvasRef.current, activeRef.current);
-        }
+        if (handoffRef.current !== state) return;
+        state.alpha = Math.max(state.alpha, Math.min(1, (now - t0) / ms));
+        if (state.alpha < 1) state.raf = requestAnimationFrame(frame);
+        apply(positionRef.current);
       };
       state.raf = requestAnimationFrame(frame);
       apply(positionRef.current);
@@ -728,24 +810,31 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     // by a tube. Holding the ENTRANCE at p = 0 instead is the same position the
     // tween starts from, so the canvas is the first thing in the paint order
     // and the page stays hidden until the hand-off has it.
-    const held: TrackPosition = previous
+    let held: TrackPosition = previous
       ? positionAt(previous, wasY)
       : openingRef.current
         ? { section: 0, segment: 'enter', offset: 0, p: 0 }
         : { section: initialRef.current, segment: 'page', offset: 0, p: 0 };
 
-    // THE PAGE RECT: the viewport, less ONE MARGIN on every side, plus the
-    // letterhead's height at the top. Every edge lands on the device pixel
-    // grid.
+    // THE PAGE RECT. Its WIDTH is a bucket's (see `pageBuckets.ts`): the
+    // nearest bucket at or below the window's width, less one margin each
+    // side, centred on the ground, which takes up whatever is left over. Its
+    // HEIGHT is the window's, less the letterhead and one margin above and
+    // below. Every edge lands on the device pixel grid, and the width is a
+    // whole number of CSS pixels, so every window in a bucket lays its page
+    // out identically and the bucket's capture is a picture of it.
     //
-    // The bottom used to be a deeper `pageFootPx` (144) — a band reserved so a
-    // page never ran under the close pill. There is no pill, so there is no
-    // band, and the page is 96px taller at both signed-off viewports.
+    // Below the smallest bucket there is nothing to snap to, and the page is
+    // the window less its margins.
     const dpr = window.devicePixelRatio || 1;
     const box = sc.getBoundingClientRect();
+    const bucket = bucketFor(box.width);
+    const pageW = bucket !== null
+      ? pageWidthFor(bucket, look.pageMarginPx)
+      : Math.max(1, Math.floor(box.width - 2 * look.pageMarginPx));
     const top = look.letterheadHPx + look.pageMarginPx;
-    const left = snap(look.pageMarginPx, dpr);
-    const right = snap(box.width - look.pageMarginPx, dpr);
+    const left = snap((box.width - pageW) / 2, dpr);
+    const right = left + pageW;
     const head = snap(top, dpr);
     const foot = snap(box.height - look.pageMarginPx, dpr);
     const rect: ScreenRect = {
@@ -765,12 +854,17 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
     stage.style.setProperty('--pv-page-h', `${rect.height}px`);
     // The canvas takes the rect in viewport coordinates, so the fit is against
     // where the page actually is rather than where the stage thinks it is.
-    canvasRef.current?.fit({
-      left: box.left + rect.left,
-      top: box.top + rect.top,
-      width: rect.width,
-      height: rect.height,
-    });
+    canvasRef.current?.fit(
+      {
+        left: box.left + rect.left,
+        top: box.top + rect.top,
+        width: rect.width,
+        height: rect.height,
+      },
+      bucket,
+    );
+    const rebucketed = previous !== null && bucketRef.current !== bucket;
+    bucketRef.current = bucket;
 
     const track = buildTrack({
       heights: parts.map(({ inner }) => inner.getBoundingClientRect().height),
@@ -783,6 +877,28 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       dwellDistance: look.dwellVh * box.height,
     });
     trackRef.current = track;
+
+    // WHERE EACH TAIL SITS IN ITS CAPTURE. Both were scrolled to the page's
+    // bottom, the live page at its own height and the capture at
+    // `CAPTURE_HEIGHT`, and the browser keeps `scrollTop` in whole CSS pixels
+    // capped at `scrollHeight - clientHeight`. `scrollHeight` is a function of
+    // the width alone, and the width is the bucket's, so this is exact.
+    canvasRef.current?.tailRows(
+      parts.map(({ scroll }) => {
+        const sh = scroll.scrollHeight;
+        return Math.max(0, sh - scroll.clientHeight) - Math.max(0, sh - CAPTURE_HEIGHT);
+      }),
+    );
+
+    // A NEW BUCKET IS A NEW LAYOUT, so a reader part-way down a page keeps the
+    // same FRACTION of it rather than the same number of pixels, which would
+    // now be somewhere else in the text. The top and the bottom, which are
+    // where a reader at rest almost always is, are exact either way.
+    if (rebucketed && previous && held.segment === 'page') {
+      const was = previous.pageScroll[held.section] ?? 0;
+      const now = track.pageScroll[held.section] ?? 0;
+      held = { ...held, offset: was > 0 ? (held.offset / was) * now : 0 };
+    }
 
     // THE SPACER IS THE ONLY REASON THE SCROLLER HAS ANYWHERE TO GO, and it has
     // to be the forward extent PLUS ONE VIEWPORT.
@@ -820,6 +936,8 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       else sc.scrollTop = position; // the first measure runs before Lenis exists
     }
     apply(position);
+    // …and the new bucket's captures are the ones to have ready.
+    if (rebucketed && readyRef.current.armed) residentWindow(canvasRef.current, activeRef.current);
 
     if (import.meta.env.DEV && previous) {
       const d = poseDials();
@@ -890,6 +1008,22 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
         lenisRef.current?.scrollTo(y, { immediate: true, force: true });
       },
       scrolling: () => Boolean(lenisRef.current?.isScrolling),
+      bucket: () => bucketRef.current,
+      lenis: () => {
+        const l = lenisRef.current;
+        if (!l) return null;
+        return {
+          target: l.targetScroll,
+          animated: l.animatedScroll,
+          velocity: l.velocity,
+          scrolling: l.isScrolling,
+          userData: l.userData,
+        };
+      },
+      handoff: () => {
+        const h = handoffRef.current;
+        return h ? { index: h.index, into: h.into, kind: h.kind, alpha: h.alpha } : null;
+      },
       release: () => {
         introRef.current = false;
         if (readyRef.current.armed) lenisRef.current?.start();
@@ -1129,9 +1263,20 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       arm();
     });
     for (const { inner } of partsRef.current) ro.observe(inner);
-    window.addEventListener('resize', measure);
+    // A WINDOW RESIZE IS MEASURED WHEN IT ENDS, not on every event. Crossing a
+    // bucket re-lays every page and asks for another bucket's captures, which
+    // is a layout and a fetch rather than a frame's worth of work, and doing
+    // it per event during a drag would re-flow the text dozens of times on
+    // the way to one width. The page holds its old rect until the drag stops.
+    let resizeTimer = 0;
+    const onResize = (): void => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(measure, RESIZE_SETTLE_MS);
+    };
+    window.addEventListener('resize', onResize);
     return () => {
       window.clearTimeout(fallback);
+      window.clearTimeout(resizeTimer);
       // The open is the one tween that outlives its own effect if nobody stops
       // it: it is started from `arm`, not from a subscription, so a project
       // swapped mid-open would leave it writing to a track that has gone.
@@ -1141,7 +1286,7 @@ export const Scroller = forwardRef<ScrollerHandle, ScrollerProps>(function Scrol
       if (handoffRef.current) cancelAnimationFrame(handoffRef.current.raf);
       handoffRef.current = null;
       ro.disconnect();
-      window.removeEventListener('resize', measure);
+      window.removeEventListener('resize', onResize);
       pagesRef.current = [];
       partsRef.current = [];
     };

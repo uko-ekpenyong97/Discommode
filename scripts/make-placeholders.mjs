@@ -13,8 +13,8 @@
  * height that changes moves every page start behind it.
  *
  *   public/projects/0N/card.webp           grid + detail art, 2000x2600 (10:13)
- *   public/projects/0N/sheet-NN-W[@2x].webp  a section's FIRST viewport — below
- *   public/projects/0N/tail-NN-W[@2x].webp   …and its LAST
+ *   public/projects/0N/sheet-NN-B@2x.webp  a section's FIRST viewport, per bucket
+ *   public/projects/0N/tail-NN-B@2x.webp   …and its LAST
  *   public/projects/placeholder/*     the block media the placeholder project uses
  *
  *   npm run dev                       # in another shell, for the captures
@@ -31,10 +31,12 @@
  * as deterministic as each other: a tear always starts with the page scrolled
  * to its bottom, which is what the end of a vertical run is.
  *
- * …times two viewports, times two SCALES: four files per hand-off per section.
- * The viewports are different documents (the measure changes and the lines wrap
- * elsewhere); the scales are the same document at the resolution the renderer's
- * framebuffer is actually at.
+ * …times one per PAGE BUCKET (`src/portfolio/pageBuckets.json`). The page is laid
+ * out at a bucket's width and never between two, so the buckets are every
+ * document a reader can be shown. Each is taken at 2x with the page
+ * `captureHeight` tall, taller than any page the view draws, and the sheet
+ * crops it by uv to the live page's height. Files for widths or scales that are
+ * no longer in the list are deleted.
  *
  * Which makes this a PLACEHOLDER pipeline and not a content one. Nothing fails
  * if a section's first viewport changes and its capture does not; the hand-off
@@ -46,13 +48,25 @@
  * the video step is skipped with a note (the committed MP4 stays as it is).
  * The captures need a dev server; without one they are skipped the same way.
  */
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import ASSETS from '../src/portfolio/projects/placeholder-assets.json' with { type: 'json' };
+import PAGE from '../src/portfolio/pageBuckets.json' with { type: 'json' };
+
+/**
+ * A RASTER BUDGET BIG ENOUGH FOR A 2x PAGE 1400px TALL. Headless Chrome's
+ * default GPU memory budget is small, and a page this size at 2x (with the
+ * grain layer, which is nine times the page's area) goes over it. Chrome's
+ * answer is to leave tiles unrasterised, and a screenshot then shows the
+ * ground through the paper in tile-shaped bands. It is not deterministic: the
+ * same page came back 3.5% and then 11.5% sky on two runs at bucket 1920, and
+ * clean with this.
+ */
+const CHROME_ARGS = ['--force-gpu-mem-available-mb=4096'];
 
 const run = promisify(execFile);
 
@@ -82,38 +96,24 @@ const URL_ARG = process.argv.indexOf('--url');
 const ORIGIN = URL_ARG >= 0 ? process.argv[URL_ARG + 1] : 'http://localhost:5173';
 
 /**
- * ONE CAPTURE PER SIGNED-OFF VIEWPORT, and there is no way around it.
+ * ONE CAPTURE PER PAGE BUCKET, and the list is the app's own.
  *
- * It would be tidier for one to serve both, and it does not work. A page's type
- * is a fixed number of pixels and its measure is not, so a page at 1728 wraps
- * its lines somewhere a page at 1440 does not — the two are different documents
- * rather than the same document at two scales, and resampling one into the
- * other resamples the wrong line breaks. Measured: a single capture put the
- * hand-off diff at 8-16% of the page's pixels at the viewport it was not taken
- * at, against a 2% budget. With one each it is under 2% at both.
+ * A page's type is a fixed number of pixels and its measure is not, so a page
+ * at one width wraps its lines somewhere a page at another does not. The two
+ * are different documents, and resampling one into the other resamples the
+ * wrong line breaks: measured, a capture worn at a width it was not taken at
+ * put the hand-off diff at 8–16% of the page against a 2% budget. So the view
+ * lays its page out only at these widths (see `pageBuckets.ts`), and each one
+ * is captured.
  *
- * The names carry the PAGE's width rather than the viewport's, because that is
- * what `SheetCanvas` picks by.
+ * The window is the bucket's width exactly, and as tall as it has to be for
+ * the page to be `captureHeight` tall. That is measured off the live page
+ * rather than worked out from the dials, so a dial change cannot put the
+ * capture a few pixels short.
  */
-const CAPTURES = [
-  { width: 1728, height: 996 },
-  { width: 1440, height: 900 },
-];
-
-/**
- * …AND AT EACH SCALE, which is a different argument from the one above.
- *
- * The two viewports are two DOCUMENTS. The two scales are one document at two
- * resolutions, and it still has to be captured twice rather than resampled:
- * the renderer's framebuffer is at the display's pixel ratio, so a 1x capture
- * on a 2x display is every glyph magnified two to one, next to an HTML page
- * whose type the browser drew at 2x. Resampling a 1x capture up would keep the
- * magnification and add a filter to it.
- *
- * A capture at `deviceScaleFactor: 2` is `width × 2` device pixels wide; the
- * CSS width in the name is the page rect, unchanged. See `SheetTexture`.
- */
-const SCALES = [1, 2];
+const BUCKETS = PAGE.buckets;
+const CAPTURE_H = PAGE.captureHeight;
+const SCALE = PAGE.captureScale;
 
 /**
  * One placeholder card per portfolio project: flat colour + a large label.
@@ -242,11 +242,40 @@ function* frames(count) {
   }
 }
 
-async function captureSheets(browser, id, viewport, scale) {
+/** `02/sheet-01-1728@2x.webp`: the name `captures.ts` expects. */
+const captureName = (id, k, kind, bucket) =>
+  `${id}/${kind}-${String(k + 1).padStart(2, '0')}-${bucket}${SCALE > 1 ? `@${SCALE}x` : ''}.webp`;
+
+/** Delete every capture in a project's folder that the bucket list no longer
+ *  names: the per-viewport set this replaced, or a bucket taken out of the
+ *  list. A stale file is never read, and never noticed either. */
+async function pruneCaptures(id, count) {
+  const keep = new Set();
+  for (const bucket of BUCKETS) {
+    for (let k = 0; k < count; k++) {
+      for (const kind of ['sheet', 'tail']) keep.add(captureName(id, k, kind, bucket).split('/')[1]);
+    }
+  }
+  for (const name of await readdir(join(OUTPUT_DIR, id))) {
+    if (!/^(sheet|tail)-\d+-\d+(@\dx)?\.webp$/.test(name) || keep.has(name)) continue;
+    await unlink(join(OUTPUT_DIR, id, name));
+    console.log(`  prune  ${id}/${name}`);
+  }
+}
+
+async function captureSheets(browser, id, bucket) {
+  const scale = SCALE;
   const context = await browser.newContext({ deviceScaleFactor: scale });
   const page = await context.newPage();
-  await page.setViewportSize(viewport);
+  // The chrome around the page is the letterhead and two margins; find it at
+  // a first guess of the height, then open again at the height that makes the
+  // page exactly `CAPTURE_H` tall.
+  await page.setViewportSize({ width: bucket, height: CAPTURE_H + 200 });
   await page.goto(`${ORIGIN}/#view-${id}`, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+  const guess = await page.evaluate(() => window.__pv.pageRect()?.height ?? 0);
+  await page.setViewportSize({ width: bucket, height: CAPTURE_H + 200 + (CAPTURE_H - guess) });
+  await page.goto(`${ORIGIN}/?capture=${bucket}#view-${id}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
   // THE INTRO OWNS THE POSITION while its tween runs, and `seek` sets the same
   // flag it holds — so a seek issued underneath one is overwritten on the next
@@ -267,13 +296,16 @@ async function captureSheets(browser, id, viewport, scale) {
     await page.waitForTimeout(60);
   }
   const count = await page.evaluate(() => document.querySelectorAll('.pv-page').length);
-  const pageWidth = await page.evaluate(
-    () => Math.round(document.querySelector('.pv-page').getBoundingClientRect().width),
-  );
+  const laid = await page.evaluate(() => ({ bucket: window.__pv.bucket(), rect: window.__pv.pageRect() }));
+  if (laid.bucket !== bucket || Math.round(laid.rect.height) !== CAPTURE_H) {
+    throw new Error(
+      `bucket ${bucket}: the page came out at bucket ${laid.bucket}, ` +
+        `${laid.rect.width}x${laid.rect.height}, not ${CAPTURE_H} tall`,
+    );
+  }
 
   for (const [k, kind] of frames(count)) {
-    const suffix = scale > 1 ? `@${scale}x` : '';
-    const rel = `${id}/${kind}-${String(k + 1).padStart(2, '0')}-${pageWidth}${suffix}.webp`;
+    const rel = captureName(id, k, kind, bucket);
     const out = join(OUTPUT_DIR, rel);
     if (!force && (await exists(out))) {
       console.log(`  skip   ${rel} (exists)`);
@@ -327,6 +359,7 @@ async function captureSheets(browser, id, viewport, scale) {
     );
   }
   await context.close();
+  return count;
 }
 
 console.log('portfolio placeholders →', OUTPUT_DIR);
@@ -356,11 +389,11 @@ try {
   const res = await fetch(ORIGIN, { method: 'GET' });
   if (!res.ok) throw new Error(String(res.status));
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await chromium.launch({ channel: 'chrome', args: CHROME_ARGS });
   for (const card of CARDS) {
-    for (const viewport of CAPTURES) {
-      for (const scale of SCALES) await captureSheets(browser, card.id, viewport, scale);
-    }
+    let count = 0;
+    for (const bucket of BUCKETS) count = await captureSheets(browser, card.id, bucket);
+    await pruneCaptures(card.id, count);
   }
   await browser.close();
 } catch (e) {

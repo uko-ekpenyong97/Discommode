@@ -105,7 +105,10 @@
 
 .pv-title {
   margin: 0;
-  font-size: clamp(48px, 8.5vw, 120px);
+  /* Of the PAGE, not the window: a page is laid out at its bucket's width, and
+     a size taken from the window would make two windows in one bucket two
+     different documents. */
+  font-size: clamp(48px, 8.5cqw, 120px);
   line-height: 0.94;
   letter-spacing: -0.03em;
   font-weight: 600;

@@ -1,53 +1,33 @@
 import type { SheetTexture } from '../blocks/types';
+import { CAPTURE_HEIGHT, CAPTURE_SCALE, PAGE_BUCKETS, pageWidthFor } from '../pageBuckets';
+import { LOOK } from '../portfolioMotion';
 
 /**
  * WHERE A SECTION'S CAPTURES LIVE, and what set of them a section ships.
  *
- * This used to sit in `placeholder.ts`, and none of it was ever about
- * placeholders: a capture is a picture of a section's first or last viewport,
- * and a real project's sections are captured exactly the way a placeholder's
- * are. The file it lived in is what made that look like a placeholder concern.
- * Everything here is re-exported from `placeholder.ts` so the existing imports
+ * A capture is a picture of a section's first or last viewport, and a real
+ * project's sections are captured exactly the way a placeholder's are.
+ * Everything here is re-exported from `placeholder.ts` so the older imports
  * still resolve.
+ *
+ * ONE PER PAGE BUCKET, at one scale and one tall height. The page is laid out
+ * at a bucket's width and nothing in between (see `pageBuckets.ts`), so a
+ * capture per bucket is a capture of every page a reader can be shown. The
+ * height is fixed and taller than any page the view draws, and the sheet crops
+ * it by uv to the live page's height. So the window's height needs no capture
+ * of its own.
+ *
+ * Written by `npm run placeholders` from the live page, and committed like
+ * every other WebP.
  */
 
 /**
- * THE PAGE RECT AT EACH SIGNED-OFF VIEWPORT, widest first — which is what the
- * captures are, and what they are named after.
+ * `sheet-01-1728@2x.webp`: the kind, the section, the BUCKET, and the scale.
  *
- * MEASURED, from the shipped page dials: the viewport less `pageMarginPx` on
- * every side, plus the letterhead's height at the top. One entry per viewport
- * and not one in total, because a page's type is a fixed size and its measure
- * is not — see `Section.sheets`.
- */
-export const SHEET_SIZES = [
-  { width: 1632, height: 844 },
-  { width: 1344, height: 748 },
-];
-
-/**
- * …AND AT EACH SCALE. The renderer's framebuffer is at the display's pixel
- * ratio, clamped at 2, so a capture is picked by width and then by scale: a 1x
- * capture in a 2x buffer is every glyph magnified two to one, next to an HTML
- * page drawn at 2x.
- *
- * Unlike the widths, these ARE the same document twice — which is why the scale
- * is declared beside the CSS size rather than folded into it (see
- * `SheetTexture`), and why the file is `width × scale` pixels wide.
- */
-export const SHEET_SCALES = [1, 2];
-
-/**
- * Two per section per viewport per scale: the first viewport of its page and
- * the last. Written by `npm run placeholders` from the live page and committed
- * like every other WebP — see `docs/portfolio-view.md` on why this is still a
- * placeholder pipeline rather than a content one.
- *
- * The name carries the PAGE's CSS width and then the scale, `@2x` the way a
- * retina asset has been named since before anyone called it that. The width is
- * what picks the document and the scale is what picks the resolution of it, and
- * a name that multiplied the two would lose the difference between a 2x capture
- * of a 1632px page and a 1x capture of a 3264px one.
+ * The bucket rather than the page width. The page width is the bucket less a
+ * margin dial, and a name that moved when a dial did would be a name nobody
+ * could find the file by. The scale is still in the name, the way a retina
+ * asset has been named since before anyone called it that.
  *
  * The folder is the PROJECT ID rather than a slug, because that is what
  * `#view-NN` names and what the capture script walks.
@@ -55,25 +35,25 @@ export const SHEET_SCALES = [1, 2];
 export function sheetSrc(
   project: string,
   index: number,
-  width: number,
+  bucket: number,
   scale: number,
   kind: 'sheet' | 'tail',
 ): string {
   const no = String(index + 1).padStart(2, '0');
-  return `/projects/${project}/${kind}-${no}-${width}${scale > 1 ? `@${scale}x` : ''}.webp`;
+  return `/projects/${project}/${kind}-${no}-${bucket}${scale > 1 ? `@${scale}x` : ''}.webp`;
 }
 
-/** Every capture of one kind a section ships: each width, at each scale. */
+/** Every capture of one kind a section ships: one per bucket. */
 export function captures(
   project: string,
   index: number,
   kind: 'sheet' | 'tail',
 ): SheetTexture[] {
-  return SHEET_SIZES.flatMap((size) =>
-    SHEET_SCALES.map((scale) => ({
-      src: sheetSrc(project, index, size.width, scale, kind),
-      ...size,
-      scale,
-    })),
-  );
+  return PAGE_BUCKETS.map((bucket) => ({
+    src: sheetSrc(project, index, bucket, CAPTURE_SCALE, kind),
+    bucket,
+    width: pageWidthFor(bucket, LOOK.pageMarginPx),
+    height: CAPTURE_HEIGHT,
+    scale: CAPTURE_SCALE,
+  }));
 }
