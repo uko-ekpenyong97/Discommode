@@ -188,8 +188,10 @@ swipe with the dials at their maxima. With a hand in the sky, every condition
 reaches 7.50 at some minute of the day. That is still over 7, so **nothing
 failed and neither wash moved.** It also means the bar no longer depends on
 the sky: at `letterheadScrim` 0.72 no sky the shader can paint can take the
-letterhead under 7:1. That holds only while a white band clears the bar. Below
-about 0.70 it stops holding, and the sweep is the check that would say so.
+letterhead under 7:1. That holds only while a white band clears the bar: 7.20
+at 0.70, 7.05 at 0.69, 6.91 at 0.68. The sweep is the check that would say so,
+and `src/portfolio/letterheadFloor.test.ts` fails `npm test` before that if the
+shipped value ever drops under 0.70.
 
 **If a state ever fails, `letterheadScrim` goes up and `groundScrim` does not.**
 Paying a contrast bar with a wash that covers things nothing is printed on is

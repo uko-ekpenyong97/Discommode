@@ -19,9 +19,8 @@ from, and anything argued about here should be argued about there first.
 > taken in the same session, because that session was a noisy one; the
 > contact sheet is `scripts/sky-sheet.mjs`, eighteen frames from 2026-09-20 and
 > the six nights re-shot 2026-09-22 (see
-> [One column at a time](#one-column-at-a-time)); the moon's phase figures are
-> 2026-09-22, its position is measured against the USNO almanac fetched
-> 2026-09-23, and the [sweep](#the-sweep-the-letterhead-under-a-moving-sky)'s
+> [One column at a time](#one-column-at-a-time)); the moon's phase and
+> position are both measured against the USNO almanac fetched 2026-09-23, and the [sweep](#the-sweep-the-letterhead-under-a-moving-sky)'s
 > table is a 2026-09-23 run; the contrast
 > figures are `scripts/sky-contrast.mjs` and live in
 > [docs/portfolio-view.md](portfolio-view.md#two-washes-because-there-are-two-questions),
@@ -123,42 +122,56 @@ the side the light is actually on.
 
 ### The model
 
-`src/env/moon.ts`, and it is thirty lines. Count days from a known new moon
-(**2000-01-06 18:14 UTC**), take the remainder against the mean synodic month
-(**29.530588853 d**), and that is the age. The illuminated fraction is the
-projected area of the lit hemisphere, which is a cosine:
+**The phase comes from where the moon and the sun actually are.** It is the
+moon's **elongation** from the sun: the difference of their ecliptic
+longitudes, from the same Meeus positions that
+[place the moon in the sky](#moon-where-it-is-and-when-there-is-none):
 
-    θ = 2π · age / 29.530588853        (0 at new, π at full)
-    fraction = (1 − cos θ) / 2
+    Δλ = λ(moon) − λ(sun)             0..360°: 0 new, 90 first quarter, 180 full
+    cos ψ = cos β · cos Δλ            ψ the true elongation, β the moon's latitude
+    fraction = (1 − cos ψ) / 2        the projected area of the lit hemisphere
+    waxing = Δλ < 180°                east of the sun, so lit on its west side
 
-**It is not from Open-Meteo.** The moon is a function of the clock, it is the
-same moon over the whole planet, and `useEnvState` already recomputes the sun
-from the clock once a minute — the moon rides along on that same tick. No
-request was added and none was needed.
+The lit fraction, the terminator and the bright limb's direction are therefore
+**one geometry**. The waxing flag and the limb both come from the same two
+positions, so they cannot disagree. β is why a new moon is not exactly 0 and a
+full moon is not exactly 1: the moon passes a few degrees off the line through
+the sun. Strictly the fraction wants the phase angle at the moon, which differs
+from 180° − ψ by the sun's parallax over the Earth–Moon distance: at most 0.15°,
+or 0.001 of fraction. That is left out.
 
-**A mean month is ±0.6 days wrong and the tests say so.** The Moon's orbit is
-an ellipse; the true interval between new moons swings either side of the mean
-by up to about half a day. That is the accuracy this needs — the sky is drawing
-a crescent, not timing an occultation, and 0.6 days is about 2% of a lunation,
-which is a couple of percent of illuminated fraction and a pixel or two of
-terminator.
+**It is not from Open-Meteo.** The moon is a function of the clock, and
+`useEnvState` already recomputes the sun from the clock once a minute. The
+moon rides along on that same tick. No request was added and none was needed.
 
-Against the almanac, at midday UTC of each date:
+Against the US Naval Observatory's phase instants (fetched 2026-09-23):
 
-| anchor | model | miss |
-| --- | --- | --- |
-| new, 2026-09-11 | 2026-09-11 20:29 UTC | 0.35 d |
-| full, 2026-09-26 | 2026-09-26 14:51 UTC | 0.12 d |
-| first quarter, 2026-09-18 | **2026-09-19 05:40 UTC** | **0.74 d** |
+| phase | USNO (UTC) | model crosses | late by |
+| --- | --- | --- | --- |
+| new | 2026-09-11 03:27 | 03:28 | 1.4 min |
+| first quarter | 2026-09-18 20:44 | 20:45 | 1.0 min |
+| full | 2026-09-26 16:49 | 16:50 | 1.3 min |
+| last quarter | 2026-10-03 13:25 | 13:27 | 2.4 min |
+| new | 2026-10-10 15:50 | 15:51 | 1.6 min |
 
-**First quarter is the one this lunation misses**, and the miss is a test
-rather than a footnote. The model puts it on the 19th; midday on the 18th is
-0.74 d short, which is outside the ±0.6 bar, and midday on the 19th is 0.24 d
-past it, which is inside. `moon.test.ts` asserts both — the pass against the
-19th and the size of the miss against the 18th — so if the model is ever
-changed the direction of the error is something the suite knows and not
-something someone has to remember. It is the mean-synodic error doing exactly
-what it says it does, on the anchor where this particular month spends it.
+It is late, and late by about the same amount every time. That is ΔT: `astro.ts`
+uses UT where the series asks for TT, which is 69 seconds, plus the almanac's
+rounding to the minute. `moon.test.ts` holds each instant to **±0.05° of
+elongation (about ±6 min)**. It also holds the lit fraction to **±0.01** of the
+USNO's published "fraction illuminated" on five dates. That figure is for noon
+of the date in the zone asked for, which the page does not say: asked in UTC−7,
+09-22 comes back 84%, and the model gives 0.843 at 12:00 PDT and 0.805 at
+midnight.
+
+**What it replaced.** The phase used to be a **mean synodic month** counted
+from a known new moon (2000-01-06 18:14 UTC, 29.530588853 d). The true interval
+between new moons swings half a day either side of the mean, so that model was
+tested to ±0.6 days and it spent it: it put this lunation's first quarter at
+**2026-09-19 05:40 UTC, nine hours late**, and 0.74 d after midday on the 18th.
+The test that used to record that miss now records that it is gone: the
+elongation crosses 90° at the almanac's minute on the 18th, and by 05:40 on the
+19th it is past 94°. The phase override is untouched, because the preview
+table's moons are fractions and not instants.
 
 ### The terminator
 
@@ -172,7 +185,10 @@ It is the **projection of a sphere**, and that is how the shader lights it:
 
 `lam > 0` is the lit hemisphere, and `s` is +1 waxing / −1 waning. **Waxing is
 lit on the right**, which is the Northern-hemisphere view and the only one this
-sky is drawn for.
+sky is drawn for. (That was this section's model. The light now comes along the
+bright limb's real direction on screen, and `s·x` became `dot(q, L)`; see
+[The bright limb](#the-bright-limb). With the limb straight to one side, which
+is what a preview moon has, it is the same expression.)
 
 The boundary this draws is exactly the half-ellipse of the flat form,
 `x·s = ct·sqrt(1 − y²)` — set them equal at y = 0 and both give x = ±ct. Two
@@ -295,11 +311,11 @@ instead of being written inside `moon.ts`. The sun gets one thing from it
 already: its real altitude and azimuth (`sunPosition`, Meeus ch. 25), which
 is what the bright limb is aimed at.
 
-**The phase is still the mean-synodic model.** The shape the preview, the
-contact sheet and the phase override are all defined against has not
-changed, and neither has its ±0.6-day error. The positions above could
-now give the real elongation, and therefore the real phase. That is a
-separate change, and it is listed under [Not done](#not-done).
+**The phase comes from the same positions.** The elongation between this
+moon and that sun gives the lit fraction and which side it is on (see
+[The model](#the-model)), so the shape, the terminator and the bright limb are
+one geometry. The phase override is unchanged: the preview's moons are
+fractions and not instants.
 
 ### Accuracy
 
@@ -1209,8 +1225,11 @@ there, so it is the floor. Three things take a sky to it:
 **And that is the finding.** At `letterheadScrim` 0.72 **no sky the shader can
 paint takes the letterhead under 7:1**, because even white does not. The bar
 has 0.50 in hand against the worst possible band, at both viewports. What
-would break it is the scrim and not the sky: below about 0.70 a white band
-fails, and this sweep is what would say so. If it ever does, the lever is
+would break it is the scrim and not the sky. Measured through the probe, a white
+band reads 7.20 at 0.70, 7.05 at 0.69 and **6.91 at 0.68**, so somewhere under
+0.69 it fails. This sweep would say so, and so would a unit test before it ever
+ran: `src/portfolio/letterheadFloor.test.ts` fails if the shipped
+`letterheadScrim` drops below **0.70**, with a message pointing here. If it ever does, the lever is
 still `letterheadScrim` (the band only). After that, it is the clamp on the
 offending effect near the band. It is never `groundScrim`.
 
@@ -1231,7 +1250,7 @@ same minutes.
 | `src/sky/envToTarget.ts` | The mapping: `EnvState` → `SkyTarget`. |
 | `src/components/SkyLayer.tsx` | The host. Claims the canvas; feeds the target in; the dev hooks (`__skyPinTime`, `__skyHoldFluid`, `__skyFluidAwake`, `__skySplat`). |
 | `src/env/wmo.ts` | WMO code → condition, cloudiness, precipitation. |
-| `src/env/moon.ts` | The moon's phase from the clock, and where it is: Meeus's lunar series → altitude and azimuth over SF, rise and set, the bright limb. Pure, tested against the almanac, and nothing to do with the network. |
+| `src/env/moon.ts` | The moon from the clock, as one geometry: Meeus's lunar series → its phase (elongation from the sun), altitude and azimuth over SF, rise and set, and the bright limb. Pure, tested against the almanac, and nothing to do with the network. |
 | `src/env/astro.ts` | Julian day, sidereal time, the frame conversions, refraction, the sun's real position. Shared, so the next thing that needs a real position does not copy them. |
 | `src/sky/bandSweep.ts` | Dev: the brightest pixel of the letterhead's band for thousands of skies at once, reduced on the GPU. What makes the sweep a minute. |
 | `src/portfolio/contrastProbe.ts` | `bandCenter`: the letterhead's band, read somewhere other than where the letterhead is. |
@@ -1254,14 +1273,6 @@ same minutes.
   real position.** `sunPosition` is used for one thing, which is aiming the
   moon's bright limb. Putting the sun on the arc by its real azimuth would move
   every daylit frame of the contact sheet, so it is a change of its own.
-- **The phase is a MEAN synodic month**, so it can be ±0.6 days out; see
-  [The model](#the-model), where the miss on this lunation's first quarter is
-  measured rather than assumed. **The fix now exists and was not used.** The
-  moon's and the sun's ecliptic longitudes are both computed, and their
-  difference is the real phase angle to about 0.01° (see
-  [Accuracy](#accuracy)). It was left out of this change because the phase is
-  what the preview, the sheet and `moon.test.ts`'s first-quarter test are
-  written against.
 - **No daytime moon, and no libration.** The moon is drawn only at night, as
   before, although it is often up by day. The disc never nods.
 - **Wind has one number and two jobs.** It blows the deck and slants the rain

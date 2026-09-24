@@ -17,12 +17,10 @@ export type { EnvSnapshot, MoonForce } from './useEnvState';
 export { classifyWeather, WMO_TABLE } from './wmo';
 export {
   brightLimbAngle,
-  moonAge,
   moonPhase,
   moonPosition,
   moonRiseSet,
   moonSky,
-  NEW_MOON_EPOCH,
   SYNODIC_MONTH,
 } from './moon';
 export type { MoonPhase, MoonSky, PhaseName, RiseSet } from './moon';

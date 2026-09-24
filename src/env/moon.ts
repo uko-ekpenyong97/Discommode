@@ -1,42 +1,38 @@
 /**
- * Moon phase — a mean-synodic model, and the whole of it.
+ * The moon — its shape and its place, from one geometry.
  *
  * The sky draws the moon with a terminator, so it needs to know what shape the
- * moon is tonight. That is one number (how much of the disc is lit) and one
- * bit (which limb it is lit on), and both fall out of one quantity: how far
- * through the synodic month we are.
+ * moon is tonight: how much of the disc is lit, and on which side. Both fall
+ * out of one angle, the moon's ELONGATION from the sun, and since the sun and
+ * the moon are both computed here from their real positions, that angle is
+ * measured rather than averaged:
  *
- * WHAT THIS IS. The synodic month — new moon to new moon — averages
- * {@link SYNODIC_MONTH} days. Count days from a known new moon, take the
- * remainder, and that is the age. The illuminated fraction is then the
- * projected area of the lit hemisphere, which for a sphere lit from a
- * direction at phase angle θ is a cosine:
+ *     Δλ = λ(moon) − λ(sun)            ecliptic longitudes, 0..360°
+ *     cos ψ = cos β · cos Δλ           ψ the true elongation (β the moon's latitude)
+ *     fraction = (1 − cos ψ) / 2       0 at new, 1 at full
+ *     waxing = Δλ < 180°               east of the sun: lit on its west side
  *
- *     θ = 2π · age / SYNODIC_MONTH        (0 at new, π at full)
- *     fraction = (1 − cos θ) / 2
+ * Strictly the fraction is (1 + cos i) / 2 with i the phase angle at the MOON,
+ * which differs from 180° − ψ by the sun's parallax over the Earth–Moon
+ * distance: at most 0.15°, or 0.001 of fraction. That is left out.
  *
- * WHAT THIS IS NOT. The Moon's orbit is an ellipse, so the *true* interval
- * between new moons swings either side of the mean by up to about half a day.
- * This model uses the mean, so every instant it reports can be **±0.6 days**
- * off the almanac, and the tests are written to that tolerance. It is the
- * right accuracy for the job: the sky is drawing a crescent, not timing an
- * occultation, and 0.6 days is about 2% of a lunation — a couple of percent of
- * illuminated fraction, which is a pixel or two of terminator.
+ * WHAT THIS REPLACED. The phase used to be a MEAN synodic month counted from a
+ * known new moon — ±0.6 days off the almanac, because the true interval
+ * between new moons swings either side of the mean. On 2026-09-18 it put first
+ * quarter 0.74 d late. From the positions it is minutes (see `moon.test.ts`),
+ * and the lit fraction, the terminator and the bright limb's direction are now
+ * one geometry instead of two models that could disagree.
  *
- * It is also deliberately NOT from Open-Meteo. The moon does not need a
- * network round trip: it is a function of the clock, it is the same moon over
- * the whole planet, and `useEnvState` already recomputes the sun from the
- * clock once a minute. The moon rides along with it.
+ * It is deliberately NOT from Open-Meteo. The moon does not need a network
+ * round trip: it is a function of the clock, and `useEnvState` already
+ * recomputes the sun from the clock once a minute. The moon rides along.
  *
- * THE PHASE STAYS MEAN; THE PLACE IS REAL. The second half of this file is
- * where the moon actually is — Meeus's lunar series, truncated, through the
- * sidereal clock in `astro.ts` to an altitude and azimuth over San Francisco —
- * and which way its bright limb faces, from where the sun is. The shape above
- * is left as it was: it is the thing the phase override and the contact sheet
- * are defined against, and its error is measured in `docs/sky.md`.
+ * WHERE IT IS is the second half of this file — Meeus's lunar series,
+ * truncated, through the sidereal clock in `astro.ts` to an altitude and
+ * azimuth over San Francisco — and which way its bright limb faces, from
+ * where the sun is.
  */
 import {
-  DAY_MS,
   centuries,
   cosD,
   crossings,
@@ -45,15 +41,14 @@ import {
   norm360,
   refraction,
   sinD,
+  sunLongitude,
   sunPosition,
 } from './astro';
 import type { Horizontal } from './astro';
 
-/** New moon to new moon, in days. The mean; see the note above. */
+/** New moon to new moon, in days, on average. Only used to express the
+ *  elongation as an age a person would recognise. */
 export const SYNODIC_MONTH = 29.530588853;
-
-/** A known new moon: 2000-01-06 18:14 UTC. */
-export const NEW_MOON_EPOCH = Date.UTC(2000, 0, 6, 18, 14, 0);
 
 /** The eight phases, in the order the month walks them. */
 export type PhaseName =
@@ -67,7 +62,11 @@ export type PhaseName =
   | 'waning crescent';
 
 export interface MoonPhase {
-  /** Days since the last new moon, 0 .. SYNODIC_MONTH. */
+  /** How far east of the sun the moon is, in ecliptic longitude: degrees,
+   *  0 new, 90 first quarter, 180 full, 270 last quarter. */
+  elongation: number;
+  /** The same as days of a mean month, 0 .. SYNODIC_MONTH — how old the moon
+   *  LOOKS. Not the time since the last new moon, which the ellipse varies. */
   age: number;
   /** Illuminated fraction of the disc: 0 at new, 1 at full. */
   fraction: number;
@@ -79,8 +78,8 @@ export interface MoonPhase {
 
 /**
  * The eight names, each claiming the eighth of the month CENTRED on its own
- * instant — so "full" is the day and a half either side of full and not
- * everything past the gibbous. Index is `floor(age / month × 8 + 0.5) mod 8`.
+ * instant — so "full" is the 45° of elongation centred on 180°, about a day
+ * and three quarters either side, and not everything past the gibbous.
  */
 const PHASE_NAMES: PhaseName[] = [
   'new',
@@ -93,24 +92,18 @@ const PHASE_NAMES: PhaseName[] = [
   'waning crescent',
 ];
 
-/** Days since the last new moon, always in [0, SYNODIC_MONTH). */
-export function moonAge(at: Date | number): number {
-  const ms = typeof at === 'number' ? at : at.getTime();
-  const age = ((ms - NEW_MOON_EPOCH) / DAY_MS) % SYNODIC_MONTH;
-  // `%` keeps the sign of the dividend, and dates before the epoch are a
-  // legitimate input (a test, a clock set wrong).
-  return age < 0 ? age + SYNODIC_MONTH : age;
-}
-
-/** The moon's shape at a moment: how much of it is lit, and on which side. */
+/** The moon's shape at a moment — how much of it is lit, and on which side —
+ *  from where it and the sun actually are. See the note at the top. */
 export function moonPhase(at: Date | number): MoonPhase {
-  const age = moonAge(at);
-  const theta = (2 * Math.PI * age) / SYNODIC_MONTH;
+  const ms = typeof at === 'number' ? at : at.getTime();
+  const moon = moonEcliptic(ms);
+  const dLon = norm360(moon.lon - sunLongitude(ms));
   return {
-    age,
-    fraction: (1 - Math.cos(theta)) / 2,
-    waxing: age < SYNODIC_MONTH / 2,
-    phaseName: PHASE_NAMES[Math.floor((age / SYNODIC_MONTH) * 8 + 0.5) % 8],
+    elongation: dLon,
+    age: (dLon / 360) * SYNODIC_MONTH,
+    fraction: (1 - cosD(moon.lat) * cosD(dLon)) / 2,
+    waxing: dLon < 180,
+    phaseName: PHASE_NAMES[Math.floor(dLon / 45 + 0.5) % 8],
   };
 }
 

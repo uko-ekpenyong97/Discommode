@@ -1,140 +1,134 @@
 import { describe, expect, it } from 'vitest';
 import {
   brightLimbAngle,
-  moonAge,
   moonEcliptic,
   moonPhase,
   moonPosition,
   moonRiseSet,
   moonSky,
-  NEW_MOON_EPOCH,
   SYNODIC_MONTH,
 } from './moon';
 import { sunLongitude } from './astro';
 
 /**
- * The moon model, against the almanac.
+ * THE PHASE, against the almanac.
  *
- * TOLERANCE IS ±0.6 DAYS and it is not slack, it is the model. A mean-synodic
- * month is an average of an elliptical orbit, so every phase instant it
- * reports swings either side of the true one by up to about half a day. A
- * tighter bar here would not be a better moon, it would be a test that fails
- * on some lunations and passes on others.
+ * The phase is the moon's elongation from the sun, from their real positions,
+ * so it is held to the almanac's INSTANTS and not to a day either side of
+ * them. The mean-synodic model this replaced was tested to ±0.6 d and missed
+ * this lunation's first quarter by 0.74 d; these are minutes.
  *
- * Each anchor is asserted at **midday UTC** of its date, which is the
- * convention for "that date" when the thing being dated has an instant in it.
+ * Instants are the US Naval Observatory's (aa.usno.navy.mil, "Phases of the
+ * Moon", fetched 2026-09-23), in UTC. The moon gains about half a degree an
+ * hour on the sun, so ±0.05° of elongation is ±6 minutes of the almanac.
  */
 const DAY = 86_400_000;
 const at = (iso: string) => Date.parse(iso);
-const TOL = 0.6;
+const PHASE_TOL_DEG = 0.05;
 
-/** How far the age at `t` is from the age a named phase happens at. */
-const missDays = (t: number, phaseAge: number) => {
-  const d = Math.abs(moonAge(t) - phaseAge);
-  return Math.min(d, SYNODIC_MONTH - d); // the month wraps
+/** Signed distance of the elongation at `t` from `target`, degrees. */
+const offBy = (t: number, target: number) => {
+  const d = (moonPhase(t).elongation - target + 540) % 360 - 180;
+  return d;
 };
 
-describe('moonAge', () => {
-  it('is 0 at the epoch, and back to new one month later', () => {
-    expect(moonAge(NEW_MOON_EPOCH)).toBeCloseTo(0, 6);
-    // A month on it is new again — which the wrap can express as either end of
-    // the range, and does: the division lands a hair short of a whole month.
-    expect(missDays(NEW_MOON_EPOCH + SYNODIC_MONTH * DAY, 0)).toBeLessThan(1e-6);
+describe('moonPhase at the almanac instants (±0.05°, about ±6 min)', () => {
+  const instants: [string, string, number][] = [
+    ['new', '2026-09-11T03:27:00Z', 0],
+    ['first quarter', '2026-09-18T20:44:00Z', 90],
+    ['full', '2026-09-26T16:49:00Z', 180],
+    ['last quarter', '2026-10-03T13:25:00Z', 270],
+    ['new', '2026-10-10T15:50:00Z', 0],
+  ];
+  for (const [name, iso, target] of instants) {
+    it(`${name}, ${iso.replace('T', ' ').slice(0, 16)} UTC`, () => {
+      expect(Math.abs(offBy(at(iso), target))).toBeLessThan(PHASE_TOL_DEG);
+      expect(moonPhase(at(iso)).phaseName).toBe(name);
+    });
+  }
+
+  /**
+   * THE MISS THE OLD MODEL HAD, as a test that it is gone. The mean month put
+   * first quarter at 2026-09-19 05:40 UTC, 0.74 d after midday on the 18th
+   * and nine hours after the real one. The elongation crosses 90° at the
+   * almanac's minute, not the next morning.
+   */
+  it('first quarter is on the 18th, not the 19th the mean month said', () => {
+    expect(moonPhase(at('2026-09-18T20:34:00Z')).elongation).toBeLessThan(90);
+    expect(moonPhase(at('2026-09-18T20:54:00Z')).elongation).toBeGreaterThan(90);
+    expect(moonPhase(at('2026-09-19T05:40:00Z')).elongation).toBeGreaterThan(94);
   });
 
-  it('is in [0, month) before the epoch as well as after', () => {
-    for (const t of [NEW_MOON_EPOCH - DAY, NEW_MOON_EPOCH - 10_000 * DAY, Date.now()]) {
-      const age = moonAge(t);
-      expect(age).toBeGreaterThanOrEqual(0);
-      expect(age).toBeLessThan(SYNODIC_MONTH);
-    }
+  it('turns from waxing to waning at full, and back at new', () => {
+    expect(moonPhase(at('2026-09-26T16:39:00Z')).waxing).toBe(true);
+    expect(moonPhase(at('2026-09-26T16:59:00Z')).waxing).toBe(false);
+    expect(moonPhase(at('2026-10-10T15:40:00Z')).waxing).toBe(false);
+    expect(moonPhase(at('2026-10-10T16:00:00Z')).waxing).toBe(true);
   });
 });
 
-describe('moonPhase against the almanac (±0.6 d)', () => {
-  it('new moon on 2026-09-11', () => {
-    expect(missDays(at('2026-09-11T12:00:00Z'), 0)).toBeLessThanOrEqual(TOL);
-  });
-
-  it('full moon on 2026-09-26', () => {
-    expect(missDays(at('2026-09-26T12:00:00Z'), SYNODIC_MONTH / 2)).toBeLessThanOrEqual(TOL);
-  });
-
-  /**
-   * FIRST QUARTER IS THE ONE THIS LUNATION MISSES, and the miss is recorded
-   * rather than papered over. The model puts first quarter at
-   * **2026-09-19 05:40 UTC**; midday on the 18th is 0.74 d short of it, which
-   * is outside the ±0.6 bar, and midday on the 19th is 0.24 d past it, which
-   * is inside. That is the mean-synodic error doing exactly what the note in
-   * `moon.ts` says it does, on the anchor where this lunation happens to spend
-   * it. Both are asserted, so if the model is ever changed the direction of
-   * the miss is a test and not a memory. See `docs/sky.md`.
-   */
-  it('first quarter lands on 2026-09-19, and misses the 18th by 0.74 d', () => {
-    const q = SYNODIC_MONTH / 4;
-    expect(missDays(at('2026-09-19T12:00:00Z'), q)).toBeLessThanOrEqual(TOL);
-    expect(missDays(at('2026-09-18T12:00:00Z'), q)).toBeCloseTo(0.74, 1);
-  });
-
-  /**
-   * "Today" as of writing — a fixed instant, so the suite does not rot — plus
-   * the live clock checked as a PROPERTY below, which is the part of "today"
-   * that keeps meaning something next month.
-   */
-  it('2026-09-22 is a waxing gibbous, about four fifths lit', () => {
-    const m = moonPhase(at('2026-09-22T12:00:00Z'));
-    expect(m.age).toBeCloseTo(10.65, 1);
-    expect(m.fraction).toBeCloseTo(0.82, 2);
-    expect(m.waxing).toBe(true);
-    expect(m.phaseName).toBe('waxing gibbous');
-  });
+/**
+ * THE LIT FRACTION, against the USNO's "fraction illuminated" for those dates
+ * (the same source, fetched 2026-09-23, asked in UT). Its figure is for NOON
+ * of the date in the zone asked for, which is not written on the page: asked
+ * in UTC−7 instead, 09-22 comes back 84% (the model: 0.843 at 12:00 PDT,
+ * 0.805 at midnight), so noon is where it is compared. It publishes whole
+ * percent, so the bar is ±0.01: its rounding, plus the 0.001 the note in
+ * `moon.ts` leaves out.
+ */
+describe('the lit fraction against the almanac (±0.01)', () => {
+  const published: [string, number][] = [
+    ['2026-09-15', 0.2],
+    ['2026-09-18', 0.47],
+    ['2026-09-22', 0.82],
+    ['2026-09-30', 0.82],
+    ['2026-10-06', 0.19],
+  ];
+  for (const [date, frac] of published) {
+    it(`${date}: ${Math.round(frac * 100)}%`, () => {
+      expect(Math.abs(moonPhase(at(`${date}T12:00:00Z`)).fraction - frac)).toBeLessThanOrEqual(0.01);
+    });
+  }
 });
 
 describe('moonPhase, whatever day it is', () => {
   it('agrees with itself for the live clock', () => {
     const m = moonPhase(new Date());
-    expect(m.age).toBeGreaterThanOrEqual(0);
-    expect(m.age).toBeLessThan(SYNODIC_MONTH);
+    expect(m.elongation).toBeGreaterThanOrEqual(0);
+    expect(m.elongation).toBeLessThan(360);
     expect(m.fraction).toBeGreaterThanOrEqual(0);
     expect(m.fraction).toBeLessThanOrEqual(1);
-    // fraction and age are the same statement
-    expect(m.fraction).toBeCloseTo((1 - Math.cos((2 * Math.PI * m.age) / SYNODIC_MONTH)) / 2, 12);
-    expect(m.waxing).toBe(m.age < SYNODIC_MONTH / 2);
+    expect(m.age).toBeCloseTo((m.elongation / 360) * SYNODIC_MONTH, 12);
+    expect(m.waxing).toBe(m.elongation < 180);
   });
 
-  it('walks new → full → new across one month, lit fraction rising then falling', () => {
-    const steps = 60;
-    const seen: number[] = [];
-    for (let i = 0; i <= steps; i++) {
-      seen.push(moonPhase(NEW_MOON_EPOCH + (i / steps) * SYNODIC_MONTH * DAY).fraction);
-    }
-    expect(seen[0]).toBeCloseTo(0, 6);
-    expect(seen[steps / 2]).toBeCloseTo(1, 6);
-    expect(seen[steps]).toBeCloseTo(0, 4);
-    // strictly rising to full, strictly falling after
-    for (let i = 1; i <= steps / 2; i++) expect(seen[i]).toBeGreaterThan(seen[i - 1]);
-    for (let i = steps / 2 + 1; i <= steps; i++) expect(seen[i]).toBeLessThan(seen[i - 1]);
+  it('walks new → full → new across a real month, lit fraction rising then falling', () => {
+    const newA = at('2026-09-11T03:27:00Z');
+    const full = at('2026-09-26T16:49:00Z');
+    const newB = at('2026-10-10T15:50:00Z');
+    const walk = (from: number, to: number) =>
+      Array.from({ length: 31 }, (_, i) => moonPhase(from + ((to - from) * i) / 30).fraction);
+    const up = walk(newA, full);
+    const down = walk(full, newB);
+    // At new and full the fraction is set by the moon's latitude, which is
+    // why it is not exactly 0 or 1: the moon passes a few degrees off the sun.
+    expect(up[0]).toBeLessThan(0.005);
+    expect(up[30]).toBeGreaterThan(0.995);
+    expect(down[30]).toBeLessThan(0.005);
+    for (let i = 1; i <= 30; i++) expect(up[i]).toBeGreaterThan(up[i - 1]);
+    for (let i = 1; i <= 30; i++) expect(down[i]).toBeLessThan(down[i - 1]);
   });
 
-  it('names the eight phases at their own instants', () => {
-    const names = [
-      'new', 'waxing crescent', 'first quarter', 'waxing gibbous',
-      'full', 'waning gibbous', 'last quarter', 'waning crescent',
-    ];
-    names.forEach((name, i) => {
-      const t = NEW_MOON_EPOCH + (i / 8) * SYNODIC_MONTH * DAY;
-      expect(moonPhase(t).phaseName).toBe(name);
-    });
+  it('a quarter is half lit', () => {
+    expect(moonPhase(at('2026-09-18T20:44:00Z')).fraction).toBeCloseTo(0.5, 2);
+    expect(moonPhase(at('2026-10-03T13:25:00Z')).fraction).toBeCloseTo(0.5, 2);
   });
 
-  it('quarters are a quarter of a month apart and lit as they should be', () => {
-    const q = (k: number) => moonPhase(NEW_MOON_EPOCH + (k / 4) * SYNODIC_MONTH * DAY);
-    expect(q(0).fraction).toBeCloseTo(0, 6);
-    expect(q(1).fraction).toBeCloseTo(0.5, 6);
-    expect(q(2).fraction).toBeCloseTo(1, 6);
-    expect(q(3).fraction).toBeCloseTo(0.5, 6);
-    expect(q(1).waxing).toBe(true);
-    expect(q(3).waxing).toBe(false);
+  it('is one day of month per ~12° of elongation', () => {
+    const a = moonPhase(at('2026-09-20T00:00:00Z')).elongation;
+    const b = moonPhase(at('2026-09-20T00:00:00Z') + DAY).elongation;
+    expect(b - a).toBeGreaterThan(10);
+    expect(b - a).toBeLessThan(15);
   });
 });
 
@@ -187,10 +181,10 @@ describe('moonRiseSet against the USNO almanac for San Francisco (±10 min)', ()
 });
 
 /**
- * The published phase INSTANTS, against where the model puts the sun and the
- * moon: at full the moon is opposite the sun in ecliptic longitude, at new it
- * is with it. The moon gains half a degree an hour on the sun, so ±0.25° is
- * ±30 minutes of the almanac's instant — measured, it is within 0.015°.
+ * The published phase INSTANTS, against the raw positions: at full the moon is
+ * opposite the sun in ecliptic longitude, at new it is with it. ±0.05° is
+ * ±6 minutes of the almanac's instant (it was ±0.25°, ±30 min, before the
+ * phase came from these positions); measured, it is within 0.015°.
  */
 describe('the moon and the sun at the almanac phase instants', () => {
   const elongation = (iso: string) => {
@@ -200,12 +194,12 @@ describe('the moon and the sun at the almanac phase instants', () => {
   };
 
   it('full moon, 2026-09-26 16:49 UTC: opposite the sun', () => {
-    expect(Math.abs(elongation('2026-09-26T16:49:00Z') - 180)).toBeLessThan(0.25);
+    expect(Math.abs(elongation('2026-09-26T16:49:00Z') - 180)).toBeLessThan(PHASE_TOL_DEG);
   });
 
   it('new moon, 2026-10-10 15:50 UTC: with the sun', () => {
     const e = elongation('2026-10-10T15:50:00Z');
-    expect(Math.min(e, 360 - e)).toBeLessThan(0.25);
+    expect(Math.min(e, 360 - e)).toBeLessThan(PHASE_TOL_DEG);
   });
 });
 

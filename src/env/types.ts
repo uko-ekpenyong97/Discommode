@@ -89,8 +89,9 @@ export interface EnvState {
    * nothing it does not already answer.
    */
   moonFraction: number;
-  /** True from new to full: the lit limb is the RIGHT one (Northern
-   *  hemisphere). What the shader draws the terminator on which side of. */
+  /** True from new to full: the moon is east of the sun, so its lit limb
+   *  faces west. From the same geometry as `moonLimbAngle`, which is what the
+   *  shader actually lights along. */
   moonWaxing: boolean;
   /**
    * Where the moon is: APPARENT altitude in degrees from San Francisco
