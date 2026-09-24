@@ -35,8 +35,16 @@ run: `verify:cover` (with the new `ground` check), `verify:detail` (64),
 each passing when re-run alone: the grid's shared tile draw at 1728×996 @2×
 (0.545ms, which put the grid total at 1.26 > 1.2; re-run 0.385ms, total 0.96),
 and one 33.4ms frame in a Prev slide (re-run: 16.8ms in all six). The grid is
-untouched here; that is the "take two runs" note below. `verify:pv` was not
+untouched here; that is the "take two runs" note below. The grid budget missed
+again in the next full run, straight after `verify:detail` (1.285ms), and
+passed alone again (0.63ms). If it keeps missing only after another GPU suite,
+the likely cause is the GPU's state after that suite, not the grid. `verify:pv` was not
 re-run: nothing it drives changed.
+
+The same PR fixes card 01's hover sprites misregistering after Prev/Next
+(docs/detail-paper.md, the sprite caveat). That bug was on `main` before this
+branch and is not a covers bug: the sprite layer sized itself from a panel that
+was still scaling.
 
 **What is next:** the [Not done](#not-done) list. And one call that is Uko's,
 not code's: what still reads as a pale sheet over the sky is the cover's OWN

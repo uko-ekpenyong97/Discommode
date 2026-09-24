@@ -318,12 +318,23 @@ and the sprite does not move with them. The boil, on the other hand, moves
 both: the plane and the sprites' layer are given the same rigid transform in
 the same task (see [the boil](#the-boil)).
 
+**The layer sizes itself from its LAYOUT box** (`getComputedStyle`), never a
+bounding rect. The sprites are positioned in the layer's own CSS px, and every
+transform above it — the strip's panel scale, the boil — scales them along
+with it. Until 2026-09-24 it measured its parent's bounding rect. After
+Prev/Next, the layer mounts on the new centre panel while that panel is still
+easing from the neighbours' scale (0.85) to 1. It measured about 0.94, and a
+transform never fires the ResizeObserver, so card 01's sprites stayed 6% small,
+up to 47px off the plate, on every route except a cold load. The sprite mask
+above is read from the same inline px, so it was off by the same amount.
+`verify:detail`'s `routes` check covers this.
+
 ## Running the checks
 
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,nav,leave,frames,reduced,life
+npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life
 ```
 
 About two minutes. It drives the layer through `window.__paper` (dev only):
@@ -365,6 +376,27 @@ are at most 0.225%.
 ripple, dent, squash and fold are all exactly 0 under its 20 sprites, and the
 neighbours ripple at 0.01. Hovering the hero takes the dent to 1.000, and
 leaving takes it back to 0.
+
+**Routes into card 01** (`routes`), 1728×996 at 1× and 2×: a cold load of
+`#item-01`, Prev from `#item-02`, Next from `#item-04`, and 01 → 02 → 01.
+
+| | measured | bar |
+| --- | --- | --- |
+| every sprite vs the cold load's | 0.000px; 0.011px from `#item-04` | ≤ 1px |
+| every sprite vs where the plate puts it at rest (the plane's rect, the manifest's displayRect, fitted as the layer fits) | 0.029–0.036px | ≤ 0.5px |
+| the boil check (`life`'s), on each route | 0.028–0.030px, 6/6 samples boiled | ≤ 0.5px |
+
+The layer before the fix: 47px against the cold load and the plate on all
+three navigated routes, while the boil check still read 0.03px. The boil check
+predicts from the sprites' own inline px, so it moves with them and cannot
+see a layer that is the wrong size.
+
+From `#item-04`, card 01 is the strip's panel 4 (`left: 2484.51px`), and
+layout's 1/64px grid puts it 0.01px off where the cold load does. That is
+enough to flip Chrome's pixel snapping of some DOM sprites by one device pixel.
+In pixels, 2.7% (1×) and 3.6% (2×) of the hero differs from the cold load, all
+of it on sprite edges; the canvas plate is identical. The Prev-from-02 and
+round-trip routes are pixel-identical to the cold load.
 
 **Cover life** (`life`), 1728×996 at 1× and 2×, identical at both:
 
