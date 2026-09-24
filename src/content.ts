@@ -25,6 +25,7 @@
 import { config } from './config';
 import { mod } from './grid';
 import { issueCover, issueCoverRest, issueOverlay } from './reader/issue-01';
+import type { CoverRef } from './covers/types';
 
 /** What a card opens. The detail bar's primary action follows from it. */
 export type CardKind = 'magazine' | 'portfolio';
@@ -59,6 +60,13 @@ export interface PosterItem {
   kind: CardKind;
   /** Optional card art (2000x2600). If absent, `hue` is used. */
   image?: string;
+  /**
+   * A LIVE cover: a shader, drawn every frame, mouse-reactive, transparent where
+   * its ground is — the grid tile, the morph card and the detail hero all draw
+   * it (src/covers/, docs/covers.md). `image` stays its STILL: what the
+   * neighbours, reduced motion and a browser without WebGL show.
+   */
+  cover?: CoverRef;
   /** Issue id (e.g. "01") — `kind: 'magazine'` only; opens `#read-NN`. */
   issue?: string;
   /** Project id (e.g. "02") — `kind: 'portfolio'` only; opens `#view-NN`. */
@@ -77,8 +85,8 @@ export interface PosterItem {
  * still a placeholder — flat-colour art and the shared placeholder block list —
  * until its project lands.
  *
- * Card 02's ART is still the flat placeholder plate: the project behind it is
- * real, the 2000x2600 cover for it is not drawn yet. Card 04's is a frame of
+ * Card 02's art is a LIVE cover — the rive-site shader, with the sky through
+ * its ground; its `image` is that shader's still. Card 04's is a frame of
  * its own pitch site, taken from `01-site-scroll.mp4` by `npm run projects` —
  * see `scripts/optimize-projects.mjs` on how a card face is cut from a clip.
  */
@@ -99,7 +107,9 @@ export const CONTENT: PosterItem[] = [
     slug: 'item-02',
     kind: 'portfolio',
     project: '02',
-    image: '/projects/02/card.webp',
+    // The rive-site cover (docs/covers.md); its still, from `npm run covers`.
+    cover: { kind: 'shader', id: 'rive-site' },
+    image: '/projects/rive-site/cover-still.webp',
     hue: 208,
     captions: ['NO 02', 'RIVE', 'REDESIGN'],
     cta: 'OPEN',

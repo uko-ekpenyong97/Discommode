@@ -1,0 +1,24 @@
+/* A live cover in the DOM: the still, and the stage's canvas over it. Both fill
+   the box and crop like object-fit: cover (the canvas is drawn cropped; the
+   still is the whole frame, cropped here), so they register exactly. No
+   background anywhere: the page behind shows through the cover's ground. */
+.cover-tile {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.cover-tile__still,
+.cover-tile__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.cover-tile__still {
+  object-fit: cover;
+}

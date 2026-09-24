@@ -57,6 +57,8 @@ export interface PaperUniforms {
   uRadius: IUniform<number>;
   uIndex: IUniform<number>;
   uAlpha: IUniform<number>;
+  /** 1: uMap is PREMULTIPLIED and not opaque — a live cover (docs/covers.md). */
+  uPremul: IUniform<number>;
   uCreaseBlend: IUniform<number>;
   uCreaseDisplacement: IUniform<number>;
   uHover: IUniform<number>;
@@ -163,6 +165,7 @@ const FRAGMENT = /* glsl */ `
   uniform float uPixelRatio;
   uniform float uRadius;
   uniform float uAlpha;
+  uniform float uPremul;
   uniform float uCreaseBlend;
   uniform float uCreaseDisplacement;
   uniform float uFold;
@@ -208,7 +211,13 @@ const FRAGMENT = /* glsl */ `
     float hover = hoverInfluence(vUv) * uHover;
     float disp = uCreaseDisplacement * (1.0 - spriteMask(vUv));
     vec2 uv = vUv - texel.g * disp - hover * disp * texel.g;
-    vec3 col = face(uv).rgb;
+    // A live cover's texture is premultiplied and mostly not opaque (the sky
+    // shows through its ground): light the colour it HAS, un-premultiplied, and
+    // carry its alpha through. An opaque face (every other card) has a = 1 and
+    // this is exactly the old path.
+    vec4 texel4 = face(uv);
+    float ta = uPremul > 0.5 ? texel4.a : 1.0;
+    vec3 col = uPremul > 0.5 ? texel4.rgb / max(ta, 1e-4) : texel4.rgb;
 
     // Light: the ridges screen into the artwork, the troughs shade it — and the
     // shading sharpens under the cursor.
@@ -225,7 +234,7 @@ const FRAGMENT = /* glsl */ `
       corner = clamp(0.5 - (length(q) - uRadius) * uPixelRatio, 0.0, 1.0);
     }
 
-    float a = uAlpha * corner;
+    float a = uAlpha * corner * ta;
     gl_FragColor = vec4(clamp(col, 0.0, 1.0) * a, a);
   }
 `;
@@ -245,6 +254,7 @@ export function createPaperMaterial(creases: Texture | null): PaperMaterial {
     uRadius: { value: CARD_RADIUS_PX },
     uIndex: { value: 0 },
     uAlpha: { value: 1 },
+    uPremul: { value: 0 },
     uCreaseBlend: { value: 0 },
     uCreaseDisplacement: { value: 0 },
     uHover: { value: 0 },
@@ -292,6 +302,9 @@ const SHADOW_FRAGMENT = /* glsl */ `
   uniform vec4 uRect;
   uniform float uSigma;
   uniform float uAlpha;
+  uniform float uOffsetY;
+  uniform float uHole;     // 1: not under the card itself (a transparent card)
+  uniform float uRadius;
   varying vec2 vPx;
 
   // Abramowitz & Stegun 7.1.27; plenty for a shadow.
@@ -312,6 +325,14 @@ const SHADOW_FRAGMENT = /* glsl */ `
     vec2 hi = erf2((vPx - hs) * k);
     vec2 cover = 0.5 * (lo - hi);
     float a = cover.x * cover.y * uAlpha;
+    // A CSS box-shadow is only ever painted OUTSIDE its box. Under an opaque
+    // card that is invisible either way; under a live cover, whose ground lets
+    // the sky through, it is the difference between the sky and a dark slab.
+    if (uHole > 0.5) {
+      vec2 q = abs(vPx + vec2(0.0, uOffsetY)) - hs + uRadius;
+      float inside = clamp(0.5 - (length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - uRadius), 0.0, 1.0);
+      a *= 1.0 - inside;
+    }
     gl_FragColor = vec4(0.0, 0.0, 0.0, a);
   }
 `;
@@ -323,6 +344,8 @@ export interface ShadowUniforms {
   uOffsetY: IUniform<number>;
   uSigma: IUniform<number>;
   uAlpha: IUniform<number>;
+  uHole: IUniform<number>;
+  uRadius: IUniform<number>;
 }
 
 export interface ShadowMaterial extends ShaderMaterial {
@@ -336,6 +359,8 @@ export function createShadowMaterial(): ShadowMaterial {
     uOffsetY: { value: 0 },
     uSigma: { value: 1 },
     uAlpha: { value: 0 },
+    uHole: { value: 0 },
+    uRadius: { value: 6 },
   };
   return new ShaderMaterial({
     uniforms,

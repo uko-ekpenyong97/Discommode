@@ -9,6 +9,7 @@
 
 .detail-morph__card {
   position: absolute;
+  /* No fill: a live cover's ground lets the sky through (docs/covers.md). */
   transform-origin: center center;
   border-radius: 6px;
   overflow: hidden;

@@ -7,6 +7,7 @@ import { CONTENT, contentIndex, itemFace, itemOverlay } from '../content';
 import type { PosterItem } from '../content';
 import type { CardFace, CellOffset } from '../hooks/usePanController';
 import { CardOverlay } from './CardOverlay';
+import { CoverTile } from '../covers/CoverTile';
 import './GridPlane.css';
 
 /**
@@ -219,11 +220,15 @@ export function GridPlane({
                     <div
                       className="grid-card__face"
                       style={{
-                        backgroundColor: `hsl(${s.item.hue}, 28%, 32%)`,
+                        // A live cover has no fill behind it: the sky shows
+                        // through its ground (docs/covers.md).
+                        backgroundColor: s.item.cover ? undefined : `hsl(${s.item.hue}, 28%, 32%)`,
                         filter: `brightness(${brightness})`,
                       }}
                     >
-                      {face && (
+                      {s.item.cover ? (
+                        <CoverTile coverId={s.item.cover.id} dome="own" />
+                      ) : face && (
                         <img
                           className="grid-card__img"
                           src={face}

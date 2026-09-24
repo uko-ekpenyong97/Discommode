@@ -2,6 +2,7 @@ import { memo, useLayoutEffect, useRef } from 'react';
 import { itemFace, itemHeroFace } from '../content';
 import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
+import { CoverTile } from '../covers/CoverTile';
 import './DetailMorph.css';
 
 /** One card morphing from its `from` rect to its `to` rect. */
@@ -115,7 +116,12 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
             className="detail-morph__card"
             style={{ left: c.to.cx - c.to.w / 2, top: c.to.cy - c.to.h / 2, width: c.to.w, height: c.to.h }}
           >
-            {to ? (
+            {c.item.cover ? (
+              // A live cover travels live — the centre card, on the shared cover
+              // clock, so it lands on the hero's frame and needs no cross-fade.
+              // The neighbours are the still, as the detail view shows them.
+              <CoverTile coverId={c.item.cover.id} live={i === 1} dome={null} className="detail-morph__media" />
+            ) : to ? (
               <>
                 {changes && <img className="detail-morph__media" src={from} alt="" draggable={false} />}
                 <img

@@ -44,6 +44,7 @@ side, held at full amplitude, with a 4× crop of the top corner under each.
 | `scripts/cover-life-checks.mjs` | The page-hover and boil checks `verify:detail` and `verify:reader` share. |
 | `scripts/make-crease-map.mjs` | `npm run creases`, which writes `public/textures/paper-creases.webp`. |
 | `scripts/detail-verify.mjs` | `npm run verify:detail`, the browser suite. |
+| `src/covers/` | Live covers (docs/covers.md). The hero plane of a card with one samples a target the cover draws in THIS layer's renderer. |
 
 `DetailView.tsx` changes in three places. At the end of every tick it hands the
 layer each panel's rect, scale, opacity, z-order and slot, taken from the same
@@ -155,6 +156,29 @@ or unmounts, so the cover never shows for a frame with its objects missing.
 Everything is uploaded (`initTexture`) at hand-in, never mid-slide.
 
 GPU cost at 1728×996 @2×: four faces at two sizes plus one plate, about 65 MB.
+
+### The live cover plane
+
+A card with a live cover (`cover` in content.ts; card 02) is the one face that
+is not a texture made once. As the HERO its plane samples the render target of
+a `CoverRenderer` held by this layer, on this layer's renderer, drawn every
+frame on the shared cover clock at the hero's device size (`coverMaxDpr`
+capped) — a texture cannot cross WebGL contexts, so the cover is drawn where the
+plane is (docs/covers.md). As a neighbour it is its still, like any other face.
+While the plane is live the layer repaints every frame whatever the signature
+says; while the cards are handed OUT it holds the cover's last frame (the DOM
+face, dissolving back over it, is the live one).
+
+The cover is NOT opaque: its ground lets the sky through. So two things here
+learned transparency, both identities for every other card:
+
+- `uPremul`: the plane's map is premultiplied; the crease lighting runs on the
+  un-premultiplied colour and the texture's alpha carries through. The still
+  is decoded premultiplied for the same reason.
+- `uHole` on the shadow: the canvas's shadow is a blurred rectangle drawn under
+  the card too, invisible under an opaque card and a dark slab under a
+  transparent one. It now leaves the card's own rounded rect out, which is what
+  the DOM's box-shadow does.
 
 ## The material
 
@@ -309,6 +333,13 @@ view's tolerance and for its reason.
 
 That is layout's 1/64px grid against doubles: zero, for any purpose.
 
+Card 02 is the live cover: the checks PIN the cover clock (`window.__covers`)
+so the DOM and the plane draw one moment, and its hand-off is checked with the
+others — the transparent hero. It has two budgets of its own, in the script:
+the hero 2.5% (0.000–0.004%, and 2.1–2.2% at 1728×996 @2×, where the 628.2px
+hero box puts neither side on whole device pixels over a field of noise), and
+the still as a neighbour 7%, card 01's (1.0–5.0%). docs/covers.md has both.
+
 **Identity** (every effect at 0; % of the card's pixels):
 
 | | hero | neighbours |
@@ -397,4 +428,5 @@ are identical (0 levels).
    over a card that is crumpling in. For the ±1 slot this is at most `foldMs` of
    a label hanging over a half-revealed card (see `neighbour-unfold-mid.webp`).
 4. **A third WebGL context.** The sky and the portfolio sheet each have one. This
-   canvas is a third, mounted for as long as the detail view is.
+   canvas is a third, mounted for as long as the detail view is. (The live
+   covers' stage is one more, for the whole page: docs/covers.md.)
