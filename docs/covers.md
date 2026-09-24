@@ -22,6 +22,55 @@ so what is tuned there is what ships.
 | the detail hero, live on the paper | `docs/covers/hero.webp` |
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 
+## Handoff
+
+**Where it stands (2026-09-24).** Branch `portfolio-card-covers`, open as
+[PR #29](https://github.com/uko-ekpenyong97/Discommode/pull/29) against `main`.
+The branch starts from `cover-shader-prototype`, which was never pushed on its
+own, so the PR also carries the prototype's three commits (the shader, the
+reference PNG, the retune). Everything below is on the branch. At the last run,
+every suite passed: `verify:cover`, `verify:detail`, `verify:pv` (320 checks),
+`npm test` (312), `tsc -b`, `lint`, `build`.
+
+**What is next:** the [open issue](#open-issue) below, then the
+[Not done](#not-done) list.
+
+**Starting a fresh workspace:**
+
+```
+npm ci
+npm run dev -- --port 5191 --strictPort   # any free port; :5173 is usually another checkout's
+npm run verify:cover -- --url http://localhost:5191
+npm run verify:detail -- --url http://localhost:5191
+```
+
+- Every suite defaults to `:5173`. In a worktree, always pass `--url`.
+- The tuning bench is `/docs/prototypes/cover-shader-prototype.html` on the
+  same server.
+- `npm run covers` rewrites the stills (it starts its own Vite server).
+
+**Dev hooks** (dev builds only):
+
+| | |
+| --- | --- |
+| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h)`, `benchPresent(w, h)`, `setSite({...})` |
+| `window.__paper` | the paper's own hooks (docs/detail-paper.md), plus `coversDrawn()` and `benchCover()` for the hero |
+
+**Gotchas that cost time:**
+
+- `window.__covers` installs a beat after the app (a dynamic import). Wait for
+  it before `pin()`, or the pin silently does nothing — verify:detail's first
+  card-02 failures were exactly that.
+- Editing ANY `.html` in the repo (the bench included) while a suite runs makes
+  Vite reload the page under it: `verify:pv` died with "Execution context was
+  destroyed". Edit between runs.
+- `verify:detail` rewrites `docs/detail-paper/boil-steps.webp` as a side
+  effect; `git checkout` it after a run unless you mean to update it.
+- GPU numbers move between runs (the GPU also drives the display). Take two runs
+  before believing a budget miss.
+- `cover-ref.png` is RGBA. Measure a reference with its alpha, or you will match
+  the wrong colours (the retune nearly did).
+
 ## Map
 
 | File | What it is |
@@ -38,7 +87,7 @@ so what is tuned there is what ships.
 | `src/covers/CoverTile.tsx` | One DOM instance: a 2D canvas over the still. |
 | `src/covers/coverClock.ts` | The shared clock. |
 | `src/covers/dome.ts` | The mouse dome's spring; `heroDome`, shared by the DOM hero and the paper plane. |
-| `src/covers/coverDials.ts` | The live dial values (a module store) and the site's two dials. |
+| `src/covers/coverDials.ts` | The live dial values (a module store) and the site's three dials. |
 | `src/dev/coverDials.tsx` | The COVER panel (dev). |
 | `src/covers/bench.ts`, `devHooks.ts` | Dev: `window.__covers`, the GPU benchmark. |
 | `scripts/make-cover-stills.mjs` | `npm run covers`: the stills. The tail of `npm run projects`. |
@@ -241,6 +290,28 @@ The bench's own controls (size, DPR, freeze, lens mask, benchmark) stay on the
 bench. `rtScale` moved from them into the cover's `quality` folder, because the
 app needs it too.
 
+rive-site's folders (`rive-site.json`). JSON carries no comments. Why each value
+is what it is — the measurements against `cover-ref.png` — is in the DIALS
+comments of the prototype as the retune left it (`git show
+65649ec:docs/prototypes/cover-shader-prototype.html`) and in that commit's
+message.
+
+| folder | what it drives |
+| --- | --- |
+| `stages` | the five stage toggles (blobs1, rings2, dots3, riso4, refraction5) |
+| `quality` | `rtScale`, pass A's resolution (0.5) |
+| `base` | the frame: background, border, `circleVisible` (off), the marquee, `textTop` (Figma's 204) |
+| `blobs1` | stage 1: the displacement (mostly a +18-unit shift), its noise, the levels crush |
+| `rings2` | stage 2: the contour rings, shown only through the lenses |
+| `dots3` | stage 3: the particle field (`cellK` / `density`, size, band, colour shift) and the mouse dome |
+| `riso4` | stage 4: paper, the four inks fitted to the reference, their opacities and misregistration; the grade (identity) |
+| `refraction5` | stage 5: the slug lenses (`slug*`, `minify`, `rimSmear`), the noise-blob fallback, the budget cuts (`noiseHalfRes`, `dispersionCut`) |
+| site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr` | not the cover's: in `coverDials.ts`, not the JSON |
+
+The COVER panel persists (`dialkit:cover-rive-site-v1` in localStorage), as the other
+dev panels do. A value set there overrides the JSON in that browser until reset,
+and the verify suites run in fresh contexts, so they always see the JSON.
+
 **The font is shipped.** The bench found Inter installed; visitors do not have
 it. `public/fonts/inter-latin-400.woff2` is fontsource 4.5.15, i.e. Inter 3.19,
 and it rasterises "Rive" pixel-identical to the Inter the cover was tuned with:
@@ -298,6 +369,40 @@ has two budgets of its own, documented in the script:
 | --- | --- | --- | --- |
 | hero | 0.000–0.004%; **2.1–2.2%** at 1728×996 @2× | 2.5% | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour |
 | as a neighbour (the still) | 1.0–5.0% | 7% (card 01's) | Chrome's scale(0.85) resampling of the `<img>` against a texture resized to the card — card 01's documented problem, on pure noise |
+
+## Open issue
+
+Reported after PR #29 opened, not yet investigated. As reported, verbatim:
+
+> in the detail view a rounded, bordered rect with a light veil sits over the shader cover; suspects: (a) grid card chrome carried by the morph, (b) paper material shading (ambient/crease highlights) lighting the transparent plane uniformly; grid tile chrome is to stay
+
+Where each suspect lives. These are pointers, not conclusions:
+
+- **(a) the morph.** `DetailMorph.tsx` / `.css`: the morph card is
+  `.detail-morph__card` (`border-radius: 6px`, `box-shadow: 0 24px 70px
+  rgba(0,0,0,.55)`). For a cover card it holds a `CoverTile` and no
+  `CardOverlay`. The detail panels are `.detail__panel` (`border-radius: 6px`,
+  the same shadow, taken off while the paper has the cards). The grid tile's
+  own chrome (`.grid-card__face` radius and shadow, `.grid-card__index`,
+  `CardOverlay`) is in `GridPlane.tsx` / `.css`. Per the report it stays.
+- **(b) the paper.** `paperMaterial.ts`, the fragment. With `uPremul` (cover
+  cards) the colour is un-premultiplied, lit, then multiplied by the texture's
+  alpha. The lighting is a screen blend with the crease texture
+  (`uCreaseBlend` 0.2) and a shading term. On the 44%-opaque ground that
+  lighting lands at full strength on the ground colour.
+- **Why the suites did not catch it.** Every pixel check of the hero runs with
+  `__paper.override({ zero: true })`, where creases, ripple and hover are all 0
+  (the hand-off identity: 0.00%). A veil made by the paper's EFFECTS at
+  presence 1 is invisible to them.
+- **Ways to split it.**
+  - `#item-02`, then `__paper.set({ paper: 'off' })`: the DOM face, no paper
+    material.
+  - `__paper.override({ zero: true })`: the paper with its effects off.
+  - `__paper.freezePresence(true)` at the hand-in: the paper at presence 0.
+  - The DETAIL PAPER panel's `creaseBlend` / `creaseDisplacement` to 0.
+  - Is the rect there during the morph itself (hold it with
+    `document.getAnimations()`, as `verify:cover`'s `morph` check does), or
+    only once the paper has the cards?
 
 ## Not done
 
