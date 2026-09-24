@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cover shader prototype — rive-site (card 02)</title>
+<!--
+  COVER SHADER PROTOTYPE — "Shader variation 3 — Soft contour field", card 02.
+
+  One purpose-built shader in place of the Figma frame's eight stacked effects.
+  Written as the thing the detail paper plane will eventually sample: GLSL ES 3.0,
+  WebGL2, two fragment passes, one texture (the "Rive" glyph strip's SDF).
+
+    pass A  (RT, half res)   base picture → 1 blob displacement → levels crush,
+                              and the ring SDF (+ 2's perturbation) in alpha
+    pass B  (screen)          5 refraction picks the coordinate, then
+                              2 rings → 3 dots → 4 riso + grade at it
+
+  Everything is in FRAME UNITS (the Figma frame, 900×1326), cover-cropped to the
+  box the way `coverCrop` in paperMath.ts crops a card face. "uv" in the brief
+  means frame units / 900, i.e. the frame's width is 1.
+
+  Open at /docs/prototypes/cover-shader-prototype.html under `npm run dev`.
+  window.__cover exposes bench(), view() and the dial controller for scripts.
+-->
+<link rel="stylesheet" href="/node_modules/dialkit/dist/vanilla/styles.css" />
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0b0e; overflow: hidden;
+               font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #cfd0d6; }
+  .stage { position: fixed; inset: 0; display: flex; align-items: center; gap: 24px; padding: 0 24px; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  figcaption { font-size: 10px; letter-spacing: .14em; color: #7d7f8a; text-transform: uppercase; }
+  .box { position: relative; background: #16161b; overflow: hidden; border-radius: 6px; }
+  .box img, .box canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .box img { object-fit: cover; }
+  .missing { position: absolute; inset: 0; display: none; place-items: center; text-align: center;
+             padding: 16px; font-size: 11px; line-height: 1.6; color: #8a8c98; }
+  .box.no-ref .missing { display: grid; }
+  .box.no-ref img { display: none; }
+  .readout { position: fixed; left: 24px; bottom: 16px; margin: 0; font-size: 11px; line-height: 1.5;
+             color: #c9cad3; white-space: pre; font-variant-numeric: tabular-nums; }
+  .readout b { color: #fff; font-weight: 500; }
+</style>
+</head>
+<body>
+<main class="stage">
+  <figure>
+    <div class="box" id="refBox">
+      <img id="ref" src="cover-ref.png" alt="Figma reference" />
+      <div class="missing">cover-ref.png is missing.<br />Export the Figma frame at 900×1326<br />to docs/prototypes/cover-ref.png</div>
+    </div>
+    <figcaption>reference · Figma</figcaption>
+  </figure>
+  <figure>
+    <div class="box" id="liveBox"><canvas id="c"></canvas></div>
+    <figcaption id="liveCap">live</figcaption>
+  </figure>
+</main>
+<pre class="readout" id="readout"></pre>
+
+<script src="/node_modules/dialkit/dist/vanilla/browser.global.js"></script>
+<script>
+'use strict';
+// ===========================================================================
+// THE FRAME. Figma's numbers, in frame units.
+// ===========================================================================
+const FRAME_W = 900, FRAME_H = 1326;
+const CIRCLE_R = 439.68 / 2;
+const CIRCLES = [[266.0, 478.0], [642.0, 106.2], [633.8, 1065.6]];
+/** One "Rive" per 1511 units; the copies at −2981.5, −1470.5 and 40.5 (+450) are one strip, tiled. */
+const STRIP_W = 1511;
+const TEXT_X = 40.5 + 450;
+/** The strip's SDF covers these rows; beyond them the distance is extended vertically. */
+const STRIP_Y0 = -420, STRIP_H = 960;
+/** Extra frame units around the visible crop in the RT, for refraction and misregistration to read. */
+const RT_MARGIN = 48;
+
+// ===========================================================================
+// GLSL
+// ===========================================================================
+const VERT = `#version 300 es
+void main(){ vec2 p = vec2(float((gl_VertexID<<1)&2), float(gl_VertexID&2)); gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }`;
+
+const COMMON = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+
+vec3 mod289(vec3 x){ return x - floor(x*(1.0/289.0))*289.0; }
+vec4 mod289(vec4 x){ return x - floor(x*(1.0/289.0))*289.0; }
+vec4 permute(vec4 x){ return mod289(((x*34.0)+1.0)*x); }
+vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314*r; }
+
+// 3D simplex noise with its analytic gradient (Gustavson / Ashima, noise3Dgrad).
+// Returns (dn/dx, dn/dy, dn/dz, n), n in about [-1, 1]. One call buys the value
+// AND the direction the displacement, dispersion and refraction all need.
+vec4 snoiseG(vec3 v){
+  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i  = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = mod289(i);
+  vec4 p = permute(permute(permute(
+             i.z + vec4(0.0, i1.z, i2.z, 1.0))
+           + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+           + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  vec3 ns = 0.142857142857 * D.wyz - D.xzx;
+  vec4 j = p - 49.0*floor(p*ns.z*ns.z);
+  vec4 x_ = floor(j*ns.z);
+  vec4 y_ = floor(j - 7.0*x_);
+  vec4 x = x_*ns.x + ns.yyyy;
+  vec4 y = y_*ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0)*2.0 + 1.0;
+  vec4 s1 = floor(b1)*2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.5 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  vec4 m2 = m*m;
+  vec4 m4 = m2*m2;
+  vec4 pdotx = vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3));
+  vec4 t = m2*m*pdotx;
+  vec3 grad = -8.0*(t.x*x0 + t.y*x1 + t.z*x2 + t.w*x3);
+  grad += m4.x*p0 + m4.y*p1 + m4.z*p2 + m4.w*p3;
+  return 105.0*vec4(grad, dot(m4, pdotx));
+}
+
+// fbm of snoiseG, 1–3 octaves, persistence = detail. Returns (grad.xy, n), both
+// normalised by the amplitude sum. detail 0 costs one octave, not three.
+vec3 fbmG(vec3 P, float detail, float oct){
+  vec4 n = snoiseG(P);
+  vec3 acc = vec3(n.xy, n.w);
+  float amp = 1.0, norm = 1.0;
+  if (oct > 1.5 && detail > 0.0) {
+    amp = detail;
+    vec4 m = snoiseG(P*vec3(2.03, 2.03, 1.0) + vec3(17.1, 3.7, 0.0));
+    acc += amp*vec3(m.xy*2.03, m.w); norm += amp;
+    if (oct > 2.5) {
+      amp *= detail;
+      m = snoiseG(P*vec3(4.11, 4.11, 1.0) + vec3(-7.3, 11.9, 0.0));
+      acc += amp*vec3(m.xy*4.11, m.w); norm += amp;
+    }
+  }
+  return acc/norm;
+}
+
+vec2 hash22(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*vec3(.1031, .1030, .0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.xx + p3.yz)*p3.zy); }
+float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y)*p3.z); }
+// Value noise, x periodic in 'period' cells (period <= 0: not periodic).
+float vnoise(vec2 p, float period){
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f*f*(3.0 - 2.0*f);
+  vec2 i1 = i + 1.0;
+  if (period > 0.0) { i.x = mod(i.x, period); i1.x = mod(i1.x, period); }
+  float a = hash12(i), b = hash12(vec2(i1.x, i.y)), c = hash12(vec2(i.x, i1.y)), d = hash12(i1);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+// 5 — the refraction field: the offset before strength (x900 x strength to use),
+// mask, rim. Same noise family as 1, its own seed.
+vec4 refrField(vec2 p, vec4 a, float z, float oct){
+  vec3 f = fbmG(vec3(p/900.0*a.x + vec2(31.7, -12.9), z + 5.3), a.y, oct);
+  float mask = smoothstep(a.z - a.w, a.z + a.w, 0.5 + 0.5*f.z);
+  float rim = 4.0*mask*(1.0 - mask);
+  vec2 dir = f.xy/(length(f.xy) + 1e-5);
+  return vec4(dir*mask*0.075 + vec2(-dir.y, dir.x)*rim*0.14, mask, rim);
+}
+float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+// Highlights / shadows as luma-weighted gains: +-100 = x1.5 / x0.5 at the ends.
+vec3 tones(vec3 c, float highlights, float shadows){
+  float l = luma(c);
+  c *= 1.0 + highlights*0.5*smoothstep(0.5, 1.0, l);
+  c *= 1.0 + shadows*0.5*(1.0 - smoothstep(0.0, 0.5, l));
+  return c;
+}
+`;
+
+// ---------------------------------------------------------------------------
+// PASS A — base picture, stage 1 (blob displacement), levels; ring SDF in .a
+// ---------------------------------------------------------------------------
+const FRAG_A = COMMON + `
+uniform vec4 uMap;        // frame = xy + gl_FragCoord.xy * zw
+uniform float uAA;        // frame units per RT texel
+uniform vec2 uC0, uC1, uC2;
+uniform float uR;
+uniform sampler2D uText;  // R16F signed distance of the "Rive" strip, frame units
+uniform vec4 uTextMap;    // strip left x (marquee applied), top y, width, height
+uniform vec3 uBg;
+uniform float uBorder;
+uniform float uS1, uS2;
+uniform vec4 uB1a;        // freq, detail, threshold, softness
+uniform vec4 uB1b;        // strength, dispersion, shadow, z
+uniform vec2 uB1c;        // octaves, warp
+uniform vec2 uLevels;     // black point 0..1, shadows -1..1
+uniform float uS5, uR5Half;
+uniform vec4 uR5a;        // 5's noise: freq, detail, threshold, softness
+uniform vec2 uR5z;        // 5's noise: z, octaves
+layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 o2;  // 5's field at half res: offset / (900 * strength), mask, rim
+uniform float uSmooth;    // ring smoothing (smin k), frame units
+uniform float uLumaThr;
+uniform vec3 uPert;       // strength, scale, falloff
+uniform vec3 uRad;        // strength, frequency (whole), scale
+
+const vec2 FRAME = vec2(${FRAME_W}.0, ${FRAME_H}.0);
+
+float sdText(vec2 p){
+  float yy = clamp(p.y, uTextMap.y + 1.0, uTextMap.y + uTextMap.w - 1.0);
+  float d = textureLod(uText, vec2((p.x - uTextMap.x)/uTextMap.z, (yy - uTextMap.y)/uTextMap.w), 0.0).r;
+  return d + abs(p.y - yy);
+}
+float smin(float a, float b, float k){
+  if (k <= 0.0) return min(a, b);
+  float h = max(k - abs(a - b), 0.0)/k;
+  return min(a, b) - h*h*k*0.25;
+}
+// (hard union for the picture, smoothed union for the rings)
+vec2 shape(vec2 p){
+  float c0 = length(p - uC0) - uR, c1 = length(p - uC1) - uR, c2 = length(p - uC2) - uR;
+  float t = sdText(p);
+  return vec2(min(min(c0, c1), min(c2, t)),
+              smin(smin(c0, c1, uSmooth), smin(c2, t, uSmooth), uSmooth));
+}
+float shapeMin(vec2 p){
+  return min(min(length(p - uC0), min(length(p - uC1), length(p - uC2))) - uR, sdText(p));
+}
+vec3 base(float dm, vec2 p){
+  float cov = clamp(0.5 - dm/uAA, 0.0, 1.0);
+  vec2 e = min(p, FRAME - p);
+  float edge = min(e.x, e.y);
+  float bor = clamp(0.5 - (edge - uBorder)/uAA, 0.0, 1.0);
+  return mix(uBg, vec3(1.0), max(cov, bor));
+}
+float perturb(float d, vec2 p){
+  float w = max(0.0, 1.0 - max(d, 0.0)/uPert.z);
+  float n = vnoise(p/900.0*uPert.y*3.0, 0.0)*2.0 - 1.0;
+  vec2 c = p - FRAME*0.5;
+  float ang = atan(c.y, c.x)/6.2831853 + 0.5;
+  float rn = vnoise(vec2(ang*uRad.y, length(c)/900.0*uRad.z*4.0), uRad.y)*2.0 - 1.0;
+  return d + (uPert.x*n + uRad.x*0.3*rn)*w;
+}
+
+void main(){
+  vec2 p = clamp(uMap.xy + gl_FragCoord.xy*uMap.zw, vec2(0.0), FRAME);
+  vec3 col; float ds;
+  if (uS1 > 0.5) {
+    // 1 — Moving blobs (Displacement)
+    vec3 P = vec3(p/900.0*uB1a.x, uB1b.w);
+    if (uB1c.y > 0.0) { vec4 w = snoiseG(P*0.5 + vec3(3.1, 7.7, 1.3)); P.xy += uB1c.y*0.25*w.xy; }
+    vec3 f = fbmG(P, uB1a.y, uB1c.x);
+    float mask = smoothstep(uB1a.z - uB1a.w, uB1a.z + uB1a.w, 0.5 + 0.5*f.z);
+    float rim = 4.0*mask*(1.0 - mask);
+    vec2 dir = f.xy/(length(f.xy) + 1e-5);
+    vec2 pg = p + vec2(1.0, -0.18)*(0.075*900.0)*uB1b.x*mask;
+    vec2 S = dir*(0.05*900.0)*uB1b.y*rim;
+    vec2 sh = shape(pg);
+    ds = sh.y;
+    col = base(sh.x, pg);
+    if (dot(S, S) > 0.01) {
+      col.r = base(shapeMin(pg + S), pg + S).r;
+      col.b = base(shapeMin(pg - S), pg - S).b;
+    }
+    col *= 1.0 - uB1b.z*rim*0.6;
+  } else {
+    vec2 sh = shape(p);
+    ds = sh.y;
+    col = base(sh.x, p);
+  }
+  // The first Color adjust (blackPoint 100, shadows -100), folded in as levels.
+  col = max(col - uLevels.x, 0.0)/(1.0 - uLevels.x);
+  col = tones(col, 0.0, uLevels.y);
+  // Wild Outlines' luma threshold, on a mask blurred by 'smoothing', moves the contour.
+  ds += (uLumaThr - 0.5)*max(uSmooth, 1.0);
+  if (uS2 > 0.5) ds = perturb(ds, p);
+  o = vec4(col, ds);
+  o2 = (uS5 > 0.5 && uR5Half > 0.5) ? refrField(p, uR5a, uR5z.x, uR5z.y) : vec4(0.0);
+}`;
+
+// ---------------------------------------------------------------------------
+// PASS B — 5 refraction picks q; 2 rings, 3 dots, 4 riso + grade at q
+// ---------------------------------------------------------------------------
+const FRAG_B = COMMON + `
+uniform vec4 uView;       // frame = xy + gl_FragCoord.xy * zw
+uniform float uAAB;       // frame units per device px
+uniform sampler2D uRT;
+uniform vec4 uRtUV;       // uv = (q - xy) / zw
+uniform sampler2D uRT2;   // 5's field, when uR5Half
+uniform float uR5Half;
+out vec4 o;
+uniform float uS2, uS3, uS4, uS5;
+// 2 rings
+uniform vec4 uRingA;      // count, thickness, spacing, offset
+uniform vec2 uRingB;      // softness 0..1, phase 0..1
+uniform vec3 uRingC0, uRingC1;
+// 3 dots
+uniform vec4 uDot;        // cell, scale 0..1, softness 0..1, threshold 0..1
+uniform vec2 uDotB;       // source mix, colour mode
+uniform vec3 uDotC0, uDotC1;
+uniform vec4 uDome;       // centre.xy, radius, amplitude (CPU spring)
+uniform vec3 uDomeB;      // strength, scale 0..1, z offset
+// 4 riso + grade
+uniform vec3 uInk[5];
+uniform vec3 uInkL[5];    // log(ink / paper)
+uniform float uInkG[5];   // |log ink|^2
+uniform vec2 uInkRot[5];  // cos, sin of each ink's screen angle
+uniform mat2 uPairInv[10];
+uniform vec3 uPairG[10];  // Gram: aa, bb, ab
+uniform vec3 uPaper;
+uniform vec4 uRiso;       // halftone size (frame units), misreg (frame units), density boost, style
+uniform vec2 uRisoIn;     // input contrast, brightness
+uniform vec4 uGradeA;     // exposure (stops), contrast factor, highlights, shadows
+uniform vec3 uGradeB;     // saturation, vibrance, temperature
+// 5 refraction
+uniform vec4 uR5a;        // freq, detail, threshold, softness
+uniform vec4 uR5b;        // strength, dispersion, shadow, z
+uniform vec2 uR5c;        // octaves, highlight
+
+vec4 tapRT(vec2 q){ return textureLod(uRT, (q - uRtUV.xy)/uRtUV.zw, 0.0); }
+
+vec4 ring(float d){
+  float x = (d - uRingA.w)/uRingA.z + 0.5;
+  if (x < 0.0 || x >= uRingA.x) return vec4(0.0);
+  float i = floor(x);
+  float f = abs(fract(x) - 0.5)*uRingA.z;
+  float hw = uRingA.y*0.5;
+  float s = uRingB.x*hw + uAAB*0.75;
+  float a = 1.0 - smoothstep(hw - s, hw + s, f);
+  float t = uRingA.x > 1.0 ? i/(uRingA.x - 1.0) : 0.0;
+  a *= 1.0 - uRingB.y*t;
+  return vec4(mix(uRingC0, uRingC1, t), a);
+}
+
+// One dot cell per pixel, shared by every tap riso makes around it (the
+// misregistration offsets are 2 units; a cell is 26): the cell's centre, size,
+// colour and coverage are found once, and only the distance is per tap.
+struct Cell { vec2 c; vec2 shift; float rad; float soft; float on; vec3 col; };
+Cell dotCell(vec2 q){
+  Cell k = Cell(vec2(0.0), vec2(0.0), 0.0, 1.0, 0.0, vec3(0.0));
+  if (uS3 < 0.5) return k;
+  float cell = uDot.x;
+  vec2 p0 = q;
+  float h = 0.0;
+  if (uDome.w > 0.001) {
+    vec2 dv = q - uDome.xy;
+    float rr = length(dv)/uDome.z;
+    if (rr < 1.0) {
+      h = clamp(sqrt(1.0 - rr*rr) + uDomeB.z, 0.0, 1.0)*uDome.w;
+      p0 = q - dv*(uDomeB.x/uDome.z)*h;     // one fixed-point step of the inverse push
+    }
+  }
+  vec2 c = floor(p0/cell);
+  k.c = (c + 0.5 + (hash22(c) - 0.5)*max(0.0, 1.0 - uDot.y))*cell;
+  k.shift = q - p0;
+  vec4 s = tapRT(k.c);
+  vec3 cc = s.rgb;
+  if (uS2 > 0.5) { vec4 r = ring(s.a); cc = mix(cc, r.rgb, r.a); }
+  float lum = luma(cc);
+  k.on = smoothstep(uDot.w, uDot.w + 0.04, lum);
+  k.rad = 0.5*cell*uDot.y*(1.0 + uDomeB.y*h)*mix(1.0, lum, uDotB.x);
+  k.soft = max(k.rad*uDot.z, uAAB);
+  k.col = uDotB.y < 0.5 ? cc : uDotB.y < 1.5 ? vec3(1.0) : uDotB.y < 2.5 ? vec3(0.0) : mix(uDotC0, uDotC1, lum);
+  return k;
+}
+float dotAlpha(Cell k, vec2 q){
+  if (k.on <= 0.0) return 0.0;
+  return k.on*(1.0 - smoothstep(k.rad - k.soft, k.rad + uAAB*0.5, length(q - k.shift - k.c)));
+}
+
+// base + 2 rings + 3 dots, at q
+vec3 pre(vec2 q, Cell k){
+  vec4 s = tapRT(q);
+  vec3 col = s.rgb;
+  if (uS2 > 0.5) { vec4 r = ring(s.a); col = mix(col, r.rgb, r.a); }
+  return mix(col, k.col, dotAlpha(k, q));
+}
+
+// Riso separation: colour = paper * inkA^x * inkB^y (overprint as multiply),
+// in log space. The pair is the two inks that fit best ON THEIR OWN, then that
+// one pair is solved (Gram inverse from the CPU). Searching all ten pairs was
+// the same picture to the eye at three times the cost. Returns (a, x, b, y).
+vec4 decomp(vec3 c){
+  c = clamp((c - 0.5)*(1.0 + uRisoIn.x) + 0.5 + uRisoIn.y, 0.0, 1.0);
+  vec3 L = log(max(c/uPaper, vec3(0.02)));
+  float LL = dot(L, L);
+  float e1 = 1e9, e2 = 1e9, x1 = 0.0;
+  int a = 0, b = 1;
+  for (int k = 0; k < 5; k++) {
+    float lk = dot(L, uInkL[k]);
+    float x = clamp(lk/uInkG[k], 0.0, 1.0);
+    float r = LL - 2.0*x*lk + x*x*uInkG[k];
+    if (r < e1) { e2 = e1; b = a; e1 = r; a = k; x1 = x; }
+    else if (r < e2) { e2 = r; b = k; }
+  }
+  int lo = min(a, b), hi = max(a, b);
+  int n = lo*4 - (lo*(lo - 1))/2 + (hi - lo - 1);
+  vec2 la = vec2(dot(L, uInkL[lo]), dot(L, uInkL[hi]));
+  vec2 xy = clamp(uPairInv[n]*la, 0.0, 1.0);
+  vec3 g = uPairG[n];
+  float r = LL - 2.0*dot(xy, la) + xy.x*xy.x*g.x + xy.y*xy.y*g.y + 2.0*xy.x*xy.y*g.z;
+  if (r > e1) return vec4(float(a), x1, float(b), 0.0);
+  return vec4(float(lo), xy.x, float(hi), xy.y);
+}
+float covOf(float k, vec4 d){ return (d.x == k ? d.y : 0.0) + (d.z == k ? d.w : 0.0); }
+
+float screenDot(vec2 q, float cov, int k){
+  if (cov <= 0.002) return 0.0;
+  cov = 1.0 - pow(1.0 - cov, 1.0 + 0.1*uRiso.z);             // density boost
+  vec2 cs = uInkRot[k];
+  vec2 g = mat2(cs.x, cs.y, -cs.y, cs.x)*q/uRiso.x;
+  float aa = uAAB/uRiso.x;
+  if (cov <= 0.5) {
+    float r = sqrt(cov/3.14159265);
+    return 1.0 - smoothstep(r - aa, r + aa, length(fract(g) - 0.5));
+  }
+  float r = sqrt((1.0 - cov)/3.14159265);                    // past 50%: paper dots on the corners
+  vec2 f = fract(g);
+  return smoothstep(r - aa, r + aa, length(f - round(f)));
+}
+
+// 4 — riso. 'mis' = print ink1 and ink2 misregistered (their own drums, +o and
+// -o; the other three inks in register). The refraction rim's red and blue
+// taps pass false: they are a few percent of the pixels, and a 2-unit
+// misregistration inside a 20-unit colour split is not visible.
+vec3 riso(vec2 q, bool mis){
+  Cell k = dotCell(q);
+  vec4 dM = decomp(pre(q, k)), d1 = dM, d2 = dM;
+  vec2 o = vec2(0.8, 0.6)*uRiso.y;
+  if (mis && uRiso.y > 0.0) { d1 = decomp(pre(q + o, k)); d2 = decomp(pre(q - o, k)); }
+  else o = vec2(0.0);
+  vec3 c = uPaper;
+  c *= mix(vec3(1.0), uInk[0], screenDot(q + o, covOf(0.0, d1), 0));
+  c *= mix(vec3(1.0), uInk[1], screenDot(q - o, covOf(1.0, d2), 1));
+  c *= mix(vec3(1.0), uInk[2], screenDot(q, covOf(2.0, dM), 2));
+  c *= mix(vec3(1.0), uInk[3], screenDot(q, covOf(3.0, dM), 3));
+  c *= mix(vec3(1.0), uInk[4], screenDot(q, covOf(4.0, dM), 4));
+  return c;
+}
+
+vec3 toLin(vec3 c){ return pow(max(c, 0.0), vec3(2.2)); }
+vec3 toSrgb(vec3 c){ return pow(max(c, 0.0), vec3(1.0/2.2)); }
+vec3 grade(vec3 c){
+  vec3 lin = toLin(c)*exp2(uGradeA.x);
+  lin.r *= 1.0 + uGradeB.z*0.3;
+  lin.b *= 1.0 - uGradeB.z*0.3;
+  c = toSrgb(lin);
+  c = (c - 0.5)*uGradeA.y + 0.5;
+  c = tones(max(c, 0.0), uGradeA.z, uGradeA.w);
+  float l = luma(c);
+  c = mix(vec3(l), c, 1.0 + uGradeB.x);
+  float sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+  return mix(vec3(l), c, 1.0 + uGradeB.y*(1.0 - clamp(sat, 0.0, 1.0)));
+}
+
+vec3 shade(vec2 q, bool mis){ return uS4 > 0.5 ? riso(q, mis) : pre(q, dotCell(q)); }
+
+void main(){
+  vec2 p = uView.xy + gl_FragCoord.xy*uView.zw;
+  vec3 col;
+  if (uS5 > 0.5) {
+    // 5 — Moving blobs (Refraction). Its noise field is read from pass A's
+    // half-res second target, or computed here at full res (uR5Half 0).
+    vec4 fld = uR5Half > 0.5 ? textureLod(uRT2, (p - uRtUV.xy)/uRtUV.zw, 0.0)
+                             : refrField(p, uR5a, uR5b.w, uR5c.x);
+    float mask = fld.z, rim = fld.w;
+    // the direction back out of the offset: offset = R(dir) (0.075 mask, 0.14 rim)
+    float ol = length(fld.xy);
+    vec2 u = ol > 1e-6 ? fld.xy/ol : vec2(1.0, 0.0);
+    vec2 cs = normalize(vec2(0.075*mask, 0.14*rim) + vec2(1e-6, 0.0));
+    vec2 dir = vec2(u.x*cs.x + u.y*cs.y, u.y*cs.x - u.x*cs.y);
+    vec2 q = p + fld.xy*900.0*uR5b.x;
+    vec2 S = dir*(0.024*900.0)*rim*uR5b.y;
+    // (a split under half a device pixel is not drawn: it cannot be seen)
+    if (dot(S, S) > 0.25*uAAB*uAAB) col = vec3(shade(q + S, false).r, shade(q, true).g, shade(q - S, false).b);
+    else col = shade(q, true);
+    if (uS4 > 0.5) col = grade(col);
+    col *= 1.0 - uR5b.z*rim*0.6;
+    col += uR5c.y*rim;
+  } else {
+    col = shade(p, true);
+    if (uS4 > 0.5) col = grade(col);
+  }
+  o = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`;
+
+// ===========================================================================
+// DIALS — Figma's values as defaults.
+// ===========================================================================
+const DIALS = {
+  view: {
+    size: { type: 'select', default: 'hero', options: [
+      { value: 'tile', label: 'grid tile 220×286' },
+      { value: 'hero', label: 'detail hero 10:13' },
+      { value: 'frame', label: 'whole frame 900:1326' },
+    ] },
+    dpr2: true,
+    freeze: false,
+    reducedMotion: false,
+    rtScale: [0.5, 0.25, 1, 0.25],
+    bench: { type: 'action', label: 'Benchmark: GPU ms per stage' },
+  },
+  stages: { blobs1: true, rings2: true, dots3: true, riso4: true, refraction5: true },
+  base: {
+    background: '#6200FF',
+    border: [2, 0, 12, 0.5],
+    marqueePx: [1511, 0, 3000, 1],
+    marqueeSec: [24.662, 1, 120, 0.001],
+    baselineY: [204, -200, 1326, 1],
+  },
+  blobs1: {
+    scale: [152, 10, 400, 1],
+    detail: [28, 0, 100, 1],
+    octaves: [2, 1, 3, 1],      // Figma has no octave count; 3 cost 0.05ms over budget (ladder step 1)
+    threshold: [54, 0, 100, 0.1],
+    softness: [6, 0, 50, 0.1],
+    strength: [36, 0, 100, 1],
+    dispersion: [12, 0, 100, 1],
+    shadow: [42, 0, 100, 1],
+    speed: [4, 0, 100, 0.1],
+    warp: [1, 0, 4, 0.05],
+    levels: { blackPoint: [100, 0, 254, 1], shadows: [-100, -100, 100, 1] },
+  },
+  rings2: {
+    count: [8, 1, 16, 1],
+    thickness: [4, 0.5, 20, 0.5],
+    spacing: [25, 4, 80, 0.5],
+    offset: [10, 0, 100, 1],
+    softness: [52, 0, 100, 1],
+    smoothing: [78, 0, 200, 1],
+    phase: [70, 0, 100, 1],
+    lumaThreshold: [0.5, 0, 1, 0.01],
+    colorFrom: '#B3FF0D',
+    colorTo: '#141FD1',
+    perturb: { strength: [14, 0, 100, 0.5], scale: [2.1, 0.1, 10, 0.1], falloff: [500, 10, 1500, 10] },
+    radial: { strength: [62, 0, 100, 1], frequency: [8, 0, 32, 1], scale: [1.4, 0.1, 5, 0.1] },
+  },
+  dots3: {
+    density: [34, 4, 120, 1],
+    dotScale: [66, 0, 100, 1],
+    softness: [42, 0, 100, 1],
+    threshold: [12, 0, 100, 1],
+    sourceMix: [44, 0, 100, 1],
+    colorFrom: '#B8FF0D',
+    colorTo: '#14339E',
+    mode: { type: 'select', default: '3', options: [
+      { value: '0', label: '0 · source colour' },
+      { value: '1', label: '1 · white' },
+      { value: '2', label: '2 · black' },
+      { value: '3', label: '3 · gradient by luma' },
+    ] },
+    dome: {
+      radius: [275, 10, 900, 1],
+      strength: [34, 0, 200, 1],
+      scale: [32, 0, 100, 1],
+      spring: [20, 1, 100, 1],
+      damping: [72, 0, 100, 1],
+      zOffset: [0, -1, 1, 0.01],
+    },
+  },
+  riso4: {
+    ink1: '#00FF62',
+    ink2: '#0F29D0',
+    ink3: '#FFD400',
+    ink5: '#EDF152',
+    ink7: '#1F784A',
+    paper: '#FFFFFF',
+    halftone: [3.5, 1, 16, 0.1],
+    angle: [40, 0, 90, 1],
+    inkAngleStep: [15, 0, 45, 1],
+    misregistration: [20, 0, 100, 1],
+    densityBoost: [4, 0, 20, 0.5],
+    inputContrast: [0.3, -1, 1, 0.01],
+    inputBrightness: [-0.21, -1, 1, 0.01],
+    grade: {
+      exposure: [-4, -100, 100, 1],
+      contrast: [-12, -100, 100, 1],
+      highlights: [-18, -100, 100, 1],
+      shadows: [22, -100, 100, 1],
+      saturation: [-24, -100, 100, 1],
+      vibrance: [8, -100, 100, 1],
+      temperature: [22, -100, 100, 1],
+    },
+  },
+  refraction5: {
+    scale: [65, 10, 400, 1],
+    detail: [0, 0, 100, 1],
+    octaves: [1, 1, 3, 1],
+    noiseHalfRes: true,         // ladder step 2: the field in pass A, at the RT's resolution
+    dispersionCut: true,        // ladder step 3: dispersion off (the dial keeps Figma's 100; this zeroes it)
+    threshold: [72.2, 0, 100, 0.1],
+    softness: [3, 0, 50, 0.1],
+    strength: [100, 0, 100, 1],
+    dispersion: [100, 0, 100, 1],
+    speed: [27.3, 0, 100, 0.1],
+    shadow: [0, 0, 100, 1],
+    highlight: [0.5, 0, 2, 0.01],
+  },
+};
+
+/** Figma's Moving blobs loop length: 90 − speed × 0.78 seconds. */
+const loopSeconds = (speed) => Math.max(1, 90 - speed * 0.78);
+/** Scale 100% = 2.2 noise cells across the frame's width; bigger scale, bigger blobs. */
+const blobFreq = (scalePct) => 2.2 / Math.max(0.05, scalePct / 100);
+
+// ===========================================================================
+// GL
+// ===========================================================================
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', {
+  alpha: false, antialias: false, depth: false, stencil: false,
+  premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance',
+});
+const floatRT = !!gl.getExtension('EXT_color_buffer_float');
+const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'));
+  return s;
+}
+function program(frag) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, frag));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) {
+    const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, '');
+    u[name] = gl.getUniformLocation(p, name);
+  }
+  return { p, u };
+}
+const A = program(FRAG_A);
+const B = program(FRAG_B);
+/** The benchmark's floor: the same two passes, same targets, a shader that does nothing. */
+const F = program('#version 300 es\nprecision highp float; out vec4 o; void main(){ o = vec4(0.0, 0.0, 0.0, 1.0); }');
+const vao = gl.createVertexArray();
+
+// The RT: pass A's output. RGBA16F keeps the ring SDF exact to well under a unit;
+// without the float extension it falls back to RGBA8 (and the rings will step).
+const rtTex = gl.createTexture();
+const rtTex2 = gl.createTexture();
+const fbo = gl.createFramebuffer();
+let rtW = 0, rtH = 0;
+function sizeRT(w, h) {
+  if (w === rtW && h === rtH) return;
+  rtW = w; rtH = h;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  [rtTex, rtTex2].forEach((tex, i) => {
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, floatRT ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA, floatRT ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, tex, 0);
+  });
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+// ===========================================================================
+// THE ONLY TEXTURE: "Rive", Inter Regular 757.7px, drawn once to a 2D canvas
+// and turned into a signed distance field on the CPU at load.
+//
+// Why a precomputed SDF and not a 4-tap gradient per frame: the rings need the
+// distance up to ~250 units from the glyphs, which no local gradient can give,
+// and the dots and misregistration read the shape at up to nine points per
+// pixel. One R16F tap per read is the cheapest there is. Cost: ~40–80ms once.
+// ===========================================================================
+const textTex = gl.createTexture();
+let fontNote = '';
+async function buildText(baselineY) {
+  let family = 'CoverInter';
+  try {
+    const face = new FontFace(family, 'local("Inter Regular"), local("Inter-Regular"), local("Inter")', { weight: '400' });
+    await face.load();
+    document.fonts.add(face);
+    fontNote = 'Inter Regular (local)';
+  } catch {
+    family = 'Inter, system-ui, sans-serif';
+    fontNote = 'Inter not found locally — system-ui stand-in';
+  }
+  const PAD = 320;
+  const W = STRIP_W + 2 * PAD, H = STRIP_H;
+  const c2 = document.createElement('canvas');
+  c2.width = W; c2.height = H;
+  const ctx = c2.getContext('2d', { willReadFrequently: true });
+  ctx.font = `400 757.7px ${family}`;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#fff';
+  const advance = ctx.measureText('Rive').width;
+  // Three copies, so the distance across the tile seam sees its neighbours.
+  for (let k = -1; k <= 1; k++) ctx.fillText('Rive', PAD + k * STRIP_W, baselineY - STRIP_Y0);
+  const px = ctx.getImageData(0, 0, W, H).data;
+
+  const INF = 1e20, N = W * H;
+  const outer = new Float64Array(N), inner = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const a = px[i * 4 + 3] / 255;
+    if (a >= 1) { outer[i] = 0; inner[i] = INF; }
+    else if (a <= 0) { outer[i] = INF; inner[i] = 0; }
+    else { const d = 0.5 - a; outer[i] = d > 0 ? d * d : 0; inner[i] = d < 0 ? d * d : 0; }
+  }
+  edt(outer, W, H, INF); edt(inner, W, H, INF);
+  const sdf = new Float32Array(STRIP_W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < STRIP_W; x++) {
+    const i = y * W + x + PAD;
+    sdf[y * STRIP_W + x] = Math.sqrt(outer[i]) - Math.sqrt(inner[i]);
+  }
+  gl.bindTexture(gl.TEXTURE_2D, textTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, STRIP_W, H, 0, gl.RED, gl.FLOAT, sdf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return advance;
+}
+// Felzenszwalb & Huttenlocher squared EDT, as in Mapbox's TinySDF.
+function edt(grid, w, h, INF) {
+  const n = Math.max(w, h);
+  const f = new Float64Array(n), z = new Float64Array(n + 1), v = new Uint32Array(n);
+  for (let x = 0; x < w; x++) edt1d(grid, x, w, h, f, v, z, INF);
+  for (let y = 0; y < h; y++) edt1d(grid, y * w, 1, w, f, v, z, INF);
+}
+function edt1d(grid, offset, stride, length, f, v, z, INF) {
+  v[0] = 0; z[0] = -INF; z[1] = INF; f[0] = grid[offset];
+  for (let q = 1, k = 0, s = 0; q < length; q++) {
+    f[q] = grid[offset + q * stride];
+    const q2 = q * q;
+    do { const r = v[k]; s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2; } while (s <= z[k] && --k > -1);
+    k++; v[k] = q; z[k] = s; z[k + 1] = INF;
+  }
+  for (let q = 0, k = 0; q < length; q++) {
+    while (z[k + 1] < q) k++;
+    const r = v[k], qr = q - r;
+    grid[offset + q * stride] = f[r] + qr * qr;
+  }
+}
+
+// ===========================================================================
+// STATE. Everything the frame loop touches is allocated here, once.
+// ===========================================================================
+const S = {
+  // layout
+  cssW: 0, cssH: 0, dpr: 2, fx0: 0, fy0: 0, fw: FRAME_W, fh: FRAME_H, unitsPerPx: 1,
+  // time
+  t: 0, last: 0, raf: 0, running: false,
+  // stages bitmask: 1 blobs, 2 rings, 4 dots, 8 riso, 16 refraction
+  mask: 31,
+  // pointer + dome spring, in frame units
+  pointerIn: false, px: 0, py: 0,
+  domeX: 450, domeY: 663, domeVX: 0, domeVY: 0, amp: 0, ampV: 0,
+  // readout
+  gpuA: 0, gpuB: 0, gpuHave: false, rafDt: 16.7, readoutAt: 0, benchText: '',
+};
+const reducedMQ = matchMedia('(prefers-reduced-motion: reduce)');
+let P = null;          // resolved dial values (replaced on change, not per frame)
+const inks = new Float32Array(15), inkL = new Float32Array(15), inkG = new Float32Array(5), inkRot = new Float32Array(10);
+const pairInv = new Float32Array(40), pairG = new Float32Array(30);
+const col3 = { bg: new Float32Array(3), ringA: new Float32Array(3), ringB: new Float32Array(3),
+               dotA: new Float32Array(3), dotB: new Float32Array(3), paper: new Float32Array(3) };
+
+// CSS colour → linear-free sRGB floats, via a 1×1 2D canvas (any CSS the dial emits).
+const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+probe.canvas.width = probe.canvas.height = 1;
+function parseColor(css, out, o = 0) {
+  probe.clearRect(0, 0, 1, 1);
+  probe.fillStyle = '#000';
+  probe.fillStyle = css;
+  probe.fillRect(0, 0, 1, 1);
+  const d = probe.getImageData(0, 0, 1, 1).data;
+  out[o] = d[0] / 255; out[o + 1] = d[1] / 255; out[o + 2] = d[2] / 255;
+}
+const reduced = () => reducedMQ.matches || (P && P.view.reducedMotion);
+
+// ===========================================================================
+// LAYOUT
+// ===========================================================================
+const refBox = document.getElementById('refBox');
+const liveBox = document.getElementById('liveBox');
+function layout() {
+  const size = P ? P.view.size : 'hero';
+  let w, h;
+  if (size === 'tile') { w = 220; h = 286; }
+  else {
+    // the hero rect (src/layout/hero.ts): detailCardScale 0.82 of the viewport,
+    // clamped so each band keeps 80px
+    h = Math.max(120, Math.min(window.innerHeight * 0.82, window.innerHeight - 160));
+    w = size === 'frame' ? h * FRAME_W / FRAME_H : h * 10 / 13;
+  }
+  w = Math.round(w); h = Math.round(h);
+  for (const b of [refBox, liveBox]) { b.style.width = w + 'px'; b.style.height = h + 'px'; }
+  const dpr = P && !P.view.dpr2 ? 1 : 2;
+  S.cssW = w; S.cssH = h; S.dpr = dpr;
+  // (only on a real change: assigning the size reallocates the drawing buffer)
+  if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
+  if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
+  // object-fit: cover, centred (paperMath.coverCrop)
+  const box = w / h, img = FRAME_W / FRAME_H;
+  if (img > box) { S.fh = FRAME_H; S.fw = FRAME_H * box; S.fx0 = (FRAME_W - S.fw) / 2; S.fy0 = 0; }
+  else { S.fw = FRAME_W; S.fh = FRAME_W / box; S.fx0 = 0; S.fy0 = (FRAME_H - S.fh) / 2; }
+  S.unitsPerPx = S.fw / canvas.width;
+  const rtScale = P ? P.view.rtScale : 0.5;
+  sizeRT(Math.ceil((S.fw + 2 * RT_MARGIN) / S.unitsPerPx * rtScale),
+         Math.ceil((S.fh + 2 * RT_MARGIN) / S.unitsPerPx * rtScale));
+  document.getElementById('liveCap').textContent =
+    `live · ${w}×${h} css @${dpr}× · ${canvas.width}×${canvas.height} px · RT ${rtW}×${rtH}${floatRT ? ' f16' : ' u8'}`;
+  uploadStatic();
+}
+
+// ===========================================================================
+// UNIFORMS. Static ones on a dial change; per-frame ones are scalars only.
+// ===========================================================================
+function applyDials(v) {
+  P = v;
+  S.mask = (v.stages.blobs1 ? 1 : 0) | (v.stages.rings2 ? 2 : 0) | (v.stages.dots3 ? 4 : 0) |
+           (v.stages.riso4 ? 8 : 0) | (v.stages.refraction5 ? 16 : 0);
+  parseColor(v.base.background, col3.bg);
+  parseColor(v.rings2.colorFrom, col3.ringA);
+  parseColor(v.rings2.colorTo, col3.ringB);
+  parseColor(v.dots3.colorFrom, col3.dotA);
+  parseColor(v.dots3.colorTo, col3.dotB);
+  parseColor(v.riso4.paper, col3.paper);
+  const r = v.riso4;
+  [r.ink1, r.ink2, r.ink3, r.ink5, r.ink7].forEach((c, k) => {
+    parseColor(c, inks, k * 3);
+    for (let j = 0; j < 3; j++) inkL[k * 3 + j] = Math.log(Math.max(inks[k * 3 + j] / Math.max(col3.paper[j], 1e-3), 0.05));
+    inkG[k] = Math.max(1e-6, inkL[k * 3] ** 2 + inkL[k * 3 + 1] ** 2 + inkL[k * 3 + 2] ** 2);
+    const a = (r.angle + k * r.inkAngleStep) * Math.PI / 180;
+    inkRot[k * 2] = Math.cos(a); inkRot[k * 2 + 1] = Math.sin(a);
+  });
+  let n = 0;
+  for (let a = 0; a < 4; a++) for (let b = a + 1; b < 5; b++, n++) {
+    const dot = (i, j) => inkL[i * 3] * inkL[j * 3] + inkL[i * 3 + 1] * inkL[j * 3 + 1] + inkL[i * 3 + 2] * inkL[j * 3 + 2];
+    const gaa = dot(a, a), gbb = dot(b, b), gab = dot(a, b);
+    const det = Math.max(gaa * gbb - gab * gab, 1e-6);
+    pairInv.set([gbb / det, -gab / det, -gab / det, gaa / det], n * 4);
+    pairG.set([gaa, gbb, gab], n * 3);
+  }
+  if (textBaseline !== v.base.baselineY && textReady) { textBaseline = v.base.baselineY; buildText(textBaseline); }
+  layout();
+}
+
+function uploadStatic() {
+  if (!P) return;
+  const v = P;
+  // pass A
+  gl.useProgram(A.p);
+  const ua = A.u;
+  const k = S.unitsPerPx / v.view.rtScale;           // frame units per RT texel
+  const rx0 = S.fx0 - RT_MARGIN, ry0 = S.fy0 - RT_MARGIN;
+  // RT row 0 is the frame's TOP row, so pass B reads it with v = 0 at the top.
+  gl.uniform4f(ua.uMap, rx0, ry0, k, k);
+  gl.uniform1f(ua.uAA, k);
+  gl.uniform2f(ua.uC0, ...CIRCLES[0]); gl.uniform2f(ua.uC1, ...CIRCLES[1]); gl.uniform2f(ua.uC2, ...CIRCLES[2]);
+  gl.uniform1f(ua.uR, CIRCLE_R);
+  gl.uniform1i(ua.uText, 1);
+  gl.uniform3fv(ua.uBg, col3.bg);
+  gl.uniform1f(ua.uBorder, v.base.border);
+  const b = v.blobs1;
+  gl.uniform4f(ua.uB1a, blobFreq(b.scale), b.detail / 100, b.threshold / 100, b.softness / 100);
+  gl.uniform2f(ua.uB1c, b.octaves, b.warp);
+  gl.uniform2f(ua.uLevels, b.levels.blackPoint / 255, b.levels.shadows / 100);
+  const rg = v.rings2;
+  gl.uniform1f(ua.uSmooth, rg.smoothing);
+  gl.uniform1f(ua.uLumaThr, rg.lumaThreshold);
+  gl.uniform3f(ua.uPert, rg.perturb.strength, rg.perturb.scale, rg.perturb.falloff);
+  gl.uniform3f(ua.uRad, rg.radial.strength, Math.round(rg.radial.frequency), rg.radial.scale);
+  const f5 = v.refraction5;
+  gl.uniform4f(ua.uR5a, blobFreq(f5.scale), f5.detail / 100, f5.threshold / 100, f5.softness / 100);
+  gl.uniform1f(ua.uR5Half, f5.noiseHalfRes ? 1 : 0);
+  // pass B
+  gl.useProgram(B.p);
+  const ub = B.u;
+  const u = S.unitsPerPx;
+  gl.uniform4f(ub.uView, S.fx0, S.fy0 + canvas.height * u, u, -u);
+  gl.uniform1f(ub.uAAB, u);
+  gl.uniform1i(ub.uRT, 0);
+  gl.uniform1i(ub.uRT2, 2);
+  gl.uniform1f(ub.uR5Half, v.refraction5.noiseHalfRes ? 1 : 0);
+  gl.uniform4f(ub.uRtUV, rx0, ry0, rtW * k, rtH * k);
+  gl.uniform4f(ub.uRingA, rg.count, rg.thickness, rg.spacing, rg.offset);
+  gl.uniform2f(ub.uRingB, rg.softness / 100, rg.phase / 100);
+  gl.uniform3fv(ub.uRingC0, col3.ringA); gl.uniform3fv(ub.uRingC1, col3.ringB);
+  const d = v.dots3;
+  gl.uniform4f(ub.uDot, FRAME_W / d.density, d.dotScale / 100, d.softness / 100, d.threshold / 100);
+  gl.uniform2f(ub.uDotB, d.sourceMix / 100, Number(d.mode));
+  gl.uniform3fv(ub.uDotC0, col3.dotA); gl.uniform3fv(ub.uDotC1, col3.dotB);
+  gl.uniform3f(ub.uDomeB, d.dome.strength, d.dome.scale / 100, d.dome.zOffset);
+  const r = v.riso4;
+  gl.uniform3fv(ub.uInk, inks); gl.uniform3fv(ub.uInkL, inkL); gl.uniform1fv(ub.uInkG, inkG); gl.uniform2fv(ub.uInkRot, inkRot);
+  gl.uniformMatrix2fv(ub.uPairInv, false, pairInv); gl.uniform3fv(ub.uPairG, pairG);
+  gl.uniform3fv(ub.uPaper, col3.paper);
+  // Halftone size is in frame units, floored at 2 device px so the grid tile does not alias to mush.
+  gl.uniform4f(ub.uRiso, Math.max(r.halftone, 2 * u), r.misregistration * 0.1, r.densityBoost, 1);
+  gl.uniform2f(ub.uRisoIn, r.inputContrast, r.inputBrightness);
+  const g = r.grade;
+  gl.uniform4f(ub.uGradeA, g.exposure / 100 * 4, 1 + g.contrast / 100, g.highlights / 100, g.shadows / 100);
+  gl.uniform3f(ub.uGradeB, g.saturation / 100, g.vibrance / 100, g.temperature / 100);
+  const f = v.refraction5;
+  gl.uniform4f(ub.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
+  gl.uniform2f(ub.uR5c, f.octaves, f.highlight);
+}
+
+// ===========================================================================
+// THE FRAME
+// ===========================================================================
+function draw(t, mask) {
+  const v = P;
+  const stepPx = v.base.marqueePx;
+  const marquee = stepPx > 0 ? (t * stepPx / v.base.marqueeSec) % STRIP_W : 0;
+  // pass A → RT
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, rtW, rtH);
+  gl.useProgram(A.p);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, textTex);
+  gl.uniform4f(A.u.uTextMap, TEXT_X - marquee, STRIP_Y0, STRIP_W, STRIP_H);
+  gl.uniform1f(A.u.uS1, mask & 1); gl.uniform1f(A.u.uS2, (mask >> 1) & 1);
+  const b = v.blobs1;
+  gl.uniform4f(A.u.uB1b, b.strength / 100, b.dispersion / 100, b.shadow / 100, t / loopSeconds(b.speed));
+  gl.uniform1f(A.u.uS5, (mask >> 4) & 1);
+  gl.uniform2f(A.u.uR5z, t / loopSeconds(v.refraction5.speed), v.refraction5.octaves);
+  gl.bindVertexArray(vao);
+  if (timerExt && !benching) beginQuery(0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (timerExt && !benching) gl.endQuery(timerExt.TIME_ELAPSED_EXT);
+  // pass B → screen
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(B.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, rtTex);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, rtTex2);
+  gl.uniform1f(B.u.uS2, (mask >> 1) & 1); gl.uniform1f(B.u.uS3, (mask >> 2) & 1);
+  gl.uniform1f(B.u.uS4, (mask >> 3) & 1); gl.uniform1f(B.u.uS5, (mask >> 4) & 1);
+  gl.uniform4f(B.u.uDome, S.domeX, S.domeY, v.dots3.dome.radius, S.amp);
+  const f = v.refraction5;
+  gl.uniform4f(B.u.uR5b, f.strength / 100, f.dispersionCut ? 0 : f.dispersion / 100, f.shadow / 100, t / loopSeconds(f.speed));
+  if (timerExt && !benching) beginQuery(1);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (timerExt && !benching) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); queryHead = (queryHead + 1) % QN; }
+}
+
+// The dome: a damped spring on the CPU, its centre and its height; uniforms only.
+function stepSpring(dt) {
+  const d = P.dots3.dome;
+  const k = d.spring * 10, c = (d.damping / 100) * 2 * Math.sqrt(k);
+  const on = S.pointerIn && !reduced();
+  const target = on ? 1 : 0;
+  if (on && S.amp < 0.01) { S.domeX = S.px; S.domeY = S.py; S.domeVX = S.domeVY = 0; }
+  const n = Math.max(1, Math.ceil(dt / (1 / 240))), h = dt / n;
+  for (let i = 0; i < n; i++) {
+    if (on) {
+      S.domeVX += ((S.px - S.domeX) * k - c * S.domeVX) * h; S.domeX += S.domeVX * h;
+      S.domeVY += ((S.py - S.domeY) * k - c * S.domeVY) * h; S.domeY += S.domeVY * h;
+    }
+    S.ampV += ((target - S.amp) * k - c * S.ampV) * h; S.amp += S.ampV * h;
+  }
+  if (!on && Math.abs(S.amp) < 1e-4 && Math.abs(S.ampV) < 1e-4) { S.amp = 0; S.ampV = 0; }
+}
+
+function tick(now) {
+  S.raf = requestAnimationFrame(tick);
+  const dt = Math.min(0.1, (now - S.last) / 1000 || 0);
+  S.last = now;
+  S.rafDt += ((dt * 1000) - S.rafDt) * 0.1;
+  if (reduced()) { S.t = 0; S.amp = 0; S.ampV = 0; }
+  else { if (!P.view.freeze) S.t += dt; stepSpring(dt); }
+  draw(S.t, S.mask);
+  if (timerExt) pollQueries();
+  if (now - S.readoutAt > 500) { S.readoutAt = now; readout(); }
+}
+function start() {
+  if (S.running || document.hidden) return;
+  S.running = true;
+  S.last = performance.now();
+  S.raf = requestAnimationFrame(tick);
+}
+function stop() { S.running = false; cancelAnimationFrame(S.raf); }
+document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
+reducedMQ.addEventListener('change', () => readout());
+
+// pointer → frame units
+canvas.addEventListener('pointermove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  S.px = S.fx0 + (e.clientX - r.left) / r.width * S.fw;
+  S.py = S.fy0 + (e.clientY - r.top) / r.height * S.fh;
+  S.pointerIn = true;
+});
+canvas.addEventListener('pointerleave', () => { S.pointerIn = false; });
+
+// ===========================================================================
+// GPU TIME. EXT_disjoint_timer_query_webgl2 where the browser has it, else the
+// rAF delta — which is the frame interval, NOT the shader's cost.
+//
+// The Benchmark action is the number to trust: batches of forty frames, the
+// framebuffer invalidated between frames so a tile-based GPU shades every one
+// (docs/sky.md, "Frame time"), closed by a one-pixel readPixels, minus the
+// floor. Chrome/ANGLE on an M1 Max DOES expose the timer query, and it reads
+// about 3× the wall clock of the same frames (timerCheck(): 3.43ms/frame for
+// frames that finished at 1.07ms/frame) — no GPU does more work than the wall
+// clock allows, so on this stack the query is not a measurement.
+// ===========================================================================
+const QN = 8;
+const queries = timerExt ? Array.from({ length: QN * 2 }, () => gl.createQuery()) : [];
+const queryBusy = new Uint8Array(QN);
+let queryHead = 0;
+let benching = false;
+function beginQuery(pass) {
+  if (pass === 0 && queryBusy[queryHead]) { pollQueries(); }
+  gl.beginQuery(timerExt.TIME_ELAPSED_EXT, queries[queryHead * 2 + pass]);
+  if (pass === 1) queryBusy[queryHead] = 1;
+}
+function pollQueries() {
+  const disjoint = gl.getParameter(timerExt.GPU_DISJOINT_EXT);
+  for (let i = 0; i < QN; i++) {
+    if (!queryBusy[i] || i === queryHead) continue;
+    const qa = queries[i * 2], qb = queries[i * 2 + 1];
+    if (!gl.getQueryParameter(qb, gl.QUERY_RESULT_AVAILABLE)) continue;
+    if (!disjoint) {
+      const a = gl.getQueryParameter(qa, gl.QUERY_RESULT) / 1e6, b = gl.getQueryParameter(qb, gl.QUERY_RESULT) / 1e6;
+      S.gpuA += (a - S.gpuA) * 0.1; S.gpuB += (b - S.gpuB) * 0.1; S.gpuHave = true;
+    }
+    queryBusy[i] = 0;
+  }
+}
+
+const px1 = new Uint8Array(4);
+const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1);
+const STAGE_NAMES = ['1 blobs', '2 rings', '3 dots', '4 riso+grade', '5 refraction'];
+function drawFloor() {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, rtW, rtH);
+  gl.useProgram(F.p);
+  gl.bindVertexArray(vao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function timeMask(mask, batches, batch) {
+  const frame = mask < 0 ? drawFloor : (t) => draw(t, mask);
+  frame(1.234); sync();
+  const out = [];
+  for (let r = 0; r < batches; r++) {
+    const t0 = performance.now();
+    for (let i = 0; i < batch; i++) {
+      if (i > 0) gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR]);
+      frame(2 + (r * batch + i) / 60);
+    }
+    sync();
+    out.push((performance.now() - t0) / batch);
+  }
+  out.sort((a, b) => a - b);
+  return out[Math.floor(out.length / 2)];
+}
+/**
+ * Median ms per frame: everything, each stage off in turn, the bare base, and
+ * the FLOOR — two do-nothing passes into the same targets. The floor is what a
+ * frame costs before any shading (submission, two render passes, the sync
+ * amortised over the batch), so "GPU" below is always measured minus floor.
+ * Three rounds, interleaved, median of each.
+ */
+function bench({ batches = 12, batch = 40, rounds = 3 } = {}) {
+  benching = true;
+  const configs = [['all', 31], ...STAGE_NAMES.map((n, i) => [`−${n}`, 31 & ~(1 << i)]), ['base only', 0], ['floor', -1]];
+  const runs = configs.map(() => []);
+  for (let k = 0; k < rounds; k++) configs.forEach(([, m], i) => runs[i].push(timeMask(m, batches, batch)));
+  benching = false;
+  const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  const res = { size: `${canvas.width}×${canvas.height}`, rt: `${rtW}×${rtH}`, ms: {} };
+  configs.forEach(([name], i) => (res.ms[name] = med(runs[i])));
+  res.stage = {};
+  STAGE_NAMES.forEach((n, i) => (res.stage[n] = res.ms.all - res.ms[`−${n}`]));
+  res.gpu = res.ms.all - res.ms.floor;
+  const rows = [`<b>bench</b> ${res.size} (RT ${res.rt}) — median ms/frame, ${rounds}×${batches}×${batch} frames`,
+    `  <b>shading    ${res.gpu.toFixed(3)}</b>  (all on − floor)`,
+    `  all on        ${res.ms.all.toFixed(3)}   floor ${res.ms.floor.toFixed(3)}`,
+    `  base only     ${(res.ms['base only'] - res.ms.floor).toFixed(3)}  (− floor)`,
+    ...STAGE_NAMES.map((n) => `  ${n.padEnd(14)}${res.stage[n].toFixed(3)}  (all − this off)`)];
+  S.benchText = rows.join('\n');
+  readout();
+  return res;
+}
+
+/**
+ * The timer query, but under the benchmark's load: one TIME_ELAPSED query
+ * around 40 back-to-back frames. Results only become available in a later task
+ * (WebGL rule), hence async. Compare with bench(): in the rAF loop the GPU idles
+ * between frames and runs at a low clock, so the live readout reads HIGHER than
+ * the same work measured saturated.
+ */
+async function timerCheck(frames = 40) {
+  if (!timerExt) return null;
+  benching = true;
+  const q = gl.createQuery();
+  draw(1, S.mask); sync();
+  gl.beginQuery(timerExt.TIME_ELAPSED_EXT, q);
+  for (let i = 0; i < frames; i++) {
+    if (i > 0) gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR]);
+    draw(2 + i / 60, S.mask);
+  }
+  gl.endQuery(timerExt.TIME_ELAPSED_EXT);
+  sync();
+  benching = false;
+  for (let i = 0; i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 16));
+    if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) {
+      const disjoint = gl.getParameter(timerExt.GPU_DISJOINT_EXT);
+      const ms = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 / frames;
+      gl.deleteQuery(q);
+      return disjoint ? null : ms;
+    }
+  }
+  return null;
+}
+
+function readout() {
+  const on = STAGE_NAMES.map((n, i) => ((S.mask >> i) & 1 ? n.split(' ')[0] : '·')).join(' ');
+  const gpu = timerExt
+    ? (S.gpuHave ? `timer query ${(S.gpuA + S.gpuB).toFixed(3)} ms  (A ${S.gpuA.toFixed(3)} · B ${S.gpuB.toFixed(3)})  — reads ~3× high on ANGLE/Metal; Benchmark is the number` : 'timer query … waiting')
+    : `rAF Δ <b>${S.rafDt.toFixed(1)} ms</b>  (no timer query here — that is the frame interval, not GPU time; run Benchmark)`;
+  const motion = reduced() ? 'reduced motion: t = 0, no mouse' : `t ${S.t.toFixed(1)}s`;
+  document.getElementById('readout').innerHTML =
+    `${gpu}\nstages ${on}   ${motion}   ${fontNote}\n${S.benchText}`;
+}
+
+// ===========================================================================
+// BOOT
+// ===========================================================================
+let textReady = false, textBaseline = DIALS.base.baselineY[0];
+{
+  const ref = document.getElementById('ref');
+  ref.addEventListener('error', () => refBox.classList.add('no-ref'));
+  if (ref.complete && ref.naturalWidth === 0) refBox.classList.add('no-ref');
+}
+(async () => {
+  const advance = await buildText(textBaseline);
+  textReady = true;
+  console.info(`cover: "Rive" advance ${advance.toFixed(1)} units (strip ${STRIP_W}), ${fontNote}`);
+  const { createDialKit, createDialRoot } = window.DialKit;
+  createDialRoot({ position: 'top-right', theme: 'dark', defaultOpen: true });
+  const dial = createDialKit('Cover shader · rive-site', DIALS, {
+    id: 'cover-shader-prototype',
+    onAction: (a) => { if (a === 'view.bench') setTimeout(() => bench(), 0); },
+  });
+  dial.subscribe(applyDials);
+  window.addEventListener('resize', () => layout());
+  window.__cover = {
+    dial, bench, timerCheck, draw: (t) => draw(t, S.mask), state: S,
+    view: (size, dpr2 = true) => dial.setValues({ view: { size, dpr2 } }),
+    ready: true,
+  };
+  start();
+})();
+</script>
+</body>
+</html>
