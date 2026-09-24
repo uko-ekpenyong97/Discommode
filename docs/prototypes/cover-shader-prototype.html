@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cover shader prototype — rive-site (card 02)</title>
+<!--
+  COVER SHADER PROTOTYPE — "Shader variation 3 — Soft contour field", card 02.
+
+  One purpose-built shader in place of the Figma frame's eight stacked effects.
+  Written as the thing the detail paper plane will eventually sample: GLSL ES 3.0,
+  WebGL2, two fragment passes, one texture (the "Rive" glyph strip's SDF), and
+  PREMULTIPLIED RGBA out — cover-ref.png is not opaque (ground 112/255, inks
+  50–100%), and matching its alpha is what makes it read the same over any
+  backdrop.
+
+    pass A  (RT, half res)   the picture as distances: letters (stage 1's shift
+                              applied), the ring field (2's perturbation), the
+                              same read at the particles' colour offset; and on a
+                              second target, stage 5's lens field (the slugs)
+    pass B  (screen)          5 picks where to look (a minifying lens), then the
+                              paper, 3's particles printed as 4's misregistered
+                              inks, and 2's rings through the lenses
+
+  The Figma values were the starting point; cover-ref.png is ground truth, and
+  where they disagree the dial comments say what a value now means. Every
+  fitted number (ink colours and opacities, cellK, the misregistration, the
+  colour shift) was measured off cover-ref.png at native size with
+  per-region mean colour, alpha and pixel-class fractions.
+
+  Everything is in FRAME UNITS (the Figma frame, 900×1326), cover-cropped to the
+  box the way `coverCrop` in paperMath.ts crops a card face. "uv" in the brief
+  means frame units / 900, i.e. the frame's width is 1.
+
+  THE TUNING BENCH for the live cover the site ships (docs/covers.md). Its
+  shader, its dials and its text SDF are the APP's — src/covers/covers/
+  rive-site.glsl, rive-site.json, riveText.ts — loaded here, so what is tuned
+  on this page is what ships; Copy from the panel pastes into rive-site.json.
+  The bench's own controls (size, DPR, freeze, lens mask, benchmark) stay here.
+
+  Open at /docs/prototypes/cover-shader-prototype.html under `npm run dev`.
+  window.__cover exposes bench(), view(), readRGBA() and the dial controller.
+-->
+<link rel="stylesheet" href="/node_modules/dialkit/dist/vanilla/styles.css" />
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #0b0b0e; overflow: hidden;
+               font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #cfd0d6; }
+  .stage { position: fixed; inset: 0; display: flex; align-items: center; gap: 24px; padding: 0 24px; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  figcaption { font-size: 10px; letter-spacing: .14em; color: #7d7f8a; text-transform: uppercase; }
+  .box { position: relative; background: #16161b; overflow: hidden; border-radius: 6px; }
+  .box img, .box canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .box img { object-fit: cover; }
+  .missing { position: absolute; inset: 0; display: none; place-items: center; text-align: center;
+             padding: 16px; font-size: 11px; line-height: 1.6; color: #8a8c98; }
+  .box.no-ref .missing { display: grid; }
+  .box.no-ref img { display: none; }
+  .readout { position: fixed; left: 24px; bottom: 16px; margin: 0; font-size: 11px; line-height: 1.5;
+             color: #c9cad3; white-space: pre; font-variant-numeric: tabular-nums; }
+  .readout b { color: #fff; font-weight: 500; }
+</style>
+</head>
+<body>
+<main class="stage">
+  <figure>
+    <div class="box" id="refBox">
+      <img id="ref" src="cover-ref.png" alt="Figma reference" />
+      <div class="missing">cover-ref.png is missing.<br />Export the Figma frame at 900×1326<br />to docs/prototypes/cover-ref.png</div>
+    </div>
+    <figcaption>reference · Figma</figcaption>
+  </figure>
+  <figure>
+    <div class="box" id="liveBox"><canvas id="c"></canvas></div>
+    <figcaption id="liveCap">live</figcaption>
+  </figure>
+</main>
+<pre class="readout" id="readout"></pre>
+
+<script src="/node_modules/dialkit/dist/vanilla/browser.global.js"></script>
+<script type="module">
+// The shader and its tuned dials are the APP's (src/covers/covers/rive-site.*):
+// this page loads them, so what is tuned here is what ships. Copy from the
+// panel pastes into rive-site.json.
+import coverGlsl from '/src/covers/covers/rive-site.glsl?raw';
+import coverDials from '/src/covers/covers/rive-site.json';
+import { splitCoverGlsl } from '/src/covers/glsl.ts';
+import { riveTextSdf, STRIP_W, STRIP_H, TEXT_X } from '/src/covers/covers/riveText.ts';
+// ===========================================================================
+// THE FRAME. Figma's numbers, in frame units.
+// ===========================================================================
+const FRAME_W = 900, FRAME_H = 1326;
+const CIRCLE_R = 439.68 / 2;
+const CIRCLES = [[266.0, 478.0], [642.0, 106.2], [633.8, 1065.6]];
+/** The "Rive" strip (src/covers/covers/riveText.ts): where its top row sits, once built. */
+let STRIP_Y0 = 204 - 300;
+/** Extra frame units around the visible crop in the RT, for refraction and misregistration to read. */
+const RT_MARGIN = 48;
+
+// ===========================================================================
+// GLSL
+// ===========================================================================
+const VERT = `#version 300 es
+void main(){ vec2 p = vec2(float((gl_VertexID<<1)&2), float(gl_VertexID&2)); gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }`;
+
+const { a: FRAG_A, b: FRAG_B } = splitCoverGlsl(coverGlsl, { FRAME_W, FRAME_H });
+
+// ===========================================================================
+// DIALS — Figma's values where cover-ref.png agrees with them; where it does
+// not, the reference wins and the comment says what the value now means.
+// ===========================================================================
+const DIALS = {
+  // The bench's own controls; everything below them is the cover's (rive-site.json).
+  view: {
+    size: { type: 'select', default: 'hero', options: [
+      { value: 'tile', label: 'grid tile 220×286' },
+      { value: 'hero', label: 'detail hero 10:13' },
+      { value: 'frame', label: 'whole frame 900:1326' },
+      { value: 'native', label: 'native 900×1326 @1× (for diffing)' },
+    ] },
+    dpr2: true,
+    freeze: false,
+    reducedMotion: false,
+    lensMask: false,            // debug: stage 5's lens mask alone
+    bench: { type: 'action', label: 'Benchmark: GPU ms per stage' },
+  },
+  ...coverDials,
+};
+
+/** Figma's Moving blobs loop length: 90 − speed × 0.78 seconds. */
+const loopSeconds = (speed) => Math.max(1, 90 - speed * 0.78);
+/** Scale 100% = 2.2 noise cells across the frame's width; bigger scale, bigger blobs. */
+const blobFreq = (scalePct) => 2.2 / Math.max(0.05, scalePct / 100);
+
+// ===========================================================================
+// GL
+// ===========================================================================
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', {
+  alpha: true, antialias: false, depth: false, stencil: false,
+  premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance',
+});
+const floatRT = !!gl.getExtension('EXT_color_buffer_float');
+const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src.split('\n').map((l, i) => `${i + 1}: ${l}`).join('\n'));
+  return s;
+}
+function program(frag) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, frag));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) {
+    const name = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, '');
+    u[name] = gl.getUniformLocation(p, name);
+  }
+  return { p, u };
+}
+const A = program(FRAG_A);
+const B = program(FRAG_B);
+/** The benchmark's floor: the same two passes, same targets, a shader that does nothing. */
+const F = program('#version 300 es\nprecision highp float; out vec4 o; void main(){ o = vec4(0.0, 0.0, 0.0, 1.0); }');
+const vao = gl.createVertexArray();
+
+// The RT: pass A's output. RGBA16F keeps the ring SDF exact to well under a unit;
+// without the float extension it falls back to RGBA8 (and the rings will step).
+const rtTex = gl.createTexture();
+const rtTex2 = gl.createTexture();
+const fbo = gl.createFramebuffer();
+let rtW = 0, rtH = 0;
+function sizeRT(w, h) {
+  if (w === rtW && h === rtH) return;
+  rtW = w; rtH = h;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  [rtTex, rtTex2].forEach((tex, i) => {
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, floatRT ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA, floatRT ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, tex, 0);
+  });
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+// ===========================================================================
+// THE ONLY TEXTURE: "Rive", Inter Regular 757.7px, drawn once to a 2D canvas
+// and turned into a signed distance field on the CPU at load.
+//
+// Why a precomputed SDF and not a 4-tap gradient per frame: the rings need the
+// distance up to ~250 units from the glyphs, which no local gradient can give,
+// and the dots and misregistration read the shape at up to nine points per
+// pixel. One R16F tap per read is the cheapest there is. Cost: ~40–80ms once.
+// ===========================================================================
+const textTex = gl.createTexture();
+let fontNote = '';
+async function buildText(textTop) {
+  const t = await riveTextSdf(textTop);
+  STRIP_Y0 = t.y0;
+  textBaselineAt = t.baseline;
+  textStemX = t.stemX;
+  fontNote = 'Inter 3.19 (shipped woff2)';
+  gl.bindTexture(gl.TEXTURE_2D, textTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, t.width, t.height, 0, gl.RED, gl.FLOAT, t.data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t.advance;
+}
+
+// ===========================================================================
+// STATE. Everything the frame loop touches is allocated here, once.
+// ===========================================================================
+const S = {
+  // layout
+  cssW: 0, cssH: 0, dpr: 2, fx0: 0, fy0: 0, fw: FRAME_W, fh: FRAME_H, unitsPerPx: 1,
+  // time
+  t: 0, last: 0, raf: 0, running: false,
+  // stages bitmask: 1 blobs, 2 rings, 4 dots, 8 riso, 16 refraction
+  mask: 31,
+  // pointer + dome spring, in frame units
+  pointerIn: false, px: 0, py: 0,
+  domeX: 450, domeY: 663, domeVX: 0, domeVY: 0, amp: 0, ampV: 0,
+  // readout
+  gpuA: 0, gpuB: 0, gpuHave: false, rafDt: 16.7, readoutAt: 0, benchText: '',
+};
+const reducedMQ = matchMedia('(prefers-reduced-motion: reduce)');
+let P = null;          // resolved dial values (replaced on change, not per frame)
+const col3 = {};
+for (const k of ['bg', 'bgPic', 'ringA', 'ringB', 'dotA', 'dotB', 'paper', 'inkG', 'inkB', 'inkY', 'inkN']) col3[k] = new Float32Array(3);
+
+// CSS colour → linear-free sRGB floats, via a 1×1 2D canvas (any CSS the dial emits).
+const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+probe.canvas.width = probe.canvas.height = 1;
+function parseColor(css, out, o = 0) {
+  probe.clearRect(0, 0, 1, 1);
+  probe.fillStyle = '#000';
+  probe.fillStyle = css;
+  probe.fillRect(0, 0, 1, 1);
+  const d = probe.getImageData(0, 0, 1, 1).data;
+  out[o] = d[0] / 255; out[o + 1] = d[1] / 255; out[o + 2] = d[2] / 255;
+}
+const reduced = () => reducedMQ.matches || (P && P.view.reducedMotion);
+
+// ===========================================================================
+// LAYOUT
+// ===========================================================================
+const refBox = document.getElementById('refBox');
+const liveBox = document.getElementById('liveBox');
+function layout() {
+  const size = P ? P.view.size : 'hero';
+  let w, h;
+  if (size === 'tile') { w = 220; h = 286; }
+  else if (size === 'native') { w = FRAME_W; h = FRAME_H; }
+  else {
+    // the hero rect (src/layout/hero.ts): detailCardScale 0.82 of the viewport,
+    // clamped so each band keeps 80px
+    h = Math.max(120, Math.min(window.innerHeight * 0.82, window.innerHeight - 160));
+    w = size === 'frame' ? h * FRAME_W / FRAME_H : h * 10 / 13;
+  }
+  w = Math.round(w); h = Math.round(h);
+  // native: top-aligned, so a screenshot of the canvas is the frame pixel for pixel
+  document.querySelector('.stage').style.alignItems = size === 'native' ? 'flex-start' : '';
+  for (const b of [refBox, liveBox]) { b.style.width = w + 'px'; b.style.height = h + 'px'; }
+  const dpr = size === 'native' || (P && !P.view.dpr2) ? 1 : 2;
+  S.cssW = w; S.cssH = h; S.dpr = dpr;
+  // (only on a real change: assigning the size reallocates the drawing buffer)
+  if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
+  if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
+  // object-fit: cover, centred (paperMath.coverCrop)
+  const box = w / h, img = FRAME_W / FRAME_H;
+  if (img > box) { S.fh = FRAME_H; S.fw = FRAME_H * box; S.fx0 = (FRAME_W - S.fw) / 2; S.fy0 = 0; }
+  else { S.fw = FRAME_W; S.fh = FRAME_W / box; S.fx0 = 0; S.fy0 = (FRAME_H - S.fh) / 2; }
+  S.unitsPerPx = S.fw / canvas.width;
+  const rtScale = P ? P.quality.rtScale : 0.5;
+  sizeRT(Math.ceil((S.fw + 2 * RT_MARGIN) / S.unitsPerPx * rtScale),
+         Math.ceil((S.fh + 2 * RT_MARGIN) / S.unitsPerPx * rtScale));
+  document.getElementById('liveCap').textContent =
+    `live · ${w}×${h} css @${dpr}× · ${canvas.width}×${canvas.height} px · RT ${rtW}×${rtH}${floatRT ? ' f16' : ' u8'}`;
+  uploadStatic();
+}
+
+// ===========================================================================
+// UNIFORMS. Static ones on a dial change; per-frame ones are scalars only.
+// ===========================================================================
+function applyDials(v) {
+  P = v;
+  S.mask = (v.stages.blobs1 ? 1 : 0) | (v.stages.rings2 ? 2 : 0) | (v.stages.dots3 ? 4 : 0) |
+           (v.stages.riso4 ? 8 : 0) | (v.stages.refraction5 ? 16 : 0);
+  parseColor(v.base.background, col3.bg);
+  // the picture's background through the first Color adjust (levels), for stage 4 off
+  const bp = v.blobs1.levels.blackPoint / 255, sh = v.blobs1.levels.shadows / 100;
+  const l0 = 0.2126 * col3.bg[0] + 0.7152 * col3.bg[1] + 0.0722 * col3.bg[2];
+  for (let j = 0; j < 3; j++) {
+    const c = Math.max(col3.bg[j] - bp, 0) / (1 - bp);
+    col3.bgPic[j] = c * (1 + sh * 0.5 * (1 - Math.min(1, Math.max(0, l0 / 0.5))));
+  }
+  parseColor(v.rings2.colorFrom, col3.ringA);
+  parseColor(v.rings2.colorTo, col3.ringB);
+  parseColor(v.dots3.colorFrom, col3.dotA);
+  parseColor(v.dots3.colorTo, col3.dotB);
+  const r = v.riso4;
+  parseColor(r.paper, col3.paper);
+  parseColor(r.inkGreen, col3.inkG);
+  parseColor(r.inkBlue, col3.inkB);
+  parseColor(r.inkYellow, col3.inkY);
+  parseColor(r.inkNavy, col3.inkN);
+  if (textBaseline !== v.base.textTop && textReady) { textBaseline = v.base.textTop; buildText(textBaseline); }
+  layout();
+}
+
+function slugUniforms(u, f) {
+  gl.uniform4f(u.uSlugA, f.slugCell, f.slugWidthMin, f.slugWidthMax, f.slugPresence);
+  gl.uniform4f(u.uSlugB, f.slugLengthMin, f.slugLengthMax, f.slugTilt * 2 * Math.PI / 180, f.slugBend);
+  gl.uniform1f(u.uSlugDrift, f.slugDrift);
+  gl.uniform1f(u.uSlugSeed, f.slugSeed);
+}
+
+function uploadStatic() {
+  if (!P) return;
+  const v = P;
+  // pass A
+  gl.useProgram(A.p);
+  const ua = A.u;
+  const k = S.unitsPerPx / v.quality.rtScale;           // frame units per RT texel
+  const rx0 = S.fx0 - RT_MARGIN, ry0 = S.fy0 - RT_MARGIN;
+  // RT row 0 is the frame's TOP row, so pass B reads it with v = 0 at the top.
+  gl.uniform4f(ua.uMap, rx0, ry0, k, k);
+  gl.uniform2f(ua.uC0, ...CIRCLES[0]); gl.uniform2f(ua.uC1, ...CIRCLES[1]); gl.uniform2f(ua.uC2, ...CIRCLES[2]);
+  gl.uniform1f(ua.uR, CIRCLE_R);
+  gl.uniform1i(ua.uText, 1);
+  gl.uniform1f(ua.uBorder, v.base.border);
+  gl.uniform1f(ua.uCircles, v.base.circleVisible ? 1 : 0);
+  const b = v.blobs1;
+  gl.uniform4f(ua.uB1a, blobFreq(b.scale), b.detail / 100, b.threshold / 100, b.softness / 100);
+  gl.uniform2f(ua.uB1c, b.octaves, b.warp);
+  const d = v.dots3;
+  gl.uniform2f(ua.uColShift, d.colourShiftX, d.colourShiftY);
+  const rg = v.rings2;
+  gl.uniform1f(ua.uSmooth, rg.smoothing);
+  gl.uniform1f(ua.uLumaThr, rg.lumaThreshold);
+  gl.uniform3f(ua.uPert, rg.perturb.strength, rg.perturb.scale, rg.perturb.falloff);
+  gl.uniform3f(ua.uRad, rg.radial.strength, Math.round(rg.radial.frequency), rg.radial.scale);
+  const f = v.refraction5;
+  gl.uniform4f(ua.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
+  gl.uniform3f(ua.uR5s, f.slugs ? 1 : 0, f.minify, f.rimSmear);
+  slugUniforms(ua, f);
+  gl.uniform1f(ua.uR5Half, f.noiseHalfRes ? 1 : 0);
+  // pass B
+  gl.useProgram(B.p);
+  const ub = B.u;
+  const u = S.unitsPerPx;
+  gl.uniform4f(ub.uView, S.fx0, S.fy0 + canvas.height * u, u, -u);
+  gl.uniform1f(ub.uAAB, u);
+  gl.uniform1i(ub.uRT, 0);
+  gl.uniform1i(ub.uRT2, 2);
+  gl.uniform1f(ub.uR5Half, f.noiseHalfRes ? 1 : 0);
+  gl.uniform1f(ub.uDebug, v.view.lensMask ? 1 : 0);
+  gl.uniform4f(ub.uRtUV, rx0, ry0, rtW * k, rtH * k);
+  gl.uniform3fv(ub.uBgPic, col3.bgPic);
+  gl.uniform4f(ub.uRingA, rg.count, rg.thickness, rg.spacing, rg.offset);
+  gl.uniform2f(ub.uRingB, rg.softness / 100, rg.phase / 100);
+  gl.uniform2f(ub.uRingV, rg.opacity, rg.outsideLenses);
+  gl.uniform3fv(ub.uRingC0, col3.ringA); gl.uniform3fv(ub.uRingC1, col3.ringB);
+  // two lattices share the density, so each is √2 coarser
+  const cell = d.cellK / d.density * Math.SQRT2;
+  const radius = d.dotScale / 100 * (d.cellK / d.density) / 2;
+  gl.uniform4f(ub.uDot, cell, radius, d.softness / 100, d.threshold / 100);
+  const jitter = Math.max(0, 1 - 2 * radius / cell) * d.jitter / 100;
+  gl.uniform4f(ub.uDotB, d.sourceMix / 100, Number(d.mode), d.band, jitter);
+  gl.uniform3fv(ub.uDotC0, col3.dotA); gl.uniform3fv(ub.uDotC1, col3.dotB);
+  gl.uniform3f(ub.uDomeB, d.dome.strength, d.dome.scale / 100, d.dome.zOffset);
+  const r = v.riso4;
+  gl.uniform3fv(ub.uPaper, col3.paper);
+  gl.uniform3fv(ub.uInkG, col3.inkG); gl.uniform3fv(ub.uInkB, col3.inkB);
+  gl.uniform3fv(ub.uInkY, col3.inkY); gl.uniform3fv(ub.uInkN, col3.inkN);
+  gl.uniform4f(ub.uMis, r.blueDx, r.blueDy, r.yellowDx, r.yellowDy);
+  gl.uniform4f(ub.uInkS, r.blueSize, r.yellowSize, r.navySize, r.yellowChance);
+  gl.uniform1f(ub.uPale, r.pale);
+  gl.uniform1f(ub.uPaperA, r.paperOpacity);
+  gl.uniform4f(ub.uInkA, r.greenOpacity, r.blueOpacity, r.yellowOpacity, r.navyOpacity);
+  const g = r.grade;
+  gl.uniform4f(ub.uGradeA, g.exposure / 100 * 4, 1 + g.contrast / 100, g.highlights / 100, g.shadows / 100);
+  gl.uniform3f(ub.uGradeB, g.saturation / 100, g.vibrance / 100, g.temperature / 100);
+  gl.uniform4f(ub.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
+  gl.uniform2f(ub.uR5c, f.octaves, f.highlight);
+  gl.uniform3f(ub.uR5s, f.slugs ? 1 : 0, f.minify, f.rimSmear);
+  slugUniforms(ub, f);
+}
+
+// ===========================================================================
+// THE FRAME
+// ===========================================================================
+function draw(t, mask) {
+  const v = P;
+  const stepPx = v.base.marqueePx;
+  const marquee = stepPx > 0 ? (t * stepPx / v.base.marqueeSec) % STRIP_W : 0;
+  // pass A → RT
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, rtW, rtH);
+  gl.useProgram(A.p);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, textTex);
+  gl.uniform4f(A.u.uTextMap, TEXT_X - marquee, STRIP_Y0, STRIP_W, STRIP_H);
+  gl.uniform1f(A.u.uS1, mask & 1); gl.uniform1f(A.u.uS2, (mask >> 1) & 1);
+  const b = v.blobs1;
+  gl.uniform4f(A.u.uB1b, 0.075 * 900 * b.strength / 100, b.shift / 100, b.wobble / 100, t / loopSeconds(b.speed));
+  gl.uniform1f(A.u.uS5, (mask >> 4) & 1);
+  gl.uniform2f(A.u.uR5z, t / loopSeconds(v.refraction5.speed), v.refraction5.octaves);
+  gl.bindVertexArray(vao);
+  if (timerExt && !benching) beginQuery(0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (timerExt && !benching) gl.endQuery(timerExt.TIME_ELAPSED_EXT);
+  // pass B → screen
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.useProgram(B.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, rtTex);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, rtTex2);
+  gl.uniform1f(B.u.uS2, (mask >> 1) & 1); gl.uniform1f(B.u.uS3, (mask >> 2) & 1);
+  gl.uniform1f(B.u.uS4, (mask >> 3) & 1); gl.uniform1f(B.u.uS5, (mask >> 4) & 1);
+  gl.uniform4f(B.u.uDome, S.domeX, S.domeY, v.dots3.dome.radius, S.amp);
+  const f = v.refraction5;
+  gl.uniform4f(B.u.uR5b, f.strength / 100, f.dispersionCut ? 0 : f.dispersion / 100, f.shadow / 100, t / loopSeconds(f.speed));
+  if (timerExt && !benching) beginQuery(1);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  if (timerExt && !benching) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); queryHead = (queryHead + 1) % QN; }
+}
+
+// The dome: a damped spring on the CPU, its centre and its height; uniforms only.
+function stepSpring(dt) {
+  const d = P.dots3.dome;
+  const k = d.spring * 10, c = (d.damping / 100) * 2 * Math.sqrt(k);
+  const on = S.pointerIn && !reduced();
+  const target = on ? 1 : 0;
+  if (on && S.amp < 0.01) { S.domeX = S.px; S.domeY = S.py; S.domeVX = S.domeVY = 0; }
+  const n = Math.max(1, Math.ceil(dt / (1 / 240))), h = dt / n;
+  for (let i = 0; i < n; i++) {
+    if (on) {
+      S.domeVX += ((S.px - S.domeX) * k - c * S.domeVX) * h; S.domeX += S.domeVX * h;
+      S.domeVY += ((S.py - S.domeY) * k - c * S.domeVY) * h; S.domeY += S.domeVY * h;
+    }
+    S.ampV += ((target - S.amp) * k - c * S.ampV) * h; S.amp += S.ampV * h;
+  }
+  if (!on && Math.abs(S.amp) < 1e-4 && Math.abs(S.ampV) < 1e-4) { S.amp = 0; S.ampV = 0; }
+}
+
+function tick(now) {
+  S.raf = requestAnimationFrame(tick);
+  const dt = Math.min(0.1, (now - S.last) / 1000 || 0);
+  S.last = now;
+  S.rafDt += ((dt * 1000) - S.rafDt) * 0.1;
+  if (reduced()) { S.t = 0; S.amp = 0; S.ampV = 0; }
+  else { if (!P.view.freeze) S.t += dt; stepSpring(dt); }
+  draw(S.t, S.mask);
+  if (timerExt) pollQueries();
+  if (now - S.readoutAt > 500) { S.readoutAt = now; readout(); }
+}
+function start() {
+  if (S.running || document.hidden) return;
+  S.running = true;
+  S.last = performance.now();
+  S.raf = requestAnimationFrame(tick);
+}
+function stop() { S.running = false; cancelAnimationFrame(S.raf); }
+document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
+reducedMQ.addEventListener('change', () => readout());
+
+// pointer → frame units
+canvas.addEventListener('pointermove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  S.px = S.fx0 + (e.clientX - r.left) / r.width * S.fw;
+  S.py = S.fy0 + (e.clientY - r.top) / r.height * S.fh;
+  S.pointerIn = true;
+});
+canvas.addEventListener('pointerleave', () => { S.pointerIn = false; });
+
+// ===========================================================================
+// GPU TIME. EXT_disjoint_timer_query_webgl2 where the browser has it, else the
+// rAF delta — which is the frame interval, NOT the shader's cost.
+//
+// The Benchmark action is the number to trust: batches of forty frames, the
+// framebuffer invalidated between frames so a tile-based GPU shades every one
+// (docs/sky.md, "Frame time"), closed by a one-pixel readPixels, minus the
+// floor. Chrome/ANGLE on an M1 Max DOES expose the timer query, and it reads
+// about 3× the wall clock of the same frames (timerCheck(): 3.43ms/frame for
+// frames that finished at 1.07ms/frame) — no GPU does more work than the wall
+// clock allows, so on this stack the query is not a measurement.
+// ===========================================================================
+const QN = 8;
+const queries = timerExt ? Array.from({ length: QN * 2 }, () => gl.createQuery()) : [];
+const queryBusy = new Uint8Array(QN);
+let queryHead = 0;
+let benching = false;
+function beginQuery(pass) {
+  if (pass === 0 && queryBusy[queryHead]) { pollQueries(); }
+  gl.beginQuery(timerExt.TIME_ELAPSED_EXT, queries[queryHead * 2 + pass]);
+  if (pass === 1) queryBusy[queryHead] = 1;
+}
+function pollQueries() {
+  const disjoint = gl.getParameter(timerExt.GPU_DISJOINT_EXT);
+  for (let i = 0; i < QN; i++) {
+    if (!queryBusy[i] || i === queryHead) continue;
+    const qa = queries[i * 2], qb = queries[i * 2 + 1];
+    if (!gl.getQueryParameter(qb, gl.QUERY_RESULT_AVAILABLE)) continue;
+    if (!disjoint) {
+      const a = gl.getQueryParameter(qa, gl.QUERY_RESULT) / 1e6, b = gl.getQueryParameter(qb, gl.QUERY_RESULT) / 1e6;
+      S.gpuA += (a - S.gpuA) * 0.1; S.gpuB += (b - S.gpuB) * 0.1; S.gpuHave = true;
+    }
+    queryBusy[i] = 0;
+  }
+}
+
+const px1 = new Uint8Array(4);
+const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1);
+const STAGE_NAMES = ['1 blobs', '2 rings', '3 dots', '4 riso+grade', '5 refraction'];
+function drawFloor() {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, rtW, rtH);
+  gl.useProgram(F.p);
+  gl.bindVertexArray(vao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function timeMask(mask, batches, batch) {
+  const frame = mask < 0 ? drawFloor : (t) => draw(t, mask);
+  frame(1.234); sync();
+  const out = [];
+  for (let r = 0; r < batches; r++) {
+    const t0 = performance.now();
+    for (let i = 0; i < batch; i++) {
+      if (i > 0) gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR]);
+      frame(2 + (r * batch + i) / 60);
+    }
+    sync();
+    out.push((performance.now() - t0) / batch);
+  }
+  out.sort((a, b) => a - b);
+  return out[Math.floor(out.length / 2)];
+}
+/**
+ * Median ms per frame: everything, each stage off in turn, the bare base, and
+ * the FLOOR — two do-nothing passes into the same targets. The floor is what a
+ * frame costs before any shading (submission, two render passes, the sync
+ * amortised over the batch), so "GPU" below is always measured minus floor.
+ * Three rounds, interleaved, median of each.
+ */
+function bench({ batches = 12, batch = 40, rounds = 3 } = {}) {
+  benching = true;
+  const configs = [['all', 31], ...STAGE_NAMES.map((n, i) => [`−${n}`, 31 & ~(1 << i)]), ['base only', 0], ['floor', -1]];
+  const runs = configs.map(() => []);
+  for (let k = 0; k < rounds; k++) configs.forEach(([, m], i) => runs[i].push(timeMask(m, batches, batch)));
+  benching = false;
+  const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  const res = { size: `${canvas.width}×${canvas.height}`, rt: `${rtW}×${rtH}`, ms: {} };
+  configs.forEach(([name], i) => (res.ms[name] = med(runs[i])));
+  res.stage = {};
+  STAGE_NAMES.forEach((n, i) => (res.stage[n] = res.ms.all - res.ms[`−${n}`]));
+  res.gpu = res.ms.all - res.ms.floor;
+  const rows = [`<b>bench</b> ${res.size} (RT ${res.rt}) — median ms/frame, ${rounds}×${batches}×${batch} frames`,
+    `  <b>shading    ${res.gpu.toFixed(3)}</b>  (all on − floor)`,
+    `  all on        ${res.ms.all.toFixed(3)}   floor ${res.ms.floor.toFixed(3)}`,
+    `  base only     ${(res.ms['base only'] - res.ms.floor).toFixed(3)}  (− floor)`,
+    ...STAGE_NAMES.map((n) => `  ${n.padEnd(14)}${res.stage[n].toFixed(3)}  (all − this off)`)];
+  S.benchText = rows.join('\n');
+  readout();
+  return res;
+}
+
+/**
+ * The timer query, but under the benchmark's load: one TIME_ELAPSED query
+ * around 40 back-to-back frames. Results only become available in a later task
+ * (WebGL rule), hence async. Compare with bench(): in the rAF loop the GPU idles
+ * between frames and runs at a low clock, so the live readout reads HIGHER than
+ * the same work measured saturated.
+ */
+async function timerCheck(frames = 40) {
+  if (!timerExt) return null;
+  benching = true;
+  const q = gl.createQuery();
+  draw(1, S.mask); sync();
+  gl.beginQuery(timerExt.TIME_ELAPSED_EXT, q);
+  for (let i = 0; i < frames; i++) {
+    if (i > 0) gl.invalidateFramebuffer(gl.FRAMEBUFFER, [gl.COLOR]);
+    draw(2 + i / 60, S.mask);
+  }
+  gl.endQuery(timerExt.TIME_ELAPSED_EXT);
+  sync();
+  benching = false;
+  for (let i = 0; i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 16));
+    if (gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) {
+      const disjoint = gl.getParameter(timerExt.GPU_DISJOINT_EXT);
+      const ms = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 / frames;
+      gl.deleteQuery(q);
+      return disjoint ? null : ms;
+    }
+  }
+  return null;
+}
+
+function readout() {
+  const on = STAGE_NAMES.map((n, i) => ((S.mask >> i) & 1 ? n.split(' ')[0] : '·')).join(' ');
+  const gpu = timerExt
+    ? (S.gpuHave ? `timer query ${(S.gpuA + S.gpuB).toFixed(3)} ms  (A ${S.gpuA.toFixed(3)} · B ${S.gpuB.toFixed(3)})  — reads ~3× high on ANGLE/Metal; Benchmark is the number` : 'timer query … waiting')
+    : `rAF Δ <b>${S.rafDt.toFixed(1)} ms</b>  (no timer query here — that is the frame interval, not GPU time; run Benchmark)`;
+  const motion = reduced() ? 'reduced motion: t = 0, no mouse' : `t ${S.t.toFixed(1)}s`;
+  document.getElementById('readout').innerHTML =
+    `${gpu}\nstages ${on}   ${motion}   ${fontNote}\n${S.benchText}`;
+}
+
+// ===========================================================================
+// BOOT
+// ===========================================================================
+let textReady = false, textBaseline = DIALS.base.textTop[0], textBaselineAt = 0, textStemX = 0;
+{
+  const ref = document.getElementById('ref');
+  ref.addEventListener('error', () => refBox.classList.add('no-ref'));
+  if (ref.complete && ref.naturalWidth === 0) refBox.classList.add('no-ref');
+}
+(async () => {
+  const advance = await buildText(textBaseline);
+  textReady = true;
+  console.info(`cover: "Rive" advance ${advance.toFixed(1)} units (strip ${STRIP_W}), baseline y ${textBaselineAt.toFixed(1)}, R stem x ${textStemX.toFixed(1)}, ${fontNote}`);
+  const { createDialKit, createDialRoot } = window.DialKit;
+  createDialRoot({ position: 'top-right', theme: 'dark', defaultOpen: true });
+  const dial = createDialKit('Cover shader · rive-site', DIALS, {
+    id: 'cover-shader-prototype',
+    onAction: (a) => { if (a === 'view.bench') setTimeout(() => bench(), 0); },
+  });
+  dial.subscribe(applyDials);
+  window.addEventListener('resize', () => layout());
+  window.__cover = {
+    text: () => ({ baseline: textBaselineAt, stemX: textStemX }),
+    /** One frame read back as straight-alpha RGBA, top row first, base64. For diffing only. */
+    readRGBA: () => {
+      draw(S.t, S.mask);
+      const w = canvas.width, h = canvas.height, px = new Uint8Array(w * h * 4), out = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = ((h - 1 - y) * w + x) * 4, j = (y * w + x) * 4, a = px[i + 3];
+        for (let k = 0; k < 3; k++) out[j + k] = a ? Math.min(255, Math.round(px[i + k] * 255 / a)) : 0;
+        out[j + 3] = a;
+      }
+      let bin = '';
+      for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+      return { w, h, b64: btoa(bin) };
+    },
+    dial, bench, timerCheck, draw: (t) => draw(t, S.mask), state: S,
+    view: (size, dpr2 = true) => dial.setValues({ view: { size, dpr2 } }),
+    ready: true,
+  };
+  start();
+})();
+</script>
+</body>
+</html>

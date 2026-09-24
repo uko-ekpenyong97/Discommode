@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- Loaded by scripts/make-cover-stills.mjs, never by the site: renders a cover's
+     still with the app's own renderer (src/covers/coverRenderer.ts). -->
+<html lang="en"><head><meta charset="utf-8" /><title>cover still</title></head>
+<body style="margin:0;background:transparent">
+<script type="module">
+import { WebGLRenderer } from 'three';
+import { COVERS } from '/src/covers/covers.ts';
+import { CoverRenderer, coverCropOf } from '/src/covers/coverRenderer.ts';
+import { dialDefaults } from '/src/covers/dialValues.ts';
+
+/** The whole frame at `width` px, t = 0, dome at rest, nothing behind it:
+ *  straight-alpha RGBA, top row first, base64. */
+window.renderStill = async (id, width) => {
+  const def = COVERS[id];
+  const w = width;
+  const h = Math.round((width * def.frame.h) / def.frame.w);
+  const canvas = document.createElement('canvas');
+  const gl = new WebGLRenderer({ canvas, alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
+  gl.setPixelRatio(1);
+  gl.setSize(w, h, false);
+  const cover = new CoverRenderer(gl, def, dialDefaults(def.dials));
+  for (let i = 0; i < 400 && !cover.ready(); i++) await new Promise((r) => setTimeout(r, 25));
+  if (!cover.ready()) throw new Error('cover never became ready');
+  const crop = coverCropOf(def.frame.w, def.frame.h, w, h, { x0: 0, y0: 0, w: 1, h: 1 });
+  cover.draw(null, { t: 0, crop, pxW: w, pxH: h, dome: { x: 0, y: 0, amp: 0 }, backdrop: null });
+  const ctx = gl.getContext();
+  const px = new Uint8Array(w * h * 4);
+  ctx.readPixels(0, 0, w, h, ctx.RGBA, ctx.UNSIGNED_BYTE, px);
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = ((h - 1 - y) * w + x) * 4, j = (y * w + x) * 4, a = px[i + 3];
+    for (let k = 0; k < 3; k++) out[j + k] = a ? Math.min(255, Math.round((px[i + k] * 255) / a)) : 0;
+    out[j + 3] = a;
+  }
+  let bin = '';
+  for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+  return { w, h, b64: btoa(bin) };
+};
+window.stillReady = true;
+</script>
+</body></html>

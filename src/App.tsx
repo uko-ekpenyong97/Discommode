@@ -20,6 +20,7 @@ import './App.css';
 
 const DevDials = import.meta.env.DEV ? lazy(() => import('./dev/Dials')) : null;
 const DevEnvReadout = import.meta.env.DEV ? lazy(() => import('./dev/EnvReadout')) : null;
+const DevCoverDials = import.meta.env.DEV ? lazy(() => import('./dev/coverDials')) : null;
 
 /** Small buffer so the morph finishes painting at its end before the phase flips. */
 const TRANS_BUFFER_MS = 60;
@@ -231,6 +232,14 @@ export default function App({ suspended = false }: AppProps) {
       {DevDials && !suspended && (
         <Suspense fallback={null}>
           <DevDials />
+        </Suspense>
+      )}
+
+      {/* The COVER panel: registered even while suspended — at #item-02?intro
+          the doorway's dock is the one showing, and it lists every panel. */}
+      {DevCoverDials && (
+        <Suspense fallback={null}>
+          <DevCoverDials />
         </Suspense>
       )}
 

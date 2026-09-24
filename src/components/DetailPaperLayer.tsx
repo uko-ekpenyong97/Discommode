@@ -43,6 +43,15 @@ import {
   tweenDone,
 } from './detailPaper/paperMath';
 import type { CardRect, Tween } from './detailPaper/paperMath';
+import { CoverRenderer, coverCropOf } from '../covers/coverRenderer';
+import { COVERS } from '../covers/covers';
+import { coverTime } from '../covers/coverClock';
+import { coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
+import { cssRgb } from '../covers/color';
+import { heroDome } from '../covers/dome';
+import type { Crop } from '../covers/types';
+import { benchCoverDraw } from '../covers/bench';
+import type { WebGLRenderTarget } from 'three';
 
 /**
  * THE DETAIL CARDS AS PAPER — one fixed WebGL canvas under the detail strip,
@@ -189,14 +198,17 @@ async function decode(url: string): Promise<HTMLImageElement> {
   return img;
 }
 
-/** The face at exactly `w × h` device pixels, cropped as `object-fit: cover`. */
-async function resized(url: string, w: number, h: number): Promise<ImageBitmap> {
+/** The face at exactly `w × h` device pixels, cropped as `object-fit: cover`.
+ *  `premultiply` for a live cover's still, which is not opaque: the plane
+ *  samples it as it samples the live cover (premultiplied). */
+async function resized(url: string, w: number, h: number, premultiply = false): Promise<ImageBitmap> {
   const img = await decode(url);
   const c = coverCrop(img.naturalWidth, img.naturalHeight, w, h);
   return createImageBitmap(img, c.sx, c.sy, c.sw, c.sh, {
     resizeWidth: w,
     resizeHeight: h,
     resizeQuality: 'high',
+    premultiplyAlpha: premultiply ? 'premultiply' : 'default',
   });
 }
 
@@ -324,7 +336,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       g.fillRect(0, 0, 2, 2);
       return [texKey(`hue:${item.hue}`, w, h), flatTexture(c)];
     }
-        return [texKey(url, w, h), flatTexture(await resized(url, w, h))];
+    return [texKey(url, w, h), flatTexture(await resized(url, w, h, !!item.cover))];
   }
 
   async function buildTextures(key: string) {
@@ -364,6 +376,55 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     sizeKey = key;
     texturesReady = true;
     dirty = true;
+  }
+
+  // ── live covers ────────────────────────────────────────────────────────
+  // A card with a live cover (content.ts `cover`) is drawn by the cover's
+  // renderer IN THIS CONTEXT, into a target whose texture IS the hero plane's
+  // map — a texture cannot cross WebGL contexts, and copying a 2 MP frame across
+  // from the grid's stage every frame would cost more than drawing it here.
+  // Only the hero is live; the neighbours use the still (itemHeroFace).
+  const liveCovers = new Map<string, { r: CoverRenderer; rt: WebGLRenderTarget | null; bound: number }>();
+  const coverCrop_: Crop = { x0: 0, y0: 0, w: 1, h: 1 };
+  let coversDrawn = 0;
+
+  /** Draw a cover for the hero at `pxW × pxH`; its texture, or null if not ready.
+   *  While the cards are handed OUT the DOM face is the live one (it is
+   *  dissolving back over this plane) and this holds its last frame, so the one
+   *  moment is not drawn twice. */
+  function liveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
+    const def = COVERS[id];
+    if (!def) return null;
+    let c = liveCovers.get(id);
+    if (!c) {
+      c = { r: new CoverRenderer(renderer, def, coverValues(id)), rt: null, bound: coverDialsVersion() };
+      c.r.warm();
+      liveCovers.set(id, c);
+    }
+    if (c.bound !== coverDialsVersion()) {
+      c.bound = coverDialsVersion();
+      c.r.setValues(coverValues(id));
+    }
+    if (state === 'out' && c.rt && c.rt.width === pxW && c.rt.height === pxH) return c.rt.texture;
+    if (!c.rt || c.rt.width !== pxW || c.rt.height !== pxH) {
+      c.rt?.dispose();
+      c.rt = CoverRenderer.outputTarget(pxW, pxH);
+    }
+    const spring = def.domeSpring(coverValues(id));
+    heroDome.step(performance.now(), spring.spring, spring.damping);
+    coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_);
+    const site = siteCoverDials();
+    const drawn = c.r.draw(c.rt, {
+      t: coverTime(),
+      crop: coverCrop_,
+      pxW,
+      pxH,
+      dome: heroDome.state,
+      backdrop: site.coverBackdrop === 'solid' ? cssRgb(site.coverBackdropColor) : null,
+    });
+    if (!drawn) return null;
+    coversDrawn++;
+    return c.rt.texture;
   }
 
   // ── cards ──────────────────────────────────────────────────────────────
@@ -595,6 +656,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     }
 
     const sig: number[] = [state === 'out' ? 1 : 0, dpr, vw, vh];
+    let liveThisFrame = false;
     const sorted = [...f.panels].sort((a, b) => a.z - b.z || a.key - b.key);
     let order = 0;
     for (const p of sorted) {
@@ -615,8 +677,19 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       const big = p.scale > (1 + input.side()) / 2;
       const [tw, th] = plate || big ? [d.heroW, d.heroH] : [d.sideW, d.sideH];
       const src = plate ?? itemHeroFace(item) ?? `hue:${item.hue}`;
-      const tex = textures.get(texKey(src, tw, th)) ?? null;
+      let tex = textures.get(texKey(src, tw, th)) ?? null;
+      // The hero's live cover, at the hero's device size (coverMaxDpr caps it),
+      // on the shared cover clock. Under reduced motion it stays the still.
+      if (item.cover && big && !still) {
+        const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
+        const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap));
+        if (live) {
+          tex = live;
+          liveThisFrame = true;
+        }
+      }
       u.uMap.value = tex;
+      u.uPremul.value = item.cover ? 1 : 0;
 
       // Sprite mask: every hover sprite's box, from its inline px in the panel.
       let sprites = 0;
@@ -696,6 +769,9 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       s.uMargin.value = SHADOW.blur * 1.5 * p.scale;
       s.uOffsetY.value = SHADOW.y * p.scale;
       s.uAlpha.value = state === 'out' ? 0 : SHADOW.alpha * alpha * (1 - u.uFold.value);
+      // A live cover lets the sky through its ground: its shadow stays outside it.
+      s.uHole.value = item.cover ? 1 : 0;
+      s.uRadius.value = CARD_RADIUS_PX * p.scale;
 
       c.shadow.renderOrder = order++;
       c.mesh.renderOrder = order++;
@@ -732,6 +808,8 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       if (!tweenDone(c.fold, now) || !tweenDone(c.hover, now)) dirty = true;
     }
     if (!tweenDone(presence, now)) dirty = true;
+    // A live cover changes every frame, whatever the signature says.
+    if (liveThisFrame) dirty = true;
 
     // An epsilon, not equality: the strip's hover-dim is an exponential ease
     // whose tail moves opacity by 1e-9 a frame for seconds, and an exact compare
@@ -788,6 +866,30 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       folds: () =>
         [...cards.entries()].map(([key, c]) => ({ key, fold: c.mesh.material.uniforms.uFold.value })),
       presence: () => sampleTween(presence, performance.now()),
+      /** Live-cover draws issued by this layer (the hero), for verify:cover. */
+      coversDrawn: () => coversDrawn,
+      /** GPU ms for one hero draw of the live cover, in THIS renderer. */
+      benchCover: () => {
+        for (const [id, c] of liveCovers) {
+          if (!c.rt || !c.r.ready()) continue;
+          const def = COVERS[id];
+          const crop: Crop = coverCropOf(def.frame.w, def.frame.h, c.rt.width, c.rt.height, { x0: 0, y0: 0, w: 1, h: 1 });
+          return {
+            id,
+            pxW: c.rt.width,
+            pxH: c.rt.height,
+            ...benchCoverDraw(renderer, c.r, c.rt, {
+              t: 1,
+              crop,
+              pxW: c.rt.width,
+              pxH: c.rt.height,
+              dome: { x: 450, y: 600, amp: 0 },
+              backdrop: null,
+            }),
+          };
+        }
+        return null;
+      },
       set: setPaper,
       override: (o: PaperOverride) => {
         override = o;
@@ -840,6 +942,10 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       pendingLeave = null;
       for (const k of [...cards.keys()]) dropCard(k);
       for (const t of textures.values()) t.dispose();
+      for (const c of liveCovers.values()) {
+        c.r.dispose();
+        c.rt?.dispose();
+      }
       creases?.dispose();
       geometry.dispose();
       shadowGeometry.dispose();

@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "pages": "node scripts/optimize-pages.mjs",
     "anims": "node scripts/optimize-anims.mjs",
-    "projects": "node scripts/optimize-projects.mjs",
+    "projects": "node scripts/optimize-projects.mjs && node scripts/make-cover-stills.mjs",
+    "covers": "node scripts/make-cover-stills.mjs",
     "backgrounds": "node scripts/optimize-backgrounds.mjs",
     "placeholders": "node scripts/make-placeholders.mjs",
     "creases": "node scripts/make-crease-map.mjs",
@@ -19,6 +20,7 @@
     "verify:reader": "node scripts/reader-verify.mjs",
     "verify:detail": "node scripts/detail-verify.mjs",
     "verify:sky": "node scripts/sky-fluid-verify.mjs",
+    "verify:cover": "node scripts/cover-verify.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

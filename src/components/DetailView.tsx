@@ -9,6 +9,8 @@ import { openPortfolio } from '../portfolio/portfolioNav';
 import { issueAnims } from '../reader/issue-01';
 import { CoverAnimLayer } from './CoverAnimLayer';
 import { DetailPaperLayer } from './DetailPaperLayer';
+import { CoverTile } from '../covers/CoverTile';
+import { heroDome } from '../covers/dome';
 import type { DetailPaperHandle, PaperPanel } from './DetailPaperLayer';
 import { afterHandOut } from './detailPaper/handoff';
 import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
@@ -355,7 +357,18 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               }
               aria-hidden={isCenter && !canOpen ? true : undefined}
             >
-              {face ? (
+              {item.cover ? (
+                // The live cover on the CENTRE panel only (its dome is the hero's,
+                // which the paper plane reads too); the neighbours show its still.
+                // The paper takes this face over once the view settles, as it
+                // does an image: the data-paper rules fade `.detail__media`.
+                <CoverTile
+                  coverId={item.cover.id}
+                  live={isCenter}
+                  dome={isCenter ? heroDome : null}
+                  className="detail__media"
+                />
+              ) : face ? (
                 <img className="detail__media" src={face} alt={`Poster ${item.title}`} draggable={false} />
               ) : (
                 <div className="detail__media" style={{ background: `hsl(${item.hue}, 28%, 32%)` }} />
