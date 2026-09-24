@@ -42,6 +42,17 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 
+/**
+ * A RASTER BUDGET BIG ENOUGH FOR A 2x PAGE 1400px TALL. Headless Chrome's
+ * default GPU memory budget is small, and a page this size at 2x (with the
+ * grain layer, which is nine times the page's area) goes over it. Chrome's
+ * answer is to leave tiles unrasterised, and a screenshot then shows the
+ * ground through the paper in tile-shaped bands. It is not deterministic: the
+ * same page came back 3.5% and then 11.5% sky on two runs at bucket 1920, and
+ * clean with this.
+ */
+const CHROME_ARGS = ['--force-gpu-mem-available-mb=4096'];
+
 const ORIGIN = process.argv.includes('--url')
   ? process.argv[process.argv.indexOf('--url') + 1]
   : 'http://localhost:5173';
@@ -56,6 +67,27 @@ const VIEWPORTS = [
   { name: '1728×996', width: 1728, height: 996 },
   { name: '1440×900', width: 1440, height: 900 },
 ];
+
+/**
+ * …AND FOUR WINDOWS THAT ARE NOT BUCKETS, at heights nobody signed off either.
+ *
+ * The page is laid out at the nearest bucket at or below the window's width
+ * and centred (see `pageBuckets.ts`), and the sheet wears that bucket's
+ * capture cropped to the live page's height. Both signed-off viewports happen
+ * to BE buckets, so every hand-off this suite measured there would have passed
+ * with captures per viewport too. The only proof that the hand-off no longer
+ * depends on the window is a window that is not one of them. These four land
+ * in four different buckets (1280, 1440, 1600, 1920), with margins of 91, 84,
+ * 88 and 88px, at four heights.
+ */
+const OFF_BUCKET_SIZES = [
+  { name: '1366×768', width: 1366, height: 768 },
+  { name: '1512×982', width: 1512, height: 982 },
+  { name: '1680×1050', width: 1680, height: 1050 },
+  { name: '2000×1100', width: 2000, height: 1100 },
+];
+/** Every size the hand-offs are measured at. */
+const ALL_SIZES = [...VIEWPORTS, ...OFF_BUCKET_SIZES];
 
 /**
  * …AND BOTH DEVICE PIXEL RATIOS, which is new and is the point of half of this.
@@ -118,17 +150,6 @@ const LIFT_POINTS = [0.05, 0.1, 0.15, 0.3];
  */
 const ROLL_RATIO = 0.25;
 
-/**
- * What a project's captures may cost the GPU, in megabytes.
- *
- * Counted as the WORST WINDOW rather than as the whole project: `SheetCanvas`
- * holds the section being read and its two neighbours and disposes the rest, so
- * the figure to compare against a budget is six captures and not two per
- * section. Uncompressed RGBA at the file's own pixels, with no mipmap chain
- * (`generateMipmaps` is off, on purpose — see the sheet). Both numbers are
- * printed, because the one the eviction retired is what says what it was for.
- */
-const TEXTURE_MB = 24;
 
 /**
  * …and how many captures may be resident at once, whatever they cost.
@@ -145,8 +166,8 @@ const RESIDENT_MAX = (RESIDENT_RADIUS * 2 + 1) * 2;
 const PUBLIC_DIR = fileURLToPath(new URL('../public/projects/', import.meta.url));
 const MB = 1024 * 1024;
 
-/** A capture's name: the kind, the section, the page's CSS width, and the scale
- *  — `sheet-01-1632@2x.webp`. Groups 1…4 are kind, section, width, scale. */
+/** A capture's name: the kind, the section, the page BUCKET, and the scale —
+ *  `sheet-01-1728@2x.webp`. Groups 1…4 are kind, section, bucket, scale. */
 const CAPTURE_RE = /(sheet|tail)-(\d+)-(\d+)(?:@(\d)x)?\.webp$/;
 
 let failures = 0;
@@ -588,13 +609,24 @@ const rectDrift = (page) =>
  * approach stays a visible number rather than becoming one nobody measures
  * again the moment the check stops tripping over it.
  */
-async function handoffIn(page, track, k, clip, handoffMs) {
+async function handoffIn(page, track, k, clip, handoffMs, { light = false } = {}) {
   const at = await page.evaluate((k) => window.__pv.handoffFrame(k), k);
   await seek(page, at);
   const drift = await rectDrift(page);
   const wearing = await textureReady(page);
   await parkMedia(page);
   const sheet = await page.screenshot({ clip, animations: 'disabled' });
+
+  // The off-bucket sizes measure the swap and nothing around it: the residual
+  // and the reveal checks are about the page, and the page at a bucket is the
+  // same page whatever window it is centred in.
+  if (light) {
+    await seek(page, track.start[k]);
+    await page.waitForTimeout(handoffMs + SWAP_SETTLE_MS);
+    await parkMediaNow(page);
+    const live = await page.screenshot({ clip, animations: 'disabled' });
+    return { drift, wearing, reanimated: 0, moving: { moving: 0 }, residual: 0, ...(await differing(sheet, live)), sheet };
+  }
 
   // …and the approach residual, one frame's worth of easing earlier.
   await seek(page, atEnter(track, k, 0.999));
@@ -663,6 +695,179 @@ async function handoffOut(page, track, k, clip, handoffMs) {
   );
   const sheet = await page.screenshot({ clip, animations: 'disabled' });
   return { drift, swapped, wearing, ...(await differing(live, sheet)) };
+}
+
+/**
+ * BOTH HAND-OFFS OF EVERY SECTION OF EVERY CARD, at one window size: the rect
+ * match and both diffs, against the same thresholds as the signed-off
+ * viewports. Returns each card's worst numbers for the table at the end.
+ */
+async function handoffsAt(context, viewport, dsf, handoffMs) {
+  const rows = [];
+  for (const id of PROJECTS) {
+    const page = await openView(context, viewport, `#view-${id}`);
+    const track = await readTrack(page);
+    const frame = await readFrame(page);
+    const bucket = await page.evaluate(() => window.__pv.bucket());
+    const clip = {
+      x: Math.round(frame.left),
+      y: Math.round(frame.top),
+      width: Math.round(frame.width),
+      height: Math.round(frame.height),
+    };
+    const worst = { drift: 0, in: 0, out: 0, mean: 0 };
+    const misses = [];
+    const last = track.start.length - 1;
+    for (let k = 0; k <= last; k++) {
+      const into = await handoffIn(page, track, k, clip, handoffMs, { light: true });
+      worst.drift = Math.max(worst.drift, into.drift);
+      worst.in = Math.max(worst.in, into.pct);
+      worst.mean = Math.max(worst.mean, into.mean);
+      // The sheet has to be wearing THIS bucket's capture, or a pass means the
+      // picker fell back to something that happened to be close.
+      if (!into.wearing?.src.includes(`-${bucket}@`)) misses.push(`${k} in wore ${wore(into)}`);
+      if (into.pct > DIFF_PCT) misses.push(`${k} in ${pct(into.pct)} wearing ${wore(into)}`);
+      if (k === last) continue;
+      const out = await handoffOut(page, track, k, clip, handoffMs);
+      worst.drift = Math.max(worst.drift, out.drift);
+      worst.out = Math.max(worst.out, out.pct);
+      worst.mean = Math.max(worst.mean, out.mean);
+      if (!out.swapped) misses.push(`${k} out never handed over`);
+      if (!out.wearing?.src.includes(`-${bucket}@`)) misses.push(`${k} out wore ${wore(out)}`);
+      if (out.pct > DIFF_PCT) misses.push(`${k} out ${pct(out.pct)} wearing ${wore(out)}`);
+    }
+    check(
+      worst.drift <= RECT_PX && misses.length === 0,
+      `card ${id} at ${viewport.name} @${dsf}x (bucket ${bucket}): every hand-off matches`,
+      `rect ${round(worst.drift)}px, in ${pct(worst.in)}, out ${pct(worst.out)} of ${DIFF_PCT}%` +
+        (misses.length ? ` — ${misses.slice(0, 3).join(' | ')}` : ''),
+    );
+    rows.push({ dsf, viewport: viewport.name, card: id, drift: worst.drift, in: worst.in, out: worst.out, mean: worst.mean, residual: 0 });
+    await page.close();
+  }
+  return rows;
+}
+
+/**
+ * A WINDOW DRAGGED ACROSS A BUCKET, with the reader at rest half way down a
+ * page. The drag is a run of real viewport changes a frame apart, and what is
+ * asked of it:
+ *
+ *   - nothing re-lays while the drag is going: the page keeps its width until
+ *     the resize has been quiet, because a re-layout per event would reflow
+ *     the text dozens of times on the way to one width;
+ *   - at the end, the page is the new bucket's width, the reader is on the
+ *     same section at the same FRACTION of it, and no rebuild moved them;
+ *   - no frame of any of it shows the ground where the page was, or the sheet;
+ *   - and both hand-offs of that section then match, wearing the new bucket's
+ *     captures, which were fetched cold when the drag ended.
+ *
+ * And back down across two buckets, to make sure the way down is the same.
+ */
+async function resizeAcrossBuckets(context, handoffMs) {
+  const from = { name: '1512×982', width: 1512, height: 982 };
+  const page = await openView(context, from, '#view-02/2');
+  const k = 1;
+  await page.evaluate((k) => {
+    const t = window.__pv.track();
+    window.__pv.park(t.start[k] + t.pageScroll[k] * 0.5);
+  }, k);
+  await page.waitForTimeout(600);
+  const fraction = () =>
+    page.evaluate((k) => {
+      const t = window.__pv.track();
+      return (window.__pv.position() - t.start[k]) / t.pageScroll[k];
+    }, k);
+  for (const to of [
+    { name: '1760×982', width: 1760, height: 982, bucket: 1728 },
+    { name: '1366×768', width: 1366, height: 768, bucket: 1280 },
+  ]) {
+    const before = {
+      fraction: await fraction(),
+      width: await page.evaluate(() => window.__pv.pageRect().width),
+    };
+    // Every frame of the drag and the settle after it: is a page painting,
+    // and is the canvas?
+    await page.evaluate(() => {
+      window.__resizeFrames = { blank: 0, sheet: 0, total: 0 };
+      window.__resizeOn = true;
+      const loop = () => {
+        if (!window.__resizeOn) return;
+        const f = window.__resizeFrames;
+        f.total++;
+        const shown = [...document.querySelectorAll('.pv-page')].some(
+          (p) => p.style.visibility !== 'hidden' && p.style.opacity !== '0',
+        );
+        if (!shown) f.blank++;
+        if (document.querySelector('.pv-canvas').style.visibility !== 'hidden') f.sheet++;
+        requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    });
+    const widths = new Set();
+    const steps = 16;
+    const cur = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
+    for (let i = 1; i <= steps; i++) {
+      await page.setViewportSize({
+        width: Math.round(cur.w + ((to.width - cur.w) * i) / steps),
+        height: Math.round(cur.h + ((to.height - cur.h) * i) / steps),
+      });
+      widths.add(await page.evaluate(() => window.__pv.pageRect().width));
+      await page.waitForTimeout(16);
+    }
+    await page.waitForTimeout(600);
+    const frames = await page.evaluate(() => {
+      window.__resizeOn = false;
+      return window.__resizeFrames;
+    });
+    const after = await page.evaluate(() => ({
+      bucket: window.__pv.bucket(),
+      width: window.__pv.pageRect().width,
+      layout: window.__pv.layout(),
+    }));
+    const now = await fraction();
+    const moved = page.logs.filter((l) => /ACTIVE SECTION MOVED/.test(l));
+    check(
+      widths.size === 1 && [...widths][0] === before.width,
+      `resize to ${to.name}: nothing re-lays while the window is being dragged`,
+      `page widths seen during the drag: ${[...widths].join(', ')}`,
+    );
+    check(
+      after.bucket === to.bucket &&
+        after.layout.activeIndex === k &&
+        after.layout.segment === 'page' &&
+        Math.abs(now - before.fraction) < 0.01 &&
+        moved.length === 0,
+      `resize to ${to.name}: re-laid at bucket ${to.bucket}, the reader where they were`,
+      `bucket ${after.bucket}, page ${after.width} wide, section ${after.layout.activeIndex} ` +
+        `(${after.layout.segment}), ${(before.fraction * 100).toFixed(1)}% → ${(now * 100).toFixed(1)}% down`,
+    );
+    check(
+      frames.blank === 0 && frames.sheet === 0,
+      `resize to ${to.name}: every frame of it shows the page, and only the page`,
+      `${frames.blank} blank, ${frames.sheet} with the sheet, of ${frames.total} frames`,
+    );
+    // …and the hand-offs, at the new size, off the new bucket's captures.
+    const track = await readTrack(page);
+    const frame = await readFrame(page);
+    const clip = { x: Math.round(frame.left), y: Math.round(frame.top), width: Math.round(frame.width), height: Math.round(frame.height) };
+    const into = await handoffIn(page, track, k, clip, handoffMs, { light: true });
+    const out = await handoffOut(page, track, k, clip, handoffMs);
+    const wearsNew = [into, out].every((h) => h.wearing?.src.includes(`-${to.bucket}@`));
+    check(
+      wearsNew && into.pct <= DIFF_PCT && out.pct <= DIFF_PCT && Math.max(into.drift, out.drift) <= RECT_PX,
+      `resize to ${to.name}: …and both hand-offs match, off bucket ${to.bucket}'s captures`,
+      `in ${pct(into.pct)} wearing ${wore(into)}, out ${pct(out.pct)} wearing ${wore(out)}`,
+    );
+    // Back to the middle of the page for the next leg.
+    await page.evaluate((k) => {
+      const t = window.__pv.track();
+      window.__pv.release();
+      window.__pv.park(t.start[k] + t.pageScroll[k] * 0.5);
+    }, k);
+    await page.waitForTimeout(600);
+  }
+  await page.close();
 }
 
 /* ── the sky follows the clock ─────────────────────────────────────────────── */
@@ -758,10 +963,429 @@ async function checkSkyFollowsTheClock(context, viewport) {
   );
 }
 
+/* ── a real hand on the controls ──────────────────────────────────────────── */
+
+/**
+ * Every other check in this file steers with `seek` or with `element.click()`,
+ * and both have now hidden a bug a reader found in one sitting. `seek` holds
+ * the track still, so a crossfade photographed through it has nothing moving
+ * under it. `click()` dispatches no pointer events, so nothing that depends on
+ * where a press began and ended is ever exercised. These two checks use the
+ * mouse the way a reader does, through CDP, and they are seeded so a failure
+ * reproduces.
+ */
+const seeded = (seed) => {
+  let s = seed;
+  return () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+};
+
+/** Presses per card in the letterhead soak. */
+const SOAK_PRESSES = 60;
+/** A hand aiming at a number lands within this of the glyph's centre, as a
+ *  normal distribution's sigma, and drifts up to half of it before letting go. */
+const AIM_SIGMA_PX = 5;
+
+/**
+ * THE LETTERHEAD SOAK: real presses on the section numbers, and not one of
+ * them may close the view.
+ *
+ * The bug this is for: after scrolling inside a project, clicking a section
+ * number sometimes left the view. Reproduced here with the press logged at
+ * both ends. The strip counted as ground, so a press a few pixels off a
+ * 21×22px number closed the view: 9 in 120 presses with a hand's scatter, and
+ * 0 in 240 aimed inside the button. In every one of the nine, the press and
+ * the release had landed on the same dead element. A press that began on a
+ * number and ended on the margin closed it as well, because the button's
+ * stopped `pointerdown` left the hook holding the previous press.
+ *
+ * Each press follows one of three things a reader does: a wheel burst left to
+ * finish, a press into the glide of a wheel burst, or a press into the glide
+ * of the previous press's own scroll. The wheel runs over the page, and the
+ * pointer then travels up to the strip in steps. A close is caught from both
+ * ends: the hook's own dev event, and the hash.
+ *
+ * Then two controls, because a soak that could not see a close would pass
+ * forever. A press on the real ground, the margin beside the page, MUST close
+ * the view. And the drag that used to close it (down on a number, up on the
+ * margin where an earlier press began) must not.
+ */
+async function letterheadSoak(context, viewport) {
+  for (const id of ['02', '04']) {
+    const rnd = seeded(Number(id) * 7919);
+    const page = await context.newPage();
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.addInitScript(() => {
+      window.__dismissed = 0;
+      window.addEventListener('pv:dismiss', () => window.__dismissed++);
+    });
+    await page.goto(`${ORIGIN}/#view-${id}`, { waitUntil: 'load' });
+    await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+    await settled(page);
+    const numbers = await page.evaluate(() =>
+      [...document.querySelectorAll('.pv-letterhead__no')].map((b) => {
+        const g = b.querySelector('[aria-hidden]').getBoundingClientRect();
+        const r = b.getBoundingClientRect();
+        return { x: g.left + g.width / 2, y: g.top + g.height / 2, box: [r.left, r.top, r.right, r.bottom] };
+      }),
+    );
+    const gauss = () => Math.sqrt(-2 * Math.log(rnd() || 1e-9)) * Math.cos(2 * Math.PI * rnd());
+
+    const closes = [];
+    let offTarget = 0;
+    let glides = 0;
+    let k = 0;
+    for (let i = 0; i < SOAK_PRESSES; i++) {
+      const mode = ['settled', 'glide', 'press-glide', 'glide'][Math.floor(rnd() * 4)];
+      await page.mouse.move(viewport.width * (0.3 + rnd() * 0.4), viewport.height * (0.35 + rnd() * 0.4));
+      if (mode !== 'press-glide') {
+        const n = 2 + Math.floor(rnd() * 8);
+        const dir = rnd() < 0.8 ? 1 : -1;
+        for (let j = 0; j < n; j++) {
+          await page.mouse.wheel(0, dir * (40 + rnd() * 80));
+          await page.waitForTimeout(16);
+        }
+        await page.waitForTimeout(mode === 'settled' ? 900 : rnd() * 200);
+      }
+      k = Math.floor(rnd() * numbers.length);
+      const x = numbers[k].x + gauss() * AIM_SIGMA_PX;
+      const y = numbers[k].y + gauss() * AIM_SIGMA_PX;
+      await page.mouse.move(x, y, { steps: 3 + Math.floor(rnd() * 6) });
+      const [l, t, r, b] = numbers[k].box;
+      if (x < l || x > r || y < t || y > b) offTarget++;
+      if (await page.evaluate(() => window.__pv?.scrolling())) glides++;
+      await page.mouse.down();
+      await page.waitForTimeout(40 + rnd() * 100);
+      await page.mouse.move(x + (rnd() - 0.5) * AIM_SIGMA_PX, y + (rnd() - 0.5) * AIM_SIGMA_PX);
+      await page.mouse.up();
+      await page.waitForTimeout(mode === 'press-glide' ? 150 : 300);
+      const state = await page.evaluate(() => ({ dismissed: window.__dismissed, hash: location.hash }));
+      if (state.dismissed > 0 || !state.hash.startsWith('#view-')) {
+        closes.push(`#${i} ${mode} → ${String(k + 1).padStart(2, '0')} at ${round(x)},${round(y)}`);
+        // Let the close finish, then open again as a fresh document: a hash
+        // change alone would race the close storyboard for the same layer.
+        await page
+          .waitForFunction(() => !location.hash.startsWith('#view-'), null, { timeout: 4000 })
+          .catch(() => {});
+        await page.goto(`${ORIGIN}/?soak=${i}#view-${id}`, { waitUntil: 'load' });
+        await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+        await settled(page);
+      }
+    }
+    // …and the last press still lands where it was aimed.
+    await page.waitForFunction(() => !window.__pv.scrolling(), null, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(400);
+    const landed = await page.evaluate(() => window.__pv.layout());
+    check(
+      closes.length === 0,
+      `card ${id}: ${SOAK_PRESSES} real presses on the letterhead, none of them leaves the view`,
+      closes.length === 0
+        ? `${glides} into a glide, ${offTarget} outside the number's own 21×22px box`
+        : closes.slice(0, 3).join(' | '),
+    );
+    check(
+      landed.segment === 'page' && landed.activeIndex === k,
+      `card ${id}: …and the last one lands on the section it was aimed at`,
+      `aimed at ${k}, on ${landed.activeIndex} (${landed.segment})`,
+    );
+
+    // The drag that used to close the view: a press on the margin released on
+    // a number, then a press on the number released where the first began.
+    const margin = { x: 16, y: viewport.height / 2 };
+    await page.evaluate(() => (window.__dismissed = 0));
+    await page.mouse.move(margin.x, margin.y);
+    await page.mouse.down();
+    await page.mouse.move(numbers[0].x, numbers[0].y, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    await page.mouse.down();
+    await page.mouse.move(margin.x, margin.y, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    const dragged = await page.evaluate(() => window.__dismissed);
+    check(dragged === 0, `card ${id}: a press that began on a number does not close the view`, `${dragged} closes`);
+
+    // THE CONTROL: the real ground still closes the view, with a real press.
+    // On its own count, and on an open view even if the drag above closed it.
+    if (dragged > 0) {
+      await page.waitForFunction(() => !location.hash.startsWith('#view-'), null, { timeout: 4000 }).catch(() => {});
+      await page.goto(`${ORIGIN}/?control#view-${id}`, { waitUntil: 'load' });
+      await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+      await settled(page);
+    }
+    await page.evaluate(() => (window.__dismissed = 0));
+    await page.mouse.move(margin.x, margin.y);
+    await page.mouse.down();
+    await page.waitForTimeout(60);
+    await page.mouse.up();
+    await page.waitForTimeout(1400);
+    const control = await page.evaluate(() => ({ dismissed: window.__dismissed, hash: location.hash }));
+    check(
+      control.dismissed === 1 && !control.hash.startsWith('#view-'),
+      `card ${id}: …while a press on the ground beside the page still does`,
+      JSON.stringify(control),
+    );
+    await page.close();
+  }
+}
+
+/** How far the picture may be from the one the track draws at rest at the
+ *  same position, in CSS pixels, at any frame near a hand-off. */
+const WHEEL_JUMP_PX = 2;
+/** Frames within this much track of a hand-off are measured against rest. */
+const WHEEL_NEAR_PX = 80;
+
+/**
+ * Record, every frame, where each surface on screen is drawing the page's
+ * content. It is sampled from a task queued in rAF, so it reads what that
+ * frame painted after every callback has run: Lenis's, the hand-off's, the
+ * track's.
+ *
+ * The page's number is exact: the content's top is at the rect's top less the
+ * inner scroll. The sheet's comes from `sheetPoint`, the CPU port of the
+ * shader's geometry, as the centre line's midpoint and the free corner. A
+ * `tail` capture begins `pageScroll` down the content, which is how the two
+ * surfaces are made comparable.
+ */
+const RECORD_FRAMES = () => {
+  const sc = document.querySelector('.pv-scroller');
+  const canvas = document.querySelector('.pv-canvas');
+  const pages = [...document.querySelectorAll('.pv-page')];
+  window.__frames = [];
+  window.__recording = true;
+  const read = () => {
+    const pv = window.__pv;
+    const t = pv.track();
+    const f = { pos: pv.position(), handoff: pv.handoff(), page: null, sheet: null };
+    const live = pages.findIndex((p) => p.style.visibility !== 'hidden');
+    if (live >= 0) {
+      const el = pages[live];
+      const alpha = el.style.opacity === '' ? 1 : Number(el.style.opacity);
+      const inner = el.querySelector('.pv-page__scroll').scrollTop;
+      if (alpha > 0) f.page = { k: live, alpha, O: el.getBoundingClientRect().top - inner };
+    }
+    if (canvas.style.visibility !== 'hidden') {
+      const m = pv.sheetTexture()?.src.match(/(sheet|tail)-(\d+)-/);
+      const top = pv.sheetPoint(0.5, 1);
+      const mid = pv.sheetPoint(0.5, 0.5);
+      const bot = pv.sheetPoint(0.5, 0);
+      const corner = pv.sheetPoint(1, 0);
+      if (m && top && mid && bot && corner) {
+        const k = Number(m[2]) - 1;
+        const c0 = m[1] === 'tail' ? t.pageScroll[k] : 0;
+        const scale = (bot.y - top.y) / t.pageHeight;
+        f.sheet = { k, O: mid.y - (c0 + t.pageHeight / 2) * scale, corner };
+      }
+    }
+    return f;
+  };
+  window.__readFrame = read;
+  const loop = () => {
+    if (!window.__recording) return;
+    setTimeout(() => window.__frames.push(read()), 0);
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+};
+
+/** Two pictures of the same track position, and how far apart they are. */
+function frameGap(live, rest) {
+  const restO = rest.page ? rest.page.O : rest.sheet ? rest.sheet.O : null;
+  if (restO === null) return 0; // the dwell: nothing painted either side
+  let gap = 0;
+  for (const s of [live.page, live.sheet]) {
+    if (s) gap = Math.max(gap, Math.abs(s.O - restO));
+  }
+  if (live.sheet && rest.sheet) {
+    gap = Math.max(
+      gap,
+      Math.hypot(live.sheet.corner.x - rest.sheet.corner.x, live.sheet.corner.y - rest.sheet.corner.y),
+    );
+  }
+  if (!live.page && !live.sheet) gap = Infinity; // painted nothing where rest paints something
+  return gap;
+}
+
+/**
+ * THE HAND-OFFS UNDER A REAL WHEEL. Every frame near a swap has to be the
+ * picture the view draws at rest at the same track position, to within
+ * `WHEEL_JUMP_PX`. The view is a function of one number, and "the page jumped"
+ * is that function failing to hold while the number is moving.
+ *
+ * Driven through CDP `mouse.wheel` in the two shapes a reader's hand makes:
+ * BURSTS of 6–12 notches of 40–120px at 16ms, walked down a whole card and
+ * back up it; and a TRACKPAD's 2–8px deltas, run across every hand-off in both
+ * directions. The rest picture is then taken with `seek` at each recorded
+ * position, after its crossfade has finished.
+ *
+ * What it found, with the crossfade on a clock alone: the flat sheet held
+ * still for 120ms under a page gliding 15–20px a frame, 126px apart by the
+ * end, and the content jumping 75–92px in the frame the page crossed half
+ * alpha. A rewind into a page's own entrance repainted the leaving page at its
+ * BOTTOM for the whole crossfade, 488–1404px away. See `HANDOFF_SLIP_PX` in
+ * `Scroller`. Every screenshot check in this file passed throughout, because
+ * `seek` holds the track still under the shutter.
+ *
+ * It also counts the hand-offs each walk actually crossed, because a walk that
+ * stalled short of the last section would measure nothing and report no jump.
+ */
+async function wheelHandoffs(context, viewport) {
+  const results = [];
+  for (const id of ['02', '04']) {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.goto(`${ORIGIN}/#view-${id}`, { waitUntil: 'load' });
+    await page.waitForFunction(() => window.__pv?.armed(), null, { timeout: 20000 });
+    await settled(page);
+    const track = await readTrack(page);
+    const last = track.start.length - 1;
+    const origins = [];
+    for (let k = 0; k <= last; k++) {
+      if (k > 0) origins.push(track.start[k]);
+      if (k < last) origins.push(track.start[k] + track.pageScroll[k]);
+    }
+    await page.evaluate(RECORD_FRAMES);
+    await page.mouse.move(viewport.width / 2, viewport.height / 2);
+    const rnd = seeded(Number(id) * 104729);
+    const walks = [];
+
+    // BURSTS, the whole card down and back up.
+    for (const dir of [1, -1]) {
+      const t0 = Date.now();
+      await page.evaluate(() => (window.__frames.length = 0));
+      while (Date.now() - t0 < 40000) {
+        const n = 6 + Math.floor(rnd() * 7);
+        for (let i = 0; i < n; i++) {
+          await page.mouse.wheel(0, dir * (40 + rnd() * 80));
+          await page.waitForTimeout(16);
+        }
+        await page.waitForTimeout(rnd() < 0.5 ? 60 + rnd() * 100 : 250 + rnd() * 400);
+        const y = await page.evaluate(() => window.__pv.position());
+        if (dir > 0 ? y >= track.start[last] + 20 : y <= 0) break;
+      }
+      await page.waitForFunction(() => !window.__pv.scrolling(), null, { timeout: 5000 }).catch(() => {});
+      walks.push({ style: `bursts ${dir > 0 ? 'down' : 'up'}`, runs: [await page.evaluate(() => window.__frames.splice(0))] });
+    }
+
+    // A TRACKPAD, across each hand-off both ways.
+    for (const dir of [1, -1]) {
+      const runs = [];
+      for (const origin of origins) {
+        await page.evaluate((y) => window.__pv.park(y), origin - dir * 30);
+        await page.waitForTimeout(250);
+        await page.evaluate(() => (window.__frames.length = 0));
+        for (let i = 0; i < 25; i++) {
+          await page.mouse.wheel(0, dir * (2 + rnd() * 6));
+          await page.waitForTimeout(16);
+        }
+        await page.waitForFunction(() => !window.__pv.scrolling(), null, { timeout: 5000 }).catch(() => {});
+        runs.push(await page.evaluate(() => window.__frames.splice(0)));
+      }
+      walks.push({ style: `trackpad ${dir > 0 ? 'down' : 'up'}`, runs });
+    }
+    await page.evaluate(() => (window.__recording = false));
+
+    // THE REST PICTURE at every recorded position near a hand-off.
+    const near = (y) => origins.some((o) => Math.abs(y - o) <= WHEEL_NEAR_PX);
+    const wanted = [...new Set(walks.flatMap((w) => w.runs.flat().map((f) => f.pos)).filter(near))];
+    const rest = new Map();
+    for (const y of wanted) {
+      rest.set(
+        y,
+        await page.evaluate(async (y) => {
+          window.__pv.seek(y);
+          const frame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+          await frame();
+          while (window.__pv.handoff()) await frame();
+          await frame();
+          return window.__readFrame();
+        }, y),
+      );
+    }
+    await page.evaluate(() => window.__pv.release());
+
+    for (const walk of walks) {
+      // Each origin counts once however many times a run went back and forth
+      // over it: the claim is that every hand-off was CROSSED, not how often.
+      const crossed = new Set();
+      let worst = { gap: 0, at: null };
+      let crossfades = 0;
+      let frames = 0;
+      for (const run of walk.runs) {
+        for (let i = 0; i < run.length; i++) {
+          const f = run[i];
+          frames++;
+          if (i > 0) for (const o of origins) if ((run[i - 1].pos - o) * (f.pos - o) <= 0) crossed.add(o);
+          if (f.handoff) crossfades++;
+          if (!near(f.pos)) continue;
+          const gap = frameGap(f, rest.get(f.pos));
+          if (gap > worst.gap) worst = { gap, at: f };
+        }
+      }
+      results.push({ id, style: walk.style, crossed: crossed.size, expected: origins.length, worst, crossfades, frames, seeks: rest.size });
+    }
+    await page.close();
+  }
+
+  for (const r of results) {
+    const where = r.worst.at
+      ? ` at ${round(r.worst.at.pos)}` +
+        (r.worst.at.handoff ? ` mid-crossfade (${r.worst.at.handoff.into}, α ${r.worst.at.handoff.alpha.toFixed(2)})` : '')
+      : '';
+    check(
+      r.crossed >= r.expected && r.worst.gap <= WHEEL_JUMP_PX,
+      `card ${r.id} at ${viewport.name}, ${r.style}: every hand-off is where the track says, frame by frame`,
+      `worst ${Number.isFinite(r.worst.gap) ? round(r.worst.gap) : 'nothing painted'}px of ${WHEEL_JUMP_PX}${where}, ` +
+        `${r.crossed} of ${r.expected} hand-offs crossed, ${r.crossfades} of ${r.frames} frames crossfading`,
+    );
+  }
+}
+
 /* ── the run ──────────────────────────────────────────────────────────────── */
 
+/** The hand-offs at the four windows that are not buckets, at both scales.
+ *  `--only sizes` runs just this. */
+async function offBucket(browser, handoffMs, rows) {
+  console.log('\n── the hand-offs at windows that are not buckets ─────────────');
+  for (const dsf of DPRS) {
+    const context = await browser.newContext({ deviceScaleFactor: dsf });
+    for (const viewport of OFF_BUCKET_SIZES) rows.push(...(await handoffsAt(context, viewport, dsf, handoffMs)));
+    await context.close();
+  }
+}
+
+/** The two checks driven by a real hand, on their own. They are the two with a
+ *  reproduction behind them and the two worth re-running while working on the
+ *  pointer or the hand-offs: `--only hand` runs them and nothing else. */
+async function realHand(browser) {
+  console.log('\n── a real hand on the controls ─────────────────────────────');
+  const context = await browser.newContext({ deviceScaleFactor: 1 });
+  await letterheadSoak(context, VIEWPORTS[0]);
+  // The wheel at every size: a cut under motion is where a capture of the
+  // wrong width would show first, as a jump in the type's size.
+  for (const viewport of ALL_SIZES) await wheelHandoffs(context, viewport);
+  await context.close();
+}
+
+const ONLY = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
+
 async function run() {
-  const browser = await chromium.launch({ channel: 'chrome' });
+  const browser = await chromium.launch({ channel: 'chrome', args: CHROME_ARGS });
+  if (ONLY === 'sizes') {
+    const rows = [];
+    await offBucket(browser, 120, rows);
+    const context = await browser.newContext({ deviceScaleFactor: 1 });
+    await resizeAcrossBuckets(context, 120);
+    await context.close();
+    await browser.close();
+    console.log(failures === 0 ? '\nall green\n' : `\n${failures} failing\n`);
+    process.exit(failures === 0 ? 0 : 1);
+  }
+  if (ONLY === 'hand') {
+    await realHand(browser);
+    await browser.close();
+    console.log(failures === 0 ? '\nall green\n' : `\n${failures} failing\n`);
+    process.exit(failures === 0 ? 0 : 1);
+  }
   const handoffMs = 120;
   /** Every hand-off's worst numbers, by scale and viewport — printed together
    *  at the end, because the question the table answers is whether 2x costs
@@ -1606,6 +2230,8 @@ async function run() {
     await context.close();
   }
 
+  await offBucket(browser, handoffMs, handoffs);
+
   // ── the hand-offs, at both scales, side by side ────────────────────────────
   //
   // The thresholds have already been checked one by one above; what this is for
@@ -1737,14 +2363,15 @@ async function run() {
     );
     const moved = logs.filter((l) => /ACTIVE SECTION MOVED/.test(l));
     check(moved.length === 0, `@${dsf}x: no rebuild moved the reader`, moved.join(' | '));
-    // …and it is the right capture for the scale. A 1x file in a 2x buffer is
-    // the softness this release is about, and the picker is what stops it.
+    // …and they are the captures for the window's BUCKET, and nothing else: a
+    // capture of another width is a different document, and fetching every
+    // bucket's would be seven times the bytes for one of them.
+    const bucket = await held.evaluate(() => window.__pv.bucket());
     const wore = seen.map((r) => r.url.match(CAPTURE_RE)).filter(Boolean);
     check(
-      wore.length > 0 && wore.every((m) => Number(m[4] ?? 1) === dsf),
-      `@${dsf}x: …and the captures it asked for are the ${dsf}x ones`,
-      `${wore.length} fetched, scales ${[...new Set(wore.map((m) => `${m[4] ?? 1}x`))].join(' ')}`,
-
+      wore.length > 0 && wore.every((m) => Number(m[3]) === bucket && Number(m[4] ?? 1) === 2),
+      `@${dsf}x: …and the captures it asked for are bucket ${bucket}'s`,
+      `${wore.length} fetched, ${[...new Set(wore.map((m) => `${m[3]}@${m[4] ?? 1}x`))].join(' ')}`,
     );
     await cold.close();
   }
@@ -1752,9 +2379,10 @@ async function run() {
   // ── what the capture set costs ─────────────────────────────────────────────
   //
   // Two numbers, and they are not the same number. The BUNDLE is what ships:
-  // compressed WebP on disk, which is what a reader downloads. The TEXTURE is
-  // what the GPU holds: uncompressed RGBA at the file's own pixels, which is
-  // roughly forty times the first and is the one with a budget on it.
+  // compressed WebP on disk, all of it, every bucket. A reader downloads one
+  // bucket's worth, and only the captures of the sections near them. The
+  // TEXTURE is what the GPU holds: uncompressed RGBA at the file's own pixels,
+  // for the one bucket the window is in, and for six captures at most.
   console.log('\n── the capture set ──────────────────────────────────────────');
   {
     const files = [];
@@ -1768,80 +2396,50 @@ async function run() {
           id,
           kind: m[1],
           section: Number(m[2]),
-          cssWidth: Number(m[3]),
+          bucket: Number(m[3]),
           scale: Number(m[4] ?? 1),
           bytes: (await stat(path)).size,
           pixels: width * height,
         });
       }
     }
-    for (const scale of [1, 2]) {
-      const mine = files.filter((f) => f.scale === scale);
-      const bytes = mine.reduce((a, f) => a + f.bytes, 0);
-      console.log(
-        `      ${scale}x  ${String(mine.length).padStart(3)} files  ` +
-          `${(bytes / 1024).toFixed(0)} KB on disk`,
-      );
-    }
+    const kb = (bytes) => `${(bytes / 1024).toFixed(0)} KB`;
     const all = files.reduce((a, f) => a + f.bytes, 0);
-    console.log(`      all ${String(files.length).padStart(3)} files  ${(all / 1024).toFixed(0)} KB on disk`);
-
-    // Per SECTION and per PROJECT, at the widest viewport — which is the worst
-    // case, and the only one a given display ever binds.
-    const widest = Math.max(...files.map((f) => f.cssWidth));
-    const overBudget = [];
-    for (const scale of [1, 2]) {
+    console.log(`      all ${files.length} files  ${(all / MB).toFixed(1)} MB on disk`);
+    const buckets = [...new Set(files.map((f) => f.bucket))].sort((a, b) => a - b);
+    for (const bucket of buckets) {
+      const mine = files.filter((f) => f.bucket === bucket);
+      // THE WORST WINDOW at this bucket: the most any section and its two
+      // neighbours cost the GPU, across every card. It is the number a reader
+      // at a window this wide actually pays.
+      let resident = 0;
       for (const id of PROJECTS) {
-        const mine = files.filter((f) => f.id === id && f.scale === scale && f.cssWidth === widest);
-        const sections = [...new Set(mine.map((f) => f.section))].sort();
-        const per = sections.map(
-          (k) => mine.filter((f) => f.section === k).reduce((a, f) => a + f.pixels * 4, 0) / MB,
+        const card = mine.filter((f) => f.id === id);
+        const sections = [...new Set(card.map((f) => f.section))].sort((a, b) => a - b);
+        const per = sections.map((k) =>
+          card.filter((f) => f.section === k).reduce((a, f) => a + f.pixels * 4, 0) / MB,
         );
-        const total = per.reduce((a, b) => a + b, 0);
-        // THE WORST WINDOW, which is the number with the budget on it now: the
-        // most any one section and its two neighbours can cost. `total` is what
-        // the same read-through used to end up holding, kept beside it because
-        // the difference is the whole point of the eviction.
-        const resident = Math.max(
-          ...sections.map((_, k) =>
-            per
-              .slice(Math.max(0, k - RESIDENT_RADIUS), k + 1 + RESIDENT_RADIUS)
-              .reduce((a, b) => a + b, 0),
-          ),
-        );
-        console.log(
-          `      ${scale}x  card ${id}  ${sections.length} sections  ` +
-            `${per.map((v) => v.toFixed(1)).join(' + ')} = ${total.toFixed(1)} MB, ` +
-            `resident ${resident.toFixed(1)} MB`,
-        );
-        if (resident > TEXTURE_MB) overBudget.push(`${id}@${scale}x ${resident.toFixed(1)}MB`);
+        for (let k = 0; k < per.length; k++) {
+          resident = Math.max(
+            resident,
+            per.slice(Math.max(0, k - RESIDENT_RADIUS), k + 1 + RESIDENT_RADIUS).reduce((a, v) => a + v, 0),
+          );
+        }
       }
+      console.log(
+        `      bucket ${String(bucket).padEnd(5)} ${String(mine.length).padStart(3)} files  ` +
+          `${kb(mine.reduce((a, f) => a + f.bytes, 0)).padStart(8)} on disk,  ` +
+          `worst window ${resident.toFixed(1)} MB of texture`,
+      );
     }
     /**
      * REPORTED, NOT ASSERTED, and that is still a decision rather than an
-     * omission.
-     *
-     * A 2x capture of a 1632 x 844 page is 3264 x 1688 RGBA = 21.0 MB on its
-     * own, so a {@link TEXTURE_MB} budget admits ONE of them and nothing else.
-     * No arrangement of captures gets a three-section window under it while the
-     * sheet is sharp, and the obvious lever — soften the tail, which is on
-     * screen for less time — spends it in the one place it shows: the tail is
-     * what the sheet wears at p = 0 of a tear, at the page's own rect, in a
-     * 120ms crossfade off a page drawn at 2x.
-     *
-     * What the eviction changed is the shape of the number rather than the
-     * number: the resident set no longer grows with the length of the project,
-     * which is the part that was unbounded. The count is asserted (see
-     * {@link RESIDENT_MAX}); the megabytes are what one capture costs.
+     * omission. The count is asserted, on every section of every card (see
+     * {@link RESIDENT_MAX}): the set does not grow with the project. What one
+     * capture costs is its bucket's width at 2x times the capture's fixed
+     * height, and the height is the price of one capture serving every window
+     * height; see `docs/portfolio-view.md`.
      */
-    if (overBudget.length > 0) {
-      console.log(`      ! over ${TEXTURE_MB} MB per window: ${overBudget.join(', ')}`);
-      console.log('        six captures, and one 2x capture is 21.0 MB. What the eviction');
-      console.log('        bought is that this does not grow with the project — the count');
-      console.log('        is asserted above, on every section of every card.');
-    } else {
-      ok(`every window of captures fits ${TEXTURE_MB} MB of texture`);
-    }
   }
 
   // ── the last section, and the clips ────────────────────────────────────────
@@ -2029,6 +2627,15 @@ async function run() {
       await p.close();
     }
     await ctx3.close();
+  }
+
+  await realHand(browser);
+
+  console.log('\n── a window resized across buckets ──────────────────────────');
+  {
+    const context = await browser.newContext({ deviceScaleFactor: 1 });
+    await resizeAcrossBuckets(context, handoffMs);
+    await context.close();
   }
 
   // ── the ways in and out ────────────────────────────────────────────────────

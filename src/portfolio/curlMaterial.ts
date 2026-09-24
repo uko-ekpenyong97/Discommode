@@ -229,6 +229,14 @@ export interface CurlUniforms {
   uPointer: IUniform<number>;
   uMap: IUniform<Texture | null>;
   uHasMap: IUniform<number>;
+  /**
+   * WHICH BAND OF THE CAPTURE THE SHEET SHOWS, as (bottom, height) in the
+   * texture's v. A capture is taller than any page (see `pageBuckets.ts`), and
+   * the plane is the live page's rect, so the sheet samples only the rows the
+   * live page shows: the top of a `sheet` capture, a band near the bottom of a
+   * `tail`. (0, 1) is the whole texture.
+   */
+  uUvCrop: IUniform<Vector2>;
   uPaper: IUniform<Color>;
   uLightAPos: IUniform<Vector3>;
   uLightBPos: IUniform<Vector3>;
@@ -489,6 +497,7 @@ const FOLD_VERTEX = VERTEX_COMMON + vertexMain('bent');
 const FRAGMENT = /* glsl */ `
   uniform sampler2D uMap;
   uniform float uHasMap;
+  uniform vec2 uUvCrop;
   uniform vec3 uPaper;
   uniform vec3 uLightAPos;
   uniform vec3 uLightBPos;
@@ -542,8 +551,14 @@ const FRAGMENT = /* glsl */ `
     // are the same surface and take the same ratio, which is also why a flat
     // sheet — every fragment of which is front-facing — is still exactly the
     // texture and both hand-offs still hold.
+    //
+    // The front samples the CROPPED band of the capture. A row the capture
+    // does not have (a page taller than the capture's fixed height) is paper
+    // rather than the clamped edge row smeared down the sheet.
+    vec2 mapUv = vec2(vUv.x, uUvCrop.x + vUv.y * uUvCrop.y);
+    float inMap = step(0.0, mapUv.y) * step(mapUv.y, 1.0);
     vec3 albedo = gl_FrontFacing
-      ? mix(uPaper, texture2D(uMap, vUv).rgb, uHasMap)
+      ? mix(uPaper, texture2D(uMap, mapUv).rgb, uHasMap * inMap)
       : uPaper * uBackShade + vec3((grainAt(vUv) - 0.5) * uGrain);
 
     vec3 v = normalize(cameraPosition - vWorldPos);
@@ -648,6 +663,7 @@ export function createCurlMaterials(o: CurlMaterialOptions): CurlMaterials {
     uBackShade: { value: o.backShade },
     uGrain: { value: o.grain },
     uHairline: { value: new Vector2(0, 0) },
+    uUvCrop: { value: new Vector2(0, 1) },
     uEdgeInk: { value: new Color(o.edgeInk) },
     uEdgeAlpha: { value: o.edgeAlpha },
     uOpacity: { value: 1 },
