@@ -326,11 +326,11 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               data-i={p.i}
               data-idx={p.idx}
               className={
-                canOpen
+                (canOpen
                   ? 'detail__panel detail__panel--center detail__panel--readable'
                   : isCenter
                     ? 'detail__panel detail__panel--center'
-                    : 'detail__panel'
+                    : 'detail__panel') + (item.cover?.kind === 'shader' ? ' detail__panel--bare' : '')
               }
               style={{
                 left: `${p.i * panelStep}px`,

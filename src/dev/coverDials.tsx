@@ -9,8 +9,8 @@ const S = SITE_COVER_DEFAULTS;
 
 /**
  * The COVER panel — one per live cover (docs/covers.md): every dial the tuning
- * bench has (the cover's JSON, stage toggles included), plus the site's two,
- * coverBackdrop and coverMaxDpr. Copy pastes into src/covers/covers/<id>.json.
+ * bench has (the cover's JSON, stage toggles included), plus the site's own:
+ * coverBackdrop, coverMaxDpr and coverPaperShade. Copy pastes into src/covers/covers/<id>.json.
  *
  * Registered from OUTSIDE src/reader: DialKit's store is global, so the panel
  * shows in whichever dock is mounted — the doorway's at #item-02?intro (the
@@ -26,6 +26,7 @@ function useCoverPanel(id: string) {
         coverBackdrop: { type: 'select', options: ['sky', 'solid'], default: S.coverBackdrop },
         coverBackdropColor: S.coverBackdropColor,
         coverMaxDpr: [S.coverMaxDpr, 0.5, 3, 0.25],
+        coverPaperShade: [S.coverPaperShade, 0, 1, 0.01],
       },
       ...(def.dials as KitConfig),
     } as KitConfig,
@@ -37,6 +38,7 @@ function useCoverPanel(id: string) {
       coverBackdrop: site.coverBackdrop === 'solid' ? 'solid' : 'sky',
       coverBackdropColor: site.coverBackdropColor,
       coverMaxDpr: site.coverMaxDpr,
+      coverPaperShade: site.coverPaperShade,
     });
     setCoverValues(id, cover);
   }, [id, v]);

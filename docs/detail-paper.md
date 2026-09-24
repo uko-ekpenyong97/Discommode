@@ -180,6 +180,15 @@ learned transparency, both identities for every other card:
   transparent one. It now leaves the card's own rounded rect out, which is what
   the DOM's box-shadow does.
 
+And a SHADER cover (`cover.kind === 'shader'`) is not a card here at all, in
+any slot (docs/covers.md, "No card in the detail view"): no rounded corners
+(`uRadius` 0), no shadow (the quad is not drawn; its DOM panel's is
+transparent), and the crease light — the screen blend and the trough shading —
+weighted by `uCoverShade × alpha` (`coverPaperShade`, on the COVER panel,
+default 1). The geometry is untouched: the dent, squash, ripple, fold and the
+crease refraction are exactly as on any card. For every other card the weight
+is exactly 1 and the radius and shadow are as before.
+
 ## The material
 
 Vertex (all in card heights, then to CSS px, then the perspective above):
@@ -199,8 +208,8 @@ Fragment:
 | reveal | `discard` where `(vUv.y − 0.04·vUv.x) < 1.04·uFold − 0.04`. This is **rescaled** from the reference's `< uFold`, whose raw form eats a 4% sliver off the bottom-right at fold 0 and would break the identity. |
 | crease texel | `paper-creases.webp`, rotated `uIndex × 90°` so no two cards share folds |
 | refraction | `uv −= texel.g · d + hover · d · texel.g`, where `d = uCreaseDisplacement`, **held at 0 inside every hover-sprite rect** |
-| light | `mix(col, screen(col, texel), uCreaseBlend)`, then `− (cmap(texel.g, 0, 0.1, 0.05, 0) − texel.g · hover · 0.1) · uCreaseBlend / 0.2` |
-| edge | the DOM's 6px corner radius (scaled), antialiased; straight edges are the triangles' own, multisampled |
+| light | `mix(col, screen(col, texel), uCreaseBlend · lit)`, then `− (cmap(texel.g, 0, 0.1, 0.05, 0) − texel.g · hover · 0.1) · uCreaseBlend / 0.2 · lit`; `lit` = `uCoverShade · alpha` on a live cover, exactly 1 otherwise |
+| edge | the DOM's 6px corner radius (scaled), antialiased; straight edges are the triangles' own, multisampled. None on a shader cover (`uRadius` 0) |
 | alpha | `uAlpha` = the panel's own opacity (hover-dim, side fade, doorway clear), premultiplied |
 
 **The invariant.** With `uCreaseBlend`, `uCreaseDisplacement`, `uHover`,
