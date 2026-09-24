@@ -1,6 +1,7 @@
 import { look } from './portfolioMotion';
 import { skyEngine } from '../sky/skyStage';
-import type { SkyTarget } from '../sky/skyEngine';
+import type { SkyTarget, SweepSplat } from '../sky/skyEngine';
+import type { LiveConfig } from '../config';
 
 /**
  * DEV-ONLY contrast probe — ink on paper, and the letterhead on the ground.
@@ -90,9 +91,11 @@ export const WORST_CASE_SKY: SkyTarget = {
   wind: 0,
   // Daylit, so the moon is not drawn at all and this is not the state the
   // moon can fail. The state where it CAN is a clear night with a full moon
-  // in the band — see `bandTop` below, and `docs/sky.md`.
+  // in the band — see `bandCenter` below, and `docs/sky.md`.
   moonFraction: 1,
-  moonWaxing: true,
+  moonAltitude: -90,
+  moonAzimuth: 0,
+  moonLimb: 0,
 };
 
 /** Every run of type on the PAPER, and the name it is reported under. */
@@ -163,12 +166,13 @@ export type SurfaceOverride = Partial<
    * height, from the top.
    *
    * THE STRIP DOES NOT MOVE; this moves the SAMPLE. There is one thing in
-   * the sky that is small, bright and in a fixed place — the moon — and the
-   * question "would the letterhead read if it were over the moon" cannot be
-   * asked of a band the moon is not in. Same band height, different row.
+   * the sky that is small and bright — the moon — and the question "would
+   * the letterhead read if it were over the moon" cannot be asked of a band
+   * the moon is not in. Same band height, different row.
    *
-   * The caller gets the row from `skyEngine().moonAt().y` rather than writing
-   * the constant down a second time. See the moon section of `docs/sky.md`,
+   * The caller gets the row from `skyEngine().moonAt().y`, with the sky it
+   * is asking about on screen: the moon moves now, so the row is only the
+   * moon's row for the sky that put it there. See the moon section of `docs/sky.md`,
    * and section 8 of `scripts/sky-fluid-verify.mjs`, which is what passes it.
    */
   bandCenter?: number;
@@ -360,6 +364,134 @@ export function probeContrast(overrides: SurfaceOverride = {}): ContrastReport |
   return report;
 }
 
+/* ── the sweep ───────────────────────────────────────────────────────────── */
+
+/**
+ * The dials the sweep holds at the WORST the dock can set them — the maxima of
+ * their DialKit ranges (`src/dev/Dials.tsx`) — so the figure is a floor for
+ * any tuning session and not only for the shipped values. The wake's push on
+ * the gradient and its stain, what the pointer puts in, how hard a star in the
+ * wake flares, and the star itself.
+ */
+export const SWEEP_WORST_DIALS: Partial<LiveConfig> = {
+  gradientPush: 1,
+  gradientSwirl: 0.6,
+  fluidStrength: 3,
+  starGlow: 4,
+  starSize: 4,
+};
+
+/** Fastest a pointer puts air in, screen heights / s (the engine's cap). */
+const SWIPE_SPEED = 4;
+
+/**
+ * THE SWIPE. Two passes of a pointer at the fastest the wake takes, and the
+ * wake left to decay after each:
+ *
+ *   A  straight along the letterhead band, left to right, through its middle
+ *      — the one that stirs the band itself;
+ *   B  a diagonal rising from low on the left to the top on the right,
+ *      through the band — the one that DRAGS the lower sky up into it, which
+ *      is what `gradientPush` does to a dusk.
+ *
+ * In CSS px and px / s, one entry per 60 Hz frame.
+ */
+export function letterheadSwipe(): SweepSplat[][] {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const band = Math.min(1, look.letterheadHPx / Math.max(vh, 1));
+  const step = (SWIPE_SPEED * vh) / 60;
+  const path = (x0: number, y0: number, x1: number, y1: number): SweepSplat[][] => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.ceil(len / step);
+    const dx = ((x1 - x0) / len) * SWIPE_SPEED * vh;
+    const dy = ((y1 - y0) / len) * SWIPE_SPEED * vh;
+    return Array.from({ length: n + 1 }, (_, i) => [
+      { x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * i) / n, dx, dy },
+    ]);
+  };
+  const rest = (n: number): SweepSplat[][] => Array.from({ length: n }, () => []);
+  return [
+    ...path(-0.05 * vw, (band / 2) * vh, 1.05 * vw, (band / 2) * vh),
+    ...rest(15),
+    ...path(0.1 * vw, 0.8 * vh, 0.95 * vw, 0),
+    ...rest(30),
+  ];
+}
+
+export interface SweepContrast {
+  /** Per state: the worst run of letterhead type over the wake, and at rest. */
+  ratio: number[];
+  kind: string[];
+  restRatio: number[];
+  /** Per state: the wake frame the worst was at (−1 = at rest). */
+  frame: number[];
+  samples: number;
+  frames: number;
+  /** GPU time for the sweep itself, ms. */
+  ms: number;
+}
+
+/**
+ * THE LETTERHEAD AGAINST A WHOLE DAY OF SKY, WITH A HAND IN IT. Every state in
+ * `skies`, the band's brightest pixel at its worst over {@link letterheadSwipe}
+ * with {@link SWEEP_WORST_DIALS} held (or `dials`, e.g. `{}` for the shipped
+ * values), put under both washes and measured
+ * against every run of letterhead type on screen exactly as
+ * {@link probeContrast} does — same grain model, same worst tenth.
+ *
+ * Sky only: nothing is captured and the page on screen does not change. The
+ * band is where the letterhead actually is.
+ */
+export function sweepContrast(
+  skies: SkyTarget[],
+  overrides: SurfaceOverride = {},
+  dials: Partial<LiveConfig> = SWEEP_WORST_DIALS,
+): SweepContrast | null {
+  const engine = skyEngine();
+  const ground = document.querySelector<HTMLElement>('.pv-ground');
+  if (!engine || !ground) return null;
+  const band = Math.min(1, look.letterheadHPx / Math.max(window.innerHeight, 1));
+  const frames = letterheadSwipe();
+  const res = engine.sweepBand(0, band, skies, {
+    frames,
+    sampleEvery: 3,
+    time: 0,
+    phases: 8,
+    config: dials,
+  });
+  if (!res) return null;
+  const opacity = overrides.grainOpacity ?? look.grainOpacity;
+  const els = Array.from(ground.querySelectorAll<HTMLElement>(GROUND_SELECTORS.join(',')));
+  // Many skies share a brightest pixel (every clouded noon is white), so each
+  // colour is measured once.
+  const memo = new Map<string, { ratio: number; kind: string }>();
+  const worstOn = (c: [number, number, number]) => {
+    const key = c.join(',');
+    let hit = memo.get(key);
+    if (!hit) {
+      const field = scrimmed(c, overrides);
+      hit = { ratio: Infinity, kind: '' };
+      for (const el of els) {
+        const sample = measure(el, 'ground', field, opacity);
+        if (sample && sample.ratio < hit.ratio) hit = { ratio: sample.ratio, kind: sample.kind };
+      }
+      memo.set(key, hit);
+    }
+    return hit;
+  };
+  const worst = res.colors.map(worstOn);
+  return {
+    ratio: worst.map((w) => w.ratio),
+    kind: worst.map((w) => w.kind),
+    restRatio: res.rest.map((c) => worstOn(c).ratio),
+    frame: res.frame,
+    samples: res.samples,
+    frames: frames.length,
+    ms: res.ms,
+  };
+}
+
 /* ── publishing to the dock ──────────────────────────────────────────────── */
 
 type Listener = (report: ContrastReport | null) => void;
@@ -425,5 +557,7 @@ export function logContrastProbe(overrides: SurfaceOverride = {}): ContrastRepor
 // console — and from `pv-verify`. Dead code in production (and verified absent
 // from the bundle).
 if (import.meta.env.DEV) {
-  (window as unknown as { __pvProbe?: typeof probeContrast }).__pvProbe = probeContrast;
+  const w = window as unknown as { __pvProbe?: typeof probeContrast; __pvSweep?: typeof sweepContrast };
+  w.__pvProbe = probeContrast;
+  w.__pvSweep = sweepContrast;
 }

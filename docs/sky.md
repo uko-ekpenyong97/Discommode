@@ -19,8 +19,9 @@ from, and anything argued about here should be argued about there first.
 > taken in the same session, because that session was a noisy one; the
 > contact sheet is `scripts/sky-sheet.mjs`, eighteen frames from 2026-09-20 and
 > the six nights re-shot 2026-09-22 (see
-> [One column at a time](#one-column-at-a-time)); the moon's figures are
-> 2026-09-22 and named where they appear; the contrast
+> [One column at a time](#one-column-at-a-time)); the moon's phase and
+> position are both measured against the USNO almanac fetched 2026-09-23, and the [sweep](#the-sweep-the-letterhead-under-a-moving-sky)'s
+> table is a 2026-09-23 run; the contrast
 > figures are `scripts/sky-contrast.mjs` and live in
 > [docs/portfolio-view.md](portfolio-view.md#two-washes-because-there-are-two-questions),
 > which is where the ground they are measured on is documented.
@@ -60,7 +61,7 @@ each layer composites over what is under it.
 | --- | --- | --- |
 | 1 | **Base gradient** | `uZenith` → `uHorizon` up the screen, the sample point warped by a 3-octave fbm so it reads painted rather than printed. Warm lift along the horizon at golden hour. Wherever it is what you can see, the wake **pushes it around like paint in water** — see [The gradient is paint](#the-gradient-is-paint). |
 | 2 | **Sun glow** | Position: `x` by phase (0.24 rising → 0.76 setting), `y` by elevation (−0.06 → 0.86). Three exponentials — a broad wash, a near glow, a disc. Occluded by cloud, fog and storm. |
-| 3 | **Stars + moon** | Only at `nightAmt`, and skipped outright above it; a hashed star field, each star with its own size and twinkle and a two-tier falloff, and **the moon in the phase it is actually in tonight** — a terminator, earthshine on the dark side, and a halo that goes with the lit fraction. See [The moon](#the-moon). Mixed back out by cloud and fog — an overcast night has no stars. |
+| 3 | **Stars + moon** | Only at `nightAmt`, and skipped outright above it. A hashed star field, each star with its own size and twinkle and a two-tier falloff. Then **the moon where it actually is, in the phase it is actually in tonight**: placed by its real altitude and azimuth, with a terminator lit from the sun's direction, earthshine on the dark side, a halo that goes with the lit fraction, and moonlight in the sky round it. **When the moon is under the horizon it is not drawn.** See [The moon](#the-moon) and [MOON](#moon-where-it-is-and-when-there-is-none). Mixed back out by cloud and fog, so an overcast night has no stars. |
 | 4 | **Cloud deck** | `coverage = max(cloud, storm)` thresholds a 5-octave fbm. Above 0.72 coverage the ceiling **closes** and the texture comes from the shading instead. A second fbm sample shades lit against shadow; lit goes sun-coloured at golden hour and the deck is **underlit** from below. Blown sideways by wind. |
 | 5 | **Fog bank** | A 5-octave fbm gated by a vertical falloff at `fogHeight`: a **bright** bank sitting low and rolling, not a grey tint. Its colour goes from a cold slate at night to near-white in daylight, and takes the sun's colour at golden hour; the sun bleeds through it. |
 | 6 | **Rain** | Two layers of hashed streaks at different scales and speeds, both slanted by wind. |
@@ -106,7 +107,8 @@ and a flip cross-fades rather than throwing the sun across the sky.
 | `storm` | `condition === 'storm' ? 1 : 0` | **a state** |
 | `wind` | `env.windSpeed` | |
 | `moonFraction` | `env.moonFraction` | **not from the weather.** See below |
-| `moonWaxing` | `env.moonWaxing` | which limb is lit |
+| `moonAltitude`, `moonAzimuth` | `env.moonAltitude`, `env.moonAzimuth` | **where it is**, from the clock; under 0° it is not drawn |
+| `moonLimb` | `env.moonLimbAngle` | which way the lit limb faces on screen: toward the sun |
 
 Fog and storm are conditions and not functions of cloudiness. That is the one
 line of this file that matters: **fog and overcast are different states**, and
@@ -120,42 +122,56 @@ the side the light is actually on.
 
 ### The model
 
-`src/env/moon.ts`, and it is thirty lines. Count days from a known new moon
-(**2000-01-06 18:14 UTC**), take the remainder against the mean synodic month
-(**29.530588853 d**), and that is the age. The illuminated fraction is the
-projected area of the lit hemisphere, which is a cosine:
+**The phase comes from where the moon and the sun actually are.** It is the
+moon's **elongation** from the sun: the difference of their ecliptic
+longitudes, from the same Meeus positions that
+[place the moon in the sky](#moon-where-it-is-and-when-there-is-none):
 
-    θ = 2π · age / 29.530588853        (0 at new, π at full)
-    fraction = (1 − cos θ) / 2
+    Δλ = λ(moon) − λ(sun)             0..360°: 0 new, 90 first quarter, 180 full
+    cos ψ = cos β · cos Δλ            ψ the true elongation, β the moon's latitude
+    fraction = (1 − cos ψ) / 2        the projected area of the lit hemisphere
+    waxing = Δλ < 180°                east of the sun, so lit on its west side
 
-**It is not from Open-Meteo.** The moon is a function of the clock, it is the
-same moon over the whole planet, and `useEnvState` already recomputes the sun
-from the clock once a minute — the moon rides along on that same tick. No
-request was added and none was needed.
+The lit fraction, the terminator and the bright limb's direction are therefore
+**one geometry**. The waxing flag and the limb both come from the same two
+positions, so they cannot disagree. β is why a new moon is not exactly 0 and a
+full moon is not exactly 1: the moon passes a few degrees off the line through
+the sun. Strictly the fraction wants the phase angle at the moon, which differs
+from 180° − ψ by the sun's parallax over the Earth–Moon distance: at most 0.15°,
+or 0.001 of fraction. That is left out.
 
-**A mean month is ±0.6 days wrong and the tests say so.** The Moon's orbit is
-an ellipse; the true interval between new moons swings either side of the mean
-by up to about half a day. That is the accuracy this needs — the sky is drawing
-a crescent, not timing an occultation, and 0.6 days is about 2% of a lunation,
-which is a couple of percent of illuminated fraction and a pixel or two of
-terminator.
+**It is not from Open-Meteo.** The moon is a function of the clock, and
+`useEnvState` already recomputes the sun from the clock once a minute. The
+moon rides along on that same tick. No request was added and none was needed.
 
-Against the almanac, at midday UTC of each date:
+Against the US Naval Observatory's phase instants (fetched 2026-09-23):
 
-| anchor | model | miss |
-| --- | --- | --- |
-| new, 2026-09-11 | 2026-09-11 20:29 UTC | 0.35 d |
-| full, 2026-09-26 | 2026-09-26 14:51 UTC | 0.12 d |
-| first quarter, 2026-09-18 | **2026-09-19 05:40 UTC** | **0.74 d** |
+| phase | USNO (UTC) | model crosses | late by |
+| --- | --- | --- | --- |
+| new | 2026-09-11 03:27 | 03:28 | 1.4 min |
+| first quarter | 2026-09-18 20:44 | 20:45 | 1.0 min |
+| full | 2026-09-26 16:49 | 16:50 | 1.3 min |
+| last quarter | 2026-10-03 13:25 | 13:27 | 2.4 min |
+| new | 2026-10-10 15:50 | 15:51 | 1.6 min |
 
-**First quarter is the one this lunation misses**, and the miss is a test
-rather than a footnote. The model puts it on the 19th; midday on the 18th is
-0.74 d short, which is outside the ±0.6 bar, and midday on the 19th is 0.24 d
-past it, which is inside. `moon.test.ts` asserts both — the pass against the
-19th and the size of the miss against the 18th — so if the model is ever
-changed the direction of the error is something the suite knows and not
-something someone has to remember. It is the mean-synodic error doing exactly
-what it says it does, on the anchor where this particular month spends it.
+It is late, and late by about the same amount every time. That is ΔT: `astro.ts`
+uses UT where the series asks for TT, which is 69 seconds, plus the almanac's
+rounding to the minute. `moon.test.ts` holds each instant to **±0.05° of
+elongation (about ±6 min)**. It also holds the lit fraction to **±0.01** of the
+USNO's published "fraction illuminated" on five dates. That figure is for noon
+of the date in the zone asked for, which the page does not say: asked in UTC−7,
+09-22 comes back 84%, and the model gives 0.843 at 12:00 PDT and 0.805 at
+midnight.
+
+**What it replaced.** The phase used to be a **mean synodic month** counted
+from a known new moon (2000-01-06 18:14 UTC, 29.530588853 d). The true interval
+between new moons swings half a day either side of the mean, so that model was
+tested to ±0.6 days and it spent it: it put this lunation's first quarter at
+**2026-09-19 05:40 UTC, nine hours late**, and 0.74 d after midday on the 18th.
+The test that used to record that miss now records that it is gone: the
+elongation crosses 90° at the almanac's minute on the 18th, and by 05:40 on the
+19th it is past 94°. The phase override is untouched, because the preview
+table's moons are fractions and not instants.
 
 ### The terminator
 
@@ -169,7 +185,10 @@ It is the **projection of a sphere**, and that is how the shader lights it:
 
 `lam > 0` is the lit hemisphere, and `s` is +1 waxing / −1 waning. **Waxing is
 lit on the right**, which is the Northern-hemisphere view and the only one this
-sky is drawn for.
+sky is drawn for. (That was this section's model. The light now comes along the
+bright limb's real direction on screen, and `s·x` became `dot(q, L)`; see
+[The bright limb](#the-bright-limb). With the limb straight to one side, which
+is what a preview moon has, it is the same expression.)
 
 The boundary this draws is exactly the half-ellipse of the flat form,
 `x·s = ct·sqrt(1 − y²)` — set them equal at y = 0 and both give x = ±ct. Two
@@ -250,10 +269,177 @@ Measured (section 8 of `npm run verify:sky`, 1440×900 @2x, 2026-09-22):
 | band moved onto a **full moon** | **7.50:1** |
 
 So a letterhead printed across a full moon would still clear 7:1, with about
-half a point in hand — and it is the tightest a night sky gets anywhere in this
-file. The twenty-four-state table is unmoved: clear night 9.36 / 9.21 at the
+half a point in hand. 7.50 is also exactly what a *pure white* band reads, so
+the moon is not tighter than anything else: see
+[the sweep](#the-sweep-the-letterhead-under-a-moving-sky), which found that
+a star at a twinkle peak, and the wake, both reach the same floor. The twenty-four-state table is unmoved: clear night 9.36 / 9.21 at the
 two viewports, worst state anywhere still partly / overcast / fog noon at
 **7.65:1**.
+
+## MOON: where it is, and when there is none
+
+The phase above was right and the place was a decoration: the disc was nailed
+to uv (0.70, 0.80) on every clear night, including the half of them when the
+real moon is under the horizon. It is now where it is.
+
+### The model
+
+`src/env/moon.ts` (the second half) and `src/env/astro.ts`. **Meeus**,
+*Astronomical Algorithms*, at low precision, in the order the book does it:
+
+1. **Ecliptic longitude, latitude and distance** from the lunar series
+   (Meeus ch. 47), truncated to the 32 longitude/distance and 20 latitude
+   terms over about 0.002°, plus the three additive terms for Venus, Jupiter
+   and the Earth's flattening.
+2. **→ right ascension and declination**, through the mean obliquity.
+3. **→ altitude and azimuth** over San Francisco (`DEFAULT_LOCATION`,
+   37.7749 N, 122.4194 W), through the **local sidereal time** (Meeus 12.4).
+4. **Topocentric**: the moon is close enough that standing on the surface
+   rather than at the centre of the Earth drops it by up to a degree —
+   `alt − parallax × cos(alt)`. Then **refraction** (Bennett), which is what
+   keeps it visible for a couple of minutes after it has geometrically set.
+
+That apparent altitude is `EnvState.moonAltitude`, and the azimuth (from north
+through east) is `moonAzimuth`. They are recomputed on the same minute tick as
+the sun, from the clock. **No request, no network**, the same as the phase.
+
+`astro.ts` exists because nothing in the sun's path could be reused: `sun.ts`
+is a curve fitted between Open-Meteo's sunrise and sunset, and it has no
+Julian day, no sidereal clock and no altitude in it. So the time and frame
+helpers are one module that the moon uses now and the sun can use later,
+instead of being written inside `moon.ts`. The sun gets one thing from it
+already: its real altitude and azimuth (`sunPosition`, Meeus ch. 25), which
+is what the bright limb is aimed at.
+
+**The phase comes from the same positions.** The elongation between this
+moon and that sun gives the lit fraction and which side it is on (see
+[The model](#the-model)), so the shape, the terminator and the bright limb are
+one geometry. The phase override is unchanged: the preview's moons are
+fractions and not instants.
+
+### Accuracy
+
+Against the **US Naval Observatory** (aa.usno.navy.mil, *Rise, Set, and Transit
+Times* for 37.77 N, 122.42 W, fetched 2026-09-23), with its definition: upper
+limb on the horizon, with refraction. `moon.test.ts` asserts each to ±10 min.
+
+| event | USNO (PDT) | model | miss |
+| --- | --- | --- | --- |
+| set, 09-23 | 03:47 | 03:48 | +1 min |
+| rise, 09-23 | 17:40 | 17:38 | −2 min |
+| set, 09-26 (full) | 07:01 | 07:02 | +1 min |
+| rise, 09-26 (full) | 18:54 | 18:52 | −2 min |
+| set, 10-03 (last quarter) | 14:56 | 14:57 | +1 min |
+| rise, 10-10 (new) | 07:20 | 07:18 | −2 min |
+
+And the published phase **instants**, against the elongation the model puts
+between the moon and the sun (the moon gains half a degree an hour, so 0.25°
+is ±30 min):
+
+| phase | USNO (UTC) | elongation there |
+| --- | --- | --- |
+| full | 2026-09-26 16:49 | 179.988° |
+| new | 2026-10-10 15:50 | 359.986° |
+
+That is roughly a hundredth of a degree. The bar was a degree. What is left out
+(ΔT, nutation, aberration, the truncated terms) is all smaller than what was
+kept by a wide margin.
+
+### On screen: the sun's arc
+
+The moon is placed **the way the sun is**, from one table (`ARC` in
+`skyEngine.ts`), and the two cannot drift apart:
+
+| | the sun | the moon |
+| --- | --- | --- |
+| x | `x0` 0.24 rising → `x1` 0.76 setting, by `dayPhase` | the same two numbers, by **azimuth**: 90° (east) → 0.24, 180° → 0.50, 270° (west) → 0.76 |
+| y | `y0` −0.06 → `y1` 0.86 over the 0..1 elevation | the same, over `elevationFromHeight(sin altitude)`, which is the function `sunElevation` is built on |
+
+So the sky is drawn **looking south**, with east on the left, and a moon on the
+horizon sits on the same row as a sun on the horizon. A moon north of east or
+west runs off the edge of the screen, which is where it is. It is placed on the
+CPU (`moonScreen`) and eased **on screen** rather than in azimuth: an azimuth
+would have to wrap at north, and over San Francisco the only moon that crosses
+north is one under the horizon.
+
+### Below the horizon, there is no moon
+
+**The rule: under 0° of apparent altitude the moon is not drawn**, and it is a
+uniform branch (`uMoonVis > 0`), so a sky with no moon up does not pay for
+one. **A clear night with the moon down is stars and nothing else.** Over its
+last **3°** it fades (`moonVisibility`, a smoothstep of `alt / 3`), so a rising
+moon comes up and a setting one goes out without popping. The disc, its halo
+and its moonlight all go with it.
+
+The moon is still only drawn at **night**, too (it is inside the `nightAmt`
+branch, as before). A daytime moon is real, and it is not drawn. That is the
+same decision as before, and nothing here changes it.
+
+### The bright limb
+
+The terminator used to be lit along x: waxing lit from the right, waning from
+the left, always vertical. Now the light comes along `uMoonLimb`, the
+direction **from the moon toward the sun** on screen: the great circle between
+them, taken where it leaves the moon, from their altitudes and azimuths
+(`brightLimbAngle`). In the shader, `lam = s·x·st − ct·z` becomes
+`lam = dot(q, L)·st − ct·z`. With L = (±1, 0) the two are the same expression,
+term for term. So a preview moon, which has no instant and so no sun, is lit
+straight from the side its phase says and draws the same pixels it used to.
+
+It is approximate in the way the brief allows: the direction is taken on the
+sky, and the screen mapping is not conformal, so near the edges it is off by
+a few degrees. What it gets right is the thing you see. An evening crescent
+in the west, with the sun set below and to its west, is lit on its **lower
+right**. A pre-dawn crescent in the east is lit **from below**. `moon.test.ts`
+asserts both, and that every evening from first quarter to full is lit on
+the west side.
+
+### Moonlight
+
+One dial, **`moonGlow`**, 0.12. A moon that is up lifts the sky round it: a
+broad, cool brightening (`exp(−d × 2.2)` in screen heights), scaled by
+`moonGlow × fraction × sin(altitude) × visibility`. It is computed on the CPU as
+one uniform, so a thin crescent low on the horizon barely lights anything and
+a full moon high up lights a wide patch. The **stars under it dim** by the
+same measure, `1 − min(0.6, 3 × light)`: never more than 60%, and only near
+the moon. It is inside the clear-night mix like the stars, so cloud and fog
+hide it.
+
+At the preview moon (full, 67°), the zenith 0.3 heights from the disc gains
+about 0.03. That is visible as light and small next to the letterhead's
+margin; see [the sweep](#the-sweep-the-letterhead-under-a-moving-sky).
+
+Reduced motion and a hidden tab are unchanged. The moon moves on the minute
+tick, and under reduced motion that is a 150ms ease and then the loop stops
+again.
+
+### Overrides
+
+The EnvReadout's moon row has two new controls:
+
+- **FORCE UP** pins the moon at **45°**, azimuth **249°** (WSW, which the arc
+  puts at x 0.70, the column the fixed moon used to be in, and clear of the
+  paper in the project view). It is **its own override**
+  (`setMoonForce` in `useEnvState.ts`), layered over whatever env is showing,
+  live or forced. So it pins the moon's *place* and keeps its *phase*:
+  tonight's moon when the sky is live, and the preset when a phase button has
+  been pressed. The bright limb is re-aimed from the forced place at the real
+  sun, and mirrored left-for-right if that disagrees with the phase's waxing
+  flag.
+- **An altitude slider**, −10° to 90°. Moving it turns FORCE UP on at that
+  altitude, which is how to watch the 3° fade and the moonlight scale with
+  height.
+
+The phase row (new / crescent / quarter / gibbous / full, wax / wane) is
+unchanged. The readout also shows `moon alt / az`, with `(down)` when it is
+under the horizon.
+
+**The preview moon is still pinned**, for the same reason as before (see
+[Stepping the shapes](#stepping-the-shapes)). It is `PREVIEW_MOON`, full, now
+written as the altitude and azimuth the arc maps to (0.70, 0.80): 67.19°,
+249.23°. The contact sheet and the twenty-four still states therefore keep
+their moon where it always was. What changed in them is the moonlight: the six
+night frames were re-shot (see [One column at a time](#one-column-at-a-time)).
 
 ## No snow. This sky is San Francisco's.
 
@@ -289,6 +475,7 @@ draw, which is the check that actually protects this.
 | `moonSize` | 1.0 | The moon's disc radius, as a multiple of the flat disc it replaced. |
 | `moonEarthshine` | 0.06 | What the unlit side still gives back. 0 is a crescent and nothing else. |
 | `moonTerminatorSoft` | 0.03 | How soft the terminator is, in **cosine of incidence** — see [The terminator](#the-terminator). |
+| `moonGlow` | 0.12 | **Moonlight**: how much a moon that is up lifts the sky round it, × lit fraction × sin(altitude). The stars near it dim by the same measure. 0 is a moon that lights nothing but itself. See [Moonlight](#moonlight). |
 | `skyResolution` | 1.0 | Backing-store scale under the DPR cap of 2. See below. |
 | `skyMaxMegapixels` | 0 | The most pixels the backing store may have, in millions. Above it the store is scaled down. 0 = no cap, which ships; it is the lever for a slower machine. See [Frame time](#frame-time). |
 
@@ -843,6 +1030,15 @@ luminance against `pv-verify`'s 35% bar — the same figure `main` measures,
 because the peak star brightness did not change and the discs cover about a
 third of a percent of the frame.
 
+**They were re-shot again on 2026-09-23 for the [moonlight](#moonlight)**,
+with the same command, and for the same reason only the night column was
+re-shot. The moon is where it was in all six (the preview moon is pinned to
+the old spot), and what changed is the light round it. Zenith luma: clear
+**44.2** (from 40.6), partly 40.0, cloudy 46.5, fog 46.2, rain 43.5, storm
+31.7. The clouded nights barely move because the deck hides the moonlight the
+same way it hides the stars. `pv-verify` puts night at **29–30%** of noon's
+mean luminance, against its 35% bar.
+
 ### The sheet is not a check, and one was needed
 
 A contact sheet is an eye test. It is driven by `window.__skyPreview`, a handle
@@ -883,6 +1079,7 @@ grain or a flash. Run 2026-09-22, Apple M1 Max, 1440×900 @2x:
 | --- | --- | --- |
 | 1 | 24 states, sim on, a sweep put through and left to decay, against sim off | **0.000%** of pixels differ in every state; the solver asleep after 7.2–7.3s every time |
 | 1 | …and against the sky before the MOON change (the branch it came from, under reduced motion, both clocks at 0) | **0.000% in all twenty-four** — the preview moon is full, and a full moon at `moonSize` 1 is the same pixels the flat disc was. The moon changes the other twenty-eight nights of the month and nothing else |
+| 1 | …and against the sky before the moon got its PLACE (`main` at 94e8628, run 2026-09-23) | **eighteen daylit states 0.000%**: the sun's position now comes from the shared `ARC` table and is the same pixels. The six nights are asserted with `moonGlow` at 0, worst **0.237%** (clear night). The preview moon is where the fixed one was and lit from the same side, so without its moonlight a night is the night it was. With the moonlight on they differ by design (clear 99.8%, partly 79.9%, rain 19.3%, cloudy 7.8%, fog 1.5%, storm 0.6%), and that is reported, not asserted |
 | 1 | …and, one change earlier, against `main` | worst **0.255%** (clear night, the bigger stars); all eighteen daylit states 0.000% — the gradient push leaves nothing behind |
 | 2 | a sweep across a clear night | **34.2%** of 3,936 star pixels moved; **0.0%** still moved at 3s |
 | 3 | fog at night, a 200px disc at the cursor | **−27.5%** luminance; back to baseline at 3s |
@@ -892,7 +1089,8 @@ grain or a flash. Run 2026-09-22, Apple M1 Max, 1440×900 @2x:
 | 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway | each wakes the field on its own |
 | 7 | a diagonal sweep across a clear **dusk** | **31.9%** of the frame moved by ≥ 8 levels; **0.00%** still shifted at 3s |
 | 8 | the moon's disc, counted pixel by pixel | full **100.0%** lit, new **0.0%**, first quarter **49.9%** with **100%** of it on the right (and a last quarter 100% on the left) |
-| 8 | the letterhead's band moved onto a full moon | **7.50:1**, against 9.03:1 where the strip actually is |
+| 8 | the letterhead's band moved onto a full moon | **7.50:1**, which is the pure-white floor, against 9.25:1 where the strip actually is (2026-09-23). The row is now asked of the sky being measured (`__skyMoonAt(target)`): the moon moves, and asked of the live one the band missed the disc and read 10.4 |
+| 8 | **below the horizon there is no moon** (FORCE UP's azimuth, 2026-09-23) | forced to **−1°**: the disc stands 0.9 levels off the sky, so it is not drawn. At **1.5°**, half way through its fade: 127 of the 210 levels it has at 45° (61%) |
 
 Check 7 is at dusk because dusk is the state that can answer it. Its ramp runs
 from a deep purple zenith to an orange horizon, so displacing the gradient *is*
@@ -924,6 +1122,123 @@ than the sky behind it, so no hole in it, however clean, can take 15% off a
 disc. The measured drops (8–10%) are printed rather than asserted, and the
 window is plainly there: see `docs/sky/fluid/fog-window.webp`.
 
+### The sweep: the letterhead under a moving sky
+
+Everything above in this file checks the wake **in the sky**. This checks it
+**under the type**. `node scripts/sky-contrast.mjs`, with the dev server up,
+runs the twenty-four still states and then the sweep, at both signed-off
+viewports @2x, in about a minute, and exits non-zero below 7:1.
+
+**What it walks.** For one date (`--date`, by default 2026-09-26, a full moon
+that is up all night, which is the brightest moon there is), it builds
+`daySweepStates`: **every condition × every 5 minutes of the day in San
+Francisco × two moons**, which is 6 × 288 × 2 = **3,456 skies**.
+
+- The sun is the real day's. Sunrise and sunset come from the sun's real
+  altitude, so both day phases and every sun height the day has are in it.
+- The weather is the preview table's.
+- The two moons are **where it really is at that minute** (under the horizon
+  for part of the day, and then not drawn) and **FORCE UP**.
+
+**What it does to each one.** It clears the wake and measures the still sky at
+**eight clock phases across one twinkle cycle**, because every star cell's
+phase lies within about a third of a cycle of the others' and one clock can
+catch the whole band at the bottom of it. Then it puts **a hand in the sky**
+(`letterheadSwipe`):
+
+- **A**: a swipe along the band, left to right through its middle, at the
+  fastest the wake takes (4 heights/s);
+- 15 frames of decay;
+- **B**: a diagonal rising from low on the left to the top on the right, which
+  drags the lower sky up into the band;
+- 30 more frames of decay.
+
+It measures every third frame of that, 98 frames at 1440×900, again walking
+the clock round the twinkle. The wake's dials are held **at the maxima of
+their DialKit ranges** for the whole run (`SWEEP_WORST_DIALS`):
+`gradientPush` 1, `gradientSwirl` 0.6, `fluidStrength` 3, `starGlow` 4,
+`starSize` 4. So the figure is a floor for any tuning session and not only for
+the shipped values.
+
+**How it measures.** For each sky it takes the brightest pixel in the
+letterhead's band over all of that: the same question `sampleBand` asks, by
+the same luma. The pixel goes under both washes and is measured against every
+run of letterhead type on screen, with the probe's own grain model and worst
+tenth (`sweepContrast` in `contrastProbe.ts`). That is about 140,000 skies per
+viewport, and reading each band back would be the whole cost, so the band is
+reduced **on the GPU** (`bandSweep.ts`). K skies' bands are drawn into one
+RGBA8 atlas (the canvas's own 8 bits), then two passes find the brightest pixel
+of each, and only four bytes a sky come back. At rest, on a clear noon, it
+agrees with `sampleBand` to the hundredth. No page is captured, and the live
+sky is put back afterwards.
+
+**The result**, 2026-09-23, Apple M1 Max, dials at their maxima:
+
+**1728×996 @2x** — 2026-09-26, 3456 skies × 42 samples
+
+| condition | still | with the wake | real moon | FORCE UP | skies at the white floor | worst at |
+| --- | --- | --- | --- | --- | --- | --- |
+| clear | 7.50 | **7.50** | 7.50 | 7.50 | 68% | 00:00 setting, sun 0.00, moon real (52°), wake frame 8 |
+| partly | 7.61 | **7.50** | 7.50 | 7.50 | 50% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| cloudy | 7.61 | **7.50** | 7.50 | 7.50 | 48% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| fog | 7.63 | **7.50** | 7.50 | 7.50 | 49% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| rain | 7.99 | **7.50** | 7.50 | 7.50 | 47% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| storm | 9.81 | **7.50** | 7.50 | 7.50 | 47% | 00:00 setting, sun 0.00, moon real (52°), wake frame 14 |
+
+Global worst **7.50:1** (clear); a pure-white band is 7.50:1. Bar 7:1.
+
+**1440×900 @2x** — 2026-09-26, 3456 skies × 40 samples
+
+| condition | still | with the wake | real moon | FORCE UP | skies at the white floor | worst at |
+| --- | --- | --- | --- | --- | --- | --- |
+| clear | 7.50 | **7.50** | 7.50 | 7.50 | 69% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| partly | 7.61 | **7.50** | 7.50 | 7.50 | 50% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| cloudy | 7.61 | **7.50** | 7.50 | 7.50 | 47% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| fog | 7.63 | **7.50** | 7.50 | 7.50 | 48% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| rain | 7.99 | **7.50** | 7.50 | 7.50 | 47% | 00:00 setting, sun 0.00, moon real (52°), wake frame 11 |
+| storm | 9.81 | **7.50** | 7.50 | 7.50 | 47% | 00:00 setting, sun 0.00, moon real (52°), wake frame 14 |
+
+Global worst **7.50:1** (clear); a pure-white band is 7.50:1. Bar 7:1.
+
+`--shipped` runs the same sweep at the shipped dials instead. It is a
+reading, not the check. As shipped the wake still takes every condition but
+storm to the floor (storm: 7.55 and 7.61), because a parting at
+`starGlow` 1.5 is still enough to flare a star to white.
+
+**Nothing fails, and nothing was changed to make it pass.** Every
+condition reaches the same **7.50:1**, and 7.50 is exactly what a **pure
+white** band reads under the washes. That is the brightest thing a sky can put
+there, so it is the floor. Three things take a sky to it:
+
+- **A star at the top of its twinkle.** The core is `1.3 × twinkle` before
+  the clamp, so at a peak it is white. The *still* clear night is at the floor
+  at `starSize` 4, and within a hundredth or so of it as shipped (7.51 and
+  7.55 in a `--shipped` run): the size grows the halo, not the peak. The 9.2
+  to 9.4 the twenty-four-state table prints for a clear night is the twinkle
+  phase the probe happened to catch.
+- **The wake at night, in any weather.** It parts the deck or the bank over
+  the band, and `starGlow` at 4 flares the stars behind it to white. That is
+  why fog, rain and storm, which are 7.63 to 9.81 still, meet the floor too.
+- **The wake by day.** `gradientPush` at 1 drags the pale horizon up under the
+  noon sun's glow, and the sum clips.
+
+**And that is the finding.** At `letterheadScrim` 0.72 **no sky the shader can
+paint takes the letterhead under 7:1**, because even white does not. The bar
+has 0.50 in hand against the worst possible band, at both viewports. What
+would break it is the scrim and not the sky. Measured through the probe, a white
+band reads 7.20 at 0.70, 7.05 at 0.69 and **6.91 at 0.68**, so somewhere under
+0.69 it fails. This sweep would say so, and so would a unit test before it ever
+ran: `src/portfolio/letterheadFloor.test.ts` fails if the shipped
+`letterheadScrim` drops below **0.70**, with a message pointing here. If it ever does, the lever is
+still `letterheadScrim` (the band only). After that, it is the clamp on the
+offending effect near the band. It is never `groundScrim`.
+
+The moon is not what binds. At FORCE UP (45°) the disc's top edge is about a quarter
+of the screen's height under the band. Its moonlight adds 5–8 levels there,
+to a sky that is already white at a twinkle peak. The **real** column is the date's own moon, which is
+up until 07:02 and again from 18:52, and at 52° at midnight. It meets the same floor at the
+same minutes.
+
 ## Where this is wired
 
 | File | What it is |
@@ -935,14 +1250,16 @@ window is plainly there: see `docs/sky/fluid/fog-window.webp`.
 | `src/sky/envToTarget.ts` | The mapping: `EnvState` → `SkyTarget`. |
 | `src/components/SkyLayer.tsx` | The host. Claims the canvas; feeds the target in; the dev hooks (`__skyPinTime`, `__skyHoldFluid`, `__skyFluidAwake`, `__skySplat`). |
 | `src/env/wmo.ts` | WMO code → condition, cloudiness, precipitation. |
-| `src/env/moon.ts` | The moon's phase from the clock. Pure, tested, and nothing to do with the network. |
+| `src/env/moon.ts` | The moon from the clock, as one geometry: Meeus's lunar series → its phase (elongation from the sun), altitude and azimuth over SF, rise and set, and the bright limb. Pure, tested against the almanac, and nothing to do with the network. |
+| `src/env/astro.ts` | Julian day, sidereal time, the frame conversions, refraction, the sun's real position. Shared, so the next thing that needs a real position does not copy them. |
+| `src/sky/bandSweep.ts` | Dev: the brightest pixel of the letterhead's band for thousands of skies at once, reduced on the GPU. What makes the sweep a minute. |
 | `src/portfolio/contrastProbe.ts` | `bandCenter`: the letterhead's band, read somewhere other than where the letterhead is. |
 | `src/dev/skyPreview.ts` | Dev: what each condition and each time of day means as numbers. |
-| `src/dev/EnvReadout.tsx` | Dev: the readout and the override buttons. |
+| `src/dev/EnvReadout.tsx` | Dev: the readout and the override buttons, FORCE UP and its altitude slider. |
 | `scripts/sky-sheet.mjs` | The 24-image contact sheet. |
 | `scripts/sky-perf.mjs` | The frame-time table above; `--fluid` for the wake awake. |
 | `scripts/sky-fluid-verify.mjs` | `npm run verify:sky`: the wake's checks, and the four captures in `docs/sky/fluid/`. |
-| `scripts/sky-contrast.mjs` | The letterhead against all 24 skies, and the sweep that set `letterheadScrim`. |
+| `scripts/sky-contrast.mjs` | The letterhead against all 24 still skies, **the sweep** (a whole day, both moons, a hand in it), and the `letterheadScrim` sweep that set the dial. |
 
 ## Not done
 
@@ -952,23 +1269,12 @@ window is plainly there: see `docs/sky/fluid/fog-window.webp`.
 - **The sun does not know where the sun is.** Its screen position is a mapping
   from elevation and phase, not an azimuth — so it rises on the left and sets on
   the right regardless of the time of year.
-- **Neither does the moon, and the moon is worse.** The sun at least moves. The
-  moon is nailed to uv (0.70, 0.80) at every hour of every night: it does not
-  rise, it does not set, it does not cross. **It is also drawn on every clear
-  night whether or not the real moon is above the horizon**, which for about
-  half of them it is not. The phase is right and the place is a decoration.
-  Fixing it is a real ephemeris — altitude and azimuth from date, time and
-  latitude — and then the sky has to decide what to do on the nights the answer
-  is "there is no moon up", which is a design question and not only a maths
-  one.
-- **The terminator is Northern-hemisphere and vertical.** Waxing is lit on the
-  right, always. In reality the lit limb tilts with the parallactic angle —
-  with latitude, and with where the moon is in its arc — and near the equator a
-  crescent lies on its back like a bowl. This draws one orientation. There is
-  no libration either, so the disc never nods.
-- **The phase is a MEAN synodic month**, so it can be ±0.6 days out; see
-  [The model](#the-model), where the miss on this lunation's first quarter is
-  measured rather than assumed.
+- **The sun still uses the fitted curve, even though `astro.ts` now has its
+  real position.** `sunPosition` is used for one thing, which is aiming the
+  moon's bright limb. Putting the sun on the arc by its real azimuth would move
+  every daylit frame of the contact sheet, so it is a change of its own.
+- **No daytime moon, and no libration.** The moon is drawn only at night, as
+  before, although it is often up by day. The disc never nods.
 - **Wind has one number and two jobs.** It blows the deck and slants the rain
   from the same normalized windspeed, with no direction. A southerly and a
   northerly look identical.
@@ -985,7 +1291,9 @@ window is plainly there: see `docs/sky/fluid/fog-window.webp`.
 - **5K @2x has 0.25ms of headroom in fog.** It is inside the 6ms budget on
   an M1 Max and nothing slower has been measured. `skyMaxMegapixels` is the
   lever if it is not inside on something else.
-- **Sweep-time letterhead contrast has never been measured.** Every ratio in
+- ~~**Sweep-time letterhead contrast has never been measured.**~~ It is now,
+  in [the sweep](#the-sweep-the-letterhead-under-a-moving-sky). The note is
+  kept as the spec the sweep was built to. Every ratio in
   this file and in [portfolio-view.md](portfolio-view.md) is a *still* sky:
   `sky-contrast.mjs` hands the probe a target and reads a settled frame out of
   the back buffer, so **none of the 7.65:1 through 10.77:1 is a measurement of

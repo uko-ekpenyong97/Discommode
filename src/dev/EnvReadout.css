@@ -91,3 +91,13 @@
 .env-readout__btn--wide {
   grid-column: span 2;
 }
+
+/* FORCE UP's altitude: the one slider on the readout, because an altitude is
+   a place on an arc rather than a state to step to. */
+.env-readout__range {
+  pointer-events: auto;
+  width: 100%;
+  margin: 0;
+  accent-color: #fff;
+  cursor: pointer;
+}
