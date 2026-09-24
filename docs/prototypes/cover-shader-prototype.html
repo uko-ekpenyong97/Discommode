@@ -9,19 +9,31 @@
 
   One purpose-built shader in place of the Figma frame's eight stacked effects.
   Written as the thing the detail paper plane will eventually sample: GLSL ES 3.0,
-  WebGL2, two fragment passes, one texture (the "Rive" glyph strip's SDF).
+  WebGL2, two fragment passes, one texture (the "Rive" glyph strip's SDF), and
+  PREMULTIPLIED RGBA out — cover-ref.png is not opaque (ground 112/255, inks
+  50–100%), and matching its alpha is what makes it read the same over any
+  backdrop.
 
-    pass A  (RT, half res)   base picture → 1 blob displacement → levels crush,
-                              and the ring SDF (+ 2's perturbation) in alpha
-    pass B  (screen)          5 refraction picks the coordinate, then
-                              2 rings → 3 dots → 4 riso + grade at it
+    pass A  (RT, half res)   the picture as distances: letters (stage 1's shift
+                              applied), the ring field (2's perturbation), the
+                              same read at the particles' colour offset; and on a
+                              second target, stage 5's lens field (the slugs)
+    pass B  (screen)          5 picks where to look (a minifying lens), then the
+                              paper, 3's particles printed as 4's misregistered
+                              inks, and 2's rings through the lenses
+
+  The Figma values were the starting point; cover-ref.png is ground truth, and
+  where they disagree the dial comments say what a value now means. Every
+  fitted number (ink colours and opacities, cellK, the misregistration, the
+  colour shift) was measured off cover-ref.png at native size with
+  per-region mean colour, alpha and pixel-class fractions.
 
   Everything is in FRAME UNITS (the Figma frame, 900×1326), cover-cropped to the
   box the way `coverCrop` in paperMath.ts crops a card face. "uv" in the brief
   means frame units / 900, i.e. the frame's width is 1.
 
   Open at /docs/prototypes/cover-shader-prototype.html under `npm run dev`.
-  window.__cover exposes bench(), view() and the dial controller for scripts.
+  window.__cover exposes bench(), view(), readRGBA() and the dial controller.
 -->
 <link rel="stylesheet" href="/node_modules/dialkit/dist/vanilla/styles.css" />
 <style>
@@ -68,11 +80,21 @@
 const FRAME_W = 900, FRAME_H = 1326;
 const CIRCLE_R = 439.68 / 2;
 const CIRCLES = [[266.0, 478.0], [642.0, 106.2], [633.8, 1065.6]];
-/** One "Rive" per 1511 units; the copies at −2981.5, −1470.5 and 40.5 (+450) are one strip, tiled. */
+/**
+ * One "Rive" per 1511 units; Figma's copies at x = −2981.5, −1470.5 and 40.5 are
+ * one strip, tiled. Those x are the text boxes' left edges in FRAME coordinates
+ * (an earlier reading added 450 as if centre-relative; cover-ref.png puts the
+ * R's stem at x ≈ 122, which only 40.5 gives).
+ */
 const STRIP_W = 1511;
-const TEXT_X = 40.5 + 450;
-/** The strip's SDF covers these rows; beyond them the distance is extended vertically. */
-const STRIP_Y0 = -420, STRIP_H = 960;
+const TEXT_X = 40.5;
+/**
+ * The strip's SDF covers these rows (the glyphs plus the ~250 units the rings
+ * reach), and moves with the text box; beyond them the distance is extended
+ * vertically.
+ */
+const STRIP_ABOVE = 300, STRIP_H = 1300;
+let STRIP_Y0 = 204 - STRIP_ABOVE;
 /** Extra frame units around the visible crop in the RT, for refraction and misregistration to read. */
 const RT_MARGIN = 48;
 
@@ -172,12 +194,84 @@ float vnoise(vec2 p, float period){
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 // 5 — the refraction field: the offset before strength (x900 x strength to use),
-// mask, rim. Same noise family as 1, its own seed.
-vec4 refrField(vec2 p, vec4 a, float z, float oct){
-  vec3 f = fbmG(vec3(p/900.0*a.x + vec2(31.7, -12.9), z + 5.3), a.y, oct);
-  float mask = smoothstep(a.z - a.w, a.z + a.w, 0.5 + 0.5*f.z);
+// mask, rim.
+//
+// cover-ref.png's lenses are SLUGS: ~16 of them, spread evenly, 90–150 units
+// across and 100–550 long, mostly upright, some curved like bananas. Noise
+// thresholded (Figma's Moving blobs) gives either the thickness or the count,
+// never both, and clumps. So with slugs on (slug.x) each cell of a jittered
+// grid holds one BENT CAPSULE — its length, width, tilt and bend drawn from
+// the cell's hash — and the lens direction is the capsule's distance gradient.
+// Each slug circles its home once per loop, so the motion loops exactly.
+// Off: the noise blobs, as Figma has them.
+uniform vec4 uSlugA;      // cell, width min, width max, presence
+uniform vec4 uSlugB;      // length min, length max, tilt spread (rad), bend
+uniform float uSlugDrift; // how far a slug wanders from home, frame units
+uniform float uSlugSeed;  // which arrangement
+
+// Distance (x) and its gradient (yz) to the nearest slug, frame units.
+vec3 slugs(vec2 p, float phase){
+  float G = uSlugA.x;
+  vec2 cell = floor(p/G);
+  vec3 best = vec3(1e5, 0.0, 1.0);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 c = cell + vec2(float(i), float(j));
+    vec2 cs = c + uSlugSeed*vec2(37.0, 11.0);
+    vec2 h1 = hash22(cs*7.31 + 117.3), h2 = hash22(cs*13.91 + 43.7), h3 = hash22(cs*5.73 - 91.1);
+    if (h3.x > uSlugA.w) continue;
+    float ph = phase + h3.y*6.2831853;
+    vec2 ctr = (c + 0.2 + 0.6*h1)*G + uSlugDrift*vec2(cos(ph), sin(ph*2.0)*0.5);
+    float ang = 1.5707963 + (h2.x - 0.5)*uSlugB.z + 0.25*sin(ph)*uSlugB.z*0.2;
+    float L = mix(uSlugB.x, uSlugB.y, h2.y);
+    float W = mix(uSlugA.y, uSlugA.z, 0.5*h1.y + 0.5*h2.y);    // the long ones are the thick ones
+    // curvature: the ends bow by up to ±bend off the chord (never more than 0.4 L)
+    float k = (h1.x - 0.5)*2.0*min(uSlugB.w, 0.4*L)*4.0/max(L*L, 1.0);
+    vec2 ax = vec2(cos(ang), sin(ang));
+    vec2 d = p - ctr;
+    float u = dot(d, ax), v = dot(d, vec2(-ax.y, ax.x));
+    float ub = clamp(u, -0.5*L, 0.5*L);                     // the bend stops at the ends: round caps
+    float vb = v - k*ub*ub;
+    float uc = max(abs(u) - 0.5*L, 0.0);
+    float len = length(vec2(uc, vb));
+    // a taper and a bulge at the ends, so they read as teardrops, peanuts and
+    // the reference's bulb-ended slugs rather than even brush strokes
+    float taper = (h3.y - 0.5)*0.6;
+    float bulge = fract(h2.x*7.31)*0.5;
+    float e = clamp(u/(0.5*L + 1.0), -1.0, 1.0);
+    float dist = len - 0.5*W*(1.0 + taper*e + bulge*(e*e - 0.35));
+    if (dist < best.x) {
+      vec2 gl = len > 1e-4 ? vec2(sign(u)*uc, vb)/len : vec2(0.0, 1.0);
+      gl.x -= 2.0*k*ub*gl.y;                                // chain rule through the bend
+      vec2 g = gl.x*ax + gl.y*vec2(-ax.y, ax.x);
+      best = vec3(dist, g/(length(g) + 1e-5));
+    }
+  }
+  return best;
+}
+
+vec4 refrField(vec2 p, vec4 a, float z, float oct, vec3 slug){
+  float mask; vec2 g;
+  if (slug.x > 0.5) {
+    vec3 sl = slugs(p, z*6.2831853);
+    // softness: Figma's % of a slug's half-width, plus a unit
+    float s = a.w*0.5*uSlugA.y + 1.0;
+    mask = 1.0 - smoothstep(-s, s, sl.x);
+    float rim = 4.0*mask*(1.0 - mask);
+    // A slug is a MINIFYING lens, as cover-ref.png's are (a finer speckle and
+    // denser ring lines inside than out): it looks outward, by its depth inside
+    // times slug.y (= 2 × strength at 100%), so the axis sees a slug-width
+    // beyond the rim. The rim itself is smeared along its tangent, as before.
+    vec2 out_ = sl.yz;
+    float depth = max(-sl.x, 0.0);
+    vec2 off = out_*depth*slug.y*mask + vec2(-out_.y, out_.x)*rim*0.14*900.0*slug.z;
+    return vec4(off/900.0, mask, rim);
+  } else {
+    vec3 f = fbmG(vec3(p/900.0*a.x + vec2(31.7, -12.9), z + 5.3), a.y, oct);
+    mask = smoothstep(a.z - a.w, a.z + a.w, 0.5 + 0.5*f.z);
+    g = f.xy;
+  }
   float rim = 4.0*mask*(1.0 - mask);
-  vec2 dir = f.xy/(length(f.xy) + 1e-5);
+  vec2 dir = g/(length(g) + 1e-5);
   return vec4(dir*mask*0.075 + vec2(-dir.y, dir.x)*rim*0.14, mask, rim);
 }
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -191,31 +285,37 @@ vec3 tones(vec3 c, float highlights, float shadows){
 `;
 
 // ---------------------------------------------------------------------------
-// PASS A — base picture, stage 1 (blob displacement), levels; ring SDF in .a
+// PASS A — the picture as distances (RT at half res):
+//   .x  the picture's shape: letters ∪ border (∪ circles when circleVisible),
+//       at stage 1's displaced point — what the particles avoid
+//   .y  the ring field: letters ∪ circles, smoothed, perturbed (stage 2)
+//   .z  .x again, read colourShift further on — what a particle takes its colour from
+//   .w  stage 1's blob mask
+// and on the second target, stage 5's field at the same resolution.
 // ---------------------------------------------------------------------------
 const FRAG_A = COMMON + `
 uniform vec4 uMap;        // frame = xy + gl_FragCoord.xy * zw
-uniform float uAA;        // frame units per RT texel
 uniform vec2 uC0, uC1, uC2;
 uniform float uR;
 uniform sampler2D uText;  // R16F signed distance of the "Rive" strip, frame units
 uniform vec4 uTextMap;    // strip left x (marquee applied), top y, width, height
-uniform vec3 uBg;
 uniform float uBorder;
+uniform float uCircles;   // circles in the picture's shape (circleVisible)
 uniform float uS1, uS2;
 uniform vec4 uB1a;        // freq, detail, threshold, softness
-uniform vec4 uB1b;        // strength, dispersion, shadow, z
+uniform vec4 uB1b;        // displacement (frame units), shift, wobble, z
 uniform vec2 uB1c;        // octaves, warp
-uniform vec2 uLevels;     // black point 0..1, shadows -1..1
+uniform vec2 uColShift;   // particle colour lookup offset, frame units
 uniform float uS5, uR5Half;
 uniform vec4 uR5a;        // 5's noise: freq, detail, threshold, softness
 uniform vec2 uR5z;        // 5's noise: z, octaves
-layout(location = 0) out vec4 o;
-layout(location = 1) out vec4 o2;  // 5's field at half res: offset / (900 * strength), mask, rim
+uniform vec3 uR5s;        // 5's slugs: on, breakup, stretch
 uniform float uSmooth;    // ring smoothing (smin k), frame units
 uniform float uLumaThr;
 uniform vec3 uPert;       // strength, scale, falloff
 uniform vec3 uRad;        // strength, frequency (whole), scale
+layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 o2;  // 5's field: offset / (900 * strength), mask, rim
 
 const vec2 FRAME = vec2(${FRAME_W}.0, ${FRAME_H}.0);
 
@@ -229,22 +329,12 @@ float smin(float a, float b, float k){
   float h = max(k - abs(a - b), 0.0)/k;
   return min(a, b) - h*h*k*0.25;
 }
-// (hard union for the picture, smoothed union for the rings)
-vec2 shape(vec2 p){
-  float c0 = length(p - uC0) - uR, c1 = length(p - uC1) - uR, c2 = length(p - uC2) - uR;
-  float t = sdText(p);
-  return vec2(min(min(c0, c1), min(c2, t)),
-              smin(smin(c0, c1, uSmooth), smin(c2, t, uSmooth), uSmooth));
-}
-float shapeMin(vec2 p){
-  return min(min(length(p - uC0), min(length(p - uC1), length(p - uC2))) - uR, sdText(p));
-}
-vec3 base(float dm, vec2 p){
-  float cov = clamp(0.5 - dm/uAA, 0.0, 1.0);
+float sdCircles(vec2 p){ return min(length(p - uC0), min(length(p - uC1), length(p - uC2))) - uR; }
+// the picture: letters, the 2px border inset, and the circles if they are drawn
+float sdPic(vec2 p, float text){
   vec2 e = min(p, FRAME - p);
-  float edge = min(e.x, e.y);
-  float bor = clamp(0.5 - (edge - uBorder)/uAA, 0.0, 1.0);
-  return mix(uBg, vec3(1.0), max(cov, bor));
+  float d = min(text, min(e.x, e.y) - uBorder);
+  return uCircles > 0.5 ? min(d, sdCircles(p)) : d;
 }
 float perturb(float d, vec2 p){
   float w = max(0.0, 1.0 - max(d, 0.0)/uPert.z);
@@ -257,42 +347,34 @@ float perturb(float d, vec2 p){
 
 void main(){
   vec2 p = clamp(uMap.xy + gl_FragCoord.xy*uMap.zw, vec2(0.0), FRAME);
-  vec3 col; float ds;
+  vec2 pg = p;
+  float mask = 0.0;
   if (uS1 > 0.5) {
-    // 1 — Moving blobs (Displacement)
+    // 1 — Moving blobs (Displacement). Figma's direction (1, -0.18) is y-UP:
+    // the content moves right and a little down. In cover-ref.png the letters
+    // sit ~18 units right and ~5 down of where Inter puts them, with straight
+    // edges — so the blob mask barely varies over them: the stage is mostly a
+    // shift (uB1b.y, the mean mask) with a little of the blobs (uB1b.z).
     vec3 P = vec3(p/900.0*uB1a.x, uB1b.w);
     if (uB1c.y > 0.0) { vec4 w = snoiseG(P*0.5 + vec3(3.1, 7.7, 1.3)); P.xy += uB1c.y*0.25*w.xy; }
     vec3 f = fbmG(P, uB1a.y, uB1c.x);
-    float mask = smoothstep(uB1a.z - uB1a.w, uB1a.z + uB1a.w, 0.5 + 0.5*f.z);
-    float rim = 4.0*mask*(1.0 - mask);
-    vec2 dir = f.xy/(length(f.xy) + 1e-5);
-    vec2 pg = p + vec2(1.0, -0.18)*(0.075*900.0)*uB1b.x*mask;
-    vec2 S = dir*(0.05*900.0)*uB1b.y*rim;
-    vec2 sh = shape(pg);
-    ds = sh.y;
-    col = base(sh.x, pg);
-    if (dot(S, S) > 0.01) {
-      col.r = base(shapeMin(pg + S), pg + S).r;
-      col.b = base(shapeMin(pg - S), pg - S).b;
-    }
-    col *= 1.0 - uB1b.z*rim*0.6;
-  } else {
-    vec2 sh = shape(p);
-    ds = sh.y;
-    col = base(sh.x, p);
+    mask = smoothstep(uB1a.z - uB1a.w, uB1a.z + uB1a.w, 0.5 + 0.5*f.z);
+    float m = clamp(uB1b.y + uB1b.z*(mask - 0.5), 0.0, 1.0);
+    pg = p - vec2(1.0, 0.18)*uB1b.x*m;
   }
-  // The first Color adjust (blackPoint 100, shadows -100), folded in as levels.
-  col = max(col - uLevels.x, 0.0)/(1.0 - uLevels.x);
-  col = tones(col, 0.0, uLevels.y);
+  float t = sdText(pg);
+  float ring = smin(t, sdCircles(pg), uSmooth);
   // Wild Outlines' luma threshold, on a mask blurred by 'smoothing', moves the contour.
-  ds += (uLumaThr - 0.5)*max(uSmooth, 1.0);
-  if (uS2 > 0.5) ds = perturb(ds, p);
-  o = vec4(col, ds);
-  o2 = (uS5 > 0.5 && uR5Half > 0.5) ? refrField(p, uR5a, uR5z.x, uR5z.y) : vec4(0.0);
+  ring += (uLumaThr - 0.5)*max(uSmooth, 1.0);
+  if (uS2 > 0.5) ring = perturb(ring, p);
+  vec2 ps = pg + uColShift;
+  o = vec4(sdPic(pg, t), ring, sdPic(ps, sdText(ps)), mask);
+  o2 = (uS5 > 0.5 && uR5Half > 0.5) ? refrField(p, uR5a, uR5z.x, uR5z.y, uR5s) : vec4(0.0);
 }`;
 
 // ---------------------------------------------------------------------------
-// PASS B — 5 refraction picks q; 2 rings, 3 dots, 4 riso + grade at q
+// PASS B — 5 refraction picks q; the ground, 3's particles printed as 4's inks,
+// and 2's rings (through the lenses) at q
 // ---------------------------------------------------------------------------
 const FRAG_B = COMMON + `
 uniform vec4 uView;       // frame = xy + gl_FragCoord.xy * zw
@@ -301,36 +383,43 @@ uniform sampler2D uRT;
 uniform vec4 uRtUV;       // uv = (q - xy) / zw
 uniform sampler2D uRT2;   // 5's field, when uR5Half
 uniform float uR5Half;
-out vec4 o;
 uniform float uS2, uS3, uS4, uS5;
+out vec4 o;
+// the picture, as drawn before the riso (stage 4 off)
+uniform vec3 uBgPic;
 // 2 rings
 uniform vec4 uRingA;      // count, thickness, spacing, offset
 uniform vec2 uRingB;      // softness 0..1, phase 0..1
+uniform vec2 uRingV;      // opacity, visibility outside the lenses
 uniform vec3 uRingC0, uRingC1;
-// 3 dots
-uniform vec4 uDot;        // cell, scale 0..1, softness 0..1, threshold 0..1
-uniform vec2 uDotB;       // source mix, colour mode
+// 3 particles
+uniform vec4 uDot;        // cell (per lattice), radius, softness 0..1, threshold 0..1
+uniform vec4 uDotB;       // source mix, colour mode, band depth inside the letters, jitter
 uniform vec3 uDotC0, uDotC1;
 uniform vec4 uDome;       // centre.xy, radius, amplitude (CPU spring)
 uniform vec3 uDomeB;      // strength, scale 0..1, z offset
-// 4 riso + grade
-uniform vec3 uInk[5];
-uniform vec3 uInkL[5];    // log(ink / paper)
-uniform float uInkG[5];   // |log ink|^2
-uniform vec2 uInkRot[5];  // cos, sin of each ink's screen angle
-uniform mat2 uPairInv[10];
-uniform vec3 uPairG[10];  // Gram: aa, bb, ab
-uniform vec3 uPaper;
-uniform vec4 uRiso;       // halftone size (frame units), misreg (frame units), density boost, style
-uniform vec2 uRisoIn;     // input contrast, brightness
+// 4 riso: the ground is paper; each particle prints its inks, misregistered
+uniform vec3 uPaper, uInkG, uInkB, uInkY, uInkN;
+uniform float uPaperA;    // the ground's opacity: cover-ref.png is 112/255 there
+uniform vec4 uInkA;       // opacity: green, blue, yellow, navy
+uniform vec4 uMis;        // blue ghost offset xy, yellow ghost offset xy (frame units)
+uniform vec4 uInkS;       // size: blue ghost, yellow ghost, navy; yellow chance
+uniform float uPale;      // ink opacity of the sparsest particles
 uniform vec4 uGradeA;     // exposure (stops), contrast factor, highlights, shadows
 uniform vec3 uGradeB;     // saturation, vibrance, temperature
 // 5 refraction
 uniform vec4 uR5a;        // freq, detail, threshold, softness
 uniform vec4 uR5b;        // strength, dispersion, shadow, z
 uniform vec2 uR5c;        // octaves, highlight
+uniform vec3 uR5s;        // slugs: on, breakup, stretch
+uniform float uDebug;     // 1: draw stage 5's lens mask alone
 
 vec4 tapRT(vec2 q){ return textureLod(uRT, (q - uRtUV.xy)/uRtUV.zw, 0.0); }
+// A pixel's footprint in the picture, frame units: uAAB, times what a lens
+// squeezes into it. Dots and rings are antialiased over it, so a minifying
+// lens averages the field into the frosted fill cover-ref.png has, instead of
+// point-sampling sharp dots.
+float gFoot;
 
 vec4 ring(float d){
   float x = (d - uRingA.w)/uRingA.z + 0.5;
@@ -338,126 +427,57 @@ vec4 ring(float d){
   float i = floor(x);
   float f = abs(fract(x) - 0.5)*uRingA.z;
   float hw = uRingA.y*0.5;
-  float s = uRingB.x*hw + uAAB*0.75;
+  float s = uRingB.x*hw + gFoot*0.75;
   float a = 1.0 - smoothstep(hw - s, hw + s, f);
   float t = uRingA.x > 1.0 ? i/(uRingA.x - 1.0) : 0.0;
   a *= 1.0 - uRingB.y*t;
   return vec4(mix(uRingC0, uRingC1, t), a);
 }
 
-// One dot cell per pixel, shared by every tap riso makes around it (the
-// misregistration offsets are 2 units; a cell is 26): the cell's centre, size,
-// colour and coverage are found once, and only the distance is per tap.
-struct Cell { vec2 c; vec2 shift; float rad; float soft; float on; vec3 col; };
-Cell dotCell(vec2 q){
-  Cell k = Cell(vec2(0.0), vec2(0.0), 0.0, 1.0, 0.0, vec3(0.0));
-  if (uS3 < 0.5) return k;
-  float cell = uDot.x;
-  vec2 p0 = q;
-  float h = 0.0;
-  if (uDome.w > 0.001) {
-    vec2 dv = q - uDome.xy;
-    float rr = length(dv)/uDome.z;
-    if (rr < 1.0) {
-      h = clamp(sqrt(1.0 - rr*rr) + uDomeB.z, 0.0, 1.0)*uDome.w;
-      p0 = q - dv*(uDomeB.x/uDome.z)*h;     // one fixed-point step of the inverse push
-    }
-  }
-  vec2 c = floor(p0/cell);
-  k.c = (c + 0.5 + (hash22(c) - 0.5)*max(0.0, 1.0 - uDot.y))*cell;
-  k.shift = q - p0;
-  vec4 s = tapRT(k.c);
-  vec3 cc = s.rgb;
-  if (uS2 > 0.5) { vec4 r = ring(s.a); cc = mix(cc, r.rgb, r.a); }
-  float lum = luma(cc);
-  k.on = smoothstep(uDot.w, uDot.w + 0.04, lum);
-  k.rad = 0.5*cell*uDot.y*(1.0 + uDomeB.y*h)*mix(1.0, lum, uDotB.x);
-  k.soft = max(k.rad*uDot.z, uAAB);
-  k.col = uDotB.y < 0.5 ? cc : uDotB.y < 1.5 ? vec3(1.0) : uDotB.y < 2.5 ? vec3(0.0) : mix(uDotC0, uDotC1, lum);
-  return k;
+// 3 — Shape-based particles, re-derived from cover-ref.png:
+//   cell = 256 / density (34 → 7.5 units, the reference's spacing), split over
+//   TWO jittered lattices, one turned 30°, so the field reads random, not gridded;
+//   radius = dotScale × cell / 2 (66 → 2.5 units, the reference's dots);
+//   they live where the picture is DARK — outside the letters — thinning to
+//   nothing across a band just inside each letter's edge ('threshold' 12 = the
+//   darkness below which there are none), smaller and paler as they thin
+//   ('source mix' 44);
+//   mode 3 = coloured by the picture at colourShift from the particle: the
+//   'to' end (navy) where that lands inside a letter — the dotted outline the
+//   reference draws along left and bottom edges — else the 'from' end.
+struct Part { vec2 c; float r; float a; float t; float h; float in_; float sh; };
+const mat2 ROT = mat2(0.8660254, 0.5, -0.5, 0.8660254);
+Part part(vec2 x, float l){
+  vec2 y = l < 0.5 ? x : ROT*x + vec2(3.7, 1.9)*uDot.x;
+  vec2 cell = floor(y/uDot.x);
+  vec2 h = hash22(cell + l*57.31);
+  vec2 cy = (cell + 0.5 + (h - 0.5)*uDotB.w)*uDot.x;
+  vec2 c = l < 0.5 ? cy : transpose(ROT)*(cy - vec2(3.7, 1.9)*uDot.x);
+  vec4 s = tapRT(c);
+  float D = smoothstep(-uDotB.z, 1.0, s.x);                 // darkness 0 (deep in a letter) .. 1
+  float pres = clamp((D - uDot.w)/(1.0 - uDot.w), 0.0, 1.0);
+  float h2 = hash12(cell*1.37 + l*91.3 + 7.1);
+  Part P;
+  P.c = c;
+  P.r = uDot.y*mix(1.0, D, uDotB.x);
+  P.a = step(h2, pres)*mix(uPale, 1.0, D*D);
+  P.t = smoothstep(-1.0, 1.0, s.x)*(1.0 - smoothstep(-1.0, 1.0, s.z));
+  P.h = fract(h2*13.7);
+  P.in_ = 1.0 - smoothstep(-1.0, 1.0, s.x);                 // 1 inside a letter
+  P.sh = smoothstep(-1.0, 1.0, s.z);                         // 1 where its shifted lookup is outside
+  return P;
 }
-float dotAlpha(Cell k, vec2 q){
-  if (k.on <= 0.0) return 0.0;
-  return k.on*(1.0 - smoothstep(k.rad - k.soft, k.rad + uAAB*0.5, length(q - k.shift - k.c)));
-}
-
-// base + 2 rings + 3 dots, at q
-vec3 pre(vec2 q, Cell k){
-  vec4 s = tapRT(q);
-  vec3 col = s.rgb;
-  if (uS2 > 0.5) { vec4 r = ring(s.a); col = mix(col, r.rgb, r.a); }
-  return mix(col, k.col, dotAlpha(k, q));
+float disc(vec2 x, Part P, float scale){
+  float r = P.r*scale;
+  float soft = max(r*uDot.z, gFoot);
+  return P.a*(1.0 - smoothstep(r - soft, r + gFoot*0.5, length(x - P.c)));
 }
 
-// Riso separation: colour = paper * inkA^x * inkB^y (overprint as multiply),
-// in log space. The pair is the two inks that fit best ON THEIR OWN, then that
-// one pair is solved (Gram inverse from the CPU). Searching all ten pairs was
-// the same picture to the eye at three times the cost. Returns (a, x, b, y).
-vec4 decomp(vec3 c){
-  c = clamp((c - 0.5)*(1.0 + uRisoIn.x) + 0.5 + uRisoIn.y, 0.0, 1.0);
-  vec3 L = log(max(c/uPaper, vec3(0.02)));
-  float LL = dot(L, L);
-  float e1 = 1e9, e2 = 1e9, x1 = 0.0;
-  int a = 0, b = 1;
-  for (int k = 0; k < 5; k++) {
-    float lk = dot(L, uInkL[k]);
-    float x = clamp(lk/uInkG[k], 0.0, 1.0);
-    float r = LL - 2.0*x*lk + x*x*uInkG[k];
-    if (r < e1) { e2 = e1; b = a; e1 = r; a = k; x1 = x; }
-    else if (r < e2) { e2 = r; b = k; }
-  }
-  int lo = min(a, b), hi = max(a, b);
-  int n = lo*4 - (lo*(lo - 1))/2 + (hi - lo - 1);
-  vec2 la = vec2(dot(L, uInkL[lo]), dot(L, uInkL[hi]));
-  vec2 xy = clamp(uPairInv[n]*la, 0.0, 1.0);
-  vec3 g = uPairG[n];
-  float r = LL - 2.0*dot(xy, la) + xy.x*xy.x*g.x + xy.y*xy.y*g.y + 2.0*xy.x*xy.y*g.z;
-  if (r > e1) return vec4(float(a), x1, float(b), 0.0);
-  return vec4(float(lo), xy.x, float(hi), xy.y);
-}
-float covOf(float k, vec4 d){ return (d.x == k ? d.y : 0.0) + (d.z == k ? d.w : 0.0); }
-
-float screenDot(vec2 q, float cov, int k){
-  if (cov <= 0.002) return 0.0;
-  cov = 1.0 - pow(1.0 - cov, 1.0 + 0.1*uRiso.z);             // density boost
-  vec2 cs = uInkRot[k];
-  vec2 g = mat2(cs.x, cs.y, -cs.y, cs.x)*q/uRiso.x;
-  float aa = uAAB/uRiso.x;
-  if (cov <= 0.5) {
-    float r = sqrt(cov/3.14159265);
-    return 1.0 - smoothstep(r - aa, r + aa, length(fract(g) - 0.5));
-  }
-  float r = sqrt((1.0 - cov)/3.14159265);                    // past 50%: paper dots on the corners
-  vec2 f = fract(g);
-  return smoothstep(r - aa, r + aa, length(f - round(f)));
-}
-
-// 4 — riso. 'mis' = print ink1 and ink2 misregistered (their own drums, +o and
-// -o; the other three inks in register). The refraction rim's red and blue
-// taps pass false: they are a few percent of the pixels, and a 2-unit
-// misregistration inside a 20-unit colour split is not visible.
-vec3 riso(vec2 q, bool mis){
-  Cell k = dotCell(q);
-  vec4 dM = decomp(pre(q, k)), d1 = dM, d2 = dM;
-  vec2 o = vec2(0.8, 0.6)*uRiso.y;
-  if (mis && uRiso.y > 0.0) { d1 = decomp(pre(q + o, k)); d2 = decomp(pre(q - o, k)); }
-  else o = vec2(0.0);
-  vec3 c = uPaper;
-  c *= mix(vec3(1.0), uInk[0], screenDot(q + o, covOf(0.0, d1), 0));
-  c *= mix(vec3(1.0), uInk[1], screenDot(q - o, covOf(1.0, d2), 1));
-  c *= mix(vec3(1.0), uInk[2], screenDot(q, covOf(2.0, dM), 2));
-  c *= mix(vec3(1.0), uInk[3], screenDot(q, covOf(3.0, dM), 3));
-  c *= mix(vec3(1.0), uInk[4], screenDot(q, covOf(4.0, dM), 4));
-  return c;
-}
-
-vec3 toLin(vec3 c){ return pow(max(c, 0.0), vec3(2.2)); }
-vec3 toSrgb(vec3 c){ return pow(max(c, 0.0), vec3(1.0/2.2)); }
 vec3 grade(vec3 c){
-  vec3 lin = toLin(c)*exp2(uGradeA.x);
+  vec3 lin = pow(max(c, 0.0), vec3(2.2))*exp2(uGradeA.x);
   lin.r *= 1.0 + uGradeB.z*0.3;
   lin.b *= 1.0 - uGradeB.z*0.3;
-  c = toSrgb(lin);
+  c = pow(lin, vec3(1.0/2.2));
   c = (c - 0.5)*uGradeA.y + 0.5;
   c = tones(max(c, 0.0), uGradeA.z, uGradeA.w);
   float l = luma(c);
@@ -466,39 +486,113 @@ vec3 grade(vec3 c){
   return mix(vec3(l), c, 1.0 + uGradeB.y*(1.0 - clamp(sat, 0.0, 1.0)));
 }
 
-vec3 shade(vec2 q, bool mis){ return uS4 > 0.5 ? riso(q, mis) : pre(q, dotCell(q)); }
+// Everything below is PREMULTIPLIED rgba: cover-ref.png is not opaque (its
+// ground is 44%, its inks 50–100%), and the plane that will carry this samples
+// a premultiplied texture anyway.
+vec4 over(vec4 c, vec3 ink, float a){ return vec4(ink*a, a) + c*(1.0 - a); }
+
+vec4 shade(vec2 q, float lens){
+  vec4 s = tapRT(q);
+  vec4 col;
+  if (uS4 > 0.5) col = vec4(uPaper*uPaperA, uPaperA);       // no ink on the ground: letters and purple alike
+  else col = vec4(mix(uBgPic, vec3(1.0), clamp(0.5 - s.x/(uAAB*2.0), 0.0, 1.0)), 1.0);
+  // deep inside a letter no particle can reach: skip the six lattice lookups
+  if (uS3 > 0.5 && s.x > -uDotB.z - 3.0*uDot.x) {
+    // the dome pushes the particles, not the picture under them
+    vec2 x = q;
+    float hd = 0.0;
+    if (uDome.w > 0.001) {
+      vec2 dv = q - uDome.xy;
+      float rr = length(dv)/uDome.z;
+      if (rr < 1.0) {
+        hd = clamp(sqrt(1.0 - rr*rr) + uDomeB.z, 0.0, 1.0)*uDome.w;
+        x = q - dv*(uDomeB.x/uDome.z)*hd;
+      }
+    }
+    float grow = 1.0 + uDomeB.y*hd;
+    if (uS4 > 0.5) {
+      // 4 — each particle prints a blue ghost and a yellow ghost
+      // (misregistered by uMis, as measured on cover-ref.png) under green, or
+      // under navy at the outline. The sparse ones just inside a letter print
+      // one ink, chosen the way mode 3 chooses: yellow where their shifted
+      // lookup is still inside (the left and bottom edges), green where it is
+      // out (the right and top). Laid blue, yellow, green, navy.
+      float cg = 0.0, cb = 0.0, cy = 0.0, cn = 0.0;
+      for (int l = 0; l < 2; l++) {
+        float fl = float(l);
+        Part P = part(x, fl);
+        float outside = 1.0 - P.in_;
+        cg = max(cg, (1.0 - P.t)*mix(P.sh, 1.0, outside)*disc(x, P, grow));
+        cn = max(cn, P.t*disc(x, P, grow*uInkS.z));
+        vec2 xb = x - uMis.xy;
+        Part B = part(xb, fl);
+        cb = max(cb, (1.0 - B.in_)*disc(xb, B, grow*uInkS.x));
+        vec2 xy = x - uMis.zw;
+        Part Y = part(xy, fl);
+        cy = max(cy, (1.0 - Y.t)*step(Y.h, uInkS.w)*mix(1.0 - Y.sh, 1.0, 1.0 - Y.in_)*disc(xy, Y, grow*uInkS.y));
+      }
+      col = over(col, uInkB, cb*uInkA.y);
+      col = over(col, uInkY, cy*uInkA.z);
+      col = over(col, uInkG, cg*uInkA.x);
+      col = over(col, uInkN, cn*uInkA.w);
+    } else {
+      for (int l = 0; l < 2; l++) {
+        Part P = part(x, float(l));
+        vec3 base = col.rgb/max(col.a, 1e-4);
+        vec3 dc = uDotB.y < 0.5 ? base : uDotB.y < 1.5 ? vec3(1.0) : uDotB.y < 2.5 ? vec3(0.0) : mix(uDotC0, uDotC1, P.t);
+        col = over(col, dc, disc(x, P, grow));
+      }
+    }
+  }
+  if (uS2 > 0.5) {
+    // 2 — the rings show through the lenses (cover-ref.png has none on the open page)
+    vec4 r = ring(s.y);
+    col = over(col, r.rgb, r.a*uRingV.x*mix(uRingV.y, 1.0, lens));
+  }
+  return col;
+}
+vec4 gradeP(vec4 c){ return c.a > 0.0 ? vec4(grade(c.rgb/c.a)*c.a, c.a) : c; }
 
 void main(){
   vec2 p = uView.xy + gl_FragCoord.xy*uView.zw;
-  vec3 col;
+  vec4 col;
+  gFoot = uAAB;
   if (uS5 > 0.5) {
     // 5 — Moving blobs (Refraction). Its noise field is read from pass A's
     // half-res second target, or computed here at full res (uR5Half 0).
     vec4 fld = uR5Half > 0.5 ? textureLod(uRT2, (p - uRtUV.xy)/uRtUV.zw, 0.0)
-                             : refrField(p, uR5a, uR5b.w, uR5c.x);
+                             : refrField(p, uR5a, uR5b.w, uR5c.x, uR5s);
     float mask = fld.z, rim = fld.w;
+    if (uDebug > 0.5) { o = vec4(vec3(mask), 1.0); return; }
     // the direction back out of the offset: offset = R(dir) (0.075 mask, 0.14 rim)
     float ol = length(fld.xy);
     vec2 u = ol > 1e-6 ? fld.xy/ol : vec2(1.0, 0.0);
     vec2 cs = normalize(vec2(0.075*mask, 0.14*rim) + vec2(1e-6, 0.0));
     vec2 dir = vec2(u.x*cs.x + u.y*cs.y, u.y*cs.x - u.x*cs.y);
     vec2 q = p + fld.xy*900.0*uR5b.x;
+    // across a slug the lens maps at 1 − k (k = minify × strength): flipped and
+    // squeezed. The footprint is floored at one frame unit — cover-ref.png's
+    // pixel — so the frosting is the reference's at any size and DPR.
+    if (uR5s.x > 0.5) gFoot = mix(uAAB, max(uAAB, 1.0), mask)*max(1.0, abs(1.0 - uR5s.y*uR5b.x*mask));
     vec2 S = dir*(0.024*900.0)*rim*uR5b.y;
     // (a split under half a device pixel is not drawn: it cannot be seen)
-    if (dot(S, S) > 0.25*uAAB*uAAB) col = vec3(shade(q + S, false).r, shade(q, true).g, shade(q - S, false).b);
-    else col = shade(q, true);
-    if (uS4 > 0.5) col = grade(col);
-    col *= 1.0 - uR5b.z*rim*0.6;
-    col += uR5c.y*rim;
+    if (dot(S, S) > 0.25*uAAB*uAAB) {
+      vec4 g = shade(q, mask);
+      col = vec4(shade(q + S, mask).r, g.g, shade(q - S, mask).b, g.a);
+    } else col = shade(q, mask);
+    if (uS4 > 0.5) col = gradeP(col);
+    col.rgb *= 1.0 - uR5b.z*rim*0.6;
+    col = over(col, vec3(1.0), clamp(uR5c.y*rim, 0.0, 1.0));   // the rim's highlight
   } else {
-    col = shade(p, true);
-    if (uS4 > 0.5) col = grade(col);
+    col = shade(p, 0.0);
+    if (uS4 > 0.5) col = gradeP(col);
   }
-  o = vec4(clamp(col, 0.0, 1.0), 1.0);
+  o = clamp(col, 0.0, 1.0);
 }`;
 
 // ===========================================================================
-// DIALS — Figma's values as defaults.
+// DIALS — Figma's values where cover-ref.png agrees with them; where it does
+// not, the reference wins and the comment says what the value now means.
 // ===========================================================================
 const DIALS = {
   view: {
@@ -506,61 +600,79 @@ const DIALS = {
       { value: 'tile', label: 'grid tile 220×286' },
       { value: 'hero', label: 'detail hero 10:13' },
       { value: 'frame', label: 'whole frame 900:1326' },
+      { value: 'native', label: 'native 900×1326 @1× (for diffing)' },
     ] },
     dpr2: true,
     freeze: false,
     reducedMotion: false,
     rtScale: [0.5, 0.25, 1, 0.25],
+    lensMask: false,            // debug: stage 5's lens mask alone
     bench: { type: 'action', label: 'Benchmark: GPU ms per stage' },
   },
   stages: { blobs1: true, rings2: true, dots3: true, riso4: true, refraction5: true },
   base: {
-    background: '#6200FF',
+    background: '#6200FF',      // the picture before the riso (stage 4 off); the riso prints none of it
     border: [2, 0, 12, 0.5],
+    circleVisible: false,       // cover-ref.png shows nothing where the circles are; they still shape the rings
     marqueePx: [1511, 0, 3000, 1],
     marqueeSec: [24.662, 1, 120, 0.001],
-    baselineY: [204, -200, 1326, 1],
+    // Figma's y is the text box's TOP; the baseline is top + Inter's ascent
+    // (0.96875 em = 734), i.e. ≈ 938, where cover-ref.png has it.
+    textTop: [204, -600, 1326, 1],
   },
   blobs1: {
+    strength: [36, 0, 100, 1],  // 0.075 × 900 × 36% = 24 units along (1, −0.18), y up
+    shift: [75, 0, 100, 1],     // the mean mask: 24 × 0.75 = the reference's +18 units
+    wobble: [10, 0, 100, 1],    // how much of the blobs shows through (the reference's edges are straight)
     scale: [152, 10, 400, 1],
     detail: [28, 0, 100, 1],
-    octaves: [2, 1, 3, 1],      // Figma has no octave count; 3 cost 0.05ms over budget (ladder step 1)
+    // Ladder step 1, taken twice: 3 → 2 octaves for the first budget, then
+    // 2 → 1 and no warp after the retune, where the stage is a shift with 10%
+    // wobble (±1.2 units) and neither shows.
+    octaves: [1, 1, 3, 1],
     threshold: [54, 0, 100, 0.1],
     softness: [6, 0, 50, 0.1],
-    strength: [36, 0, 100, 1],
-    dispersion: [12, 0, 100, 1],
-    shadow: [42, 0, 100, 1],
     speed: [4, 0, 100, 0.1],
-    warp: [1, 0, 4, 0.05],
+    warp: [0, 0, 4, 0.05],
     levels: { blackPoint: [100, 0, 254, 1], shadows: [-100, -100, 100, 1] },
   },
   rings2: {
     count: [8, 1, 16, 1],
-    thickness: [4, 0.5, 20, 0.5],
+    thickness: [2, 0.5, 20, 0.5],   // Figma 4; the reference's lines are finer
     spacing: [25, 4, 80, 0.5],
     offset: [10, 0, 100, 1],
     softness: [52, 0, 100, 1],
     smoothing: [78, 0, 200, 1],
     phase: [70, 0, 100, 1],
     lumaThreshold: [0.5, 0, 1, 0.01],
+    opacity: [0.45, 0, 1, 0.01],
+    outsideLenses: [0, 0, 1, 0.01],   // the reference shows rings only through the refraction lenses
     colorFrom: '#B3FF0D',
     colorTo: '#141FD1',
     perturb: { strength: [14, 0, 100, 0.5], scale: [2.1, 0.1, 10, 0.1], falloff: [500, 10, 1500, 10] },
     radial: { strength: [62, 0, 100, 1], frequency: [8, 0, 32, 1], scale: [1.4, 0.1, 5, 0.1] },
   },
   dots3: {
-    density: [34, 4, 120, 1],
-    dotScale: [66, 0, 100, 1],
-    softness: [42, 0, 100, 1],
-    threshold: [12, 0, 100, 1],
-    sourceMix: [44, 0, 100, 1],
+    // Fitted to cover-ref.png (green dots per 100×100 units, and their area):
+    // cellK 200 → cell 5.9 units at density 34, radius 1.95 at dotScale 66 —
+    // 184 dots / median 12 u² live against the reference's 175 / 11.
+    density: [34, 4, 120, 1],   // cell = cellK / density units
+    cellK: [200, 100, 400, 1],
+    dotScale: [66, 0, 100, 1],  // radius = dotScale × cell / 2
+    softness: [42, 0, 100, 1],  // Figma's particle softness, as is
+    threshold: [12, 0, 100, 1], // darkness below which there are no particles
+    sourceMix: [44, 0, 100, 1], // how much the thinning band shrinks them
+    band: [16, 0, 60, 0.5],     // how far inside a letter's edge they thin out
+    jitter: [100, 0, 100, 1],
+    colourShiftX: [8, -30, 30, 0.5],   // where a particle reads its colour, frame units
+    colourShiftY: [-8, -30, 30, 0.5],
     colorFrom: '#B8FF0D',
     colorTo: '#14339E',
     mode: { type: 'select', default: '3', options: [
       { value: '0', label: '0 · source colour' },
       { value: '1', label: '1 · white' },
       { value: '2', label: '2 · black' },
-      { value: '3', label: '3 · gradient by luma' },
+      { value: '3', label: '3 · gradient by the shifted picture' },
     ] },
     dome: {
       radius: [275, 10, 900, 1],
@@ -572,42 +684,72 @@ const DIALS = {
     },
   },
   riso4: {
-    ink1: '#00FF62',
-    ink2: '#0F29D0',
-    ink3: '#FFD400',
-    ink5: '#EDF152',
-    ink7: '#1F784A',
-    paper: '#FFFFFF',
-    halftone: [3.5, 1, 16, 0.1],
-    angle: [40, 0, 90, 1],
-    inkAngleStep: [15, 0, 45, 1],
-    misregistration: [20, 0, 100, 1],
-    densityBoost: [4, 0, 20, 0.5],
-    inputContrast: [0.3, -1, 1, 0.01],
-    inputBrightness: [-0.21, -1, 1, 0.01],
+    // Measured off cover-ref.png (these are the PRINTED colours, grade included;
+    // Figma's ink list was #00FF62 #0F29D0 #FFD400 #EDF152 #1F784A on white).
+    paper: '#9FAFFF',
+    // Each ink fitted to cover-ref.png's pixels of its colour (their densest
+    // 40%): colour and opacity such that the ink over the 44% paper gives what
+    // the reference has. The yellow comes out #F5D700 — Figma's ink3, #FFD400.
+    inkGreen: '#2DCC5F',
+    inkBlue: '#427FB1',
+    inkYellow: '#F5D700',
+    inkNavy: '#425EB6',
+    paperOpacity: [0.439, 0, 1, 0.001],   // cover-ref.png's ground is 112/255
+    greenOpacity: [0.85, 0, 1, 0.01],
+    blueOpacity: [0.36, 0, 1, 0.01],
+    yellowOpacity: [0.38, 0, 1, 0.01],
+    navyOpacity: [0.89, 0, 1, 0.01],
+    // Misregistration, measured: blue sits 3 units left of green, yellow 2 left and 4 down.
+    blueDx: [-3, -8, 8, 0.5], blueDy: [0, -8, 8, 0.5],
+    yellowDx: [-2, -8, 8, 0.5], yellowDy: [4, -8, 8, 0.5],
+    blueSize: [1, 0, 2, 0.01],
+    yellowSize: [0.9, 0, 2, 0.01],
+    yellowChance: [1, 0, 1, 0.01],
+    navySize: [1, 0, 2, 0.01],
+    pale: [0.35, 0, 1, 0.01],
+    // The grade is already in the measured inks, so it is identity here
+    // (Figma: exposure −4, contrast −12, highlights −18, shadows +22,
+    // saturation −24, vibrance +8, temperature +22).
     grade: {
-      exposure: [-4, -100, 100, 1],
-      contrast: [-12, -100, 100, 1],
-      highlights: [-18, -100, 100, 1],
-      shadows: [22, -100, 100, 1],
-      saturation: [-24, -100, 100, 1],
-      vibrance: [8, -100, 100, 1],
-      temperature: [22, -100, 100, 1],
+      exposure: [0, -100, 100, 1],
+      contrast: [0, -100, 100, 1],
+      highlights: [0, -100, 100, 1],
+      shadows: [0, -100, 100, 1],
+      saturation: [0, -100, 100, 1],
+      vibrance: [0, -100, 100, 1],
+      temperature: [0, -100, 100, 1],
     },
   },
   refraction5: {
+    slugs: true,                // bent capsules on a jittered grid (off: Figma's noise blobs)
+    // Tuned by eye against cover-ref.png's lens outlines (about 16 slugs,
+    // 80–150 across, up to ~500 long, ~20% of the frame): 24% here.
+    slugCell: [320, 120, 600, 1],
+    slugWidthMin: [80, 10, 300, 1],
+    slugWidthMax: [150, 10, 300, 1],
+    slugLengthMin: [60, 0, 800, 1],
+    slugLengthMax: [380, 0, 800, 1],
+    slugTilt: [55, 0, 90, 1],   // degrees either side of upright
+    slugBend: [40, 0, 200, 1],  // how far the ends bow off the chord, frame units
+    slugPresence: [0.85, 0, 1, 0.01],
+    slugDrift: [40, 0, 200, 1],
+    slugSeed: [7, 0, 50, 1],
+    // across a slug the lens maps at 1 − minify × strength: 5 → flipped and 4× squeezed,
+    // which is what turns the field into cover-ref.png's frosted fill
+    minify: [6, 0, 10, 0.05],
+    rimSmear: [0.3, 0, 1, 0.01],// the rim's tangential smear, of Figma's 0.14
     scale: [65, 10, 400, 1],
     detail: [0, 0, 100, 1],
     octaves: [1, 1, 3, 1],
     noiseHalfRes: true,         // ladder step 2: the field in pass A, at the RT's resolution
     dispersionCut: true,        // ladder step 3: dispersion off (the dial keeps Figma's 100; this zeroes it)
-    threshold: [72.2, 0, 100, 0.1],
-    softness: [3, 0, 50, 0.1],
+    threshold: [85, 0, 100, 0.1],
+    softness: [8, 0, 50, 0.1],  // Figma 3; the reference's rims are a ~4-unit band
     strength: [100, 0, 100, 1],
     dispersion: [100, 0, 100, 1],
     speed: [27.3, 0, 100, 0.1],
     shadow: [0, 0, 100, 1],
-    highlight: [0.5, 0, 2, 0.01],
+    highlight: [0.35, 0, 2, 0.01],
   },
 };
 
@@ -621,8 +763,8 @@ const blobFreq = (scalePct) => 2.2 / Math.max(0.05, scalePct / 100);
 // ===========================================================================
 const canvas = document.getElementById('c');
 const gl = canvas.getContext('webgl2', {
-  alpha: false, antialias: false, depth: false, stencil: false,
-  premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance',
+  alpha: true, antialias: false, depth: false, stencil: false,
+  premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'high-performance',
 });
 const floatRT = !!gl.getExtension('EXT_color_buffer_float');
 const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
@@ -688,7 +830,7 @@ function sizeRT(w, h) {
 // ===========================================================================
 const textTex = gl.createTexture();
 let fontNote = '';
-async function buildText(baselineY) {
+async function buildText(textTop) {
   let family = 'CoverInter';
   try {
     const face = new FontFace(family, 'local("Inter Regular"), local("Inter-Regular"), local("Inter")', { weight: '400' });
@@ -699,6 +841,7 @@ async function buildText(baselineY) {
     family = 'Inter, system-ui, sans-serif';
     fontNote = 'Inter not found locally — system-ui stand-in';
   }
+  STRIP_Y0 = textTop - STRIP_ABOVE;
   const PAD = 320;
   const W = STRIP_W + 2 * PAD, H = STRIP_H;
   const c2 = document.createElement('canvas');
@@ -707,10 +850,16 @@ async function buildText(baselineY) {
   ctx.font = `400 757.7px ${family}`;
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#fff';
-  const advance = ctx.measureText('Rive').width;
+  const m = ctx.measureText('Rive');
+  const advance = m.width;
+  const ascent = m.fontBoundingBoxAscent || 0.96875 * 757.7;
+  textBaselineAt = textTop + ascent;
   // Three copies, so the distance across the tile seam sees its neighbours.
-  for (let k = -1; k <= 1; k++) ctx.fillText('Rive', PAD + k * STRIP_W, baselineY - STRIP_Y0);
+  for (let k = -1; k <= 1; k++) ctx.fillText('Rive', PAD + k * STRIP_W, textBaselineAt - STRIP_Y0);
   const px = ctx.getImageData(0, 0, W, H).data;
+  // Where the R's stem starts, 300 units above the baseline (checked against cover-ref.png).
+  const row = Math.round(textBaselineAt - 300 - STRIP_Y0);
+  for (let x = PAD; x < PAD + 400; x++) if (px[(row * W + x) * 4 + 3] >= 128) { textStemX = TEXT_X + (x - PAD); break; }
 
   const INF = 1e20, N = W * H;
   const outer = new Float64Array(N), inner = new Float64Array(N);
@@ -774,10 +923,8 @@ const S = {
 };
 const reducedMQ = matchMedia('(prefers-reduced-motion: reduce)');
 let P = null;          // resolved dial values (replaced on change, not per frame)
-const inks = new Float32Array(15), inkL = new Float32Array(15), inkG = new Float32Array(5), inkRot = new Float32Array(10);
-const pairInv = new Float32Array(40), pairG = new Float32Array(30);
-const col3 = { bg: new Float32Array(3), ringA: new Float32Array(3), ringB: new Float32Array(3),
-               dotA: new Float32Array(3), dotB: new Float32Array(3), paper: new Float32Array(3) };
+const col3 = {};
+for (const k of ['bg', 'bgPic', 'ringA', 'ringB', 'dotA', 'dotB', 'paper', 'inkG', 'inkB', 'inkY', 'inkN']) col3[k] = new Float32Array(3);
 
 // CSS colour → linear-free sRGB floats, via a 1×1 2D canvas (any CSS the dial emits).
 const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
@@ -801,6 +948,7 @@ function layout() {
   const size = P ? P.view.size : 'hero';
   let w, h;
   if (size === 'tile') { w = 220; h = 286; }
+  else if (size === 'native') { w = FRAME_W; h = FRAME_H; }
   else {
     // the hero rect (src/layout/hero.ts): detailCardScale 0.82 of the viewport,
     // clamped so each band keeps 80px
@@ -808,8 +956,10 @@ function layout() {
     w = size === 'frame' ? h * FRAME_W / FRAME_H : h * 10 / 13;
   }
   w = Math.round(w); h = Math.round(h);
+  // native: top-aligned, so a screenshot of the canvas is the frame pixel for pixel
+  document.querySelector('.stage').style.alignItems = size === 'native' ? 'flex-start' : '';
   for (const b of [refBox, liveBox]) { b.style.width = w + 'px'; b.style.height = h + 'px'; }
-  const dpr = P && !P.view.dpr2 ? 1 : 2;
+  const dpr = size === 'native' || (P && !P.view.dpr2) ? 1 : 2;
   S.cssW = w; S.cssH = h; S.dpr = dpr;
   // (only on a real change: assigning the size reallocates the drawing buffer)
   if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
@@ -835,29 +985,32 @@ function applyDials(v) {
   S.mask = (v.stages.blobs1 ? 1 : 0) | (v.stages.rings2 ? 2 : 0) | (v.stages.dots3 ? 4 : 0) |
            (v.stages.riso4 ? 8 : 0) | (v.stages.refraction5 ? 16 : 0);
   parseColor(v.base.background, col3.bg);
+  // the picture's background through the first Color adjust (levels), for stage 4 off
+  const bp = v.blobs1.levels.blackPoint / 255, sh = v.blobs1.levels.shadows / 100;
+  const l0 = 0.2126 * col3.bg[0] + 0.7152 * col3.bg[1] + 0.0722 * col3.bg[2];
+  for (let j = 0; j < 3; j++) {
+    const c = Math.max(col3.bg[j] - bp, 0) / (1 - bp);
+    col3.bgPic[j] = c * (1 + sh * 0.5 * (1 - Math.min(1, Math.max(0, l0 / 0.5))));
+  }
   parseColor(v.rings2.colorFrom, col3.ringA);
   parseColor(v.rings2.colorTo, col3.ringB);
   parseColor(v.dots3.colorFrom, col3.dotA);
   parseColor(v.dots3.colorTo, col3.dotB);
-  parseColor(v.riso4.paper, col3.paper);
   const r = v.riso4;
-  [r.ink1, r.ink2, r.ink3, r.ink5, r.ink7].forEach((c, k) => {
-    parseColor(c, inks, k * 3);
-    for (let j = 0; j < 3; j++) inkL[k * 3 + j] = Math.log(Math.max(inks[k * 3 + j] / Math.max(col3.paper[j], 1e-3), 0.05));
-    inkG[k] = Math.max(1e-6, inkL[k * 3] ** 2 + inkL[k * 3 + 1] ** 2 + inkL[k * 3 + 2] ** 2);
-    const a = (r.angle + k * r.inkAngleStep) * Math.PI / 180;
-    inkRot[k * 2] = Math.cos(a); inkRot[k * 2 + 1] = Math.sin(a);
-  });
-  let n = 0;
-  for (let a = 0; a < 4; a++) for (let b = a + 1; b < 5; b++, n++) {
-    const dot = (i, j) => inkL[i * 3] * inkL[j * 3] + inkL[i * 3 + 1] * inkL[j * 3 + 1] + inkL[i * 3 + 2] * inkL[j * 3 + 2];
-    const gaa = dot(a, a), gbb = dot(b, b), gab = dot(a, b);
-    const det = Math.max(gaa * gbb - gab * gab, 1e-6);
-    pairInv.set([gbb / det, -gab / det, -gab / det, gaa / det], n * 4);
-    pairG.set([gaa, gbb, gab], n * 3);
-  }
-  if (textBaseline !== v.base.baselineY && textReady) { textBaseline = v.base.baselineY; buildText(textBaseline); }
+  parseColor(r.paper, col3.paper);
+  parseColor(r.inkGreen, col3.inkG);
+  parseColor(r.inkBlue, col3.inkB);
+  parseColor(r.inkYellow, col3.inkY);
+  parseColor(r.inkNavy, col3.inkN);
+  if (textBaseline !== v.base.textTop && textReady) { textBaseline = v.base.textTop; buildText(textBaseline); }
   layout();
+}
+
+function slugUniforms(u, f) {
+  gl.uniform4f(u.uSlugA, f.slugCell, f.slugWidthMin, f.slugWidthMax, f.slugPresence);
+  gl.uniform4f(u.uSlugB, f.slugLengthMin, f.slugLengthMax, f.slugTilt * 2 * Math.PI / 180, f.slugBend);
+  gl.uniform1f(u.uSlugDrift, f.slugDrift);
+  gl.uniform1f(u.uSlugSeed, f.slugSeed);
 }
 
 function uploadStatic() {
@@ -870,24 +1023,26 @@ function uploadStatic() {
   const rx0 = S.fx0 - RT_MARGIN, ry0 = S.fy0 - RT_MARGIN;
   // RT row 0 is the frame's TOP row, so pass B reads it with v = 0 at the top.
   gl.uniform4f(ua.uMap, rx0, ry0, k, k);
-  gl.uniform1f(ua.uAA, k);
   gl.uniform2f(ua.uC0, ...CIRCLES[0]); gl.uniform2f(ua.uC1, ...CIRCLES[1]); gl.uniform2f(ua.uC2, ...CIRCLES[2]);
   gl.uniform1f(ua.uR, CIRCLE_R);
   gl.uniform1i(ua.uText, 1);
-  gl.uniform3fv(ua.uBg, col3.bg);
   gl.uniform1f(ua.uBorder, v.base.border);
+  gl.uniform1f(ua.uCircles, v.base.circleVisible ? 1 : 0);
   const b = v.blobs1;
   gl.uniform4f(ua.uB1a, blobFreq(b.scale), b.detail / 100, b.threshold / 100, b.softness / 100);
   gl.uniform2f(ua.uB1c, b.octaves, b.warp);
-  gl.uniform2f(ua.uLevels, b.levels.blackPoint / 255, b.levels.shadows / 100);
+  const d = v.dots3;
+  gl.uniform2f(ua.uColShift, d.colourShiftX, d.colourShiftY);
   const rg = v.rings2;
   gl.uniform1f(ua.uSmooth, rg.smoothing);
   gl.uniform1f(ua.uLumaThr, rg.lumaThreshold);
   gl.uniform3f(ua.uPert, rg.perturb.strength, rg.perturb.scale, rg.perturb.falloff);
   gl.uniform3f(ua.uRad, rg.radial.strength, Math.round(rg.radial.frequency), rg.radial.scale);
-  const f5 = v.refraction5;
-  gl.uniform4f(ua.uR5a, blobFreq(f5.scale), f5.detail / 100, f5.threshold / 100, f5.softness / 100);
-  gl.uniform1f(ua.uR5Half, f5.noiseHalfRes ? 1 : 0);
+  const f = v.refraction5;
+  gl.uniform4f(ua.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
+  gl.uniform3f(ua.uR5s, f.slugs ? 1 : 0, f.minify, f.rimSmear);
+  slugUniforms(ua, f);
+  gl.uniform1f(ua.uR5Half, f.noiseHalfRes ? 1 : 0);
   // pass B
   gl.useProgram(B.p);
   const ub = B.u;
@@ -896,29 +1051,38 @@ function uploadStatic() {
   gl.uniform1f(ub.uAAB, u);
   gl.uniform1i(ub.uRT, 0);
   gl.uniform1i(ub.uRT2, 2);
-  gl.uniform1f(ub.uR5Half, v.refraction5.noiseHalfRes ? 1 : 0);
+  gl.uniform1f(ub.uR5Half, f.noiseHalfRes ? 1 : 0);
+  gl.uniform1f(ub.uDebug, v.view.lensMask ? 1 : 0);
   gl.uniform4f(ub.uRtUV, rx0, ry0, rtW * k, rtH * k);
+  gl.uniform3fv(ub.uBgPic, col3.bgPic);
   gl.uniform4f(ub.uRingA, rg.count, rg.thickness, rg.spacing, rg.offset);
   gl.uniform2f(ub.uRingB, rg.softness / 100, rg.phase / 100);
+  gl.uniform2f(ub.uRingV, rg.opacity, rg.outsideLenses);
   gl.uniform3fv(ub.uRingC0, col3.ringA); gl.uniform3fv(ub.uRingC1, col3.ringB);
-  const d = v.dots3;
-  gl.uniform4f(ub.uDot, FRAME_W / d.density, d.dotScale / 100, d.softness / 100, d.threshold / 100);
-  gl.uniform2f(ub.uDotB, d.sourceMix / 100, Number(d.mode));
+  // two lattices share the density, so each is √2 coarser
+  const cell = d.cellK / d.density * Math.SQRT2;
+  const radius = d.dotScale / 100 * (d.cellK / d.density) / 2;
+  gl.uniform4f(ub.uDot, cell, radius, d.softness / 100, d.threshold / 100);
+  const jitter = Math.max(0, 1 - 2 * radius / cell) * d.jitter / 100;
+  gl.uniform4f(ub.uDotB, d.sourceMix / 100, Number(d.mode), d.band, jitter);
   gl.uniform3fv(ub.uDotC0, col3.dotA); gl.uniform3fv(ub.uDotC1, col3.dotB);
   gl.uniform3f(ub.uDomeB, d.dome.strength, d.dome.scale / 100, d.dome.zOffset);
   const r = v.riso4;
-  gl.uniform3fv(ub.uInk, inks); gl.uniform3fv(ub.uInkL, inkL); gl.uniform1fv(ub.uInkG, inkG); gl.uniform2fv(ub.uInkRot, inkRot);
-  gl.uniformMatrix2fv(ub.uPairInv, false, pairInv); gl.uniform3fv(ub.uPairG, pairG);
   gl.uniform3fv(ub.uPaper, col3.paper);
-  // Halftone size is in frame units, floored at 2 device px so the grid tile does not alias to mush.
-  gl.uniform4f(ub.uRiso, Math.max(r.halftone, 2 * u), r.misregistration * 0.1, r.densityBoost, 1);
-  gl.uniform2f(ub.uRisoIn, r.inputContrast, r.inputBrightness);
+  gl.uniform3fv(ub.uInkG, col3.inkG); gl.uniform3fv(ub.uInkB, col3.inkB);
+  gl.uniform3fv(ub.uInkY, col3.inkY); gl.uniform3fv(ub.uInkN, col3.inkN);
+  gl.uniform4f(ub.uMis, r.blueDx, r.blueDy, r.yellowDx, r.yellowDy);
+  gl.uniform4f(ub.uInkS, r.blueSize, r.yellowSize, r.navySize, r.yellowChance);
+  gl.uniform1f(ub.uPale, r.pale);
+  gl.uniform1f(ub.uPaperA, r.paperOpacity);
+  gl.uniform4f(ub.uInkA, r.greenOpacity, r.blueOpacity, r.yellowOpacity, r.navyOpacity);
   const g = r.grade;
   gl.uniform4f(ub.uGradeA, g.exposure / 100 * 4, 1 + g.contrast / 100, g.highlights / 100, g.shadows / 100);
   gl.uniform3f(ub.uGradeB, g.saturation / 100, g.vibrance / 100, g.temperature / 100);
-  const f = v.refraction5;
   gl.uniform4f(ub.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
   gl.uniform2f(ub.uR5c, f.octaves, f.highlight);
+  gl.uniform3f(ub.uR5s, f.slugs ? 1 : 0, f.minify, f.rimSmear);
+  slugUniforms(ub, f);
 }
 
 // ===========================================================================
@@ -936,7 +1100,7 @@ function draw(t, mask) {
   gl.uniform4f(A.u.uTextMap, TEXT_X - marquee, STRIP_Y0, STRIP_W, STRIP_H);
   gl.uniform1f(A.u.uS1, mask & 1); gl.uniform1f(A.u.uS2, (mask >> 1) & 1);
   const b = v.blobs1;
-  gl.uniform4f(A.u.uB1b, b.strength / 100, b.dispersion / 100, b.shadow / 100, t / loopSeconds(b.speed));
+  gl.uniform4f(A.u.uB1b, 0.075 * 900 * b.strength / 100, b.shift / 100, b.wobble / 100, t / loopSeconds(b.speed));
   gl.uniform1f(A.u.uS5, (mask >> 4) & 1);
   gl.uniform2f(A.u.uR5z, t / loopSeconds(v.refraction5.speed), v.refraction5.octaves);
   gl.bindVertexArray(vao);
@@ -1146,7 +1310,7 @@ function readout() {
 // ===========================================================================
 // BOOT
 // ===========================================================================
-let textReady = false, textBaseline = DIALS.base.baselineY[0];
+let textReady = false, textBaseline = DIALS.base.textTop[0], textBaselineAt = 0, textStemX = 0;
 {
   const ref = document.getElementById('ref');
   ref.addEventListener('error', () => refBox.classList.add('no-ref'));
@@ -1155,7 +1319,7 @@ let textReady = false, textBaseline = DIALS.base.baselineY[0];
 (async () => {
   const advance = await buildText(textBaseline);
   textReady = true;
-  console.info(`cover: "Rive" advance ${advance.toFixed(1)} units (strip ${STRIP_W}), ${fontNote}`);
+  console.info(`cover: "Rive" advance ${advance.toFixed(1)} units (strip ${STRIP_W}), baseline y ${textBaselineAt.toFixed(1)}, R stem x ${textStemX.toFixed(1)}, ${fontNote}`);
   const { createDialKit, createDialRoot } = window.DialKit;
   createDialRoot({ position: 'top-right', theme: 'dark', defaultOpen: true });
   const dial = createDialKit('Cover shader · rive-site', DIALS, {
@@ -1165,6 +1329,21 @@ let textReady = false, textBaseline = DIALS.base.baselineY[0];
   dial.subscribe(applyDials);
   window.addEventListener('resize', () => layout());
   window.__cover = {
+    text: () => ({ baseline: textBaselineAt, stemX: textStemX }),
+    /** One frame read back as straight-alpha RGBA, top row first, base64. For diffing only. */
+    readRGBA: () => {
+      draw(S.t, S.mask);
+      const w = canvas.width, h = canvas.height, px = new Uint8Array(w * h * 4), out = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = ((h - 1 - y) * w + x) * 4, j = (y * w + x) * 4, a = px[i + 3];
+        for (let k = 0; k < 3; k++) out[j + k] = a ? Math.min(255, Math.round(px[i + k] * 255 / a)) : 0;
+        out[j + 3] = a;
+      }
+      let bin = '';
+      for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+      return { w, h, b64: btoa(bin) };
+    },
     dial, bench, timerCheck, draw: (t) => draw(t, S.mask), state: S,
     view: (size, dpr2 = true) => dial.setValues({ view: { size, dpr2 } }),
     ready: true,
