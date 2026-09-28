@@ -14,6 +14,7 @@ import {
 } from './doorway';
 import { useDetailPaperDials } from '../dev/detailPaperDials';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
+import { persistedPanelId } from '../dev/dialState';
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
 const s = (ms: number): number => ms / 1000;
@@ -76,7 +77,7 @@ interface DoorwayDialKitProps {
  */
 export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKitProps) {
   const tl = useDialTimeline('Doorway', CLIPS, {
-    id: 'doorway-v1',
+    id: persistedPanelId('doorway'),
     persist: import.meta.env.DEV,
     autoplay: false,
   });

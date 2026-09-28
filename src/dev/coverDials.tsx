@@ -6,6 +6,8 @@ import { SITE_COVER_DEFAULTS, setCoverValues, setSiteCoverDials } from '../cover
 import type { DialValues } from '../covers/dialValues';
 import { riveStatus } from '../covers/rive/riveCover';
 import type { RivePlayerStatus, RivePointerStatus } from '../covers/rive/riveCover';
+import { persistedPanelId } from './dialState';
+import { useResetDialsPanel } from './resetDialsPanel';
 
 const S = SITE_COVER_DEFAULTS;
 
@@ -36,7 +38,7 @@ function useCoverPanel(id: string) {
       },
       ...(def.dials as KitConfig),
     } as KitConfig,
-    { id: `cover-${id}-v1`, persist: true },
+    { id: persistedPanelId(`cover-${id}`), persist: true },
   );
   useEffect(() => {
     const { site, ...cover } = v as unknown as { site: typeof S } & DialValues;
@@ -102,7 +104,7 @@ function useRiveCoverPanel(id: string) {
   const { values, setValues } = useDialKitController(
     `COVER · ${id}`,
     { ...(COVERS[id].dials as KitConfig), status: STATUS } as KitConfig,
-    { id: `cover-${id}-v1`, persist: true },
+    { id: persistedPanelId(`cover-${id}`), persist: true },
   );
   // The cover reads its dials, not the readout: only a change in THEM rebinds.
   const last = useRef('');
@@ -165,10 +167,17 @@ function NoseyPanel() {
   return null;
 }
 
-/** Mounted by App in dev, suspended or not. */
+function DialsPanel() {
+  useResetDialsPanel();
+  return null;
+}
+
+/** Mounted by App in dev, suspended or not — so the DIALS panel (Reset dials)
+ *  is registered here too, and shows in whichever dock is up. */
 export default function CoverDials() {
   return (
     <>
+      <DialsPanel />
       <RiveSitePanel />
       <NoseyPanel />
     </>

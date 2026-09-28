@@ -638,6 +638,8 @@ smoothing dial: the characters' tracking eases in the file itself.
 
 ### When card 04 does not react
 
+**If a feature looks dead on one port and alive on another, or in an incognito window, suspect saved dials first.** They live in `localStorage`, which is per port, and every workspace's dev server takes the ports in turn. Press **Reset dials** in the dock's DIALS panel. Saved dials are versioned (`DIAL_STATE_VERSION` in `src/dev/dialState.ts`: bump it when a persisted dial is renamed, re-ranged or changes meaning) and validated on load.
+
 The COVER · nosey panel ends in a **status** readout, and the console carries
 the same lines as they change (`[covers] nosey: …`):
 
