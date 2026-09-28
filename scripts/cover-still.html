@@ -1,6 +1,7 @@
 <!doctype html>
 <!-- Loaded by scripts/make-cover-stills.mjs, never by the site: renders a cover's
-     still with the app's own renderer (src/covers/coverRenderer.ts). -->
+     still with the app's own renderer (src/covers/coverRenderer.ts for a
+     shader, src/covers/rive/riveCover.ts for a Rive cover). -->
 <html lang="en"><head><meta charset="utf-8" /><title>cover still</title></head>
 <body style="margin:0;background:transparent">
 <script type="module">
@@ -8,11 +9,37 @@ import { WebGLRenderer } from 'three';
 import { COVERS } from '/src/covers/covers.ts';
 import { CoverRenderer, coverCropOf } from '/src/covers/coverRenderer.ts';
 import { dialDefaults } from '/src/covers/dialValues.ts';
+import { ensureRive, rivePlayer, riveProbe } from '/src/covers/rive/riveCover.ts';
+
+/** A Rive cover's still: its GRID artboard (Main) as its first frame — at rest,
+ *  no pointer — the whole frame at `width` px. A 2D canvas already reads back
+ *  straight-alpha RGBA, top row first. */
+async function riveStill(id, width) {
+  const def = COVERS[id];
+  const w = width;
+  const h = Math.round((width * def.frame.h) / def.frame.w);
+  ensureRive(id);
+  let p = null;
+  for (let i = 0; i < 400 && !(p = rivePlayer(id, 'grid')); i++) {
+    if (riveProbe().failed(id)) throw new Error(`${id}: the Rive cover failed to load`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  if (!p) throw new Error('the Rive cover never became ready');
+  p.draw(0, w, h);
+  return p.canvas.getContext('2d').getImageData(0, 0, w, h).data;
+}
 
 /** The whole frame at `width` px, t = 0, dome at rest, nothing behind it:
  *  straight-alpha RGBA, top row first, base64. */
 window.renderStill = async (id, width) => {
   const def = COVERS[id];
+  if (def.kind === 'rive') {
+    const out = await riveStill(id, width);
+    const h = Math.round((width * def.frame.h) / def.frame.w);
+    let bin = '';
+    for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode.apply(null, out.subarray(i, i + 0x8000));
+    return { w: width, h, b64: btoa(bin) };
+  }
   const w = width;
   const h = Math.round((width * def.frame.h) / def.frame.w);
   const canvas = document.createElement('canvas');

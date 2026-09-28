@@ -2,7 +2,8 @@ import { pinCoverTime, coverTime } from './coverClock';
 import { coverStageProbe } from './coverStage';
 import { coverCropOf } from './coverRenderer';
 import { benchCoverDraw, benchPresent } from './bench';
-import { COVERS } from './covers';
+import { COVERS, shaderCover } from './covers';
+import { riveProbe } from './rive/riveCover';
 import { coverValues, setCoverValues, setSiteCoverDials, siteCoverDials } from './coverDials';
 import { dialDefaults } from './dialValues';
 import type { DialValues } from './dialValues';
@@ -47,7 +48,8 @@ export function installCoverDevHooks() {
       const gl = probe.renderer;
       const cover = probe.cover(id);
       if (!gl || !cover || !cover.ready()) return null;
-      const def = COVERS[id];
+      const def = shaderCover(id);
+      if (!def) return null;
       probe.draw(id, pxW, pxH, 1); // sizes the stage canvas
       const crop: Crop = coverCropOf(def.frame.w, def.frame.h, pxW, pxH, { x0: 0, y0: 0, w: 1, h: 1 });
       return benchCoverDraw(gl, cover, null, { t: 1, crop, pxW, pxH, dome: { x: 450, y: 600, amp: 0 }, backdrop: null });
@@ -57,5 +59,9 @@ export function installCoverDevHooks() {
       const gl = probe.renderer;
       return gl ? benchPresent(gl.domElement, pxW, pxH) : null;
     },
+    /** Rive covers (card 04): `ready(id)`, `players()`, `player(id, role)`,
+     *  `viewModel(id, role)`, `reset(id)`, and `costs()` — the main-thread ms
+     *  of every recent frame's Rive work (draws, copies, the paper's upload). */
+    rive: riveProbe(),
   };
 }

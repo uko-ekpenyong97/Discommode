@@ -1,8 +1,10 @@
 import { WebGLRenderer } from 'three';
 import { CoverRenderer, coverCropOf } from './coverRenderer';
-import { COVERS } from './covers';
+import { riveCover, shaderCover } from './covers';
 import { coverTime } from './coverClock';
 import { coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
+import { ensureRive, onRiveReady, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
+import type { RivePlayerRole } from './rive/riveCover';
 import { cssRgb } from './color';
 import { DomeSpring } from './dome';
 import type { Crop } from './types';
@@ -27,10 +29,18 @@ import type { Crop } from './types';
  * The 2D canvases are DOM over the SkyLayer, so they composite over the sky
  * with their alpha and nothing else. Nothing renders while no instance is on
  * screen; the loop stops and restarts itself. No per-frame allocation.
+ *
+ * A RIVE cover (card 04) goes through the same loop, grouped the same way, but
+ * its draw is its player's (src/covers/rive/riveCover.ts): one instance of the
+ * artboard, drawn once per frame on the CPU into a 2D canvas, and copied into
+ * each instance from there. It needs no WebGL — not this stage's context, nor
+ * any other — so a browser without WebGL still gets card 04 live.
  */
 
 export interface Presenter {
   coverId: string;
+  /** A Rive cover's: which player it shows (the grid's artboard or the hero's). */
+  role: RivePlayerRole;
   /** The element whose box IS the instance (its rect sizes the draw). */
   host: HTMLElement;
   canvas: HTMLCanvasElement;
@@ -49,6 +59,7 @@ export interface Presenter {
 
 interface Group {
   coverId: string;
+  role: RivePlayerRole;
   aspect: number;
   pxW: number;
   pxH: number;
@@ -129,7 +140,7 @@ export function coverStageAvailable(): boolean {
 function coverFor(id: string): CoverRenderer | null {
   let c = covers.get(id);
   if (!c && renderer) {
-    const def = COVERS[id];
+    const def = shaderCover(id);
     if (!def) return null;
     c = new CoverRenderer(renderer, def, coverValues(id));
     c.warm();
@@ -139,15 +150,24 @@ function coverFor(id: string): CoverRenderer | null {
 }
 
 subscribeCoverDials(() => kick());
+onRiveReady(() => kick());
 
 if (import.meta.env.DEV) void import('./devHooks').then((m) => m.installCoverDevHooks());
 
+/** Can an instance of this cover be live here? A shader needs the stage's
+ *  WebGL2; a Rive cover only its runtime and file (until either fails). */
+export function coverLiveAvailable(id: string): boolean {
+  return riveCover(id) ? riveAvailable(id) : coverStageAvailable();
+}
+
 export function addPresenter(p: Presenter): () => void {
-  if (!coverStageAvailable()) return () => {};
+  const rive = !!riveCover(p.coverId);
+  if (!coverLiveAvailable(p.coverId)) return () => {};
   p.ctx = p.canvas.getContext('2d');
   presenters.add(p);
   io.observe(p.host);
-  coverFor(p.coverId);
+  if (rive) ensureRive(p.coverId);
+  else coverFor(p.coverId);
   kick();
   return () => {
     presenters.delete(p);
@@ -156,7 +176,7 @@ export function addPresenter(p: Presenter): () => void {
 }
 
 function kick() {
-  if (running || failed) return;
+  if (running) return;
   running = true;
   raf = requestAnimationFrame(tick);
 }
@@ -170,11 +190,12 @@ document.addEventListener('visibilitychange', () => {
 
 function tick(now: number) {
   raf = 0;
-  if (document.hidden || !renderer) {
+  if (document.hidden) {
     running = false;
     return;
   }
   const t0 = performance.now();
+  riveFrame(); // a frame of cover work, for the Rive hero's "left" test
   const site = siteCoverDials();
   const dprCap = Math.max(0.5, site.coverMaxDpr);
   const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
@@ -192,9 +213,15 @@ function tick(now: number) {
   for (const p of presenters) {
     p.visible = false;
     if (!p.onScreen || !p.host.isConnected) continue;
+    const rive = !!riveCover(p.coverId);
+    // A shader instance with no stage (its context lost) keeps its last frame.
+    if (!rive && (failed || !renderer)) continue;
     onScreen = true;
-    // (checkVisibility: Safari 17.4+; without it, CSS-hidden instances draw too)
-    if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true })) continue;
+    // (checkVisibility: Safari 17.4+; without it, CSS-hidden instances draw too.)
+    // Opacity counts: the grid under the detail view is `opacity: 0`
+    // (.grid-stage--hidden), not `visibility: hidden`, and was drawn — every
+    // frame, behind the hero — while only visibility was checked.
+    if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
     if (p.drawn && p.host.closest(HOLD)) continue;
     const r = p.host.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) continue;
@@ -202,18 +229,33 @@ function tick(now: number) {
     any = true;
     p.pxW = Math.max(1, Math.round(r.width * dpr));
     p.pxH = Math.max(1, Math.round(r.height * dpr));
-    if (p.dome) {
-      const spring = COVERS[p.coverId].domeSpring(coverValues(p.coverId));
+    if (rive) {
+      // Its own cap on the backing store (a CPU draw; riveMaxDpr, nosey.json),
+      // and its LAYOUT box's aspect, not its bounding box's: the hovered tile
+      // tilts, and a tilted tile's bounding box is a different shape — which
+      // for a shader is a draw of its own anyway (its dome), and for Rive would
+      // be a second draw of the one instance, for nothing.
+      const rdpr = Math.min(window.devicePixelRatio || 1, riveMaxDpr(p.coverId));
+      const lw = p.host.offsetWidth || r.width;
+      const lh = p.host.offsetHeight || r.height;
+      p.pxW = Math.max(1, Math.round(r.width * rdpr));
+      p.pxH = Math.max(1, Math.round((p.pxW * lh) / lw));
+    } else if (p.dome) {
+      const spring = shaderCover(p.coverId)!.domeSpring(coverValues(p.coverId));
       p.dome.step(now, spring.spring, spring.damping);
     }
-    if (p.dome && p.dome.state.amp !== 0) continue; // drawn for itself below
+    if (!rive && p.dome && p.dome.state.amp !== 0) continue; // drawn for itself below
     const aspect = Math.round((p.pxW / p.pxH) * 100) / 100;
+    const role: RivePlayerRole = rive ? p.role : 'grid';
     let g: Group | undefined;
-    for (let i = 0; i < nGroups; i++) if (groups[i].coverId === p.coverId && groups[i].aspect === aspect) g = groups[i];
+    for (let i = 0; i < nGroups; i++) {
+      if (groups[i].coverId === p.coverId && groups[i].aspect === aspect && groups[i].role === role) g = groups[i];
+    }
     if (!g) {
-      if (nGroups === groups.length) groups.push({ coverId: '', aspect: 0, pxW: 0, pxH: 0, n: 0 });
+      if (nGroups === groups.length) groups.push({ coverId: '', role: 'grid', aspect: 0, pxW: 0, pxH: 0, n: 0 });
       g = groups[nGroups++];
       g.coverId = p.coverId;
+      g.role = role;
       g.aspect = aspect;
       g.pxW = g.pxH = g.n = 0;
     }
@@ -223,6 +265,7 @@ function tick(now: number) {
     }
     g.n++;
   }
+  reportRiveRoles();
   if (!any) {
     // Nothing visible. Hidden by CSS (the grid under the detail view, the
     // hero's DOM face under the paper) is still on screen as far as the
@@ -237,6 +280,10 @@ function tick(now: number) {
   // 2. the shared rest draws, then each domed instance's own
   for (let i = 0; i < nGroups; i++) {
     const g = groups[i];
+    if (riveCover(g.coverId)) {
+      drawRive(g, t);
+      continue;
+    }
     const cover = coverFor(g.coverId);
     if (!cover || !draw(cover, g.pxW, g.pxH, t, restDome, backdrop)) continue;
     for (const p of presenters) {
@@ -246,7 +293,7 @@ function tick(now: number) {
     }
   }
   for (const p of presenters) {
-    if (!p.visible || !p.dome || p.dome.state.amp === 0) continue;
+    if (!p.visible || !p.dome || p.dome.state.amp === 0 || riveCover(p.coverId)) continue;
     const cover = coverFor(p.coverId);
     if (cover && draw(cover, p.pxW, p.pxH, t, p.dome.state, backdrop)) present(p, p.pxW, p.pxH);
   }
@@ -277,20 +324,69 @@ function draw(
 }
 
 function present(p: Presenter, pxW: number, pxH: number) {
+  // The draw sits at the framebuffer's bottom-left; in image rows that is the
+  // last pxH rows.
+  if (renderer) copy(p, renderer.domElement, stageH - pxH, pxW, pxH);
+}
+
+/** A copy of the draw at `(0, sy, pxW, pxH)` of `src` into one instance's canvas. */
+function copy(p: Presenter, src: CanvasImageSource, sy: number, pxW: number, pxH: number) {
   const ctx = p.ctx;
-  if (!ctx || !renderer) return;
+  if (!ctx) return;
   if (p.canvas.width !== p.pxW || p.canvas.height !== p.pxH) {
     p.canvas.width = p.pxW;
     p.canvas.height = p.pxH;
   }
   ctx.clearRect(0, 0, p.pxW, p.pxH);
-  // The draw sits at the framebuffer's bottom-left; in image rows that is the
-  // last pxH rows.
-  ctx.drawImage(renderer.domElement, 0, stageH - pxH, pxW, pxH, 0, 0, p.pxW, p.pxH);
+  ctx.drawImage(src, 0, sy, pxW, pxH, 0, 0, p.pxW, p.pxH);
   if (!p.drawn) {
     p.drawn = true;
     p.onDrawn();
   }
+}
+
+/** Each Rive cover's visible instances, as a mask, for its status
+ *  (riveDomRoles: 1 grid tiles, 2 the morph card as Main, 4 the morph card as
+ *  Main Bounce, 8 the hero's DOM face). No allocation. */
+const riveMasks = new Map<string, number>();
+function reportRiveRoles() {
+  for (const id of riveMasks.keys()) riveMasks.set(id, 0);
+  for (const p of presenters) {
+    if (!riveCover(p.coverId)) continue;
+    let m = riveMasks.get(p.coverId) ?? 0;
+    if (p.visible) {
+      const morph = !!p.host.closest('.detail-morph');
+      m |= morph ? (p.role === 'hero' ? 4 : 2) : p.role === 'hero' ? 8 : 1;
+    }
+    riveMasks.set(p.coverId, m);
+  }
+  for (const [id, m] of riveMasks) riveDomRoles(id, m);
+}
+
+/** The cap on a Rive cover's backing store (its riveMaxDpr dial). */
+function riveMaxDpr(id: string): number {
+  const v = coverValues(id) as { rive?: { riveMaxDpr?: number } };
+  return Math.max(0.5, v.rive?.riveMaxDpr ?? 2);
+}
+
+/**
+ * A Rive group: its player draws once, at the group's largest size, into its
+ * own canvas (top-left), and each instance copies it — the grid's tiles all
+ * share one draw of "Main", as card 02's share one draw of the shader.
+ */
+function drawRive(g: Group, t: number) {
+  const player = rivePlayer(g.coverId, g.role);
+  if (!player) return;
+  const ms = player.draw(t, g.pxW, g.pxH);
+  if (player.version === 0) return;
+  riveCost('draw', ms);
+  const t0 = performance.now();
+  for (const p of presenters) {
+    if (!p.visible || p.coverId !== g.coverId || p.role !== g.role) continue;
+    if (Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
+    copy(p, player.canvas, 0, g.pxW, g.pxH);
+  }
+  riveCost('copy', performance.now() - t0);
 }
 
 /** DEV / verify: the stage's renderer (for benchmarks) and counters. */
@@ -300,7 +396,14 @@ export function coverStageProbe() {
     frames: () => frames,
     lastMs: () => lastMs,
     presenters: () =>
-      [...presenters].map((p) => ({ cover: p.coverId, visible: p.visible, pxW: p.pxW, pxH: p.pxH, domed: !!p.dome && p.dome.state.amp !== 0 })),
+      [...presenters].map((p) => ({
+        cover: p.coverId,
+        role: p.role,
+        visible: p.visible,
+        pxW: p.pxW,
+        pxH: p.pxH,
+        domed: !!p.dome && p.dome.state.amp !== 0,
+      })),
     cover: (id: string) => coverFor(id),
     draw: (id: string, pxW: number, pxH: number, t: number) => {
       const c = coverFor(id);

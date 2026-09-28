@@ -108,9 +108,15 @@ const QUALITY = 82;
  *
  * `rive-site/loop.riv` is the Loop character, which section 01 opened with
  * until the two clips replaced it. It is 3.6 MB of artboard nothing fetches.
+ *
+ * `nosey/cover.unsigned.riv` is a build of card 04's cover whose scripts are
+ * not signed: the web runtimes refuse its scripts, so Main's props and Main
+ * Bounce's physics never run (docs/covers.md, "The .riv"). Kept only as the
+ * record of that; `cover.riv` is the signed build.
  */
 const NOT_SHIPPED = {
   'rive-site': ['loop.riv'],
+  nosey: ['cover.unsigned.riv'],
 };
 
 /**

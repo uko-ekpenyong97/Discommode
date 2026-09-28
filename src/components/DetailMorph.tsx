@@ -3,6 +3,9 @@ import { itemFace, itemHeroFace } from '../content';
 import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
 import { CoverTile } from '../covers/CoverTile';
+import { coverValues } from '../covers/coverDials';
+import { morphRole as swapRole, riveSwapAt } from '../covers/rive/swap';
+import type { RivePlayerRole } from '../covers/rive/swap';
 import './DetailMorph.css';
 
 /** One card morphing from its `from` rect to its `to` rect. */
@@ -16,11 +19,11 @@ export interface MorphCard {
  *  it is covering a substitution, not performing a transition of its own. */
 const FACE_CROSSFADE_MS = 200;
 
-/** The travel's easing. The chrome of a shader cover fades on it too, so the
+/** The travel's easing. The chrome of a live cover fades on it too, so the
  *  chrome is always as far gone as the card is from the grid. */
 const TRAVEL_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
-/** A card's chrome (DetailMorph.css) and a shader cover's in the detail view:
+/** A card's chrome (DetailMorph.css) and a live cover's in the detail view:
  *  none — the detail panel is `.detail__panel--bare` (docs/covers.md). The
  *  shadow keeps its geometry and loses its alpha, so it fades, not shrinks. */
 const CHROME = { borderRadius: '6px', boxShadow: '0 24px 70px rgba(0, 0, 0, 0.55)' };
@@ -74,13 +77,13 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
       })
       .filter((a): a is Animation => a !== null);
 
-    // A shader cover sheds the card's chrome on the way in and takes it back on
-    // the way out, over the travel: the grid tile keeps its chrome and the detail
-    // view has none, and neither end snaps.
+    // A live cover (shader or Rive) sheds the card's chrome on the way in and
+    // takes it back on the way out, over the travel: the grid tile keeps its
+    // chrome and the detail view has none, and neither end snaps.
     const chrome = cards
       .map((c, i) => {
         const el = refs.current[i];
-        if (!el || c.item.cover?.kind !== 'shader') return null;
+        if (!el || !c.item.cover) return null;
         return el.animate(entering ? [CHROME, BARE] : [BARE, CHROME], {
           duration: durationMs,
           easing: TRAVEL_EASING,
@@ -146,7 +149,13 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
               // A live cover travels live — the centre card, on the shared cover
               // clock, so it lands on the hero's frame and needs no cross-fade.
               // The neighbours are the still, as the detail view shows them.
-              <CoverTile coverId={c.item.cover.id} live={i === 1} dome={null} className="detail-morph__media" />
+              <CoverTile
+                coverId={c.item.cover.id}
+                live={i === 1}
+                dome={null}
+                role={morphRole(c.item.cover.id, entering)}
+                className="detail-morph__media"
+              />
             ) : to ? (
               <>
                 {changes && <img className="detail-morph__media" src={from} alt="" draggable={false} />}
@@ -168,6 +177,12 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
       })}
     </div>
   );
+}
+
+/** Which Rive player the morph's centre card shows: the grid's artboard or the
+ *  hero's, by the cover's riveSwapAt (src/covers/rive/swap.ts). */
+function morphRole(id: string, entering: boolean): RivePlayerRole {
+  return swapRole(riveSwapAt(coverValues(id) as { rive?: { riveSwapAt?: unknown } }), entering);
 }
 
 export default memo(DetailMorph);

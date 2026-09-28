@@ -61,10 +61,11 @@ export interface PosterItem {
   /** Optional card art (2000x2600). If absent, `hue` is used. */
   image?: string;
   /**
-   * A LIVE cover: a shader, drawn every frame, mouse-reactive, transparent where
-   * its ground is — the grid tile, the morph card and the detail hero all draw
-   * it (src/covers/, docs/covers.md). `image` stays its STILL: what the
-   * neighbours, reduced motion and a browser without WebGL show.
+   * A LIVE cover: a shader or a Rive file, drawn every frame, mouse-reactive,
+   * transparent where its ground is — the grid tile, the morph card and the
+   * detail hero all draw it (src/covers/, docs/covers.md). `image` stays its
+   * STILL: what the neighbours, reduced motion and a browser without WebGL (a
+   * shader) or the Rive runtime (a .riv) show.
    */
   cover?: CoverRef;
   /** Issue id (e.g. "01") — `kind: 'magazine'` only; opens `#read-NN`. */
@@ -86,9 +87,9 @@ export interface PosterItem {
  * until its project lands.
  *
  * Card 02's art is a LIVE cover — the rive-site shader, with the sky through
- * its ground; its `image` is that shader's still. Card 04's is a frame of
- * its own pitch site, taken from `01-site-scroll.mp4` by `npm run projects` —
- * see `scripts/optimize-projects.mjs` on how a card face is cut from a clip.
+ * its ground; its `image` is that shader's still. Card 04's is live too, and
+ * is Rive: Nosey's characters on "Main" in the grid and "Main Bounce" as the
+ * detail hero, the sky through the ground; its `image` is Main's still.
  */
 export const CONTENT: PosterItem[] = [
   {
@@ -133,7 +134,16 @@ export const CONTENT: PosterItem[] = [
     slug: 'item-04',
     kind: 'portfolio',
     project: '04',
-    image: '/projects/04/card.webp',
+    // The Nosey cover (docs/covers.md, "Rive covers"); its still, from
+    // `npm run covers`. The .riv is copied in by `npm run projects`.
+    cover: {
+      kind: 'rive',
+      id: 'nosey',
+      src: '/projects/nosey/cover.riv',
+      artboard: { grid: 'Main', detail: 'Main Bounce' },
+      stateMachine: 'Main',
+    },
+    image: '/projects/nosey/cover-still.webp',
     hue: 148,
     captions: ['NO 04', 'NOSEY', 'PITCH'],
     cta: 'OPEN',

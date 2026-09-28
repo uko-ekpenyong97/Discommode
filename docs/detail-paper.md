@@ -146,7 +146,11 @@ purpose, and it is where the dials live.
 ### Textures
 
 Each face is resized **once, by the browser** (`createImageBitmap`, `high`), to
-the card's own device pixels: at the hero's size and at the neighbours'. The
+the card's own device pixels: at the hero's size and at the neighbours'. From
+the file's BLOB, not the decoded `<img>`: from an image element Chrome crops
+and resizes on the main thread, and the faces built as the view mounts —
+during the grid→detail morph — were ~1 s of it, on every card (a real-Chrome
+profile, 2026-09-27). From a blob it happens off the main thread. The
 plane then samples it one texel to one pixel. Faces are `itemHeroFace` (Issue
 01's `cover-rest.webp`, the portfolio cards' `card.webp`). Issue 01 also gets
 its `cover-plate.webp` at the hero's size. The plate is used exactly while a
@@ -159,8 +163,8 @@ GPU cost at 1728×996 @2×: four faces at two sizes plus one plate, about 65 MB.
 
 ### The live cover plane
 
-A card with a live cover (`cover` in content.ts; card 02) is the one face that
-is not a texture made once. As the HERO its plane samples the render target of
+A card with a live cover (`cover` in content.ts; cards 02 and 04) is the face
+that is not a texture made once. As the HERO its plane samples the render target of
 a `CoverRenderer` held by this layer, on this layer's renderer, drawn every
 frame on the shared cover clock at the hero's device size (`coverMaxDpr`
 capped) — a texture cannot cross WebGL contexts, so the cover is drawn where the
@@ -168,6 +172,13 @@ plane is (docs/covers.md). As a neighbour it is its still, like any other face.
 While the plane is live the layer repaints every frame whatever the signature
 says; while the cards are handed OUT it holds the cover's last frame (the DOM
 face, dissolving back over it, is the live one).
+
+Card 04's cover is RIVE (docs/covers.md, "Rive covers"): no draw in this
+layer's renderer. Its hero plane samples a `CanvasTexture` of the hero
+PLAYER's 2D canvas — the same canvas the DOM hero face is copied from, so the
+DOM → plane hand-off is one picture — uploaded (premultiplied, 0.06–0.07 ms at
+1256 × 1633) only when the player drew a new frame, and the layer repaints
+only then. It is held while handing out, as the shader's is.
 
 The cover is NOT opaque: its ground lets the sky through. So two things here
 learned transparency, both identities for every other card:
@@ -180,12 +191,12 @@ learned transparency, both identities for every other card:
   transparent one. It now leaves the card's own rounded rect out, which is what
   the DOM's box-shadow does.
 
-And a SHADER cover (`cover.kind === 'shader'`) is not a card here at all, in
-any slot (docs/covers.md, "No card in the detail view"): no rounded corners
+And a live cover (either kind) is not a card here at all, in any slot
+(docs/covers.md, "No card in the detail view"): no rounded corners
 (`uRadius` 0), no shadow (the quad is not drawn; its DOM panel's is
 transparent), and the crease light — the screen blend and the trough shading —
 weighted by `uCoverShade × alpha` (`coverPaperShade`, on the COVER panel,
-default 1). The geometry is untouched: the dent, squash, ripple, fold and the
+default 1; card 04 has its own). The geometry is untouched: the dent, squash, ripple, fold and the
 crease refraction are exactly as on any card. For every other card the weight
 is exactly 1 and the radius and shadow are as before.
 
@@ -209,7 +220,7 @@ Fragment:
 | crease texel | `paper-creases.webp`, rotated `uIndex × 90°` so no two cards share folds |
 | refraction | `uv −= texel.g · d + hover · d · texel.g`, where `d = uCreaseDisplacement`, **held at 0 inside every hover-sprite rect** |
 | light | `mix(col, screen(col, texel), uCreaseBlend · lit)`, then `− (cmap(texel.g, 0, 0.1, 0.05, 0) − texel.g · hover · 0.1) · uCreaseBlend / 0.2 · lit`; `lit` = `uCoverShade · alpha` on a live cover, exactly 1 otherwise |
-| edge | the DOM's 6px corner radius (scaled), antialiased; straight edges are the triangles' own, multisampled. None on a shader cover (`uRadius` 0) |
+| edge | the DOM's 6px corner radius (scaled), antialiased; straight edges are the triangles' own, multisampled. None on a live cover (`uRadius` 0) |
 | alpha | `uAlpha` = the panel's own opacity (hover-dim, side fade, doorway clear), premultiplied |
 
 **The invariant.** With `uCreaseBlend`, `uCreaseDisplacement`, `uHover`,
@@ -353,12 +364,15 @@ view's tolerance and for its reason.
 
 That is layout's 1/64px grid against doubles: zero, for any purpose.
 
-Card 02 is the live cover: the checks PIN the cover clock (`window.__covers`)
-so the DOM and the plane draw one moment, and its hand-off is checked with the
-others — the transparent hero. It has two budgets of its own, in the script:
-the hero 2.5% (0.000–0.004%, and 2.1–2.2% at 1728×996 @2×, where the 628.2px
-hero box puts neither side on whole device pixels over a field of noise), and
-the still as a neighbour 7%, card 01's (1.0–5.0%). docs/covers.md has both.
+Cards 02 and 04 are live covers: the checks PIN the cover clock
+(`window.__covers`) so the DOM and the plane draw one moment, and their
+hand-offs are checked with the others — transparent heroes. Card 02 has two
+budgets of its own, in the script: the hero 2.5% (0.000–0.004%, and 2.1–2.2%
+at 1728×996 @2×, where the 628.2px hero box puts neither side on whole device
+pixels over a field of noise), and the still as a neighbour 7%, card 01's
+(1.0–5.0%). Card 04's hero meets the spec (0.149–0.434%); its still as a
+neighbour, line art on a transparent ground, is held to 2% (0.018–0.891%).
+docs/covers.md has all of them.
 
 **Identity** (every effect at 0; % of the card's pixels):
 
