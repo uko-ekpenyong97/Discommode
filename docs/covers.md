@@ -535,27 +535,70 @@ frames, a pointer), and `rcontexts` counts 0 contexts made by the runtime: the
 grid has 2 and `#item-04` 3, as before card 04 was live. A future file that
 deforms or shows images has to lift both, and pays that context back.
 
-**The one-off work waits for a quiet moment.** Importing this file is one
-85–97 ms main-thread task (the Editor's export, without Main, imported in 8:
-it is Main's scripts and nested artboards); making the grid's instance takes
-~10 ms and each hero's 3–4. The first run of `verify:detail` caught the import
-landing inside a Prev slide (a 33.3 ms frame). Each now waits for an idle
-callback with no input for 1.2 s and no animation running (and runs anyway
-after 10 s); a spare hero instance is made the same way, so the swap takes one
-ready-made. Until the grid's instance exists the tiles show the still, as they
-do before any first frame.
+**The one-off work prefers a quiet moment, and waits at most a second for
+one.** Importing this file is one 45–97 ms main-thread task (the Editor's
+export, without Main, imported in 8: it is Main's scripts and nested
+artboards); making the grid's instance takes ~10 ms and each hero's 3–4. The
+first run of `verify:detail` caught the import landing inside a Prev slide (a
+33.3 ms frame), so the import waits for an idle callback with no input for
+1.2 s and no animation running — but only for **1 s** after the file's bytes
+are ready, and the grid's instance is made in the same task as the import.
+Until then the tiles show the still, as they do before any first frame; a
+spare hero instance is made the same way, so the swap takes one ready-made.
+
+The deadline was 10 s, and waited twice (the import, then the grid's
+instance). With a real person's pointer — always moving, and a moving pointer
+is input — that was **20.8 s of the still** in a real Chrome session before the
+cover was live, with every hover in that time going nowhere: card 04 looked
+like a static image, in the grid and the detail view (2026-09-27, reported by
+Uko). The suites never saw it: their pointer sat still, the page was quiet in
+1.2 s, and they waited for the file before hovering. Now, with the pointer
+moving from the first frame, the import runs 1.00 s after the bytes land and
+the cover is live 1.4–1.5 s after navigation (`rpointer`). The deadline has a
+timer of its own: checked only from idle callbacks, which are up to 500 ms
+apart on a busy page, it ran at 1.34 s in a real session. In real Chrome at
+`#item-04?intro`, pointer moving: waited 1.03 s, live 2.1–2.7 s after
+navigation (fetching and compiling the runtime is ~1 s of that, before the
+wait; the import itself took 45–405 ms there).
 
 ### The pointer
 
 | instance | what it takes | from |
 | --- | --- | --- |
-| a grid tile | moves while the pointer is over it, an exit when it leaves — the characters look at the hovered tile's pointer and go back to rest when there is none; all tiles show the one instance, so all look the same way | the tile |
+| a grid tile | moves while the pointer is over its CARD, an exit when it leaves — the characters look at the hovered tile's pointer and go back to rest when there is none; all tiles show the one instance, so all look the same way | the whole `.grid-card`: the hover overlay's CTA sits over the tile and takes the pointer, and over it the tile alone saw a leave |
 | the hero | moves, presses and releases | the whole PANEL (under the paper the DOM face is `visibility: hidden` and takes no events; its panel does) |
 | the morph card, the neighbours | nothing | |
 
 A point across an instance's box maps back through its `object-fit: cover`
-crop into artboard space. No smoothing dial: the characters' tracking eases in
-the file itself.
+crop into artboard space. An event that arrives before the instance exists
+(the file still loading) is kept, and the last move is replayed into the
+instance when it is made — a pointer already resting on the cover counts. No
+smoothing dial: the characters' tracking eases in the file itself.
+
+### When card 04 does not react
+
+The COVER · nosey panel ends in a **status** readout, and the console carries
+the same lines as they change (`[covers] nosey: …`):
+
+| field | reads | if it is wrong |
+| --- | --- | --- |
+| `file` | not requested → fetching → waiting for idle → importing → loaded (or failed: the error), with the ms of each since the request | stuck before `loaded`: the still is what shows, and no hover goes anywhere. `waiting for idle` → `importing` is at most ~1 s; `failed` names the reason (a 404, not a .riv, no runtime) |
+| `grid`, `hero` | the instance: artboard / state machine / view model, the frames its state machine has advanced, the last step's dt, how many instances have been made | `no instance`: nothing is drawing that role. `vm none`: not bound — nothing view-model-driven moves (docs above). Frames not climbing while it is on screen: nothing is advancing it |
+| `pointer` | the last event an instance received: role, kind, where in ARTBOARD space, how long ago, how many | `none received` while you hover: the events are not reaching the cover (an element above it, `inert`, the listener's target) |
+| `reducedMotion` | the media query as the page sees it | `reduce`: the stills everywhere, by design, and the runtime never loads |
+
+Also in the console: the file's artboards, state machines and view models at
+load, the image assets not decoded, and `prefers-reduced-motion`.
+`window.__covers.rive.status('nosey')` returns the same object.
+
+What was checked, in a real headed Chrome (153), the pointer moving from the
+first frame, 2026-09-27: advance runs every frame the cover is on screen (the
+grid's 76.5 steps a second at 76.5 rAF a second; the hero 91 in a second with
+no pointer at all), not only on pointer events; the grid tile's own canvas is
+on top at its middle, the detail's panel at the hero's (the paper canvas takes
+no events), and `#item-04?intro` is not `inert` for card 04 (only DialKit's
+own text fields are); the reduced-motion query was `no-preference`. The one
+thing wrong was the 20.8 s wait above — and the CTA's leave.
 
 **The headset's colour steps on pointer-ENTER, not on a press.** In the file,
 the listener "Headset.Pointer.Enter" fires Noseyhead's `Click` trigger, which
@@ -670,7 +713,8 @@ only; `nogl` now also shows card 04's tiles live without WebGL). Pixel checks
 hide the sky and the dev overlays, except `sky` and `ground`; a pixel differs
 past 32 levels. About ten minutes.
 
-Card 04's eight, with the numbers of the last run. The Rive players advance by
+Card 04's eight, with the numbers of the last run. `rpointer` is the one that
+runs as a person does (below). The others need a still clock: the Rive players advance by
 the clock's delta, so the checks pin it, `__covers.rive.reset('nosey')` for
 fresh instances, and walk it a frame at a time: the same walk is the same run
 (Main Bounce's physics has no randomness — two runs with no pointer differ by
@@ -680,14 +724,16 @@ fresh instances, and walk it a frame at a time: the same walk is the same run
 | --- | --- | --- |
 | `rbudgets` | all card-04 work per frame, pointer moving (Frame time above) | p95 0.8–0.9 (grid), 1.1–1.3 (hero) ≤ 2.0 |
 | `rswap` | morph (Main) → DOM hero (Main Bounce) at landing; DOM hero → paper; `riveSwapAt` start | 0.51–0.54% ≤ 2% (control 16%); 0.00%; 0.51% |
-| `rpointer` | the headset Nosey's region (found from `headsetX/Y`) after 1 s with the pointer at the hero's far corner, vs none | 4.3–4.5% > 1% (two runs without: 0.00%) |
+| `rpointer` | the REAL path: the clock never pinned, the pointer moving from the first frame, mouse events dispatched through the browser at the focused tile's, the overlay CTA's and the hero's on-screen positions (the hero opened by clicking the tile) | loaded 1.38–1.50 s after navigation, the idle wait 1.00–1.02 s ≤ 1.1; the view model's `ptrX/ptrY` exactly the on-screen point through the crop — tile (129.5, 650) / (870.5, 650), CTA (499.2, 650), hero (120, 650) / (880, 650); tracking changes left vs right; tile pixels 1.55% vs its idle 0.31% |
 | `rclick` | onto the headset's cup and press, vs no pointer: its colour | blue → red, 10.8–11.0% of the region; a press alone 0.00% |
 | `rreduced` | reduced motion: tiles and hero on the still, runtime never loaded, 1 s | 0 canvases, not loaded, 0 bytes changed |
 | `rsky` | Main's empty ground, NOON vs NIGHT | 190.1–190.2 vs 85.8–86.1: 54.7–54.9% > 20% |
 | `rground` | the hero's transparent ground, paper effects on, vs the sky with the cover hidden | 88% of the hero is ground; mean 0.11–0.13% (floor 0.09–0.10%); control `solid` 70% |
 | `rcontexts` | WebGL contexts with card 04 live | grid 2, `#item-04` 3 (unchanged); 0 made by the runtime |
 
-`window.__covers.rive`: `ready(id)`, `players()`, `viewModel(id, role)`,
+`rpointer` was run against each way the real path broke or could break, and fails on each: the 10 s idle deadline put back ("never loaded"), events kept from the cover (`pointer-events: none` on the tile: `ptrX/ptrY` stay 0, no tracking change, tile and hero), and the tile-only listener put back (over the overlay's CTA the grid instance's last event is an `exit`).
+
+`window.__covers.rive`: `ready(id)`, `status(id)`, `players()`, `viewModel(id, role)`,
 `reset(id)`, `costs()` / `clearCosts()`, `oneOff()` (the import's and each
 instance's ms), `bench(id, role, w, h, n)`; `window.__paper.riveUploads()` and
 `benchRiveUpload(n)`.

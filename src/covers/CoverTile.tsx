@@ -5,7 +5,7 @@ import { coverStill as clockStill, subscribeReducedMotion } from './coverClock';
 import { coverStillUrl, riveCover } from './covers';
 import { DomeSpring } from './dome';
 import { frameOf } from './frame';
-import { rivePlayer } from './rive/riveCover';
+import { rivePointer } from './rive/riveCover';
 import type { RivePlayerRole, RivePointerKind } from './rive/riveCover';
 import type { Presenter } from './coverStage';
 import './CoverTile.css';
@@ -120,18 +120,20 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
  *   hover  a grid tile: moves while over it, an exit when it leaves — so the
  *          characters look at the hovered tile's pointer and go back to rest
  *          when there is none. No presses: a click on a tile opens the card.
+ *          Read from the whole CARD, not the tile: the hover overlay's CTA
+ *          sits over the tile and takes the pointer (`pointer-events: auto`),
+ *          and over it the tile alone saw a leave — the characters went back
+ *          to rest with the pointer still on the card.
  *   full   the hero: moves, presses and releases (the headset's click), read
  *          from the whole PANEL. Under the paper the DOM face is
  *          `visibility: hidden` and takes no pointer events; its panel does.
  */
 function riveInput(id: string, role: RivePlayerRole, host: HTMLElement, mode: 'hover' | 'full'): () => void {
-  const target = mode === 'full' ? (host.closest<HTMLElement>('.detail__panel') ?? host) : host;
+  const target = host.closest<HTMLElement>(mode === 'full' ? '.detail__panel' : '.grid-card') ?? host;
   const send = (kind: RivePointerKind, e: PointerEvent) => {
-    const player = rivePlayer(id, role);
-    if (!player) return;
     const r = host.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
-    player.pointer(kind, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, r.width, r.height);
+    rivePointer(id, role, kind, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, r.width, r.height);
   };
   const onMove = (e: PointerEvent) => {
     if (e.pointerType !== 'touch') send('move', e);

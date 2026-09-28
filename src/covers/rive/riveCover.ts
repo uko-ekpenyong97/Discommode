@@ -60,31 +60,48 @@ const MAX_STEP_S = 0.1;
 const HERO_GRACE_MS = 400;
 
 /**
- * THE ONE-OFF WORK WAITS FOR A QUIET MOMENT. Importing card 04's file is one
- * ~60–100 ms main-thread task (Main's scripts and nested artboards; the Editor
- * export without them imported in 8), making the grid's instance 10 ms and a
- * hero's 3–4 (docs/covers.md, "Frame time"). Any of them inside a slide, a
- * morph or a drag is a dropped frame — verify:detail's Prev slide caught the
- * import doing exactly that. So each waits for an idle callback with no input
- * for `QUIET_MS` and no animation running, and runs anyway after `QUIET_MAX_MS`.
- * Until then the tiles show the still, as they do before any first frame.
+ * THE ONE-OFF WORK PREFERS A QUIET MOMENT, AND WAITS AT MOST A SECOND FOR ONE.
+ * Importing card 04's file is one ~60–100 ms main-thread task (Main's scripts
+ * and nested artboards; the Editor export without them imported in 8), making
+ * the grid's instance 10 ms and a hero's 3–4 (docs/covers.md, "Frame time").
+ * Inside a slide or a morph that is a dropped frame — verify:detail's Prev
+ * slide caught the import doing exactly that — so it waits for an idle
+ * callback with no input for `QUIET_MS` and no animation running.
+ *
+ * But a person's pointer is always moving, and a moving pointer is input: with
+ * a 10 s fallback, run twice in a row (the import, then the grid's instance),
+ * card 04 stayed its still for 20.8 s in a real Chrome session with the mouse
+ * moving, and every hover in that time went nowhere. So the wait has a
+ * DEADLINE, `QUIET_MAX_MS` from the bytes being ready, and the grid's
+ * instance is made in the same task as the import, not after a second wait.
+ * The cover is live within ~1.1 s of its bytes arriving whatever the pointer
+ * is doing; a slide that happens to be running then pays one long frame.
  */
 const QUIET_MS = 1200;
-const QUIET_MAX_MS = 10_000;
+const QUIET_MAX_MS = 1000;
 let lastInput = -Infinity;
 for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const) {
   window.addEventListener(ev, () => (lastInput = performance.now()), { capture: true, passive: true });
 }
 
 function whenQuiet(fn: () => void) {
-  const since = performance.now();
+  let done = false;
+  const fire = () => {
+    if (done) return;
+    done = true;
+    window.clearTimeout(deadline);
+    fn();
+  };
+  // The deadline has a timer of its own: checked only from idle callbacks
+  // (up to 500 ms apart on a busy page) it ran 1.34 s late in a real session.
+  const deadline = window.setTimeout(fire, QUIET_MAX_MS);
   const idle: (cb: () => void) => void = window.requestIdleCallback
     ? (cb) => window.requestIdleCallback(cb, { timeout: 500 })
     : (cb) => window.setTimeout(cb, 100);
   const attempt = () => {
-    const now = performance.now();
-    const quiet = now - lastInput > QUIET_MS && !document.getAnimations().some((a) => a.playState === 'running');
-    if (quiet || now - since > QUIET_MAX_MS) fn();
+    if (done) return;
+    const quiet = performance.now() - lastInput > QUIET_MS && !document.getAnimations().some((a) => a.playState === 'running');
+    if (quiet) fire();
     else idle(attempt);
   };
   idle(attempt);
@@ -101,6 +118,71 @@ const listeners = new Set<() => void>();
 /** DEV / verify: main-thread ms of the one-off work — the file's import, and
  *  each instance made (the grid's, each hero). */
 const oneOff = { importMs: 0, instances: [] as { role: RivePlayerRole; ms: number; idle: boolean }[] };
+
+// ── status (dev readout, console) ────────────────────────────────────────
+// What a Rive cover is doing, for the COVER panel's readout and the console:
+// the file's state, each player's instance and frames, the last pointer event
+// an instance received. Written on every change; cheap enough to keep in
+// production (a few fields), logged in dev only.
+
+export type RiveFileState = 'not requested' | 'fetching' | 'waiting for idle' | 'importing' | 'loaded' | 'failed';
+
+export interface RivePlayerStatus {
+  artboard: string;
+  stateMachine: string;
+  viewModel: string | null;
+  /** State machine advances with dt > 0, and the last dt, s. */
+  frames: number;
+  lastDt: number;
+  instances: number;
+}
+
+export interface RiveStatus {
+  file: RiveFileState;
+  error: string;
+  /** ms from ensureRive to each state. */
+  at: Partial<Record<RiveFileState, number>>;
+  players: Partial<Record<RivePlayerRole, RivePlayerStatus>>;
+  pointer: { role: RivePlayerRole; kind: RivePointerKind; x: number; y: number; t: number; n: number } | null;
+  reducedMotion: boolean;
+}
+
+const reducedQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+if (import.meta.env.DEV) {
+  const say = () =>
+    console.info(`[covers] prefers-reduced-motion: ${reducedQuery.matches ? 'reduce — live covers show their stills' : 'no-preference'}`);
+  say();
+  reducedQuery.addEventListener('change', say);
+}
+const statuses = new Map<string, RiveStatus & { t0: number }>();
+
+export function riveStatus(id: string): RiveStatus & { t0: number } {
+  let st = statuses.get(id);
+  if (!st) {
+    st = { file: 'not requested', error: '', at: {}, players: {}, pointer: null, reducedMotion: reducedQuery.matches, t0: performance.now() };
+    statuses.set(id, st);
+  }
+  st.reducedMotion = reducedQuery.matches;
+  return st;
+}
+
+function log(id: string, msg: string, ...rest: unknown[]) {
+  if (import.meta.env.DEV) console.info(`[covers] ${id}: ${msg}`, ...rest);
+}
+
+function fileState(id: string, state: RiveFileState, error = '') {
+  const st = riveStatus(id);
+  if (st.file === 'not requested') st.t0 = performance.now();
+  st.file = state;
+  st.error = error;
+  st.at[state] = Math.round(performance.now() - st.t0);
+  log(id, `file ${state} (+${st.at[state]} ms)${error ? ` — ${error}` : ''}`);
+}
+
+/** The last pointer event per cover and role, kept while no instance exists to
+ *  take it — replayed into the instance when it is made, so a pointer already
+ *  resting on the cover is not lost to the load. */
+const pendingPointer = new Map<string, { kind: RivePointerKind; u: number; v: number; w: number; h: number }>();
 
 /** The manifest's ref for a Rive cover id. */
 export function riveRef(id: string): RiveCoverRef | undefined {
@@ -176,7 +258,11 @@ export function ensureRive(id: string) {
     load: Promise.resolve(),
   };
   files.set(id, entry);
-  if (!ref) return;
+  if (!ref) {
+    fileState(id, 'failed', 'no cover of kind rive with this id in the manifest');
+    return;
+  }
+  fileState(id, 'fetching');
   entry.load = (async () => {
     try {
       const [rt, bytes] = await Promise.all([
@@ -187,7 +273,9 @@ export function ensureRive(id: string) {
       const buf = new Uint8Array(bytes);
       // The dev server answers a missing file with index.html: a .riv starts "RIVE".
       if (buf[0] !== 0x52 || buf[1] !== 0x49 || buf[2] !== 0x56 || buf[3] !== 0x45) throw new Error(`${ref.src} is not a .riv`);
+      fileState(id, 'waiting for idle');
       await new Promise<void>((r) => whenQuiet(r));
+      fileState(id, 'importing');
       const t0 = performance.now();
       const skipped: string[] = [];
       const images = new rt.CustomFileAssetLoader({
@@ -203,15 +291,26 @@ export function ensureRive(id: string) {
       }
       oneOff.importMs = performance.now() - t0;
       if (import.meta.env.DEV) whenQuiet(() => introspect(id, rt, file, ref));
-      await new Promise<void>((r) => whenQuiet(r));
       entry.file = file;
-      // The grid's instance now, not inside the first frame that draws it.
+      // The grid's instance in this same task, not after a second wait and not
+      // inside the first frame that draws it.
       const grid = makePlayer(id, 'grid', true);
       if (grid) players.set(`${id}/grid`, grid);
+      fileState(id, 'loaded');
+      if (grid) {
+        riveStatus(id).players.grid = grid.status;
+        log(id, `grid instance: artboard "${grid.status.artboard}", state machine "${grid.status.stateMachine}", view model ${grid.status.viewModel ?? 'none'}`);
+        const pending = pendingPointer.get(`${id}/grid`);
+        if (pending) {
+          pendingPointer.delete(`${id}/grid`);
+          grid.pointer(pending.kind, pending.u, pending.v, pending.w, pending.h);
+        }
+      }
       for (const l of listeners) l();
       scheduleSpare(id);
     } catch (e) {
       entry.failed = true;
+      fileState(id, 'failed', e instanceof Error ? e.message : String(e));
       console.warn(`[covers] ${id}: the Rive cover could not load; its still stands in.`, e);
       for (const l of listeners) l();
     }
@@ -305,7 +404,19 @@ export class RivePlayer {
     this.sm.advanceAndApply(0);
     this.canvas.width = this.canvas.height = 1;
     this.renderer = rt.makeRenderer(this.canvas);
+    this.status = {
+      artboard: ab.name,
+      stateMachine: ref.stateMachine,
+      viewModel: vm ? vm.name : null,
+      frames: 0,
+      lastDt: 0,
+      instances: (riveStatus(id).players[role]?.instances ?? 0) + 1,
+    };
   }
+
+  /** What the readout shows for this instance. Bound into the cover's status
+   *  when the instance is in use (rivePlayer), not while it is a spare. */
+  readonly status: RivePlayerStatus;
 
   /**
    * Advance to cover time `t` and draw at `pxW × pxH` (an `object-fit: cover`
@@ -324,6 +435,10 @@ export class RivePlayer {
       this.lastT = t;
       this.sm.advanceAndApply(dt);
       advanced = true;
+      if (dt > 0) {
+        this.status.frames++;
+        this.status.lastDt = dt;
+      }
     }
     // coverBackdrop (a site dial, as for card 02): 'sky' draws nothing behind
     // the artboard; 'solid' lays its colour under it.
@@ -381,6 +496,7 @@ export class RivePlayer {
     coverCropOf(b.maxX - b.minX, b.maxY - b.minY, w, h, this.crop);
     const x = b.minX + this.crop.x0 + u * this.crop.w;
     const y = b.minY + this.crop.y0 + v * this.crop.h;
+    notePointer(this.id, this.role, kind, x, y);
     if (kind === 'move') this.sm.pointerMove(x, y, 0);
     else if (kind === 'down') this.sm.pointerDown(x, y, 0);
     else if (kind === 'up') this.sm.pointerUp(x, y, 0);
@@ -414,6 +530,33 @@ export class RivePlayer {
     this.artboard.delete();
     this.canvas.width = this.canvas.height = 0;
   }
+}
+
+let pointerLogAt = 0;
+let pointerLogN = 0;
+function notePointer(id: string, role: RivePlayerRole, kind: RivePointerKind, x: number, y: number) {
+  const st = riveStatus(id);
+  const now = performance.now();
+  const first = !st.pointer || st.pointer.role !== role;
+  st.pointer = { role, kind, x: Math.round(x), y: Math.round(y), t: now, n: (st.pointer?.n ?? 0) + 1 };
+  pointerLogN++;
+  if (first || kind !== 'move' || now - pointerLogAt > 2000) {
+    log(id, `${role} pointer ${kind} at (${st.pointer.x}, ${st.pointer.y}) in ${role === 'grid' ? 'Main' : 'Main Bounce'}'s space — ${pointerLogN} event(s) since the last line`);
+    pointerLogAt = now;
+    pointerLogN = 0;
+  }
+}
+
+/**
+ * A pointer event for a cover's role, at (u, v) across a `w × h` instance box.
+ * With no instance yet (the file still loading) the last one is kept and
+ * replayed into the instance when it is made.
+ */
+export function rivePointer(id: string, role: RivePlayerRole, kind: RivePointerKind, u: number, v: number, w: number, h: number) {
+  const player = rivePlayer(id, role);
+  if (player) player.pointer(kind, u, v, w, h);
+  else if (kind === 'exit') pendingPointer.delete(`${id}/${role}`);
+  else if (kind === 'move') pendingPointer.set(`${id}/${role}`, { kind, u, v, w, h });
 }
 
 function makePlayer(id: string, role: RivePlayerRole, idle = false): RivePlayer | null {
@@ -467,6 +610,13 @@ export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null 
     }
     if (!p) return null;
     players.set(key, p);
+    riveStatus(id).players[role] = p.status;
+    log(id, `${role} instance: artboard "${p.status.artboard}", state machine "${p.status.stateMachine}", view model ${p.status.viewModel ?? 'none'} (#${p.status.instances})`);
+    const pending = pendingPointer.get(key);
+    if (pending) {
+      pendingPointer.delete(key);
+      p.pointer(pending.kind, pending.u, pending.v, pending.w, pending.h);
+    }
   }
   return p;
 }
@@ -527,6 +677,10 @@ export function riveProbe() {
       }
     },
     def: (id: string) => riveCover(id),
+    status: (id: string) => {
+      const st = riveStatus(id);
+      return { ...st, pointer: st.pointer && { ...st.pointer, ageMs: Math.round(performance.now() - st.pointer.t) } };
+    },
     /** The one-off costs: the file's import, each instance made. */
     oneOff: () => ({ importMs: oneOff.importMs, instances: oneOff.instances.slice() }),
     /** Main-thread ms per draw of a THROWAWAY instance of `role` at `w × h`,

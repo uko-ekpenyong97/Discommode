@@ -70,10 +70,24 @@
  *             a control, the hero a second of bounce later, has to fail. Then
  *             the DOM hero → the paper, ≤ 2% (the morph's whole hand-off).
  *             Also riveSwapAt 'start', where the morph card is the hero.
- *   rpointer  the pointer over the hero turns a character: the headset Nosey's
- *             region (found from the view model's headsetX/Y) after 1s with the
- *             pointer at the hero's far corner, against the same second with no
- *             pointer — > 1% of the region differs; two runs without, ≈ 0.
+ *   rpointer  the REAL pointer path, as a person uses it: the clock never
+ *             pinned, the pointer moving from the first frame (a moving
+ *             pointer is input, and input is what held the file's import back
+ *             for 20.8 s), mouse events dispatched through the browser at the
+ *             on-screen position of the focused grid tile and then of the hero
+ *             (opened by clicking the tile), with the tile's hover overlay
+ *             left in place (made transparent, still hit-testable):
+ *               - the file is imported ≤ 1.1 s after its bytes are ready;
+ *               - the instance receives the events, in artboard space: the view
+ *                 model's ptrX/ptrY (MainPlay mirrors them) match the on-screen
+ *                 point mapped through the instance's crop, ± 2 units;
+ *               - a character tracks: a tracking flag or lookX differs between
+ *                 the pointer at 12% and at 88% across;
+ *               - the tile's pixels move with the pointer: left vs right more
+ *                 than 3× the tile's own idle animation over the same time.
+ *             It fails on each way this path broke or could: the old 10 s idle
+ *             deadline ("never loaded"), events kept from the cover (ptrX/ptrY
+ *             stay 0), and the tile-only listener (an exit over the CTA).
  *   rclick    a click on the headset Nosey changes the headset's colour: the
  *             pointer moved onto its cup and pressed, against the same second
  *             with no pointer — the headset's colour is another one. In the
@@ -863,28 +877,128 @@ async function heroRun(page, dpr, T, { before, mid, n = 60 }) {
 }
 
 async function checkRivePointer(browser) {
-  console.log('\nrive pointer: over the hero, a character turns to it');
-  const T = 2;
+  console.log('\nrive pointer: real mouse events at the tile and the hero, the pointer moving from the first frame');
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
-    await heroOn04(page);
-    await quiet(page);
-    await page.evaluate(() => window.__paper.override({ zero: true })); // no dent: only the cover moves
-    const none = await heroRun(page, dpr, T, {});
-    const none2 = await heroRun(page, dpr, T, {});
-    const corner = await heroRun(page, dpr, T, {
-      before: async (hr) => {
-        await page.mouse.move(hr.x + hr.w * 0.97, hr.y + hr.h * 0.97, { steps: 4 });
-      },
-    });
-    const same = none.vm.headsetX === corner.vm.headsetX && none.vm.headsetY === corner.vm.headsetY && none.vm.headsetX === none2.vm.headsetX;
-    const d0 = diff(none.img, none2.img);
-    const d = diff(none.img, corner.img);
+    const tag = `@${dpr}×`;
+    // Moving from the first frame, and never waiting for a quiet moment.
+    await page.goto(B, { waitUntil: 'domcontentloaded' });
+    const t0 = Date.now();
+    let loaded = null;
+    for (let i = 0; i < 150 && !loaded; i++) {
+      await page.mouse.move(140 + 60 * Math.sin(i / 3), 110 + 40 * Math.cos(i / 4));
+      await page.waitForTimeout(40);
+      loaded = await page.evaluate(() => {
+        const st = window.__covers?.rive.status('nosey');
+        return st && (st.file === 'loaded' || st.file === 'failed') ? st : null;
+      });
+    }
+    const waited = loaded ? loaded.at.importing - loaded.at['waiting for idle'] : NaN;
     check(
-      same && d0 <= 0.005 && d > 0.01,
-      `@${dpr}× the headset Nosey, pointer at the far corner vs none`,
-      `${pct(d)} of its region differs > 1% (two runs with no pointer: ${pct(d0)}; the bounce put it at ${none.vm.headsetX.toFixed(1)}, ${none.vm.headsetY.toFixed(1)} in all three)`,
+      loaded?.file === 'loaded' && waited <= 1100,
+      `${tag} loads with the pointer moving`,
+      loaded
+        ? `${loaded.file} ${Date.now() - t0} ms after navigation; waited ${waited} ms for a quiet moment (≤ 1100: the deadline), bytes ready at +${loaded.at['waiting for idle']} ms, imported at +${loaded.at.loaded} ms`
+        : 'never loaded',
     );
+    if (loaded?.file !== 'loaded') {
+      await page.context().close();
+      continue;
+    }
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(350);
+    }
+    await page.waitForTimeout(900);
+    await quiet(page);
+    await flatGrid(page);
+    // The hover overlay stays hit-testable (its CTA takes the pointer); it is
+    // only made invisible, so the pixels are the cover's.
+    await page.evaluate(() => {
+      const st = document.createElement('style');
+      st.textContent = '.card-overlay, .grid-card__overlay { opacity: 0 !important; }';
+      document.head.append(st);
+    });
+    const tile = await focusedTile(page);
+    const hold = async (r, u, v, ms) => {
+      const x = r.x + u * r.w;
+      const y = r.y + v * r.h;
+      for (let i = 0; i <= 8; i++) await page.mouse.move(x - 40 + 5 * i, y, { steps: 1 });
+      for (let t = 0; t < ms; t += 50) {
+        await page.mouse.move(x + ((t / 50) % 2), y); // a hand is never still
+        await page.waitForTimeout(50);
+      }
+      await page.mouse.move(x, y); // …and the last event is the point checked
+      await page.waitForTimeout(50);
+      return { x, y };
+    };
+    const ptr = (role) => page.evaluate((role) => ({ vm: window.__covers.rive.viewModel('nosey', role), st: window.__covers.rive.status('nosey').pointer }), role);
+    const tracking = (vm) => Object.entries(vm).filter(([k]) => /isTracking|lookX|overHead/.test(k)).map(([k, v]) => `${k}=${typeof v === 'number' ? v.toFixed(2) : v}`);
+    const crop = (r) => {
+      const a = r.w / r.h;
+      const img = RFRAME.w / RFRAME.h;
+      return img > a ? { x0: (RFRAME.w - RFRAME.h * a) / 2, y0: 0, w: RFRAME.h * a, h: RFRAME.h } : { x0: 0, y0: (RFRAME.h - RFRAME.w / a) / 2, w: RFRAME.w, h: RFRAME.w / a };
+    };
+    const judge = async (role, r, label) => {
+      const c = crop(r);
+      const onCard = await page.evaluate(
+        ([x, y, sel]) => !!document.elementFromPoint(x, y)?.closest(sel),
+        [r.x + 0.12 * r.w, r.y + 0.5 * r.h, role === 'grid' ? '.grid-card' : '.detail__panel--center'],
+      );
+      const a = await hold(r, 0.12, 0.5, 1000);
+      const A = await ptr(role);
+      const imgA = await grab(page, r, dpr, 150, 200);
+      const b = await hold(r, 0.88, 0.5, 1000);
+      const Bp = await ptr(role);
+      const imgB = await grab(page, r, dpr, 150, 200);
+      await hold(r, 0.88, 0.5, 1000);
+      const imgB2 = await grab(page, r, dpr, 150, 200);
+      const want = (p) => ({ x: c.x0 + ((p.x - r.x) / r.w) * c.w, y: c.y0 + ((p.y - r.y) / r.h) * c.h });
+      const wa = want(a);
+      const wb = want(b);
+      const near = (vm, w) => Math.abs(vm.ptrX - w.x) <= 2 && Math.abs(vm.ptrY - w.y) <= 2;
+      const tA = tracking(A.vm).join(' ');
+      const tB = tracking(Bp.vm).join(' ');
+      const dMove = diff(imgA, imgB);
+      const dStill = diff(imgB, imgB2);
+      const pixels = role === 'grid' ? dMove > 3 * dStill && dMove > 0.002 : true;
+      check(
+        onCard && A.st?.role === role && Bp.st?.role === role && near(A.vm, wa) && near(Bp.vm, wb) && tA !== tB && pixels,
+        `${tag} ${label}`,
+        `events on the ${role === 'grid' ? 'card' : 'panel'}: ${onCard}; the ${role} instance got them (${Bp.st?.n} so far) at (${A.vm.ptrX.toFixed(1)}, ${A.vm.ptrY.toFixed(1)}) / (${Bp.vm.ptrX.toFixed(1)}, ${Bp.vm.ptrY.toFixed(1)}) — wanted (${wa.x.toFixed(1)}, ${wa.y.toFixed(1)}) / (${wb.x.toFixed(1)}, ${wb.y.toFixed(1)}); tracking left [${tA}] vs right [${tB}]` +
+          (role === 'grid' ? `; pixels left vs right ${pct(dMove)} vs the tile's idle ${pct(dStill)}` : ''),
+      );
+    };
+    await judge('grid', tile, 'the focused grid tile');
+    // Over the hover overlay's CTA — the one thing over a tile that takes the
+    // pointer itself: the instance still gets moves there, not an exit.
+    const cta = await page.evaluate(() => {
+      const b = document.querySelector('.grid-card .card-overlay__cta');
+      const r = b?.getBoundingClientRect();
+      const el = r && document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2, top: el?.closest('.card-overlay__cta') ? 'card-overlay__cta' : (el?.tagName ?? 'nothing') } : null;
+    });
+    if (cta) {
+      for (let i = 0; i < 10; i++) {
+        await page.mouse.move(cta.x + (i % 2), cta.y);
+        await page.waitForTimeout(50);
+      }
+      await page.mouse.move(cta.x, cta.y);
+      await page.waitForTimeout(80);
+      const c = crop(tile);
+      const want = { x: c.x0 + ((cta.x - tile.x) / tile.w) * c.w, y: c.y0 + ((cta.y - tile.y) / tile.h) * c.h };
+      const got = await ptr('grid');
+      check(
+        /card-overlay__cta/.test(String(cta.top)) && got.st?.role === 'grid' && got.st.kind === 'move' && Math.abs(got.vm.ptrX - want.x) <= 2 && Math.abs(got.vm.ptrY - want.y) <= 2,
+        `${tag} over the overlay's CTA`,
+        `on top: ${String(cta.top).split(' ')[0]}; the grid instance's last event: ${got.st?.kind} at (${got.vm.ptrX.toFixed(1)}, ${got.vm.ptrY.toFixed(1)}), wanted (${want.x.toFixed(1)}, ${want.y.toFixed(1)})`,
+      );
+    } else bad(`${tag} over the overlay's CTA`, 'no overlay CTA on the hovered card');
+    // Into the detail view the way a person goes: a click on the tile.
+    await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.62);
+    await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
+    await page.waitForTimeout(600);
+    await judge('hero', await heroRect(page), 'the hero, on the paper');
     await page.context().close();
   }
 }
