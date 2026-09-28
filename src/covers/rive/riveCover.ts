@@ -9,7 +9,7 @@ import type {
 import wasmUrl from '@rive-app/canvas/rive.wasm?url';
 import { CONTENT } from '../../content';
 import { coverCropOf } from '../coverRenderer';
-import { siteCoverDials } from '../coverDials';
+import { backdropUnder } from '../coverDials';
 import { riveCover } from '../covers';
 import type { Crop, RiveCoverRef } from '../types';
 
@@ -508,10 +508,9 @@ export class RivePlayer {
         this.status.lastDt = dt;
       }
     }
-    // coverBackdrop (a site dial, as for card 02): 'sky' draws nothing behind
-    // the artboard; 'solid' lays its colour under it.
-    const site = siteCoverDials();
-    const bg = site.coverBackdrop === 'solid' ? site.coverBackdropColor : '';
+    // The site's coverBackdrop colour, laid under the artboard only if this
+    // cover lets the sky through (card 04 is 'solid': its artboards' own fill).
+    const bg = backdropUnder(this.id) ?? '';
     const resized = this.size(pxW, pxH) || bg !== this.drawnBg;
     this.drawnBg = bg;
     if (!resized && this.drawnT === this.lastT) return 0;

@@ -5,6 +5,7 @@ import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
 import { useDetailPaperDials } from './detailPaperDials';
 import { useCoverLifeDials } from './coverLifeDials';
+import { clampDial, loadAppDials, saveAppDials } from './dialState';
 
 /**
  * Dev-only DialKit panel for live feel/layout tuning. This whole module is
@@ -19,70 +20,68 @@ import { useCoverLifeDials } from './coverLifeDials';
  * Memoised (no props) so the per-frame App re-renders don't re-run the effect;
  * it re-renders only when DialKit's own store changes a value.
  */
-const STORAGE_KEY = 'discommode-dials';
-
-function loadPersisted(): Partial<LiveConfig> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Partial<LiveConfig>) : {};
-  } catch {
-    return {};
-  }
-}
 
 function Dials() {
-  // Restore persisted values as each dial's starting point (defaults otherwise).
-  const start = useMemo<LiveConfig>(() => ({ ...DEFAULTS, ...loadPersisted() }), []);
+  // Restore saved values as each dial's starting point (defaults otherwise):
+  // only this version's, only keys DEFAULTS has, of the right type (dialState.ts).
+  const start = useMemo<LiveConfig>(() => ({ ...DEFAULTS, ...loadAppDials(DEFAULTS) }), []);
+  // A slider starting at its saved value clamped into its range: a value saved
+  // under another range (another branch on this port) lands inside this one.
+  type NumKey = { [K in keyof LiveConfig]: LiveConfig[K] extends number ? K : never }[keyof LiveConfig];
+  const n = (k: NumKey, min: number, max: number, step?: number) =>
+    (step === undefined
+      ? [clampDial(start[k], DEFAULTS[k], min, max), min, max]
+      : [clampDial(start[k], DEFAULTS[k], min, max), min, max, step]) as [number, number, number, number?];
 
   const motion = useDialKit('MOTION', {
-    snapMs: [start.snapMs, 100, 1500],
-    flickThreshold: [start.flickThreshold, 0.3, 4],
-    momentumFactor: [start.momentumFactor, 0.05, 0.8],
-    maxFlickCells: [start.maxFlickCells, 1, 8, 1],
-    velocityWindowMs: [start.velocityWindowMs, 40, 300],
-    settleTauPerCell: [start.settleTauPerCell, 0, 0.5],
+    snapMs: n('snapMs', 100, 1500),
+    flickThreshold: n('flickThreshold', 0.3, 4),
+    momentumFactor: n('momentumFactor', 0.05, 0.8),
+    maxFlickCells: n('maxFlickCells', 1, 8, 1),
+    velocityWindowMs: n('velocityWindowMs', 40, 300),
+    settleTauPerCell: n('settleTauPerCell', 0, 0.5),
   });
 
   const grid = useDialKit('GRID', {
-    clickCenterMaxMs: [start.clickCenterMaxMs, 150, 1200],
+    clickCenterMaxMs: n('clickCenterMaxMs', 150, 1200),
   });
 
   const depth = useDialKit('DEPTH', {
-    maxTiltDeg: [start.maxTiltDeg, 0, 12],
-    parallaxShiftPx: [start.parallaxShiftPx, 0, 40],
-    tiltLerpMs: [start.tiltLerpMs, 50, 600],
-    overlayDepthHeadline: [start.overlayDepthHeadline, 1, 2.5],
-    overlayDepthCaptions: [start.overlayDepthCaptions, 1, 2],
-    overlayDepthCta: [start.overlayDepthCta, 1, 1.5],
-    cursorDepthPx: [start.cursorDepthPx, 200, 1500],
-    cardFaceStrength: [start.cardFaceStrength, 0, 1.5],
-    maxCardTiltDeg: [start.maxCardTiltDeg, 0, 20],
-    cardTiltLerpMs: [start.cardTiltLerpMs, 50, 800],
+    maxTiltDeg: n('maxTiltDeg', 0, 12),
+    parallaxShiftPx: n('parallaxShiftPx', 0, 40),
+    tiltLerpMs: n('tiltLerpMs', 50, 600),
+    overlayDepthHeadline: n('overlayDepthHeadline', 1, 2.5),
+    overlayDepthCaptions: n('overlayDepthCaptions', 1, 2),
+    overlayDepthCta: n('overlayDepthCta', 1, 1.5),
+    cursorDepthPx: n('cursorDepthPx', 200, 1500),
+    cardFaceStrength: n('cardFaceStrength', 0, 1.5),
+    maxCardTiltDeg: n('maxCardTiltDeg', 0, 20),
+    cardTiltLerpMs: n('cardTiltLerpMs', 50, 800),
   });
 
   const layout = useDialKit('LAYOUT', {
-    cardWidth: [start.cardWidth, 180, 480],
-    gap: [start.gap, 40, 240],
-    wrapStride: [start.wrapStride, 3, 8, 1],
+    cardWidth: n('cardWidth', 180, 480),
+    gap: n('gap', 40, 240),
+    wrapStride: n('wrapStride', 3, 8, 1),
   });
 
   const focus = useDialKit('FOCUS', {
-    focusScale: [start.focusScale, 1, 1.4],
-    unfocusedOpacity: [start.unfocusedOpacity, 0.1, 1],
-    farOpacity: [start.farOpacity, 0.05, 1],
-    hoverLiftOpacity: [start.hoverLiftOpacity, 0.1, 1],
+    focusScale: n('focusScale', 1, 1.4),
+    unfocusedOpacity: n('unfocusedOpacity', 0.1, 1),
+    farOpacity: n('farOpacity', 0.05, 1),
+    hoverLiftOpacity: n('hoverLiftOpacity', 0.1, 1),
   });
 
   const detail = useDialKit('DETAIL', {
-    detailTransitionMs: [start.detailTransitionMs, 150, 900],
-    detailCardScale: [start.detailCardScale, 0.3, 1],
-    detailSideScale: [start.detailSideScale, 0.3, 1],
-    detailSideOpacity: [start.detailSideOpacity, 0.1, 1],
-    detailGap: [start.detailGap, 0, 160],
-    detailHoverDim: [start.detailHoverDim, 0, 1],
-    detailScrimOpacity: [start.detailScrimOpacity, 0, 0.8],
-    detailChromeFadeMs: [start.detailChromeFadeMs, 50, 600],
-    detailSlideMs: [start.detailSlideMs, 150, 900],
+    detailTransitionMs: n('detailTransitionMs', 150, 900),
+    detailCardScale: n('detailCardScale', 0.3, 1),
+    detailSideScale: n('detailSideScale', 0.3, 1),
+    detailSideOpacity: n('detailSideOpacity', 0.1, 1),
+    detailGap: n('detailGap', 0, 160),
+    detailHoverDim: n('detailHoverDim', 0, 1),
+    detailScrimOpacity: n('detailScrimOpacity', 0, 0.8),
+    detailChromeFadeMs: n('detailChromeFadeMs', 50, 600),
+    detailSlideMs: n('detailSlideMs', 150, 900),
   });
 
   // SKY — the sky's FEEL, and only its feel. Six dials, which is the whole
@@ -92,19 +91,19 @@ function Dials() {
   // EnvReadout, where the six conditions are six buttons instead of a slider
   // you have to count clicks on.
   const sky = useDialKit('SKY', {
-    skyTransitionMs: [start.skyTransitionMs, 150, 4000],
-    skyDrift: [start.skyDrift, 0, 3, 0.05],
-    cloudScale: [start.cloudScale, 0.8, 4, 0.05],
-    fogHeight: [start.fogHeight, 0.3, 1.2, 0.01],
-    skySaturation: [start.skySaturation, 0.4, 1.6, 0.01],
-    skyGrain: [start.skyGrain, 0, 0.1, 0.005],
-    starSize: [start.starSize, 0.5, 4, 0.05],
-    moonSize: [start.moonSize, 0.3, 3, 0.05],
-    moonEarthshine: [start.moonEarthshine, 0, 0.3, 0.005],
-    moonTerminatorSoft: [start.moonTerminatorSoft, 0.002, 0.2, 0.002],
-    moonGlow: [start.moonGlow, 0, 0.5, 0.005],
-    skyResolution: [start.skyResolution, 0.5, 1, 0.05],
-    skyMaxMegapixels: [start.skyMaxMegapixels, 0, 16, 0.5],
+    skyTransitionMs: n('skyTransitionMs', 150, 4000),
+    skyDrift: n('skyDrift', 0, 3, 0.05),
+    cloudScale: n('cloudScale', 0.8, 4, 0.05),
+    fogHeight: n('fogHeight', 0.3, 1.2, 0.01),
+    skySaturation: n('skySaturation', 0.4, 1.6, 0.01),
+    skyGrain: n('skyGrain', 0, 0.1, 0.005),
+    starSize: n('starSize', 0.5, 4, 0.05),
+    moonSize: n('moonSize', 0.3, 3, 0.05),
+    moonEarthshine: n('moonEarthshine', 0, 0.3, 0.005),
+    moonTerminatorSoft: n('moonTerminatorSoft', 0.002, 0.2, 0.002),
+    moonGlow: n('moonGlow', 0, 0.5, 0.005),
+    skyResolution: n('skyResolution', 0.5, 1, 0.05),
+    skyMaxMegapixels: n('skyMaxMegapixels', 0, 16, 0.5),
   });
 
   // SKY · FLUID — the wake (docs/sky.md, "The wake"). The solver's five, then
@@ -114,20 +113,20 @@ function Dials() {
     'SKY · FLUID',
     {
       fluidOn: start.fluidOn,
-      fluidRadius: [start.fluidRadius, 0.02, 0.25, 0.005],
-      fluidStrength: [start.fluidStrength, 0, 3, 0.05],
-      fluidCurl: [start.fluidCurl, 0, 50, 1],
-      velocityDissipation: [start.velocityDissipation, 0.9, 0.999, 0.001],
-      densityDissipation: [start.densityDissipation, 0.85, 0.999, 0.001],
-      fluidWarp: [start.fluidWarp, 0, 0.1, 0.001],
-      starPush: [start.starPush, 0, 2, 0.05],
-      starGlow: [start.starGlow, 0, 4, 0.05],
-      cloudPart: [start.cloudPart, 0, 1, 0.01],
-      fogPart: [start.fogPart, 0, 1, 0.01],
-      rainBend: [start.rainBend, 0, 0.6, 0.01],
-      gradientPush: [start.gradientPush, 0, 1, 0.01],
-      gradientSwirl: [start.gradientSwirl, 0, 0.6, 0.01],
-      pageSplat: [start.pageSplat, 0, 3, 0.05],
+      fluidRadius: n('fluidRadius', 0.02, 0.25, 0.005),
+      fluidStrength: n('fluidStrength', 0, 3, 0.05),
+      fluidCurl: n('fluidCurl', 0, 50, 1),
+      velocityDissipation: n('velocityDissipation', 0.9, 0.999, 0.001),
+      densityDissipation: n('densityDissipation', 0.85, 0.999, 0.001),
+      fluidWarp: n('fluidWarp', 0, 0.1, 0.001),
+      starPush: n('starPush', 0, 2, 0.05),
+      starGlow: n('starGlow', 0, 4, 0.05),
+      cloudPart: n('cloudPart', 0, 1, 0.01),
+      fogPart: n('fogPart', 0, 1, 0.01),
+      rainBend: n('rainBend', 0, 0.6, 0.01),
+      gradientPush: n('gradientPush', 0, 1, 0.01),
+      gradientSwirl: n('gradientSwirl', 0, 0.6, 0.01),
+      pageSplat: n('pageSplat', 0, 3, 0.05),
       fluidDebug: start.fluidDebug,
     },
     { shortcuts: { fluidDebug: { key: 'f' } } },
@@ -152,14 +151,14 @@ function Dials() {
   const overlay = useDialKit(
     'OVERLAY',
     {
-      overlayFadeMs: [start.overlayFadeMs, 0, 600],
-      overlayCardDim: [start.overlayCardDim, 0.2, 1],
-      ctaHoverScale: [start.ctaHoverScale, 1, 1.4],
+      overlayFadeMs: n('overlayFadeMs', 0, 600),
+      overlayCardDim: n('overlayCardDim', 0.2, 1),
+      ctaHoverScale: n('ctaHoverScale', 1, 1.4),
       // Explicit steps: DialKit infers a coarse step from the range otherwise
       // (0-120 snaps to multiples of 10, which quietly rewrote the 24 default to
       // 20 and persisted it), and both of these want finer resolution than that.
-      overlayZ: [start.overlayZ, 0, 120, 1],
-      overlayLayerFadeMs: [start.overlayLayerFadeMs, 0, 200, 5],
+      overlayZ: n('overlayZ', 0, 120, 1),
+      overlayLayerFadeMs: n('overlayLayerFadeMs', 0, 200, 5),
       copy: { type: 'action', label: 'Copy config' },
     },
     { onAction },
@@ -197,7 +196,8 @@ function Dials() {
       unfocusedOpacity: focus.unfocusedOpacity,
       farOpacity: focus.farOpacity,
       hoverLiftOpacity: focus.hoverLiftOpacity,
-      miniMapSpan: start.miniMapSpan,
+      // No dial: a saved value could only be another branch's.
+      miniMapSpan: DEFAULTS.miniMapSpan,
       detailTransitionMs: detail.detailTransitionMs,
       detailCardScale: detail.detailCardScale,
       detailSideScale: detail.detailSideScale,
@@ -238,12 +238,8 @@ function Dials() {
       fluidDebug: fluid.fluidDebug,
     };
     setConfig(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // best effort
-    }
-  }, [motion, grid, depth, layout, focus, detail, overlay, sky, fluid, start.miniMapSpan]);
+    saveAppDials(next);
+  }, [motion, grid, depth, layout, focus, detail, overlay, sky, fluid]);
 
   // Test hooks (dev only; this module never ships to production).
   useEffect(() => {

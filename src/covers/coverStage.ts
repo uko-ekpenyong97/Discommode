@@ -2,7 +2,7 @@ import { WebGLRenderer } from 'three';
 import { CoverRenderer, coverCropOf } from './coverRenderer';
 import { riveCover, shaderCover } from './covers';
 import { coverTime } from './coverClock';
-import { coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
+import { coverBackdrop, coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
 import { ensureRive, onRiveReady, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
 import type { RivePlayerRole } from './rive/riveCover';
 import { cssRgb } from './color';
@@ -285,7 +285,7 @@ function tick(now: number) {
       continue;
     }
     const cover = coverFor(g.coverId);
-    if (!cover || !draw(cover, g.pxW, g.pxH, t, restDome, backdrop)) continue;
+    if (!cover || !draw(cover, g.pxW, g.pxH, t, restDome, coverBackdrop(g.coverId) === 'solid' ? null : backdrop)) continue;
     for (const p of presenters) {
       if (!p.visible || p.coverId !== g.coverId || (p.dome && p.dome.state.amp !== 0)) continue;
       if (Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
@@ -295,7 +295,7 @@ function tick(now: number) {
   for (const p of presenters) {
     if (!p.visible || !p.dome || p.dome.state.amp === 0 || riveCover(p.coverId)) continue;
     const cover = coverFor(p.coverId);
-    if (cover && draw(cover, p.pxW, p.pxH, t, p.dome.state, backdrop)) present(p, p.pxW, p.pxH);
+    if (cover && draw(cover, p.pxW, p.pxH, t, p.dome.state, coverBackdrop(p.coverId) === 'solid' ? null : backdrop)) present(p, p.pxW, p.pxH);
   }
 
   frames++;

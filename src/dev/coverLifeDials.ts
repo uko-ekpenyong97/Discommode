@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useDialKit } from 'dialkit';
 import { COVER_LIFE_DEFAULTS, setCoverLife } from '../reader/coverLife';
+import { persistedPanelId } from './dialState';
 
 const D = COVER_LIFE_DEFAULTS;
 
@@ -26,7 +27,7 @@ export function useCoverLifeDials(): void {
       boilOutMs: [D.boilOutMs, 0, 2000, 10],
       stagger: [D.stagger, 0, 400, 5],
     },
-    { id: 'cover-life-v1', persist: true },
+    { id: persistedPanelId('cover-life'), persist: true },
   );
 
   useEffect(() => {

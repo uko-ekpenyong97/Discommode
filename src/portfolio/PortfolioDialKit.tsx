@@ -18,6 +18,7 @@ import {
 import type { EntranceBend, PortfolioLook } from './portfolioMotion';
 import { logContrastProbe, subscribeContrast } from './contrastProbe';
 import type { ContrastReport } from './contrastProbe';
+import { persistedPanelId } from '../dev/dialState';
 
 /**
  * The contrast probe's verdict, beside the dials that change it. Red and
@@ -88,7 +89,7 @@ const CLIPS = {
  */
 export default function PortfolioDialKit() {
   const tl = useDialTimeline('Portfolio', CLIPS, {
-    id: 'portfolio-v1',
+    id: persistedPanelId('portfolio'),
     persist: import.meta.env.DEV,
     autoplay: false,
   });

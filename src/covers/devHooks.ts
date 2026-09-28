@@ -4,7 +4,7 @@ import { coverCropOf } from './coverRenderer';
 import { benchCoverDraw, benchPresent } from './bench';
 import { COVERS, shaderCover } from './covers';
 import { riveProbe } from './rive/riveCover';
-import { coverValues, setCoverValues, setSiteCoverDials, siteCoverDials } from './coverDials';
+import { coverBackdrop, coverValues, setCoverValues, setSiteCoverDials, siteCoverDials } from './coverDials';
 import { dialDefaults } from './dialValues';
 import type { DialValues } from './dialValues';
 import type { Crop } from './types';
@@ -37,6 +37,8 @@ export function installCoverDevHooks() {
     frames: probe.frames,
     lastMs: probe.lastMs,
     site: siteCoverDials,
+    /** A cover's own backdrop, 'sky' or 'solid': the sky checks skip 'solid'. */
+    backdrop: (id: string) => coverBackdrop(id),
     setSite: setSiteCoverDials,
     /** A cover's live dial values, and a patch over them (folders merge), or
      *  null to go back to its JSON's. */

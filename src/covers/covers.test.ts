@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COVERS, riveCover, shaderCover } from './covers';
 import { dialDefaults } from './dialValues';
+import { backdropUnder, coverBackdrop, setSiteCoverDials, SITE_COVER_DEFAULTS } from './coverDials';
 import { CONTENT } from '../content';
 
 describe('the cover registry', () => {
@@ -33,5 +34,24 @@ describe('the cover registry', () => {
       artboard: { grid: 'Main', detail: 'Main Bounce' },
       stateMachine: 'Main',
     });
+  });
+});
+
+describe('the backdrop', () => {
+  it('card 04 is solid, card 02 lets the sky through', () => {
+    expect(coverBackdrop('nosey')).toBe('solid');
+    expect(coverBackdrop('rive-site')).toBe('sky');
+  });
+
+  it("lays the site's colour only under a cover that lets the sky through", () => {
+    expect(backdropUnder('rive-site')).toBeNull();
+    expect(backdropUnder('nosey')).toBeNull();
+    setSiteCoverDials({ coverBackdrop: 'solid' });
+    try {
+      expect(backdropUnder('rive-site')).toBe(SITE_COVER_DEFAULTS.coverBackdropColor);
+      expect(backdropUnder('nosey')).toBeNull();
+    } finally {
+      setSiteCoverDials({ coverBackdrop: 'sky' });
+    }
   });
 });

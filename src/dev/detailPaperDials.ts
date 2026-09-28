@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useDialKit } from 'dialkit';
 import { PAPER_DEFAULTS, setPaper } from '../components/detailPaper/paperDials';
+import { persistedPanelId } from './dialState';
 
 const D = PAPER_DEFAULTS;
 
@@ -33,7 +34,7 @@ export function useDetailPaperDials(): void {
       foldAmp: [D.foldAmp, 0, 2, 0.05],
       segments: [D.segments, 4, 96, 1],
     },
-    { id: 'detail-paper-v1', persist: true },
+    { id: persistedPanelId('detail-paper'), persist: true },
   );
 
   useEffect(() => {
