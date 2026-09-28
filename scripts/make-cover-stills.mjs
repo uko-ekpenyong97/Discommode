@@ -20,6 +20,10 @@
  *   cover-still-sm.webp  360 px, ~180 KB — the grid tiles' first paint, for
  *                        the few hundred ms before the live cover's first frame.
  *
+ * A RIVE cover's still (card 04, nosey) is its grid artboard ("Main") at its
+ * first frame, no pointer, drawn by the app's own player (riveCover.ts) — a
+ * vector drawing, so it is a few tens of KB, not a megabyte.
+ *
  * Self-contained: starts its own Vite server and a headless Chrome, so it needs
  * no dev server running. Rendered on the GPU where there is one (Metal on a
  * Mac), SwiftShader where there is not — the same shader either way.
@@ -37,7 +41,8 @@ const OUT = [
   { file: 'cover-still.webp', width: 900, quality: 72 },
   { file: 'cover-still-sm.webp', width: 360, quality: 70 },
 ];
-const COVERS = ['rive-site'];
+const COVERS = ['rive-site', 'nosey'];
+const ONLY = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1].split(',') : COVERS;
 
 const server = await createServer({ root: ROOT, configFile: join(ROOT, 'vite.config.ts'), server: { port: 0 }, logLevel: 'error' });
 await server.listen();
@@ -49,7 +54,7 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${url}scripts/cover-still.html`, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.stillReady, null, { timeout: 30_000 });
-  for (const id of COVERS) {
+  for (const id of COVERS.filter((c) => ONLY.includes(c))) {
     const { w, h, b64 } = await page.evaluate(([i, wd]) => window.renderStill(i, wd), [id, RENDER_W]);
     const raw = Buffer.from(b64, 'base64');
     for (const o of OUT) {

@@ -16,6 +16,10 @@ const S = SITE_COVER_DEFAULTS;
  * shows in whichever dock is mounted — the doorway's at #item-02?intro (the
  * view is suspended there, which is why this host is mounted even then) and the
  * app's own everywhere else.
+ *
+ * A Rive cover's panel (card 04, at #item-04?intro) is its JSON only — riveSwapAt,
+ * riveMaxDpr, and its own coverPaperShade — and no site folder: two persisted
+ * panels writing the same site dials would each overwrite the other's.
  */
 function useCoverPanel(id: string) {
   const def = COVERS[id];
@@ -49,7 +53,22 @@ function RiveSitePanel() {
   return null;
 }
 
+function useRiveCoverPanel(id: string) {
+  const v = useDialKit(`COVER · ${id}`, COVERS[id].dials as KitConfig, { id: `cover-${id}-v1`, persist: true });
+  useEffect(() => setCoverValues(id, v as unknown as DialValues), [id, v]);
+}
+
+function NoseyPanel() {
+  useRiveCoverPanel('nosey');
+  return null;
+}
+
 /** Mounted by App in dev, suspended or not. */
 export default function CoverDials() {
-  return <RiveSitePanel />;
+  return (
+    <>
+      <RiveSitePanel />
+      <NoseyPanel />
+    </>
+  );
 }

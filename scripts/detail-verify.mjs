@@ -110,6 +110,16 @@ const COVER_STILL_SIDE = 0.07;
  * does not show it; the speckle does. Held to 2.5%.
  */
 const COVER_HERO = 0.025;
+/**
+ * CARD 04 AS A NEIGHBOUR. Card 04 is a Rive cover now (docs/covers.md, "Rive
+ * covers"); as the hero it meets the spec's 0.5% (0.149–0.434%: the DOM face
+ * and the plane show one instance's one canvas). As a neighbour it is its
+ * STILL — thin black line art on a transparent ground — and so card 01's
+ * problem again: Chrome's scale(0.85) resampling of the <img> against a
+ * texture resized to the card, on edges. Measured 0.018–0.891% (the high end at
+ * 1440×900 @1×, where the old opaque photo face was 0.1–0.4%). Held to 2%.
+ */
+const RIVE_STILL_SIDE = 0.02;
 const budget = (r) =>
   r.idx === 0
     ? r.slot === 0
@@ -119,7 +129,9 @@ const budget = (r) =>
       ? r.slot === 0
         ? COVER_HERO
         : COVER_STILL_SIDE
-      : IDENTITY;
+      : r.idx === 3 && r.slot !== 0
+        ? RIVE_STILL_SIDE
+        : IDENTITY;
 const HANDOFF = 0.02;
 const handoffBudget = (r) => Math.max(HANDOFF, budget(r));
 const FRAME_BUDGET_MS = 20;
@@ -161,6 +173,16 @@ async function open(page, item = '01', { settle = true } = {}) {
   await page.goto(`${B}#item-${item}`);
   await page.mouse.move(3, 3);
   await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
+  // Card 04 is a Rive cover, and its file is imported at the first quiet moment
+  // (docs/covers.md, "Rendering: two players, no WebGL"): until then its hero
+  // is the still on both sides, which is the still's resampling, not the
+  // hand-off. Wait for the live hero.
+  if (item === '04') {
+    await page.waitForFunction(() => window.__covers.rive.players().some((p) => p.role === 'hero' && p.version > 0), null, {
+      timeout: 20000,
+    });
+    await page.waitForTimeout(100);
+  }
   if (settle) await page.waitForFunction(() => window.__paper.presence() >= 1, null, { timeout: 5000 });
 }
 

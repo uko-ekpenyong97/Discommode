@@ -1,10 +1,13 @@
 # Live covers
 
-A card can have a LIVE cover: a shader, drawn every frame, reacting to the
-mouse, transparent where its ground is. Card 02 (rive-site) is the first: the
-tuned "Shader variation 3 — Soft contour field", with the weather sky showing
-through its ground. It is live in the grid tile, the grid→detail morph and the
-detail hero, and everywhere else it is its still.
+A card can have a LIVE cover: a shader or a Rive file, drawn every frame,
+reacting to the mouse, transparent where its ground is. Card 02 (rive-site) is
+the first: the tuned "Shader variation 3 — Soft contour field", with the
+weather sky showing through its ground. Card 04 (Nosey) is the second, and is
+Rive: Nosey's four characters, looking at the pointer, on "Main" in the grid
+and bouncing off the walls on "Main Bounce" as the detail hero — see
+[Rive covers](#rive-covers-card-04). Each is live in the grid tile, the
+grid→detail morph and the detail hero, and everywhere else it is its still.
 
 The shader and its tuning are the prototype's
 ([docs/prototypes/cover-shader-prototype.html](prototypes/cover-shader-prototype.html)),
@@ -12,9 +15,9 @@ and that page stays the tuning bench: it now loads the app's GLSL and dial JSON,
 so what is tuned there is what ships.
 
 > **On the numbers in this file.** Every measurement is from
-> `npm run verify:cover` and `npm run verify:detail` on 2026-09-24, on an Apple
-> M1 Max (ANGLE / Metal), headless Chromium for the first and Chrome for the
-> second.
+> `npm run verify:cover` and `npm run verify:detail` on 2026-09-24 (card 02) and
+> 2026-09-27 (card 04), on an Apple M1 Max (ANGLE / Metal), headless Chromium
+> for the first and Chrome for the second.
 
 | | |
 | --- | --- |
@@ -23,10 +26,27 @@ so what is tuned there is what ships.
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 | the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
 | the grid→detail morph at 0 / 0.5 / 1, before and after | `docs/covers/bare-morph.webp` |
+| card 04: the grid row, live, the sky through its ground | `docs/covers/nosey-grid-row.webp` |
+| card 04: the detail hero at rest and mid-bounce | `docs/covers/nosey-hero.webp` |
+| card 04: the same tile over NOON and over NIGHT | `docs/covers/nosey-noon-night.webp` |
 
 ## Handoff
 
-**Where it stands (2026-09-24).** PR #29 (the live covers) is merged. Branch
+**Where it stands (2026-09-27).** Branch `nosey-rive-cover` makes card 04 a
+live Rive cover ([Rive covers](#rive-covers-card-04)). At its last runs:
+`verify:cover` all passed — card 02's checks unchanged and card 04's eight
+(`rbudgets`, `rswap`, `rpointer`, `rclick`, `rreduced`, `rsky`, `rground`,
+`rcontexts`); `verify:detail` all passed (routes 01 ↔ 02 / 04 included, and
+the Prev slide's frames at 16.8 ms — see "The one-off work" for the 33 ms it
+caught first); `npm test` (323), `tsc -b`, `lint`, `build`. One
+intermittent miss, not card 04's: card 02's `reduced` grid check once saw
+22,336 bytes change over 1 s (0 in the next full run, in 3 runs alone, and in
+23 of 24 loop repeats; the one repeat that tripped changed pixels across the
+grid, centred on an image card, not on a cover tile). Read
+[The .riv](#the-riv) before re-exporting card 04's file: the Editor's export
+of it does not work.
+
+**Card 02 (2026-09-24).** PR #29 (the live covers) is merged. Branch
 `shader-cover-detail-no-veil` takes the card chrome off a shader cover in the
 detail view and weights the paper's light by the cover's alpha — the
 [open issue](#the-veil-in-the-detail-view-resolved), now resolved. At its last
@@ -91,8 +111,11 @@ npm run verify:detail -- --url http://localhost:5191
 
 | File | What it is |
 | --- | --- |
-| `src/covers/types.ts` | `CoverRef` (the manifest's), `CoverDef` (a cover), the per-draw `InstanceFrame`. |
-| `src/covers/covers.ts` | The registry: cover id → `CoverDef`. The stills' URLs. |
+| `src/covers/types.ts` | `CoverRef` (the manifest's: `shader` or `rive`), `CoverDef` (a shader cover), `RiveCoverDef`, the per-draw `InstanceFrame`. |
+| `src/covers/covers.ts` | The registry: cover id → its definition (`shaderCover` / `riveCover` narrow it). The stills' URLs. |
+| `src/covers/covers/nosey.ts`, `nosey.json` | Card 04's `RiveCoverDef`: its frame (1000 × 1300) and its dials. |
+| `src/covers/rive/riveCover.ts` | Rive covers: the runtime and the file (once each), the players (grid, hero), the pointer, the one-off work's scheduling, per-frame cost, `__covers.rive`. |
+| `public/projects/nosey/cover.riv` | Card 04's file, copied in by `npm run projects` from `~/Discommode-pages/projects/nosey/cover.riv`. |
 | `src/covers/covers/rive-site.glsl` | Card 02's shader: `//#common`, `//#passA`, `//#passB`. Shared with the bench. |
 | `src/covers/covers/rive-site.json` | Card 02's dials, as a DialKit config; its defaults ARE the tuned values. Shared with the bench. |
 | `src/covers/covers/rive-site.ts` | Card 02's `CoverDef`: dial values → uniforms (the bench's code, for three.js). |
@@ -110,10 +133,10 @@ npm run verify:detail -- --url http://localhost:5191
 | `scripts/cover-verify.mjs` | `npm run verify:cover`. |
 | `public/fonts/inter-latin-400.woff2` | Inter 3.19 (fontsource 4.5.15, OFL — `Inter-OFL.txt` beside it). |
 
-Wired in: `content.ts` (`cover` on `PosterItem`, card 02), `GridPlane.tsx`
-(the tile), `DetailMorph.tsx` (the morph card), `DetailView.tsx` (the panels),
-`DetailPaperLayer.tsx` + `paperMaterial.ts` (the hero plane), `App.tsx` (the
-dev panel).
+Wired in: `content.ts` (`cover` on `PosterItem`, cards 02 and 04),
+`GridPlane.tsx` (the tile), `DetailMorph.tsx` (the morph card, and which Rive
+player it shows), `DetailView.tsx` (the panels), `DetailPaperLayer.tsx` +
+`paperMaterial.ts` (the hero plane), `App.tsx` (the dev panel).
 
 ## The model
 
@@ -124,14 +147,16 @@ cover: { kind: 'shader', id: 'rive-site' },
 image: '/projects/rive-site/cover-still.webp',   // the still
 ```
 
-Cards without `cover` are unchanged (card 04 keeps its video-cut face).
+Cards without `cover` are unchanged (card 03). A Rive cover's ref is
+`{ kind: 'rive', id, src, artboard: { grid, detail }, stateMachine }` — see
+[Rive covers](#rive-covers-card-04).
 
 A cover is a `CoverDef` in the registry: one GLSL file, one dial JSON, and the
 few lines of TS that turn dial values into its uniforms. Every instance of it is
 an `object-fit: cover` crop of its FRAME (the Figma frame, 900 × 1326 for
 rive-site): the grid tile shows the 3:4 of it, the hero the 10:13.
 
-### Adding a cover (Nosey's, say)
+### Adding a shader cover
 
 1. `src/covers/covers/nosey.glsl` — `//#common`, `//#passA`, `//#passB`. Pass A
    writes two targets at `rtScale` of the output over the crop plus `rtMargin`;
@@ -183,15 +208,17 @@ NOON and a clear NIGHT: mean luminance 184.2 and 128.7, **30% apart**.
 
 ### No card in the detail view
 
-In the grid a shader cover is a card: 4px corners, a shadow, the hover overlay.
+In the grid a live cover is a card: 4px corners, a shadow, the hover overlay.
 In the detail view it is not — nothing lies between it and the sky. For a card
-whose `cover.kind` is `'shader'`, in every detail slot:
+with a `cover` of either kind (card 02's shader, card 04's Rive), in every
+detail slot:
 
 | | |
 | --- | --- |
 | the DOM panel | `.detail__panel--bare`: no corners, a TRANSPARENT shadow. Not `none`: `none` on an off-screen panel changes how Chrome layers the strip and re-rasterises the other cards' images (`#item-04`, DOM faces: 8% of pixels, up to 111 levels). |
 | the paper | `uRadius` 0 (no rounded clip), no shadow quad. |
-| the paper's light | the crease screen-blend and trough shading are weighted by `coverPaperShade × alpha`: the full paper under opaque ink, none where the ground is transparent. The dent, squash, ripple, fold and crease refraction move the sheet and are unchanged. |
+| the paper's light | the crease screen-blend and trough shading are weighted by `coverPaperShade × alpha`: the full paper under opaque ink, none where the ground is transparent. The dent, squash, ripple, fold and crease refraction move the sheet and are unchanged. Card 04 has its own `coverPaperShade` (its JSON); card 02's is the site dial. |
+| the name's scrim | card 04 has a name and a line under it (card 02 has neither), and their scrim — a dark gradient up from the panel's foot — was a dark band across the sky over a transparent cover: `.detail__panel--bare` drops it, and the type carries a soft shadow (`0 1px 14px` at .4) instead. A design call: say if the scrim should come back. |
 | the morph | the card's chrome (6px corners, `0 24px 70px` at .55) fades to none over the travel, on its easing, and back on the way out. |
 
 Every other card is untouched: `verify:detail` as before, and before/after
@@ -395,18 +422,275 @@ The design never draws one that way. It costs that much because the grid's tile
 is 300 × 400 CSS px, scaled 1.12 when focused: 672 × 896 at 2×, 2.4× the
 pixels of the 220 × 286 tile the prototype measured.
 
+## Rive covers (card 04)
+
+Card 04's cover is Uko's Rive file: four Nosey characters — the headset one,
+the cat, the propeller and the hardhat — that follow the pointer, with the sky
+through everything that is not a character. In the grid it is the artboard
+"Main"; as the detail hero it is "Main Bounce", where the four bounce off the
+walls and each other like a screensaver. Both are 1000 × 1300 (10:13, the
+hero's ratio) and transparent, and both run the state machine "Main".
+
+```ts
+cover: {
+  kind: 'rive',
+  id: 'nosey',                                  // registry key, and the stills' folder
+  src: '/projects/nosey/cover.riv',
+  artboard: { grid: 'Main', detail: 'Main Bounce' },
+  stateMachine: 'Main',
+},
+image: '/projects/nosey/cover-still.webp',      // the still
+```
+
+The registry holds a `RiveCoverDef` for it (`src/covers/covers/nosey.ts`): the
+frame and the dials. The tiles, the morph, the paper, the stills, the COVER
+panel and the verify suite take it as they take card 02; everything
+Rive-specific is `src/covers/rive/riveCover.ts`.
+
+### The .riv
+
+**The Editor's export of this file does not work, and the shipped file is a
+CLI build.** What was found on 2026-09-27:
+
+| file | artboards | Main / Main Bounce | scripts run |
+| --- | --- | --- | --- |
+| the Editor's export (303 KB) | 4 | **not in the file** | the one script it has (PropellerSpin) |
+| `rive <dir> --once` (unsigned, 876 KB) | 6 | yes | **no** — "ScriptAsset doesn't have a generator function" |
+| `rive <dir> --publish=local` (signed, 872 KB) — **shipped** | 6 | yes | yes |
+
+Each was loaded in @rive-app/canvas 2.42.1 (this repo's), canvas 2.43.1 and
+webgl2 2.43.1, with the same result in all three: the runtime was never the
+problem. Main and Main Bounce are built on Luau scripts (MainPlay, BouncePlay;
+PropellerSpin, BladeSpin, LerpNumber beside them), and the Editor's export
+(checked by parsing it object by object) holds their view models but neither
+artboard nor their scripts. The CLI's project, pulled with
+`rive create --from-remote-file=2319048` (a download; nothing was pushed), has
+all six artboards and five scripts, and `--verify`s clean. Built with
+`--once` its scripts are unsigned, and web runtimes refuse unsigned scripts
+(the CLI's docs, "Why signing exists"); built with `--publish` they are
+compiled and signed, and run.
+
+So: **re-export card 04 with the CLI**, `rive <dir> --publish`, into
+`~/Discommode-pages/projects/nosey/cover.riv`, then `npm run projects` (and
+`npm run covers` if Main's first frame changed). An unsigned build still has
+the artboards but nothing scripted moves, and it says so only in the console.
+The earlier unsigned master is kept beside it as `cover.unsigned.riv`, which
+`npm run projects` does not ship (`NOT_SHIPPED`).
+
+**521 KB of the 872 KB are four reference screenshots** the artboards never
+show (one is placed under Nosey Cat, hidden; the Editor had them out of the
+export, the CLI embeds them). `exportFlags="2"` on their `ImageAsset`s in the
+CLI project drops them from the build. Not done here: it is a change to the
+file.
+
+**Checking a file:** the dev console logs, at load, every artboard, state
+machine (inputs, listeners) and view model (properties) the file holds, and
+warns when the manifest's artboards are not among them.
+
+### Data binding
+
+The behaviour lives in view models: Main's and Main Bounce's (positions, the
+pointer, the free propeller and hat) and each character's (Nosey, Nosey
+Hardhat, Nosey Cat, Noseyhead), with the "LookX to blend" converter. **Nothing
+moves unless the state machine is bound to them.** The `Rive` class does that
+with `autoBind: true`; the cover uses the low-level API (below), so it does it
+itself: each player binds its state machine to its artboard's default view
+model instance, and to a default instance of each global view model (the file
+has none). If the pointer-follow or the headset stop reacting, check this
+first; then that the file's scripts are signed (above).
+
+### Rendering: two players, no WebGL
+
+The low-level runtime, not the `Rive` class: the class runs its own rAF loop
+into one DOM canvas, and the cover draws on the SHARED cover clock, once per
+frame, for however many instances show it. The file is fetched and imported
+once. There are two PLAYERS — an instance of an artboard, its state machine
+and its view model, drawing into its own 2D canvas:
+
+| player | artboard | shows it | how |
+| --- | --- | --- | --- |
+| grid | Main | every card-04 tile, the morph card | the cover stage draws it ONCE a frame at the largest visible tile's size and `drawImage`s it into each tile, exactly as card 02's shared draw |
+| hero | Main Bounce | the DOM hero face AND the paper's hero plane | the stage copies it into the DOM face; the paper wraps the same canvas in a `CanvasTexture` and uploads it when the player drew a new frame |
+
+One instance behind both of the hero's surfaces is what makes the DOM → paper
+hand-off an identity: 0.00% at every size. The stage groups a Rive presenter
+by its LAYOUT box's aspect, not its bounding box's — a hovered tile tilts, and
+a tilted tile's bounding box is another shape, which was a second draw of Main
+every frame (1.87 draws a frame before, 1.00 after).
+
+A player advances by the cover clock's delta since its last draw, capped at
+0.1 s (a grid you come back to resumes; it does not replay), so a pinned clock
+holds it still. A player whose artboard did not change is not redrawn, and
+the paper does not upload it.
+
+**No WebGL context.** @rive-app/canvas draws with Canvas 2D, but its init
+opens a WebGL context of its own, unconditionally, for IMAGE MESHES, and
+decoding an image asset retries it. Card 04 draws no image meshes — its one
+image is the hidden reference screenshot — so `riveCover.ts` withholds both:
+while the runtime initialises, a context request carrying Emscripten's own
+`renderViaOffscreenBackBuffer` attribute (nothing else on the site asks for
+one) gets null, and the file is imported with an asset loader that declines
+images. Frames with and without are byte-identical (both artboards, 150
+frames, a pointer), and `rcontexts` counts 0 contexts made by the runtime: the
+grid has 2 and `#item-04` 3, as before card 04 was live. A future file that
+deforms or shows images has to lift both, and pays that context back.
+
+**The one-off work waits for a quiet moment.** Importing this file is one
+85–97 ms main-thread task (the Editor's export, without Main, imported in 8:
+it is Main's scripts and nested artboards); making the grid's instance takes
+~10 ms and each hero's 3–4. The first run of `verify:detail` caught the import
+landing inside a Prev slide (a 33.3 ms frame). Each now waits for an idle
+callback with no input for 1.2 s and no animation running (and runs anyway
+after 10 s); a spare hero instance is made the same way, so the swap takes one
+ready-made. Until the grid's instance exists the tiles show the still, as they
+do before any first frame.
+
+### The pointer
+
+| instance | what it takes | from |
+| --- | --- | --- |
+| a grid tile | moves while the pointer is over it, an exit when it leaves — the characters look at the hovered tile's pointer and go back to rest when there is none; all tiles show the one instance, so all look the same way | the tile |
+| the hero | moves, presses and releases | the whole PANEL (under the paper the DOM face is `visibility: hidden` and takes no events; its panel does) |
+| the morph card, the neighbours | nothing | |
+
+A point across an instance's box maps back through its `object-fit: cover`
+crop into artboard space. No smoothing dial: the characters' tracking eases in
+the file itself.
+
+**The headset's colour steps on pointer-ENTER, not on a press.** In the file,
+the listener "Headset.Pointer.Enter" fires Noseyhead's `Click` trigger, which
+steps the Colors layer blue → red → yellow → blue (Main Bounce's bumps fire it
+too). There is no press listener. So on the site the headset changes colour
+when the pointer arrives on it — a click does it by arriving — and a press
+with the pointer already there does nothing (`rclick` prints it: 0.00%). A
+press is sent to Rive all the same; for a colour change on click, make the
+listener a Pointer Down in the file. On the grid tiles, where only moves are
+sent, hovering the headset steps its colour too.
+
+**Hero clicks are the cover's.** A click on card 04's hero panel goes to Rive
+and does NOT open the project; the bar's "Open project" is the way in. Every
+other card's centre panel still opens on click.
+
+### The artboard swap
+
+The grid shows Main; the hero shows Main Bounce, a FRESH instance each time the
+hero is entered (a hero player not drawn for 400 ms is dropped), so the bounce
+starts from the layout the grid shows. Both artboards place the characters
+alike at their first frame, so the swap is the bounce starting and nothing
+else — at rest. Where the grid's instance has moved on (a character looking at
+the pointer, the propeller off flying), the hero starts from rest.
+
+`riveSwapAt` (card 04's COVER panel) says at which END of the grid→detail
+morph it happens:
+
+| | on the way in | on the way out |
+| --- | --- | --- |
+| `landing` (default) | the morph card is Main; the hero is Main Bounce from the frame it lands on | the morph card is Main Bounce (the hero, carrying on); the tile is Main once it lands |
+| `start` | the morph card is already Main Bounce | the morph card is already Main |
+
+The neighbour slots and the MiniMap are the still (the MiniMap shows numbers,
+not faces). Prev/Next into the hero slot switches the still to a fresh Main
+Bounce, as card 02 switches its still to live ([Not done](#not-done) 1).
+
+`rswap`, the clock pinned and both instances fresh: the morph held on its last
+frame (Main) against the DOM hero it lands on (Main Bounce) — **0.51% (1×),
+0.53–0.54% (2×)**; the control, the hero a second of bounce later, 16%. With
+`start`, 0.51% (the name and number, which only the DOM hero has, are hidden:
+this compares the cover).
+
+### The still
+
+`npm run covers` draws Main's first frame, no pointer, with the app's own
+player: `cover-still.webp` (900 × 1170, **20 KB**) and `cover-still-sm.webp`
+(360 × 468, 7 KB) — a vector drawing compresses; card 02's noise does not. It
+is what reduced motion shows (the runtime is never loaded: `rreduced`), what
+the neighbours show, and the tiles' first paint. Card 04's old face
+(`/projects/04/card.webp`, a frame of the pitch site) is no longer used;
+`npm run projects` still writes it.
+
+### Dials
+
+Card 04's COVER panel (`COVER · nosey`, at `#item-04?intro` and in the app's
+dock) is its JSON only, with no site folder — two persisted panels writing the
+site's dials would overwrite each other:
+
+| dial | default | |
+| --- | --- | --- |
+| `riveSwapAt` | landing | when the hero becomes Main Bounce (above) |
+| `riveMaxDpr` | 2 | the cap on both players' backing store |
+| `coverPaperShade` | 1 | the paper's light on this cover, per unit of its alpha (card 02's is the site dial) |
+
+`coverBackdrop` (the site's) applies to it: `solid` lays the colour under the
+drawing. It is `rground`'s control.
+
+### Frame time
+
+Main-thread ms (Rive is CPU work; Chrome rasterises the 2D canvases off the
+main thread). Every piece of card-04 cover work in a frame — the players'
+advance and draw, each tile's copy, the paper's upload — is summed per frame,
+with the pointer circling the focused tile, then the hero. The per-frame reads
+are on a 0.1 ms clock (the page is not cross-origin isolated); a timed batch
+of 120 draws of a throwaway instance is printed beside them. The two runs
+after the grid's second draw was removed, 2026-09-27:
+
+| | 1728×996 @1× | @2× | 1440×900 @1× | @2× | budget |
+| --- | --- | --- | --- | --- | --- |
+| grid, per frame: mean / p95 | 0.72–0.74 / 0.9 | 0.68 / 0.8 | 0.69 / 0.9 | 0.67–0.69 / 0.9 | p95 ≤ 2.0 |
+| — of which the tiles' copies (3 tiles) | 0.07–0.08 | 0.08 | 0.06 | 0.08 | |
+| hero, per frame: mean / p95 | 0.94–1.06 / 1.1–1.3 | **0.95–0.96 / 1.1** (1256×1633) | 0.91–1.01 / 1.1–1.2 | 1.04 / 1.2 | p95 ≤ 2.0 |
+| — of which the upload | 0.06–0.08 | 0.07 | 0.06–0.07 | 0.07 | |
+| a timed draw (grid; hero + upload) | 0.28; 0.29–0.32 | 0.27; 0.28–0.29 | 0.26; 0.28–0.31 | 0.27; 0.27–0.29 | |
+| sky + fluid (p95) + covers | 2.08–2.21 | 2.71 | 2.00–2.14 | 2.48 | ≤ 8 |
+
+The worst single frame: the grid 2.2–2.4 ms, once per run, on the first sweep
+(a second sweep in the same page has no frame over 1.5 ms, so it is a first
+time through something, not a steady cost); the hero 1.2–1.4. A draw in a live frame
+costs 2–3× the timed batch's; the likely reason is that a live frame draws
+into a canvas that was just read (copied into the tiles, uploaded), which a
+batch into a canvas nobody reads never does. The one-off costs (the import,
+the instances) are above; they wait for a quiet moment.
+
+The upload is the canvas → texture copy of an accelerated 2D canvas into the
+paper's context: 0.06–0.07 ms a frame at 1256×1633, premultiplied (as a 2D
+canvas already is: no conversion).
+
 ## Checking
 
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground
-npm run verify:detail         # its identity and hand-off now cover card 02
+npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground,
+                              #   rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts
+npm run verify:detail         # its identity and hand-off cover cards 02 and 04
 ```
 
 `verify:cover` checks `budgets`, `clock`, `morph`, `reduced`, `nogl`,
-`contexts`, `sky` and `ground`, as above. Pixel checks hide the sky and the dev
-overlays, except `sky` and `ground`; a pixel differs past 32 levels.
+`contexts`, `sky` and `ground`, as above (`budgets` counts card 02's tiles
+only; `nogl` now also shows card 04's tiles live without WebGL). Pixel checks
+hide the sky and the dev overlays, except `sky` and `ground`; a pixel differs
+past 32 levels. About ten minutes.
+
+Card 04's eight, with the numbers of the last run. The Rive players advance by
+the clock's delta, so the checks pin it, `__covers.rive.reset('nosey')` for
+fresh instances, and walk it a frame at a time: the same walk is the same run
+(Main Bounce's physics has no randomness — two runs with no pointer differ by
+0.00%).
+
+| check | what | measured |
+| --- | --- | --- |
+| `rbudgets` | all card-04 work per frame, pointer moving (Frame time above) | p95 0.8–0.9 (grid), 1.1–1.3 (hero) ≤ 2.0 |
+| `rswap` | morph (Main) → DOM hero (Main Bounce) at landing; DOM hero → paper; `riveSwapAt` start | 0.51–0.54% ≤ 2% (control 16%); 0.00%; 0.51% |
+| `rpointer` | the headset Nosey's region (found from `headsetX/Y`) after 1 s with the pointer at the hero's far corner, vs none | 4.3–4.5% > 1% (two runs without: 0.00%) |
+| `rclick` | onto the headset's cup and press, vs no pointer: its colour | blue → red, 10.8–11.0% of the region; a press alone 0.00% |
+| `rreduced` | reduced motion: tiles and hero on the still, runtime never loaded, 1 s | 0 canvases, not loaded, 0 bytes changed |
+| `rsky` | Main's empty ground, NOON vs NIGHT | 190.1–190.2 vs 85.8–86.1: 54.7–54.9% > 20% |
+| `rground` | the hero's transparent ground, paper effects on, vs the sky with the cover hidden | 88% of the hero is ground; mean 0.11–0.13% (floor 0.09–0.10%); control `solid` 70% |
+| `rcontexts` | WebGL contexts with card 04 live | grid 2, `#item-04` 3 (unchanged); 0 made by the runtime |
+
+`window.__covers.rive`: `ready(id)`, `players()`, `viewModel(id, role)`,
+`reset(id)`, `costs()` / `clearCosts()`, `oneOff()` (the import's and each
+instance's ms), `bench(id, role, w, h, n)`; `window.__paper.riveUploads()` and
+`benchRiveUpload(n)`.
 
 **verify:detail** pins the cover clock where it opens a card, so its identity
 and hand-off checks compare one moment on both sides, and its hand-off check now
@@ -417,6 +701,12 @@ has two budgets of its own, documented in the script:
 | --- | --- | --- | --- |
 | hero | 0.000–0.004%; **2.1–2.2%** at 1728×996 @2× | 2.5% | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour |
 | as a neighbour (the still) | 1.0–5.0% | 7% (card 01's) | Chrome's scale(0.85) resampling of the `<img>` against a texture resized to the card — card 01's documented problem, on pure noise |
+
+Card 04, the same way: as the hero **0.149–0.434%**, the spec's 0.5% (the DOM
+face and the plane show one canvas; the suite waits for the live hero — until
+the file is imported both sides are the still); as a neighbour, its still — thin line art
+on a transparent ground — **0.018–0.891%**, held to 2% for card 01's reason
+(the old opaque photo face was 0.1–0.4%).
 
 ## The veil in the detail view (resolved)
 
@@ -471,3 +761,16 @@ paper's effects on and the sky there.
    hidden once the first frame landed, and it is not brought back.
 4. **"Each tile ≤ 0.15ms"**: met as each tile's own cost (its copy). As "one
    tile drawn on its own" it is 0.235–0.365ms at 2×. See Frame time.
+5. **Card 04's .riv carries 521 KB it never shows** (the four reference
+   screenshots; [The .riv](#the-riv)). `exportFlags="2"` on them in the CLI
+   project, and a re-publish, would take it to ~350 KB.
+6. **Card 04's hero starts from rest, whatever the grid was doing.** At rest
+   the swap is invisible (0.5%); a character looking at the pointer, or the
+   propeller off on its loop, in the grid is back home in the hero. Carrying
+   state across would mean one instance for both, and they are different
+   artboards.
+7. **The headset's colour is on pointer-enter** in the file, not on a press
+   ([The pointer](#the-pointer)). A file change if a click should do it.
+8. **The Rive runtime's image-mesh context is withheld** for card 04's file,
+   which draws none. A file that deforms or shows images needs that lifted
+   ([Rendering](#rendering-two-players-no-webgl)).

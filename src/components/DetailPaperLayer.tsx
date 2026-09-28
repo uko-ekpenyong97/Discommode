@@ -44,7 +44,9 @@ import {
 } from './detailPaper/paperMath';
 import type { CardRect, Tween } from './detailPaper/paperMath';
 import { CoverRenderer, coverCropOf } from '../covers/coverRenderer';
-import { COVERS } from '../covers/covers';
+import { riveCover, shaderCover } from '../covers/covers';
+import { riveCost, rivePlayer } from '../covers/rive/riveCover';
+import type { RivePlayer } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
 import { coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
 import { cssRgb } from '../covers/color';
@@ -396,7 +398,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
    *  dissolving back over this plane) and this holds its last frame, so the one
    *  moment is not drawn twice. */
   function liveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
-    const def = COVERS[id];
+    const def = shaderCover(id);
     if (!def) return null;
     let c = liveCovers.get(id);
     if (!c) {
@@ -428,6 +430,51 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     if (!drawn) return null;
     coversDrawn++;
     return c.rt.texture;
+  }
+
+  // A RIVE cover's hero (card 04) is its hero player's canvas — the same
+  // instance the DOM hero face shows, so the hand-off is one picture —
+  // uploaded as this plane's texture when the player has drawn a new frame,
+  // and not otherwise (a still artboard costs nothing here). Premultiplied, as
+  // a 2D canvas already is: no conversion on the upload. Held while handing
+  // OUT, as the shader's is.
+  const riveTex = new Map<string, { tex: Texture; player: RivePlayer; version: number; w: number; h: number }>();
+  let riveUploads = 0;
+  let riveUploadMs = 0;
+  let riveFresh = false;
+
+  function riveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
+    const player = rivePlayer(id, 'hero');
+    if (!player) return null;
+    let c = riveTex.get(id);
+    if (state === 'out' && c && c.player === player && player.pxW === pxW && player.pxH === pxH) return c.tex;
+    const ms = player.draw(coverTime(), pxW, pxH);
+    if (player.version === 0) return null;
+    riveCost('draw', ms);
+    if (c && (c.player !== player || c.w !== pxW || c.h !== pxH)) {
+      // A new instance, or a new size: three.js allocates a texture's storage
+      // once, so a new size is a new texture.
+      c.tex.dispose();
+      riveTex.delete(id);
+      c = undefined;
+    }
+    if (!c) {
+      const tex = flatTexture(player.canvas);
+      tex.premultiplyAlpha = true;
+      c = { tex, player, version: -1, w: pxW, h: pxH };
+      riveTex.set(id, c);
+    }
+    if (c.version !== player.version) {
+      c.version = player.version;
+      c.tex.needsUpdate = true;
+      const t0 = performance.now();
+      renderer.initTexture(c.tex); // the upload, now, so it can be timed
+      riveUploadMs = performance.now() - t0;
+      riveCost('upload', riveUploadMs);
+      riveUploads++;
+      riveFresh = true;
+    }
+    return c.tex;
   }
 
   // ── cards ──────────────────────────────────────────────────────────────
@@ -681,22 +728,32 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       const [tw, th] = plate || big ? [d.heroW, d.heroH] : [d.sideW, d.sideH];
       const src = plate ?? itemHeroFace(item) ?? `hue:${item.hue}`;
       let tex = textures.get(texKey(src, tw, th)) ?? null;
-      // The hero's live cover, at the hero's device size (coverMaxDpr caps it),
-      // on the shared cover clock. Under reduced motion it stays the still.
+      // The hero's live cover, at the hero's device size (coverMaxDpr caps it;
+      // a Rive cover's riveMaxDpr), on the shared cover clock. Under reduced
+      // motion it stays the still.
+      const rive = item.cover?.kind === 'rive' ? riveCover(item.cover.id) : undefined;
+      const riveDials = rive ? (coverValues(rive.id) as { rive?: { riveMaxDpr?: number; coverPaperShade?: number } }).rive : undefined;
       if (item.cover && big && !still) {
-        const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
-        const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap));
-        if (live) {
-          tex = live;
-          liveThisFrame = true;
+        if (rive) {
+          const cap = Math.min(dpr, Math.max(0.5, riveDials?.riveMaxDpr ?? 2)) / dpr;
+          const live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap));
+          if (live) tex = live;
+        } else {
+          const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
+          const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap));
+          if (live) {
+            tex = live;
+            liveThisFrame = true;
+          }
         }
       }
       u.uMap.value = tex;
       u.uPremul.value = item.cover ? 1 : 0;
-      // A shader cover lies on the sky with no card around it: no rounded
-      // corners, no shadow (below), and the paper's light only where its ink is.
-      const bare = item.cover?.kind === 'shader';
-      u.uCoverShade.value = siteCoverDials().coverPaperShade;
+      // A live cover lies on the sky with no card around it: no rounded
+      // corners, no shadow (below), and the paper's light only where its ink is
+      // — card 02's by the site's coverPaperShade, a Rive cover's by its own.
+      const bare = !!item.cover;
+      u.uCoverShade.value = rive ? (riveDials?.coverPaperShade ?? 1) : siteCoverDials().coverPaperShade;
 
       // Sprite mask: every hover sprite's box, from its inline px in the panel.
       let sprites = 0;
@@ -775,7 +832,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       s.uSigma.value = (SHADOW.blur / 2) * p.scale;
       s.uMargin.value = SHADOW.blur * 1.5 * p.scale;
       s.uOffsetY.value = SHADOW.y * p.scale;
-      // A shader cover has none: its DOM panel has none either (DetailView.css).
+      // A live cover has none: its DOM panel has none either (DetailView.css).
       s.uAlpha.value = state === 'out' || bare ? 0 : SHADOW.alpha * alpha * (1 - u.uFold.value);
       // A live cover lets the sky through its ground: its shadow stays outside it.
       s.uHole.value = item.cover ? 1 : 0;
@@ -818,8 +875,10 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       if (!tweenDone(c.fold, now) || !tweenDone(c.hover, now)) dirty = true;
     }
     if (!tweenDone(presence, now)) dirty = true;
-    // A live cover changes every frame, whatever the signature says.
-    if (liveThisFrame) dirty = true;
+    // A live cover changes every frame, whatever the signature says; a Rive
+    // one whenever its player drew a new picture.
+    if (liveThisFrame || riveFresh) dirty = true;
+    riveFresh = false;
 
     // An epsilon, not equality: the strip's hover-dim is an exponential ease
     // whose tail moves opacity by 1e-9 a frame for seconds, and an exact compare
@@ -877,12 +936,26 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
         [...cards.entries()].map(([key, c]) => ({ key, fold: c.mesh.material.uniforms.uFold.value })),
       presence: () => sampleTween(presence, performance.now()),
       /** Live-cover draws issued by this layer (the hero), for verify:cover. */
-      coversDrawn: () => coversDrawn,
+      coversDrawn: () => coversDrawn + riveUploads,
+      /** The Rive hero's texture uploads, and the last one's main-thread ms. */
+      riveUploads: () => ({ n: riveUploads, ms: riveUploadMs }),
+      /** Main-thread ms per upload of the Rive hero's canvas, `n` in a row. */
+      benchRiveUpload: (n = 60) => {
+        for (const c of riveTex.values()) {
+          const t0 = performance.now();
+          for (let i = 0; i < n; i++) {
+            c.tex.needsUpdate = true;
+            renderer.initTexture(c.tex);
+          }
+          return (performance.now() - t0) / n;
+        }
+        return null;
+      },
       /** GPU ms for one hero draw of the live cover, in THIS renderer. */
       benchCover: () => {
         for (const [id, c] of liveCovers) {
           if (!c.rt || !c.r.ready()) continue;
-          const def = COVERS[id];
+          const def = shaderCover(id)!;
           const crop: Crop = coverCropOf(def.frame.w, def.frame.h, c.rt.width, c.rt.height, { x0: 0, y0: 0, w: 1, h: 1 });
           return {
             id,
@@ -956,6 +1029,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
         c.r.dispose();
         c.rt?.dispose();
       }
+      for (const c of riveTex.values()) c.tex.dispose();
       creases?.dispose();
       geometry.dispose();
       shadowGeometry.dispose();

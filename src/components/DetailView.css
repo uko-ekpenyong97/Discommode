@@ -105,7 +105,8 @@
   cursor: default;
 }
 
-/* A shader cover is not a card on the sky, it is ON the sky (docs/covers.md):
+/* A live cover (card 02's shader, card 04's Rive) is not a card on the sky,
+   it is ON the sky (docs/covers.md):
    no rounded corners and no shadow, in any slot, so nothing lies between its
    transparent ground and the sky — the shadow alone darkened the sky around it
    into a lit card-shaped rect. The morph fades the grid tile's chrome out on
@@ -119,6 +120,17 @@
 .detail__panel--bare {
   border-radius: 0;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0);
+}
+
+/* …and no scrim under its name either (card 04 has one; card 02 has none): over
+   a transparent cover the scrim is a dark band across the sky, the veil the
+   rules above exist to keep off. The type carries its own soft shadow instead,
+   enough to hold white on a NOON sky. */
+.detail__panel--bare .detail__panel-meta {
+  background: none;
+}
+.detail__panel--bare :is(.detail__panel-name, .detail__panel-desc, .detail__panel-num) {
+  text-shadow: 0 1px 14px rgba(10, 12, 16, 0.4);
 }
 
 /* A readable issue's centre panel is the doorway into the reader. */

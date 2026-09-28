@@ -309,8 +309,11 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           const item = CONTENT[p.idx];
           // The centre panel opens what its kind opens — the reader for an
           // issue, the project view for a portfolio card; side panels navigate.
-          // A centre panel with neither is inert (aria-hidden).
-          const canOpen = isCenter && !!(item.issue ?? item.project);
+          // A centre panel with neither is inert (aria-hidden). A Rive cover's
+          // clicks are the cover's (the headset's colour, docs/covers.md): its
+          // project opens from the bar's button.
+          const riveHero = isCenter && item.cover?.kind === 'rive';
+          const canOpen = isCenter && !riveHero && !!(item.issue ?? item.project);
           const face = itemHeroFace(item);
           // Keyed off THIS panel's item, not the active one: mid-slide the
           // centre panel and `activeIndex` can briefly disagree, and the layer
@@ -330,7 +333,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
                   ? 'detail__panel detail__panel--center detail__panel--readable'
                   : isCenter
                     ? 'detail__panel detail__panel--center'
-                    : 'detail__panel') + (item.cover?.kind === 'shader' ? ' detail__panel--bare' : '')
+                    : 'detail__panel') + (item.cover ? ' detail__panel--bare' : '')
               }
               style={{
                 left: `${p.i * panelStep}px`,
@@ -340,6 +343,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               onClick={(e) => {
                 e.stopPropagation(); // a card is not backdrop — don't dismiss
                 if (!isCenter) goto(p.idx);
+                else if (riveHero) return;
                 else if (item.issue) read(item.issue);
                 else if (item.project) openProject(item.project);
               }}
@@ -359,13 +363,16 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
             >
               {item.cover ? (
                 // The live cover on the CENTRE panel only (its dome is the hero's,
-                // which the paper plane reads too); the neighbours show its still.
+                // which the paper plane reads too; a Rive cover's is the hero's
+                // player, which the paper plane shows too); the neighbours show
+                // its still.
                 // The paper takes this face over once the view settles, as it
                 // does an image: the data-paper rules fade `.detail__media`.
                 <CoverTile
                   coverId={item.cover.id}
                   live={isCenter}
                   dome={isCenter ? heroDome : null}
+                  role="hero"
                   className="detail__media"
                 />
               ) : face ? (

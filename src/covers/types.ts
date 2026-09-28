@@ -2,9 +2,26 @@ import type { IUniform, Texture } from 'three';
 import type { DialConfig, DialValues } from './dialValues';
 
 /** A card's live cover, as the manifest names it (content.ts). */
-export interface CoverRef {
+export type CoverRef = ShaderCoverRef | RiveCoverRef;
+
+/** A shader cover: everything about it is its `CoverDef` in the registry. */
+export interface ShaderCoverRef {
   kind: 'shader';
   id: string;
+}
+
+/**
+ * A Rive cover (docs/covers.md, "Rive covers"): a .riv, the artboard the grid
+ * shows and the one the detail hero switches to, and the state machine both
+ * run. `id` is its registry key and names its stills
+ * (`/projects/<id>/cover-still.webp`).
+ */
+export interface RiveCoverRef {
+  kind: 'rive';
+  id: string;
+  src: string;
+  artboard: { grid: string; detail: string };
+  stateMachine: string;
 }
 
 export type Uniforms = { [name: string]: IUniform };
@@ -53,6 +70,7 @@ export interface InstanceFrame {
  * renderer, the stage, the tiles, the paper and the stills do not change.
  */
 export interface CoverDef {
+  kind?: 'shader';
   id: string;
   /** The Figma frame, frame units. Every instance is a cover-crop of it. */
   frame: { w: number; h: number };
@@ -76,3 +94,17 @@ export interface CoverDef {
   /** Per draw: time, crop, target mapping, dome. No allocation. */
   frameUniforms: (v: DialValues, a: Uniforms, b: Uniforms, f: InstanceFrame, assets: Record<string, Texture>) => void;
 }
+
+/**
+ * A Rive cover's registry entry (src/covers/rive/): its frame — the artboards'
+ * size, which every instance crops as `object-fit: cover` — and its dials. The
+ * file, the artboards and the state machine are the manifest's (RiveCoverRef).
+ */
+export interface RiveCoverDef {
+  kind: 'rive';
+  id: string;
+  frame: { w: number; h: number };
+  dials: DialConfig;
+}
+
+export type AnyCoverDef = CoverDef | RiveCoverDef;
