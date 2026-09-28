@@ -106,6 +106,12 @@
  *   rcontexts WebGL contexts with card 04 live, grid and #item-04: the same
  *             bounds as `contexts`, and none of them made by the Rive runtime.
  *
+ * `sky`, `ground`, `rsky` and `rground` are about the sky THROUGH a cover's
+ * ground. A cover whose own `coverBackdrop` is 'solid' (card 04: its artboards
+ * are filled) has no sky through it by design, so they are SKIPPED for it —
+ * printed as skipped, not failed — and run again the day it is 'sky'
+ * (docs/covers.md, "Transparency, and the backdrop").
+ *
  * Pixel checks hide the sky and the dev overlays, as verify:detail does, except
  * `sky`, which is about the sky. A pixel differs past 32 levels (verify:detail's
  * tolerance).
@@ -140,12 +146,17 @@ const RIVE_BUDGET = 2.0;
 const HEADSET = { w: 296 * 1.2, h: 225 * 1.2, head: { x: 175, y: 153 }, cup: { x: 271, y: 180 } };
 
 let failures = 0;
+let skipped = 0;
 const ok = (label, extra = '') => console.log(`  ✓ ${label}${extra ? `  ${extra}` : ''}`);
 const bad = (label, extra = '') => {
   failures++;
   console.log(`  ✗ ${label}${extra ? `  ${extra}` : ''}`);
 };
 const check = (pass, label, extra = '') => (pass ? ok(label, extra) : bad(label, extra));
+const skip = (label, extra) => {
+  skipped++;
+  console.log(`  – ${label}  skipped: ${extra}`);
+};
 const pct = (x) => `${(100 * x).toFixed(2)}%`;
 const ms = (x) => `${x.toFixed(3)}ms`;
 
@@ -268,6 +279,26 @@ function cropOf(aspect) {
   }
   const h = FRAME.w / aspect;
   return { x0: 0, y0: (FRAME.h - h) / 2, w: FRAME.w, h };
+}
+
+/** Each cover's own backdrop, 'sky' or 'solid', as the app has it. */
+let backdrops = null;
+async function coverBackdrops(browser) {
+  if (!backdrops) {
+    const page = await newPage(browser, VIEWPORTS[0], 1);
+    await page.goto(B, { waitUntil: 'networkidle' });
+    await page.waitForFunction(() => window.__covers?.backdrop, null, { timeout: 20000 });
+    backdrops = await page.evaluate(() => ({ 'rive-site': window.__covers.backdrop('rive-site'), nosey: window.__covers.backdrop('nosey') }));
+    await page.context().close();
+  }
+  return backdrops;
+}
+
+/** Skip a sky-through check for a cover whose backdrop is 'solid'; true if so. */
+async function skipSolid(browser, id, labels) {
+  if ((await coverBackdrops(browser))[id] !== 'solid') return false;
+  for (const label of labels) skip(label, `${id}'s coverBackdrop is 'solid': an opaque ground of its own, no sky through it`);
+  return true;
 }
 
 // ── budgets ─────────────────────────────────────────────────────────────
@@ -503,6 +534,7 @@ async function checkContexts(browser) {
 
 async function checkSky(browser) {
   console.log('\nsky: the cover ground over NOON and over NIGHT');
+  if (await skipSolid(browser, 'rive-site', ['ground luminance'])) return;
   const page = await newPage(browser, VIEWPORTS[0], 2);
   await gridOn02(page);
   await flatGrid(page);
@@ -543,6 +575,7 @@ async function checkSky(browser) {
 
 async function checkGround(browser) {
   console.log('\nground: the hero where the cover is transparent, paper effects ON, vs the sky with the cover hidden');
+  if (await skipSolid(browser, 'rive-site', ['1728×996 @1× ground ↔ sky', '1728×996 @2× ground ↔ sky'])) return;
   const TUNED = 0.439; // rive-site.json riso4.paperOpacity
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
@@ -1230,6 +1263,7 @@ async function checkRiveReduced(browser) {
 
 async function checkRiveSky(browser) {
   console.log("\nrive sky: Main's empty ground over NOON and over NIGHT");
+  if (await skipSolid(browser, 'nosey', ['ground luminance'])) return;
   const page = await newPage(browser, VIEWPORTS[0], 2);
   await gridOn04(page);
   await flatGrid(page);
@@ -1269,6 +1303,7 @@ async function checkRiveSky(browser) {
 
 async function checkRiveGround(browser) {
   console.log("\nrive ground: card 04's hero where it is transparent, paper effects ON, vs the sky with the cover hidden");
+  if (await skipSolid(browser, 'nosey', ['1728×996 @1× ground ↔ sky', '1728×996 @2× ground ↔ sky'])) return;
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
     await heroOn04(page);
@@ -1408,7 +1443,8 @@ async function run() {
   }
   const noise = errors.filter((e) => !/Download the React DevTools|favicon|webgl|WebGL/i.test(e));
   check(noise.length === 0, 'no page errors', noise.slice(0, 3).join(' | '));
-  console.log(failures ? `\n${failures} failed` : '\nall passed');
+  const skips = skipped ? ` (${skipped} skipped)` : '';
+  console.log(failures ? `\n${failures} failed${skips}` : `\nall passed${skips}`);
   process.exit(failures ? 1 : 0);
 }
 

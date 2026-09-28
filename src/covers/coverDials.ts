@@ -1,6 +1,7 @@
 import { COVERS } from './covers';
 import { dialDefaults } from './dialValues';
 import type { DialValues } from './dialValues';
+import type { CoverBackdrop } from './types';
 
 /**
  * The covers' live dial values — a module store, like the paper's
@@ -13,7 +14,9 @@ import type { DialValues } from './dialValues';
  *   coverBackdrop  'sky' (default): nothing is drawn behind a cover — its ground
  *                  is 44% opaque and the SkyLayer shows through it, with no
  *                  scrim and no darkening between them. 'solid': one colour,
- *                  `coverBackdropColor`, laid under it.
+ *                  `coverBackdropColor`, laid under it. Only under a cover
+ *                  whose own `coverBackdrop` is 'sky' (`backdropUnder`): a
+ *                  'solid' cover has an opaque ground of its own.
  *   coverMaxDpr    the cap on a cover's backing store (2).
  *   coverPaperShade  in the detail view, how much of the paper's light (the
  *                  creases' screen-blend highlights and trough shading) a
@@ -49,6 +52,19 @@ export function coverValues(id: string): DialValues {
 
 export function siteCoverDials(): SiteCoverDials {
   return site;
+}
+
+/** Cover `id`'s own backdrop (types.ts, `CoverBackdrop`): 'sky' unless its
+ *  definition says 'solid'. */
+export function coverBackdrop(id: string): CoverBackdrop {
+  return COVERS[id]?.coverBackdrop ?? 'sky';
+}
+
+/** The colour laid under cover `id`, or null for none: the site's
+ *  `coverBackdropColor` when the site dial is 'solid' and the cover lets the
+ *  sky through; never under a 'solid' cover. */
+export function backdropUnder(id: string): string | null {
+  return site.coverBackdrop === 'solid' && coverBackdrop(id) === 'sky' ? site.coverBackdropColor : null;
 }
 
 export function setCoverValues(id: string, v: DialValues) {

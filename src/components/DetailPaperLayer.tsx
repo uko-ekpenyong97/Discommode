@@ -48,7 +48,7 @@ import { riveCover, shaderCover } from '../covers/covers';
 import { riveCost, riveFrame, rivePlane, rivePlayer } from '../covers/rive/riveCover';
 import type { RivePlayer } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
-import { coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
+import { backdropUnder, coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
 import { cssRgb } from '../covers/color';
 import { heroDome } from '../covers/dome';
 import type { Crop } from '../covers/types';
@@ -426,14 +426,14 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     const spring = def.domeSpring(coverValues(id));
     heroDome.step(performance.now(), spring.spring, spring.damping);
     coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_);
-    const site = siteCoverDials();
+    const under = backdropUnder(id);
     const drawn = c.r.draw(c.rt, {
       t: coverTime(),
       crop: coverCrop_,
       pxW,
       pxH,
       dome: heroDome.state,
-      backdrop: site.coverBackdrop === 'solid' ? cssRgb(site.coverBackdropColor) : null,
+      backdrop: under ? cssRgb(under) : null,
     });
     if (!drawn) return null;
     coversDrawn++;

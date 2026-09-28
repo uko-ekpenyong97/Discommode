@@ -65,6 +65,16 @@ export interface InstanceFrame {
 }
 
 /**
+ * What is behind a cover (docs/covers.md, "Transparency, and the backdrop"):
+ *
+ *   'sky'    (default) its ground is transparent and the sky shows through it;
+ *            the site's `coverBackdrop` dial can lay one colour under it
+ *   'solid'  it brings its own opaque ground (card 04's artboards are filled
+ *            #E0DDDD) and nothing is drawn behind it, the site dial included
+ */
+export type CoverBackdrop = 'sky' | 'solid';
+
+/**
  * A cover: one GLSL file, one dial JSON, and the few lines that turn dial
  * values into its uniforms. Adding one is a new entry in covers.ts — the
  * renderer, the stage, the tiles, the paper and the stills do not change.
@@ -76,6 +86,8 @@ export interface CoverDef {
   frame: { w: number; h: number };
   glsl: string;
   dials: DialConfig;
+  /** What is behind it: 'sky' when omitted. */
+  coverBackdrop?: CoverBackdrop;
   /** Frame units around the crop that pass A also draws (for lens look-ups). */
   rtMargin: number;
   /** Pass A's resolution, as a fraction of the output's. */
@@ -105,6 +117,8 @@ export interface RiveCoverDef {
   id: string;
   frame: { w: number; h: number };
   dials: DialConfig;
+  /** What is behind it: 'sky' when omitted. */
+  coverBackdrop?: CoverBackdrop;
 }
 
 export type AnyCoverDef = CoverDef | RiveCoverDef;

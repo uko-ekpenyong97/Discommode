@@ -14,10 +14,15 @@ import type { RiveCoverDef } from '../types';
  *          grid→detail morph lands, or as it starts), riveMaxDpr (the cap on
  *          the drawing's backing store) and coverPaperShade (this cover's own
  *          value for the paper's light; card 02's is the site dial)
+ *   coverBackdrop  'solid': Main and Main Bounce are filled #E0DDDD, an opaque
+ *          ground of their own, so nothing is drawn behind them and the sky
+ *          does not show through (docs/covers.md, "Transparency, and the
+ *          backdrop")
  */
 export const nosey: RiveCoverDef = {
   kind: 'rive',
   id: 'nosey',
   frame: { w: 1000, h: 1300 },
   dials,
+  coverBackdrop: 'solid',
 };

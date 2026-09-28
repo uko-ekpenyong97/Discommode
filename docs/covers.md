@@ -1,11 +1,13 @@
 # Live covers
 
 A card can have a LIVE cover: a shader or a Rive file, drawn every frame,
-reacting to the mouse, transparent where its ground is. Card 02 (rive-site) is
+reacting to the mouse, and transparent where its ground is unless it brings
+its own ([the backdrop](#transparency-and-the-backdrop)). Card 02 (rive-site) is
 the first: the tuned "Shader variation 3 — Soft contour field", with the
 weather sky showing through its ground. Card 04 (Nosey) is the second, and is
-Rive: Nosey's four characters, looking at the pointer, on "Main" in the grid
-and bouncing off the walls on "Main Bounce" as the detail hero — see
+Rive: Nosey's four characters on an opaque grey ground of their own, looking at
+the pointer, on "Main" in the grid and bouncing off the walls on "Main Bounce"
+as the detail hero — see
 [Rive covers](#rive-covers-card-04). Each is live in the grid tile, the
 grid→detail morph and the detail hero, and everywhere else it is its still.
 
@@ -26,11 +28,23 @@ so what is tuned there is what ships.
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 | the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
 | the grid→detail morph at 0 / 0.5 / 1, before and after | `docs/covers/bare-morph.webp` |
-| card 04: the grid row, live, the sky through its ground | `docs/covers/nosey-grid-row.webp` |
+| card 04: the grid row, live, the sky through its ground (the file before 2026-09-28; it is opaque now) | `docs/covers/nosey-grid-row.webp` |
 | card 04: the detail hero at rest and mid-bounce | `docs/covers/nosey-hero.webp` |
-| card 04: the same tile over NOON and over NIGHT | `docs/covers/nosey-noon-night.webp` |
+| card 04: the same tile over NOON and over NIGHT (the file before 2026-09-28) | `docs/covers/nosey-noon-night.webp` |
 
 ## Handoff
+
+**Card 04's new file (2026-09-28).** Branch `update-nosey-cover-riv` ships
+Uko's updated Nosey file (from `publish.sh`, signed, 872,152 bytes). The
+interactions changed inside the file: the free hat is pushed and hit by the
+moving pointer instead of dragged ([The .riv](#the-riv)). Main and Main Bounce
+now have an opaque #E0DDDD fill. That is intended: card 04 is an opaque cover,
+so its `coverBackdrop` is `solid` ([the backdrop](#transparency-and-the-backdrop)),
+and the sky-through checks (`rsky`, `rground`) are skipped for it.
+At the last runs: `verify:detail` all passed (card 04 as the hero
+0.133–0.387%); `verify:cover` passed with 3 skipped (`rsky`, `rground` @1×/@2×),
+except one miss of card 02's `reduced` grid (22,336 bytes changed in 1 s), which
+passed 3 of 3 when re-run alone. Also `npm test` (325), `tsc -b`, `lint`, `build`.
 
 **Where it stands (2026-09-27).** Branch `nosey-rive-cover` makes card 04 a
 live Rive cover ([Rive covers](#rive-covers-card-04)). Uko's eye tests found
@@ -90,7 +104,7 @@ npm run verify:detail -- --url http://localhost:5191
 
 | | |
 | --- | --- |
-| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h)`, `benchPresent(w, h)`, `setSite({...})`; `dials(id)`, `patchDials(id, {folder: {dial: v}} \| null)` (null: back to the JSON) |
+| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h)`, `benchPresent(w, h)`, `setSite({...})`, `backdrop(id)` (the cover's own, `sky` or `solid`); `dials(id)`, `patchDials(id, {folder: {dial: v}} \| null)` (null: back to the JSON) |
 | `window.__paper` | the paper's own hooks (docs/detail-paper.md), plus `coversDrawn()` and `benchCover()` for the hero, and `override({ hideCovers: true })`: the live-cover planes undrawn |
 
 **Gotchas that cost time:**
@@ -112,9 +126,9 @@ npm run verify:detail -- --url http://localhost:5191
 
 | File | What it is |
 | --- | --- |
-| `src/covers/types.ts` | `CoverRef` (the manifest's: `shader` or `rive`), `CoverDef` (a shader cover), `RiveCoverDef`, the per-draw `InstanceFrame`. |
+| `src/covers/types.ts` | `CoverRef` (the manifest's: `shader` or `rive`), `CoverDef` (a shader cover), `RiveCoverDef`, the per-draw `InstanceFrame`, `CoverBackdrop` (a cover's own: `sky` or `solid`). |
 | `src/covers/covers.ts` | The registry: cover id → its definition (`shaderCover` / `riveCover` narrow it). The stills' URLs. |
-| `src/covers/covers/nosey.ts`, `nosey.json` | Card 04's `RiveCoverDef`: its frame (1000 × 1300) and its dials. |
+| `src/covers/covers/nosey.ts`, `nosey.json` | Card 04's `RiveCoverDef`: its frame (1000 × 1300), its dials and its `coverBackdrop` (`solid`). |
 | `src/covers/rive/riveCover.ts` | Rive covers: the runtime and the file (once each), the players (grid, hero), the pointer, the one-off work's scheduling, per-frame cost, `__covers.rive`. |
 | `public/projects/nosey/cover.riv` | Card 04's file, copied in by `npm run projects` from `~/Discommode-pages/projects/nosey/cover.riv`. |
 | `src/covers/covers/rive-site.glsl` | Card 02's shader: `//#common`, `//#passA`, `//#passB`. Shared with the bench. |
@@ -127,7 +141,7 @@ npm run verify:detail -- --url http://localhost:5191
 | `src/covers/CoverTile.tsx` | One DOM instance: a 2D canvas over the still. |
 | `src/covers/coverClock.ts` | The shared clock. |
 | `src/covers/dome.ts` | The mouse dome's spring; `heroDome`, shared by the DOM hero and the paper plane. |
-| `src/covers/coverDials.ts` | The live dial values (a module store) and the site's three dials. |
+| `src/covers/coverDials.ts` | The live dial values (a module store), the site's dials, and `coverBackdrop(id)` / `backdropUnder(id)`: what is drawn behind each cover. |
 | `src/dev/coverDials.tsx` | The COVER panel (dev). |
 | `src/covers/bench.ts`, `devHooks.ts` | Dev: `window.__covers`, the GPU benchmark. |
 | `scripts/make-cover-stills.mjs` | `npm run covers`: the stills. The tail of `npm run projects`. |
@@ -180,12 +194,32 @@ exactly 112/255 opaque, its inks 50–100%. The retune matched alpha as well as
 colour, and the shader writes premultiplied RGBA, so the cover looks like the
 reference over any backdrop. On the site the backdrop is the sky.
 
-`coverBackdrop` (a site dial, beside the cover's own):
+`coverBackdrop` is set in two places: on each cover, and as a site dial.
+
+**On the cover** (its registry entry, `coverBackdrop` in `types.ts`), the
+backdrop describes the file. It is a legitimate choice per cover:
+
+| | |
+| --- | --- |
+| `sky` (default; card 02) | the cover's ground is transparent and the sky shows through it. The site dial below applies. |
+| `solid` (card 04) | the cover brings its own opaque ground (card 04's artboards are filled #E0DDDD) and **nothing is drawn behind it**, including the site dial's colour. The sky does not show through, by design. |
+
+**The site dial**, for a `sky` cover only (`backdropUnder(id)` in
+`coverDials.ts`, which the stage, the Rive players and the paper all ask):
 
 | | |
 | --- | --- |
 | `sky` (default) | nothing is drawn behind the cover. The grid tile is a 2D canvas in the DOM over the SkyLayer; the hero plane is premultiplied over the sky. No scrim, no darkening, nothing between the cover and the sky. |
-| `solid` | `coverBackdropColor` is laid under the cover (premultiplied-over, in pass B). |
+| `solid` | `coverBackdropColor` is laid under the cover (premultiplied-over, in pass B; under the drawing in a Rive player). |
+
+An opaque cover still goes through everything below (no tile fill, the
+premultiplied texture, the shadow's hole). Those are exact for alpha 1, so
+nothing about the card changes. The paper's light (`coverPaperShade × alpha`)
+is then the full paper everywhere on it.
+
+`verify:cover` asks the page for each cover's backdrop (`__covers.backdrop(id)`)
+and **skips** `sky`, `ground`, `rsky` and `rground` for a `solid` one. They
+are printed as skipped, not as failed, and the summary counts them.
 
 What that took, outside the covers:
 
@@ -428,11 +462,13 @@ pixels of the 220 × 286 tile the prototype measured.
 ## Rive covers (card 04)
 
 Card 04's cover is Uko's Rive file: four Nosey characters — the headset one,
-the cat, the propeller and the hardhat — that follow the pointer, with the sky
-through everything that is not a character. In the grid it is the artboard
-"Main"; as the detail hero it is "Main Bounce", where the four bounce off the
-walls and each other like a screensaver. Both are 1000 × 1300 (10:13, the
-hero's ratio) and transparent, and both run the state machine "Main".
+the cat, the propeller and the hardhat — that follow the pointer, on an opaque
+grey ground. In the grid it is the artboard "Main"; as the detail hero it is
+"Main Bounce", where the four bounce off the walls and each other like a
+screensaver. Both are 1000 × 1300 (10:13, the hero's ratio), both are filled
+#E0DDDD (since 2026-09-28; they were transparent before), and both run the
+state machine "Main". Its `coverBackdrop` is `solid`
+([the backdrop](#transparency-and-the-backdrop)).
 
 ```ts
 cover: {
@@ -485,6 +521,23 @@ show (one is placed under Nosey Cat, hidden; the Editor had them out of the
 export, the CLI embeds them). `exportFlags="2"` on their `ImageAsset`s in the
 CLI project drops them from the build. Not done here: it is a change to the
 file.
+
+**The 2026-09-28 file.** It arrived as a `--once` build (byte-identical to one
+of the Editor file), so its scripts were unsigned. The shipped file is the
+signed build of the same source (`publish.sh`, 872,152 bytes). Compared with
+the 2026-09-27 source, no artboard, state machine or listener was renamed,
+added or removed (6 artboards, 17 listeners). What changed:
+
+- **`MainPlay.luau`: the free hat is hover-driven.** It used to be grabbed,
+  dragged and thrown on a press, which the site never sends. Now a pointer
+  within 150 units pushes it gently, and a pointer sweeping into it (within 90,
+  faster than 150 u/s toward it) hits it like a ball. Nothing claims the
+  pointer. `ptrX`/`ptrY`/`ptrDown` are still mirrored (`rpointer` reads them).
+- **`Nosey Hardhat.dropReady`**, a new view-model boolean (default true). It
+  gates Hat Off → Hat Drop and is false for 8 s after a hat comes off, so the
+  loose hat can be played with. The cover binds default instances, so it needs
+  nothing.
+- **The #E0DDDD fill on Main and Main Bounce** (above).
 
 **Checking a file:** the dev console logs, at load, every artboard, state
 machine (inputs, listeners) and view model (properties) the file holds, and
@@ -689,8 +742,10 @@ this compares the cover).
 ### The still
 
 `npm run covers` draws Main's first frame, no pointer, with the app's own
-player: `cover-still.webp` (900 × 1170, **20 KB**) and `cover-still-sm.webp`
-(360 × 468, 7 KB) — a vector drawing compresses; card 02's noise does not. It
+player: `cover-still.webp` (900 × 1170, **11 KB**) and `cover-still-sm.webp`
+(360 × 468, 4 KB) — a vector drawing compresses; card 02's noise does not.
+Since the file became opaque the stills have no alpha channel (an opaque WebP
+is written without one). Decode them as 3 channels, not RGBA. It
 is what reduced motion shows (the runtime is never loaded: `rreduced`), what
 the neighbours show, and the tiles' first paint. Card 04's old face
 (`/projects/04/card.webp`, a frame of the pitch site) is no longer used;
@@ -708,8 +763,9 @@ site's dials would overwrite each other:
 | `riveMaxDpr` | 2 | the cap on both players' backing store |
 | `coverPaperShade` | 1 | the paper's light on this cover, per unit of its alpha (card 02's is the site dial) |
 
-`coverBackdrop` (the site's) applies to it: `solid` lays the colour under the
-drawing. It is `rground`'s control.
+Its own `coverBackdrop` is `solid` (`nosey.ts`), so the site's
+`coverBackdrop` does not apply to it: nothing is drawn under the drawing. While
+it was transparent, the site dial's `solid` was `rground`'s control.
 
 ### Frame time
 
@@ -756,7 +812,8 @@ npm run verify:detail         # its identity and hand-off cover cards 02 and 04
 `contexts`, `sky` and `ground`, as above (`budgets` counts card 02's tiles
 only; `nogl` now also shows card 04's tiles live without WebGL). Pixel checks
 hide the sky and the dev overlays, except `sky` and `ground`; a pixel differs
-past 32 levels. About ten minutes.
+past 32 levels. About ten minutes. `sky`, `ground`, `rsky` and `rground` are
+skipped for a cover whose `coverBackdrop` is `solid` (card 04 now).
 
 Card 04's eight, with the numbers of the last run. `rpointer` is the one that
 runs as a person does (below). The others need a still clock: the Rive players advance by
@@ -772,8 +829,8 @@ fresh instances, and walk it a frame at a time: the same walk is the same run
 | `rpointer` | the REAL path: the clock never pinned, the pointer moving from the first frame, mouse events dispatched through the browser at the focused tile's, the overlay CTA's and the hero's on-screen positions — the hero reached by clicking the tile (the morph) AND by a direct load of `#item-04`; on both, the hero ALIVE: advancing, uploaded to the plane, bouncing, the swap seen (the morph), and one instance through three 450 ms frames; and STILL alive 2 s and 5 s after landing, the pointer sweeping it — advancing, uploading, receiving the pointer, a character tracking it in each window, the same instance, its pixels moving | loaded 0.77–0.88 s after navigation, the idle wait 0.39 s ≤ 1.1; the direct-load hero live 0.64–1.11 s after navigation; ~80–88 frames and as many uploads in ~2 s, the headset bounced ~290–300 units, #1 → #1; at 2 s / 5 s: +44–182 frames and as many uploads a window, a character tracking in 2–7 checks, 16–50% of the hero's pixels changed, #1 throughout; the view model's `ptrX/ptrY` exactly the on-screen point through the crop — tile (129.5, 650) / (870.5, 650), CTA (499.2, 650), hero (120, 650) / (880, 650); tracking changes left vs right; tile pixels 1.55% vs its idle 0.31% |
 | `rclick` | onto the headset's cup (a hover) vs no pointer: its colour; a click on the hero | blue → red, 10.8–11.0% of the region; the click opens `#view-04` |
 | `rreduced` | reduced motion: tiles and hero on the still, runtime never loaded, 1 s | 0 canvases, not loaded, 0 bytes changed |
-| `rsky` | Main's empty ground, NOON vs NIGHT | 190.1–190.2 vs 85.8–86.1: 54.7–54.9% > 20% |
-| `rground` | the hero's transparent ground, paper effects on, vs the sky with the cover hidden | 88% of the hero is ground; mean 0.11–0.13% (floor 0.09–0.10%); control `solid` 70% |
+| `rsky` | Main's empty ground, NOON vs NIGHT | **skipped** while card 04 is `solid`. On the transparent file (2026-09-27): 190.1–190.2 vs 85.8–86.1: 54.7–54.9% > 20% |
+| `rground` | the hero's transparent ground, paper effects on, vs the sky with the cover hidden | **skipped** while card 04 is `solid`. On the transparent file: 88% of the hero is ground; mean 0.11–0.13% (floor 0.09–0.10%); control `solid` 70% |
 | `rcontexts` | WebGL contexts with card 04 live | grid 2, `#item-04` 3 (unchanged); 0 made by the runtime |
 
 `rpointer` was run against each way the real path broke or could break, and fails on each: the 10 s idle deadline put back ("never loaded"), events kept from the cover (`pointer-events: none` on the tile: `ptrX/ptrY` stay 0, no tracking change, tile and hero), and the tile-only listener put back (over the overlay's CTA the grid instance's last event is an `exit`).
@@ -797,7 +854,8 @@ Card 04, the same way: as the hero **0.149–0.434%**, the spec's 0.5% (the DOM
 face and the plane show one canvas; the suite waits for the live hero — until
 the file is imported both sides are the still); as a neighbour, its still — thin line art
 on a transparent ground — **0.018–0.891%**, held to 2% for card 01's reason
-(the old opaque photo face was 0.1–0.4%).
+(the old opaque photo face was 0.1–0.4%). With the opaque file (2026-09-28): the
+hero 0.133–0.387%, as a neighbour 0.023–0.795%.
 
 ## The veil in the detail view (resolved)
 
