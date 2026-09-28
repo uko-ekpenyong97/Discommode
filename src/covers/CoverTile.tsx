@@ -20,9 +20,9 @@ interface CoverTileProps {
    * paper plane reads too), or null for none (the morph card).
    *
    * A Rive cover has no dome; the same prop says where its pointer goes: 'own'
-   * is a grid tile (hover only: the tile under the pointer moves the grid's one
-   * instance, and a click opens the card as ever), a spring is the hero (move,
-   * press and release, from the whole panel), null is none.
+   * is a grid tile (the card under the pointer moves the grid's one instance),
+   * a spring is the hero (its whole panel), null is none. Hover only, both: a
+   * click opens the card, and the hero's opens its project, as ever.
    */
   dome?: 'own' | DomeSpring | null;
   /** A Rive cover's player: the grid's artboard or the hero's (riveCover.ts). */
@@ -124,9 +124,11 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
  *          sits over the tile and takes the pointer (`pointer-events: auto`),
  *          and over it the tile alone saw a leave — the characters went back
  *          to rest with the pointer still on the card.
- *   full   the hero: moves, presses and releases (the headset's click), read
- *          from the whole PANEL. Under the paper the DOM face is
- *          `visibility: hidden` and takes no pointer events; its panel does.
+ *   full   the hero: the same, read from the whole PANEL — under the paper
+ *          the DOM face is `visibility: hidden` and takes no pointer events;
+ *          its panel does. No presses here either: the cover's interactions
+ *          are all hover (the headset's colour steps on pointer-ENTER), and a
+ *          click on the hero opens its project, as on every portfolio card.
  */
 function riveInput(id: string, role: RivePlayerRole, host: HTMLElement, mode: 'hover' | 'full'): () => void {
   const target = host.closest<HTMLElement>(mode === 'full' ? '.detail__panel' : '.grid-card') ?? host;
@@ -139,18 +141,10 @@ function riveInput(id: string, role: RivePlayerRole, host: HTMLElement, mode: 'h
     if (e.pointerType !== 'touch') send('move', e);
   };
   const onLeave = (e: PointerEvent) => send('exit', e);
-  const onDown = (e: PointerEvent) => send('down', e);
-  const onUp = (e: PointerEvent) => send('up', e);
   target.addEventListener('pointermove', onMove, { passive: true });
   target.addEventListener('pointerleave', onLeave);
-  if (mode === 'full') {
-    target.addEventListener('pointerdown', onDown);
-    target.addEventListener('pointerup', onUp);
-  }
   return () => {
     target.removeEventListener('pointermove', onMove);
     target.removeEventListener('pointerleave', onLeave);
-    target.removeEventListener('pointerdown', onDown);
-    target.removeEventListener('pointerup', onUp);
   };
 }

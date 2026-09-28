@@ -88,14 +88,11 @@
  *             It fails on each way this path broke or could: the old 10 s idle
  *             deadline ("never loaded"), events kept from the cover (ptrX/ptrY
  *             stay 0), and the tile-only listener (an exit over the CTA).
- *   rclick    a click on the headset Nosey changes the headset's colour: the
- *             pointer moved onto its cup and pressed, against the same second
- *             with no pointer — the headset's colour is another one. In the
- *             file the colour steps on POINTER-ENTER of the headset (the
- *             listener "Headset.Pointer.Enter" fires its Click trigger; Main
- *             Bounce's bumps fire it too) — there is no press listener — so
- *             a press with the pointer already on it is printed too: it adds
- *             nothing. That is the .riv's wiring (docs/covers.md).
+ *   rclick    the cover is hover-only: the pointer moved onto the headset
+ *             Nosey's cup, against the same second with no pointer — its
+ *             colour is another one (the file's "Headset.Pointer.Enter" fires
+ *             its Click trigger). And a click on the hero opens the project,
+ *             #view-04, as on every portfolio card.
  *   rreduced  reduced motion: card 04's tiles and hero are the still, the
  *             runtime is never loaded, nothing moves in 1s.
  *   rsky      a patch of Main's empty ground over NOON and NIGHT: > 20% apart.
@@ -998,7 +995,66 @@ async function checkRivePointer(browser) {
     await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.62);
     await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
     await page.waitForTimeout(600);
-    await judge('hero', await heroRect(page), 'the hero, on the paper');
+    // What was on screen from the click to the paper, before anything else moves it on.
+    const landing = await page.evaluate(() => window.__covers.rive.status('nosey').swaps.map((w) => [w.from, w.to]));
+    await judge('hero', await heroRect(page), 'the hero after the morph, on the paper');
+    // Alive, not just receiving: advancing, bouncing, uploaded to the plane,
+    // the swap seen, and one instance through three 450 ms frames (a loaded
+    // machine's arrival) — wall-time grace made each such frame a fresh hero.
+    const heroAlive = async (label, morph) => {
+      const read = () =>
+        page.evaluate(() => {
+          const st = window.__covers.rive.status('nosey');
+          const vm = window.__covers.rive.viewModel('nosey', 'hero');
+          return {
+            f: st.players.hero?.frames ?? 0,
+            inst: st.players.hero?.instances ?? 0,
+            up: st.plane?.uploads ?? 0,
+            shows: st.plane?.shows ?? 'none',
+            hx: vm?.headsetX ?? NaN,
+            hy: vm?.headsetY ?? NaN,
+            swaps: st.swaps.map((w) => [w.from, w.to]),
+          };
+        });
+      const a = await read();
+      await page.waitForTimeout(800);
+      await page.evaluate(async () => {
+        for (let k = 0; k < 3; k++) {
+          await new Promise((r) => requestAnimationFrame(r));
+          const t = performance.now();
+          while (performance.now() - t < 450);
+        }
+      });
+      await page.waitForTimeout(600);
+      const z = await read();
+      const swaps = morph ? landing : z.swaps;
+      const swapped = !morph || swaps.some(([from, to]) => /morph card \(Main\)/.test(from) && /Main Bounce/.test(to));
+      const moved = Math.hypot(z.hx - a.hx, z.hy - a.hy);
+      check(
+        z.f - a.f > 30 && z.up - a.up > 30 && z.shows === 'live' && moved > 20 && z.inst === a.inst && swapped,
+        `${tag} ${label}: alive`,
+        `${z.f - a.f} frames advanced and ${z.up - a.up} uploads to the plane in ~2 s, the plane shows ${z.shows}; the headset Nosey bounced ${moved.toFixed(0)} units; hero instance #${a.inst} → #${z.inst} through three 450 ms frames${morph ? `; the swap: ${swapped ? swaps.filter(([fr, to]) => /morph card \(Main\)/.test(fr) && /Main Bounce/.test(to)).map(([fr, to]) => `${fr} → ${to}`)[0] : `not seen in ${JSON.stringify(swaps)}`}` : ''}`,
+      );
+    };
+    await heroAlive('the hero after the morph', true);
+
+    // …and a direct load of #item-04, the pointer moving from the first frame.
+    await page.goto('about:blank');
+    await page.goto(`${B}#item-04`, { waitUntil: 'domcontentloaded' });
+    const d0 = Date.now();
+    let live = false;
+    for (let i = 0; i < 150 && !live; i++) {
+      await page.mouse.move(820 + 40 * Math.sin(i / 3), 380 + 30 * Math.cos(i / 4));
+      await page.waitForTimeout(40);
+      live = await page.evaluate(() => window.__covers?.rive.status('nosey').plane?.shows === 'live');
+    }
+    const liveMs = Date.now() - d0;
+    check(live && liveMs <= 4000, `${tag} direct load: the hero goes live`, live ? `the plane shows Main Bounce ${liveMs} ms after navigation, the pointer moving (≤ 4000)` : 'never live');
+    if (live) {
+      await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 10000 });
+      await judge('hero', await heroRect(page), 'the hero on a direct load');
+      await heroAlive('the hero on a direct load', false);
+    }
     await page.context().close();
   }
 }
@@ -1019,50 +1075,34 @@ function hues(img) {
 }
 
 async function checkRiveClick(browser) {
-  console.log('\nrive click: onto the headset Nosey and press — its colour changes');
+  console.log('\nrive click: hovering onto the headset steps its colour; a click on the hero opens the project');
   const T = 2;
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
     await heroOn04(page);
     await quiet(page);
     await page.evaluate(() => window.__paper.override({ zero: true }));
-    const cup = async (hr) => {
+    const onto = async (hr) => {
       const vm = await page.evaluate(() => window.__covers.rive.viewModel('nosey', 'hero'));
       const b = heroBox(hr, vm.headsetX + HEADSET.cup.x, vm.headsetY + HEADSET.cup.y, 0, 0);
-      return b;
+      await page.mouse.move(b.x, b.y, { steps: 3 });
     };
     const none = await heroRun(page, dpr, T, {});
-    const click = await heroRun(page, dpr, T, {
-      mid: async (hr) => {
-        const b = await cup(hr);
-        await page.mouse.move(b.x, b.y, { steps: 3 });
-        await page.mouse.down();
-        await page.mouse.up();
-      },
-    });
-    // The press alone: the pointer arrives on the cup a quarter-second early,
-    // then presses there (vs arriving and not pressing).
-    const arrive = async (hr, press) => {
-      const b = await cup(hr);
-      await page.mouse.move(b.x, b.y, { steps: 3 });
-      await step(page, T + 0.5, 15);
-      if (press) {
-        await page.mouse.down();
-        await page.mouse.up();
-      }
-    };
-    const hoverOnly = await heroRun(page, dpr, T, { mid: (hr) => arrive(hr, false) });
-    const pressOnly = await heroRun(page, dpr, T, { mid: (hr) => arrive(hr, true) });
+    const hover = await heroRun(page, dpr, T, { mid: onto });
     const a = hues(none.img);
-    const b = hues(click.img);
+    const b = hues(hover.img);
     check(
       a.top !== 'none' && b.top !== 'none' && a.top !== b.top,
-      `@${dpr}× clicked vs no pointer, 0.5s after`,
-      `the headset is ${b.top} (no pointer: ${a.top}); ${pct(diff(none.img, click.img))} of its region differs`,
+      `@${dpr}× onto the headset vs no pointer, 0.5s after`,
+      `the headset is ${b.top} (no pointer: ${a.top}); ${pct(diff(none.img, hover.img))} of its region differs`,
     );
-    console.log(
-      `      a press with the pointer already on it (not held to a bar): ${pct(diff(hoverOnly.img, pressOnly.img))} of the region differs; ${hues(hoverOnly.img).top} → ${hues(pressOnly.img).top}`,
-    );
+    // A click on the hero is the card's, as on every portfolio card: #view-04.
+    await page.evaluate(() => window.__covers.pin(null));
+    const hr = await heroRect(page);
+    await page.mouse.click(hr.x + hr.w * 0.5, hr.y + hr.h * 0.35);
+    await page.waitForFunction(() => location.hash.startsWith('#view-04'), null, { timeout: 5000 }).catch(() => {});
+    const hash = await page.evaluate(() => location.hash);
+    check(hash.startsWith('#view-04'), `@${dpr}× a click on the hero opens the project`, `hash ${hash || '(none)'}`);
     await page.context().close();
   }
 }

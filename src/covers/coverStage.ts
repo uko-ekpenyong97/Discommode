@@ -3,7 +3,7 @@ import { CoverRenderer, coverCropOf } from './coverRenderer';
 import { riveCover, shaderCover } from './covers';
 import { coverTime } from './coverClock';
 import { coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
-import { ensureRive, onRiveReady, riveAvailable, riveCost, rivePlayer } from './rive/riveCover';
+import { ensureRive, onRiveReady, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
 import type { RivePlayerRole } from './rive/riveCover';
 import { cssRgb } from './color';
 import { DomeSpring } from './dome';
@@ -195,6 +195,7 @@ function tick(now: number) {
     return;
   }
   const t0 = performance.now();
+  riveFrame(); // a frame of cover work, for the Rive hero's "left" test
   const site = siteCoverDials();
   const dprCap = Math.max(0.5, site.coverMaxDpr);
   const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
@@ -216,8 +217,11 @@ function tick(now: number) {
     // A shader instance with no stage (its context lost) keeps its last frame.
     if (!rive && (failed || !renderer)) continue;
     onScreen = true;
-    // (checkVisibility: Safari 17.4+; without it, CSS-hidden instances draw too)
-    if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true })) continue;
+    // (checkVisibility: Safari 17.4+; without it, CSS-hidden instances draw too.)
+    // Opacity counts: the grid under the detail view is `opacity: 0`
+    // (.grid-stage--hidden), not `visibility: hidden`, and was drawn — every
+    // frame, behind the hero — while only visibility was checked.
+    if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
     if (p.drawn && p.host.closest(HOLD)) continue;
     const r = p.host.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) continue;
@@ -261,6 +265,7 @@ function tick(now: number) {
     }
     g.n++;
   }
+  reportRiveRoles();
   if (!any) {
     // Nothing visible. Hidden by CSS (the grid under the detail view, the
     // hero's DOM face under the paper) is still on screen as far as the
@@ -338,6 +343,24 @@ function copy(p: Presenter, src: CanvasImageSource, sy: number, pxW: number, pxH
     p.drawn = true;
     p.onDrawn();
   }
+}
+
+/** Each Rive cover's visible instances, as a mask, for its status
+ *  (riveDomRoles: 1 grid tiles, 2 the morph card as Main, 4 the morph card as
+ *  Main Bounce, 8 the hero's DOM face). No allocation. */
+const riveMasks = new Map<string, number>();
+function reportRiveRoles() {
+  for (const id of riveMasks.keys()) riveMasks.set(id, 0);
+  for (const p of presenters) {
+    if (!riveCover(p.coverId)) continue;
+    let m = riveMasks.get(p.coverId) ?? 0;
+    if (p.visible) {
+      const morph = !!p.host.closest('.detail-morph');
+      m |= morph ? (p.role === 'hero' ? 4 : 2) : p.role === 'hero' ? 8 : 1;
+    }
+    riveMasks.set(p.coverId, m);
+  }
+  for (const [id, m] of riveMasks) riveDomRoles(id, m);
 }
 
 /** The cap on a Rive cover's backing store (its riveMaxDpr dial). */

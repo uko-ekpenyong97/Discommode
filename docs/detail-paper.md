@@ -146,7 +146,11 @@ purpose, and it is where the dials live.
 ### Textures
 
 Each face is resized **once, by the browser** (`createImageBitmap`, `high`), to
-the card's own device pixels: at the hero's size and at the neighbours'. The
+the card's own device pixels: at the hero's size and at the neighbours'. From
+the file's BLOB, not the decoded `<img>`: from an image element Chrome crops
+and resizes on the main thread, and the faces built as the view mounts —
+during the grid→detail morph — were ~1 s of it, on every card (a real-Chrome
+profile, 2026-09-27). From a blob it happens off the main thread. The
 plane then samples it one texel to one pixel. Faces are `itemHeroFace` (Issue
 01's `cover-rest.webp`, the portfolio cards' `card.webp`). Issue 01 also gets
 its `cover-plate.webp` at the hero's size. The plate is used exactly while a

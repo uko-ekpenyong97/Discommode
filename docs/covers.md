@@ -33,18 +33,19 @@ so what is tuned there is what ships.
 ## Handoff
 
 **Where it stands (2026-09-27).** Branch `nosey-rive-cover` makes card 04 a
-live Rive cover ([Rive covers](#rive-covers-card-04)). At its last runs:
-`verify:cover` all passed — card 02's checks unchanged and card 04's eight
-(`rbudgets`, `rswap`, `rpointer`, `rclick`, `rreduced`, `rsky`, `rground`,
-`rcontexts`); `verify:detail` all passed (routes 01 ↔ 02 / 04 included, and
-the Prev slide's frames at 16.8 ms — see "The one-off work" for the 33 ms it
-caught first); `npm test` (323), `tsc -b`, `lint`, `build`. One
-intermittent miss, not card 04's: card 02's `reduced` grid check once saw
-22,336 bytes change over 1 s (0 in the next full run, in 3 runs alone, and in
-23 of 24 loop repeats; the one repeat that tripped changed pixels across the
-grid, centred on an image card, not on a cover tile). Read
-[The .riv](#the-riv) before re-exporting card 04's file: the Editor's export
-of it does not work.
+live Rive cover ([Rive covers](#rive-covers-card-04)). Uko's eye tests found
+it dead twice, and neither was visible to the suites as they were: the grid
+(a still for 20.8 s while the pointer moved) and then the hero (restarted from
+rest by every long frame; the still for 2.1–2.7 s on a direct load; a readout
+that stuttered the page) — "When card 04 does not react" has both, and the
+COVER · nosey status readout that shows each stage. `rpointer` now runs the
+real path on the grid, the hero after the morph and the hero on a direct
+load. At the last runs: `verify:cover` and `verify:detail` all passed,
+`npm test`, `tsc -b`, `lint`, `build`. A click on card 04's hero opens
+`#view-04` (the cover is hover-only). Read [The .riv](#the-riv) before
+re-exporting card 04's file: the Editor's export of it does not work. What
+next: [Not done](#not-done) 9, the detail view's janky arrival, is on every
+card and on `main`.
 
 **Card 02 (2026-09-24).** PR #29 (the live covers) is merged. Branch
 `shader-cover-detail-no-veil` takes the card chrome off a shader cover in the
@@ -271,7 +272,9 @@ takes it over): 10:13 instead of 3:4, so a group of its own.
 hero, the hovered tile, all of them. Nothing renders when none is visible: the
 stage's loop sleeps until the IntersectionObserver wakes it. Instances that are
 on screen but hidden by CSS are checked, not drawn — the grid under the detail
-view, the hero's DOM face under the paper. Three places **hold** their last frame
+view (`opacity: 0`: until 2026-09-27 only `visibility` was checked, and the
+grid was drawn every frame behind the hero, card 02's and card 04's alike), the
+hero's DOM face under the paper (`visibility: hidden`). Three places **hold** their last frame
 instead of drawing, because another instance is showing the same cover bigger
 and live, and drawing both would pay twice for one moment:
 
@@ -540,9 +543,14 @@ one.** Importing this file is one 45–97 ms main-thread task (the Editor's
 export, without Main, imported in 8: it is Main's scripts and nested
 artboards); making the grid's instance takes ~10 ms and each hero's 3–4. The
 first run of `verify:detail` caught the import landing inside a Prev slide (a
-33.3 ms frame), so the import waits for an idle callback with no input for
-1.2 s and no animation running — but only for **1 s** after the file's bytes
-are ready, and the grid's instance is made in the same task as the import.
+33.3 ms frame), so the import waits for an idle callback with no press, key,
+wheel, touch or drag for 800 ms and no animation running — but only for **1 s**
+after the file's bytes are ready, and the grid's instance is made in the same
+task as the import. A HOVER is not input here: slides and morphs start from
+presses, keys and wheels, and counting a moving pointer made every arrival
+wait the whole second (a direct load of `#item-04` showed the still for
+2.1–2.7 s with nothing animating; now the hero is live 0.64–1.11 s after
+navigation, `rpointer`).
 Until then the tiles show the still, as they do before any first frame; a
 spare hero instance is made the same way, so the swap takes one ready-made.
 
@@ -566,7 +574,7 @@ wait; the import itself took 45–405 ms there).
 | instance | what it takes | from |
 | --- | --- | --- |
 | a grid tile | moves while the pointer is over its CARD, an exit when it leaves — the characters look at the hovered tile's pointer and go back to rest when there is none; all tiles show the one instance, so all look the same way | the whole `.grid-card`: the hover overlay's CTA sits over the tile and takes the pointer, and over it the tile alone saw a leave |
-| the hero | moves, presses and releases | the whole PANEL (under the paper the DOM face is `visibility: hidden` and takes no events; its panel does) |
+| the hero | moves while the pointer is over its panel, an exit when it leaves — hover only, like the tiles; a click opens the project (below) | the whole PANEL (under the paper the DOM face is `visibility: hidden` and takes no events; its panel does) |
 | the morph card, the neighbours | nothing | |
 
 A point across an instance's box maps back through its `object-fit: cover`
@@ -583,13 +591,20 @@ the same lines as they change (`[covers] nosey: …`):
 | field | reads | if it is wrong |
 | --- | --- | --- |
 | `file` | not requested → fetching → waiting for idle → importing → loaded (or failed: the error), with the ms of each since the request | stuck before `loaded`: the still is what shows, and no hover goes anywhere. `waiting for idle` → `importing` is at most ~1 s; `failed` names the reason (a 404, not a .riv, no runtime) |
-| `grid`, `hero` | the instance: artboard / state machine / view model, the frames its state machine has advanced, the last step's dt, how many instances have been made | `no instance`: nothing is drawing that role. `vm none`: not bound — nothing view-model-driven moves (docs above). Frames not climbing while it is on screen: nothing is advancing it |
-| `pointer` | the last event an instance received: role, kind, where in ARTBOARD space, how long ago, how many | `none received` while you hover: the events are not reaching the cover (an element above it, `inert`, the listener's target) |
+| `showing` | which instances are on screen now: grid tiles (Main), the morph card (Main or Main Bounce), the hero's DOM face (Main Bounce), the paper plane (Main Bounce, or the still) — and what it was before; the artboard swap is a change here | the paper plane on `the still` once the file is loaded: Main Bounce is not reaching the plane |
+| `grid`, `hero` | each instance apart: artboard / state machine / view model, which instance it is (`#n` counts them), and whether its state machine is advancing | `no instance`: nothing is drawing that role. `vm none`: not bound — nothing view-model-driven moves (docs above). `not advancing` while it is on screen: nothing steps it. A hero `#n` that climbs while you watch: the hero keeps being made afresh — the bounce restarting from rest (below) |
+| `gridPointer`, `heroPointer` | `receiving` while events come; once they stop, the last one: its kind, where in ARTBOARD space, how many in all | `none received` while you hover: the events are not reaching the cover (an element above it, `inert`, the listener's target) |
+| `heroPlane` | what the paper's hero plane samples — live Main Bounce or the still — and whether new frames are being uploaded to it | `the still`, or `no new frame uploaded` while the hero is on the paper |
 | `reducedMotion` | the media query as the page sees it | `reduce`: the stills everywhere, by design, and the runtime never loads |
 
-Also in the console: the file's artboards, state machines and view models at
-load, the image assets not decoded, and `prefers-reduced-motion`.
-`window.__covers.rive.status('nosey')` returns the same object.
+Its lines are STATES, not counters: every change of the panel is a DialKit
+re-render of the dock, ~300 ms in a dev build, and a readout that ticked (a
+frame count, an age, coordinates while the pointer moved — the first version
+of it) stuttered the page once a second while the dock was open. The live
+numbers — frames, dt, every pointer event, uploads — are in the console and
+`window.__covers.rive.status('nosey')`. Also in the console: the file's
+artboards, state machines and view models at load, the image assets not
+decoded, every change of `showing`, and `prefers-reduced-motion`.
 
 What was checked, in a real headed Chrome (153), the pointer moving from the
 first frame, 2026-09-27: advance runs every frame the cover is on screen (the
@@ -600,25 +615,55 @@ no events), and `#item-04?intro` is not `inert` for card 04 (only DialKit's
 own text fields are); the reduced-motion query was `no-preference`. The one
 thing wrong was the 20.8 s wait above — and the CTA's leave.
 
-**The headset's colour steps on pointer-ENTER, not on a press.** In the file,
-the listener "Headset.Pointer.Enter" fires Noseyhead's `Click` trigger, which
-steps the Colors layer blue → red → yellow → blue (Main Bounce's bumps fire it
-too). There is no press listener. So on the site the headset changes colour
-when the pointer arrives on it — a click does it by arriving — and a press
-with the pointer already there does nothing (`rclick` prints it: 0.00%). A
-press is sent to Rive all the same; for a colour change on click, make the
-listener a Pointer Down in the file. On the grid tiles, where only moves are
-sent, hovering the headset steps its colour too.
+**The hero, the second time (same day, real Chrome, arriving by the tile's
+morph and by a direct load, Next, Prev, Enter, paper off, after a hot
+reload).** In a clean session it lived on every route; what made it look dead
+was the machine being busy, and four things this cover did with that:
 
-**Hero clicks are the cover's.** A click on card 04's hero panel goes to Rive
-and does NOT open the project; the bar's "Open project" is the way in. Every
-other card's centre panel still opens on click.
+1. **A long frame made a fresh hero.** A hero not drawn for 400 ms of wall
+   time was taken as LEFT, and remade: the bounce back at rest, the tracking
+   dropped. One 400 ms frame is enough, and the detail view's arrival gives
+   150–500 ms frames on a loaded machine (more in a dev build; below): five
+   450 ms frames made five fresh heroes. Now the hero is left only after 30
+   frames of cover work without it AND 400 ms (`riveFrame`); three 450 ms
+   frames leave it one instance (`rpointer`'s `alive`), and leaving the
+   detail view or sliding away still gives a fresh one on return.
+2. **The still for 2.1–2.7 s on a direct load** — the quiet wait above,
+   counting a hover as input. Now 0.64–1.11 s.
+3. **The readout itself**: a DialKit re-render every second while the pointer
+   moved, ~300 ms each in the dev build (above). Now none while nothing
+   changes state (0 long frames in 4 s of pointer moving, from 2–3).
+4. **The grid drawn under the detail view.** The grid there is `opacity: 0`
+   (`.grid-stage--hidden`), not `visibility: hidden`, and the stage only
+   checked visibility: Main was advanced and drawn every frame behind the
+   hero (and card 02's shared draw too). The stage now checks opacity; the
+   grid's instance advances 0 frames in the detail view.
+
+And one that is not this cover's, measured on `main` too: the detail view's
+ARRIVAL. The paper builds every card's textures as the view mounts, during
+the morph: ~1 s of `createImageBitmap` on the main thread (from an `<img>`,
+Chrome crops and resizes there) — now from the file's blob, off the main
+thread (docs/detail-paper.md, Textures) — and the paper's WebGL context
+(~0.2 s) and first uploads. What remains is 120–480 ms frames for ~1.5 s after
+the click in a production build, on every card (card 02: 150–350 ms); `main`
+had 0.8–2.0 s frames there in the dev build. [Not done](#not-done) 9.
+
+**The cover is hover-only, by design.** The headset's colour steps on
+pointer-ENTER: in the file, the listener "Headset.Pointer.Enter" fires
+Noseyhead's `Click` trigger, which steps the Colors layer blue → red → yellow
+→ blue (Main Bounce's bumps fire it too). There is no press listener, and no
+presses are sent: only moves and exits, from the tiles and from the hero.
+
+**A click on the hero opens the project**, `#view-04`, as on every portfolio
+card; the bar's "Open project" does the same. (It went to Rive for a round;
+the cover has nothing to click.)
 
 ### The artboard swap
 
 The grid shows Main; the hero shows Main Bounce, a FRESH instance each time the
-hero is entered (a hero player not drawn for 400 ms is dropped), so the bounce
-starts from the layout the grid shows. Both artboards place the characters
+hero is entered (a hero player not drawn for 30 frames of cover work and
+400 ms is dropped — frames, because one long frame is not leaving; see "The
+hero, the second time"), so the bounce starts from the layout the grid shows. Both artboards place the characters
 alike at their first frame, so the swap is the bounce starting and nothing
 else — at rest. Where the grid's instance has moved on (a character looking at
 the pointer, the propeller off flying), the hero starts from rest.
@@ -724,8 +769,8 @@ fresh instances, and walk it a frame at a time: the same walk is the same run
 | --- | --- | --- |
 | `rbudgets` | all card-04 work per frame, pointer moving (Frame time above) | p95 0.8–0.9 (grid), 1.1–1.3 (hero) ≤ 2.0 |
 | `rswap` | morph (Main) → DOM hero (Main Bounce) at landing; DOM hero → paper; `riveSwapAt` start | 0.51–0.54% ≤ 2% (control 16%); 0.00%; 0.51% |
-| `rpointer` | the REAL path: the clock never pinned, the pointer moving from the first frame, mouse events dispatched through the browser at the focused tile's, the overlay CTA's and the hero's on-screen positions (the hero opened by clicking the tile) | loaded 1.38–1.50 s after navigation, the idle wait 1.00–1.02 s ≤ 1.1; the view model's `ptrX/ptrY` exactly the on-screen point through the crop — tile (129.5, 650) / (870.5, 650), CTA (499.2, 650), hero (120, 650) / (880, 650); tracking changes left vs right; tile pixels 1.55% vs its idle 0.31% |
-| `rclick` | onto the headset's cup and press, vs no pointer: its colour | blue → red, 10.8–11.0% of the region; a press alone 0.00% |
+| `rpointer` | the REAL path: the clock never pinned, the pointer moving from the first frame, mouse events dispatched through the browser at the focused tile's, the overlay CTA's and the hero's on-screen positions — the hero reached by clicking the tile (the morph) AND by a direct load of `#item-04`; on both, the hero ALIVE: advancing, uploaded to the plane, bouncing, the swap seen (the morph), and one instance through three 450 ms frames | loaded 0.77–0.88 s after navigation, the idle wait 0.39 s ≤ 1.1; the direct-load hero live 0.64–1.11 s after navigation; ~80–88 frames and as many uploads in ~2 s, the headset bounced ~290–300 units, #1 → #1; the view model's `ptrX/ptrY` exactly the on-screen point through the crop — tile (129.5, 650) / (870.5, 650), CTA (499.2, 650), hero (120, 650) / (880, 650); tracking changes left vs right; tile pixels 1.55% vs its idle 0.31% |
+| `rclick` | onto the headset's cup (a hover) vs no pointer: its colour; a click on the hero | blue → red, 10.8–11.0% of the region; the click opens `#view-04` |
 | `rreduced` | reduced motion: tiles and hero on the still, runtime never loaded, 1 s | 0 canvases, not loaded, 0 bytes changed |
 | `rsky` | Main's empty ground, NOON vs NIGHT | 190.1–190.2 vs 85.8–86.1: 54.7–54.9% > 20% |
 | `rground` | the hero's transparent ground, paper effects on, vs the sky with the cover hidden | 88% of the hero is ground; mean 0.11–0.13% (floor 0.09–0.10%); control `solid` 70% |
@@ -816,7 +861,14 @@ paper's effects on and the sky there.
    state across would mean one instance for both, and they are different
    artboards.
 7. **The headset's colour is on pointer-enter** in the file, not on a press
-   ([The pointer](#the-pointer)). A file change if a click should do it.
+   ([The pointer](#the-pointer)) — the cover is hover-only by design, and a
+   click on the hero opens the project.
 8. **The Rive runtime's image-mesh context is withheld** for card 04's file,
    which draws none. A file that deforms or shows images needs that lifted
    ([Rendering](#rendering-two-players-no-webgl)).
+9. **The detail view's arrival is janky, on every card** — 120–480 ms frames for
+   ~1.5 s after the click in a production build (the paper's WebGL context,
+   shader compiles and texture uploads as it mounts; unattributed main-thread
+   time, not script). Pre-existing: `main` is as bad or worse. Building the
+   paper's textures and context after the morph has landed, or ahead of it,
+   is the place to look.

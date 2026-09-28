@@ -45,7 +45,7 @@ import {
 import type { CardRect, Tween } from './detailPaper/paperMath';
 import { CoverRenderer, coverCropOf } from '../covers/coverRenderer';
 import { riveCover, shaderCover } from '../covers/covers';
-import { riveCost, rivePlayer } from '../covers/rive/riveCover';
+import { riveCost, riveFrame, rivePlane, rivePlayer } from '../covers/rive/riveCover';
 import type { RivePlayer } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
 import { coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
@@ -205,11 +205,19 @@ async function decode(url: string): Promise<HTMLImageElement> {
 
 /** The face at exactly `w × h` device pixels, cropped as `object-fit: cover`.
  *  `premultiply` for a live cover's still, which is not opaque: the plane
- *  samples it as it samples the live cover (premultiplied). */
+ *  samples it as it samples the live cover (premultiplied).
+ *
+ *  From the file's BLOB, not the decoded <img>: from an image element Chrome
+ *  crops and resizes on the main thread, and the eight-odd faces the layer
+ *  builds as the detail view mounts — during the grid→detail morph — were
+ *  ~1 s of it (createImageBitmap, 981 ms in one real-Chrome profile), a run
+ *  of 60–500 ms frames over the morph and the landing, on every card. From a
+ *  blob it decodes and resizes off the main thread. The <img> only gives the
+ *  natural size (its decode is off the main thread too). */
 async function resized(url: string, w: number, h: number, premultiply = false): Promise<ImageBitmap> {
-  const img = await decode(url);
+  const [img, blob] = await Promise.all([decode(url), fetch(url).then((r) => r.blob())]);
   const c = coverCrop(img.naturalWidth, img.naturalHeight, w, h);
-  return createImageBitmap(img, c.sx, c.sy, c.sw, c.sh, {
+  return createImageBitmap(blob, c.sx, c.sy, c.sw, c.sh, {
     resizeWidth: w,
     resizeHeight: h,
     resizeQuality: 'high',
@@ -682,6 +690,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   function render(force: boolean) {
     const f = last;
     if (!f) return;
+    riveFrame(); // a frame of cover work, for the Rive hero's "left" test
     const now = performance.now();
     const still = reduced.matches;
     const zero = !!override.zero;
@@ -733,18 +742,21 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       // motion it stays the still.
       const rive = item.cover?.kind === 'rive' ? riveCover(item.cover.id) : undefined;
       const riveDials = rive ? (coverValues(rive.id) as { rive?: { riveMaxDpr?: number; coverPaperShade?: number } }).rive : undefined;
-      if (item.cover && big && !still) {
-        if (rive) {
+      if (rive && big) {
+        // The readout's "paper plane": live Main Bounce, or the still.
+        let live: Texture | null = null;
+        if (!still) {
           const cap = Math.min(dpr, Math.max(0.5, riveDials?.riveMaxDpr ?? 2)) / dpr;
-          const live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap));
+          live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap));
           if (live) tex = live;
-        } else {
-          const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
-          const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap));
-          if (live) {
-            tex = live;
-            liveThisFrame = true;
-          }
+        }
+        rivePlane(rive.id, live ? 'live' : tex ? 'still' : 'none', riveUploads);
+      } else if (item.cover && big && !still) {
+        const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
+        const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap));
+        if (live) {
+          tex = live;
+          liveThisFrame = true;
         }
       }
       u.uMap.value = tex;

@@ -26,7 +26,7 @@ import type { Crop, RiveCoverRef } from '../types';
  *         (a stage presenter) and the paper plane (DetailPaperLayer, a
  *         CanvasTexture of this player's canvas) both show THIS instance, so
  *         the DOM → paper hand-off is one picture. A fresh instance each time
- *         the hero is entered (see `HERO_GRACE_MS`), so the bounce starts from
+ *         the hero is entered (see `HERO_GRACE_FRAMES`), so the bounce starts from
  *         the layout the grid shows.
  *
  * The runtime is @rive-app/canvas (Canvas 2D): it adds no WebGL context. The
@@ -52,15 +52,41 @@ export type RivePointerKind = 'move' | 'down' | 'up' | 'exit';
 const MAX_STEP_S = 0.1;
 
 /**
- * A hero player not drawn for this long is dropped, and the next hero is a
- * fresh instance of the artboard — the bounce starts again. Long enough that
- * the hand-offs between the hero's surfaces (morph card → DOM face → paper,
- * and back) never drop it: each is the same frame or the next.
+ * A hero player not drawn for this many FRAMES of cover work — and this long —
+ * has been left (the detail view closed, the card slid away): it is dropped,
+ * and the next hero is a fresh instance, so the bounce starts again. The
+ * hand-offs between the hero's surfaces (morph card → DOM face → paper, and
+ * back) are the same frame or the next.
+ *
+ * Frames, not only time: it was 400 ms of wall time, and ONE long frame — the
+ * detail view's arrival gives 150–500 ms frames on a loaded machine, more in a
+ * dev build — looked like leaving. Five 450 ms frames made five fresh heroes:
+ * the bounce kept restarting from rest and the tracking kept dropping, which
+ * is a hero that looks dead. Frames are counted by the cover work itself
+ * (`riveFrame`: the stage's loop, the paper's), so a stall counts once.
  */
+const HERO_GRACE_FRAMES = 30;
 const HERO_GRACE_MS = 400;
+let frameSerial = 0;
+let frameSerialKey = -1;
+/** Count this frame (once per frame, whoever calls). */
+export function riveFrame(): number {
+  const t = document.timeline.currentTime;
+  const k = typeof t === 'number' ? t : performance.now();
+  if (k !== frameSerialKey) {
+    frameSerialKey = k;
+    frameSerial++;
+  }
+  return frameSerial;
+}
 
 /**
  * THE ONE-OFF WORK PREFERS A QUIET MOMENT, AND WAITS AT MOST A SECOND FOR ONE.
+ * (A quiet moment: no press, key, wheel, touch or drag for `QUIET_MS`, and no
+ * animation running. A HOVER is not input here: slides and morphs start from
+ * presses, keys and wheels, never from the pointer merely moving, and counting
+ * it made every arrival wait the whole deadline — a direct load of #item-04
+ * showed the still for 2.1–2.7 s while nothing at all was animating.)
  * Importing card 04's file is one ~60–100 ms main-thread task (Main's scripts
  * and nested artboards; the Editor export without them imported in 8), making
  * the grid's instance 10 ms and a hero's 3–4 (docs/covers.md, "Frame time").
@@ -77,12 +103,15 @@ const HERO_GRACE_MS = 400;
  * The cover is live within ~1.1 s of its bytes arriving whatever the pointer
  * is doing; a slide that happens to be running then pays one long frame.
  */
-const QUIET_MS = 1200;
+const QUIET_MS = 800;
 const QUIET_MAX_MS = 1000;
 let lastInput = -Infinity;
-for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const) {
-  window.addEventListener(ev, () => (lastInput = performance.now()), { capture: true, passive: true });
+const noteInput = () => (lastInput = performance.now());
+for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const) {
+  window.addEventListener(ev, noteInput, { capture: true, passive: true });
 }
+// A drag is input (the grid pans under it); a hover is not.
+window.addEventListener('pointermove', (e) => e.buttons !== 0 && noteInput(), { capture: true, passive: true });
 
 function whenQuiet(fn: () => void) {
   let done = false;
@@ -135,6 +164,17 @@ export interface RivePlayerStatus {
   frames: number;
   lastDt: number;
   instances: number;
+  /** When this instance went into use (performance.now). */
+  since: number;
+}
+
+export interface RivePointerStatus {
+  role: RivePlayerRole;
+  kind: RivePointerKind;
+  x: number;
+  y: number;
+  t: number;
+  n: number;
 }
 
 export interface RiveStatus {
@@ -143,7 +183,17 @@ export interface RiveStatus {
   /** ms from ensureRive to each state. */
   at: Partial<Record<RiveFileState, number>>;
   players: Partial<Record<RivePlayerRole, RivePlayerStatus>>;
-  pointer: { role: RivePlayerRole; kind: RivePointerKind; x: number; y: number; t: number; n: number } | null;
+  /** The last pointer event of either instance, and of each. */
+  pointer: RivePointerStatus | null;
+  pointers: Partial<Record<RivePlayerRole, RivePointerStatus>>;
+  /** Which instances are on screen now (the stage's presenters, the paper's
+   *  plane), and the last change — the artboard swap is one. */
+  showing: string;
+  swaps: { from: string; to: string; t: number }[];
+  /** The stage's half of `showing`: its visible presenters' roles. */
+  dom: { mask: number; roles: string; t: number } | null;
+  /** The paper's hero plane for this cover: what it samples, and its uploads. */
+  plane: { shows: 'live' | 'still' | 'none'; uploads: number; t: number } | null;
   reducedMotion: boolean;
 }
 
@@ -159,7 +209,20 @@ const statuses = new Map<string, RiveStatus & { t0: number }>();
 export function riveStatus(id: string): RiveStatus & { t0: number } {
   let st = statuses.get(id);
   if (!st) {
-    st = { file: 'not requested', error: '', at: {}, players: {}, pointer: null, reducedMotion: reducedQuery.matches, t0: performance.now() };
+    st = {
+      file: 'not requested',
+      error: '',
+      at: {},
+      players: {},
+      pointer: null,
+      pointers: {},
+      showing: '',
+      swaps: [],
+      dom: null,
+      plane: null,
+      reducedMotion: reducedQuery.matches,
+      t0: performance.now(),
+    };
     statuses.set(id, st);
   }
   st.reducedMotion = reducedQuery.matches;
@@ -298,6 +361,7 @@ export function ensureRive(id: string) {
       if (grid) players.set(`${id}/grid`, grid);
       fileState(id, 'loaded');
       if (grid) {
+        grid.status.since = performance.now();
         riveStatus(id).players.grid = grid.status;
         log(id, `grid instance: artboard "${grid.status.artboard}", state machine "${grid.status.stateMachine}", view model ${grid.status.viewModel ?? 'none'}`);
         const pending = pendingPointer.get(`${id}/grid`);
@@ -365,6 +429,8 @@ export class RivePlayer {
   /** Main-thread ms of this player's last advance + draw. */
   lastMs = 0;
   lastUsed = performance.now();
+  /** The `riveFrame` it was last drawn in. */
+  lastFrame = 0;
   private readonly rt: RiveCanvas;
   private readonly artboard: Artboard;
   private readonly sm: StateMachineInstance;
@@ -411,6 +477,7 @@ export class RivePlayer {
       frames: 0,
       lastDt: 0,
       instances: (riveStatus(id).players[role]?.instances ?? 0) + 1,
+      since: 0,
     };
   }
 
@@ -428,6 +495,7 @@ export class RivePlayer {
   draw(t: number, pxW: number, pxH: number): number {
     if (this.disposed) return 0;
     this.lastUsed = performance.now();
+    this.lastFrame = riveFrame();
     const t0 = performance.now();
     let advanced = false;
     if (t > this.lastT) {
@@ -538,13 +606,64 @@ function notePointer(id: string, role: RivePlayerRole, kind: RivePointerKind, x:
   const st = riveStatus(id);
   const now = performance.now();
   const first = !st.pointer || st.pointer.role !== role;
-  st.pointer = { role, kind, x: Math.round(x), y: Math.round(y), t: now, n: (st.pointer?.n ?? 0) + 1 };
+  st.pointer = { role, kind, x: Math.round(x), y: Math.round(y), t: now, n: (st.pointers[role]?.n ?? 0) + 1 };
+  st.pointers[role] = st.pointer;
   pointerLogN++;
   if (first || kind !== 'move' || now - pointerLogAt > 2000) {
     log(id, `${role} pointer ${kind} at (${st.pointer.x}, ${st.pointer.y}) in ${role === 'grid' ? 'Main' : 'Main Bounce'}'s space — ${pointerLogN} event(s) since the last line`);
     pointerLogAt = now;
     pointerLogN = 0;
   }
+}
+
+/**
+ * Which of a cover's instances are on screen: the stage reports its visible
+ * presenters' roles every frame it runs, the paper its hero plane; a change is
+ * logged — grid → hero is the artboard swap.
+ */
+const DOM_ROLES = ['grid tiles (Main)', 'morph card (Main)', 'morph card (Main Bounce)', 'hero face, DOM (Main Bounce)'];
+export function riveDomRoles(id: string, mask: number) {
+  const st = riveStatus(id);
+  if (st.dom?.mask !== mask) {
+    const roles: string[] = [];
+    for (let i = 0; i < DOM_ROLES.length; i++) if (mask & (1 << i)) roles.push(DOM_ROLES[i]);
+    st.dom = { mask, roles: roles.join(' + '), t: 0 };
+  }
+  st.dom!.t = performance.now();
+  recomposeShowing(id);
+}
+
+const PLANE_TEXT = { live: 'paper plane (Main Bounce)', still: 'paper plane (the still)', none: '' } as const;
+/** Composes `showing` from the stage's half and the paper's; strings are
+ *  only built when a half changes (this runs every frame). */
+const composed = new Map<string, { dom: string; plane: string }>();
+function recomposeShowing(id: string) {
+  const st = riveStatus(id);
+  const now = performance.now();
+  const dom = st.dom && now - st.dom.t < 250 ? st.dom.roles : '';
+  const plane = st.plane && now - st.plane.t < 250 ? PLANE_TEXT[st.plane.shows] : '';
+  let last = composed.get(id);
+  if (!last) composed.set(id, (last = { dom: '', plane: '' }));
+  if (last.dom === dom && last.plane === plane && st.swaps.length) return;
+  last.dom = dom;
+  last.plane = plane;
+  const showing = dom && plane ? `${dom} + ${plane}` : dom || plane;
+  if (st.showing === showing) return;
+  const from = st.showing;
+  st.showing = showing;
+  st.swaps.push({ from, to: showing, t: now });
+  if (st.swaps.length > 16) st.swaps.shift();
+  log(id, `showing ${from || 'nothing'} → ${showing || 'nothing'}`);
+}
+
+/** The paper reports what its hero plane samples for a Rive cover. */
+export function rivePlane(id: string, shows: 'live' | 'still' | 'none', uploads: number) {
+  const st = riveStatus(id);
+  if (!st.plane) st.plane = { shows, uploads, t: 0 };
+  st.plane.shows = shows;
+  st.plane.uploads = uploads;
+  st.plane.t = performance.now();
+  recomposeShowing(id);
 }
 
 /**
@@ -586,14 +705,14 @@ function scheduleSpare(id: string) {
 
 /**
  * The player for a cover's role, or null until its file has loaded. The hero
- * is a fresh instance when it has not been drawn for `HERO_GRACE_MS`: every
+ * is a fresh instance when it has not been drawn for `HERO_GRACE_FRAMES`: every
  * entry into the detail view (or slide into the hero slot) starts the bounce.
  */
 export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null {
   ensureRive(id);
   const key = `${id}/${role}`;
   let p = players.get(key);
-  if (p && role === 'hero' && performance.now() - p.lastUsed > HERO_GRACE_MS) {
+  if (p && role === 'hero' && riveFrame() - p.lastFrame > HERO_GRACE_FRAMES && performance.now() - p.lastUsed > HERO_GRACE_MS) {
     p.dispose();
     players.delete(key);
     p = undefined;
@@ -603,6 +722,7 @@ export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null 
     if (spare) {
       spares.delete(id);
       spare.lastUsed = performance.now();
+      spare.lastFrame = riveFrame();
       p = spare;
       scheduleSpare(id);
     } else {
@@ -610,6 +730,7 @@ export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null 
     }
     if (!p) return null;
     players.set(key, p);
+    p.status.since = performance.now();
     riveStatus(id).players[role] = p.status;
     log(id, `${role} instance: artboard "${p.status.artboard}", state machine "${p.status.stateMachine}", view model ${p.status.viewModel ?? 'none'} (#${p.status.instances})`);
     const pending = pendingPointer.get(key);
