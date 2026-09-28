@@ -85,6 +85,11 @@
  *                 the pointer at 12% and at 88% across;
  *               - the tile's pixels move with the pointer: left vs right more
  *                 than 3× the tile's own idle animation over the same time.
+ *             The hero is checked again 2 s and 5 s after landing (both
+ *             routes), the pointer sweeping it: still advancing, still
+ *             uploaded to the plane, still receiving the pointer, a character
+ *             tracking it within each window, the same instance, the hero's
+ *             pixels still moving (> 0.5% past 32 levels).
  *             It fails on each way this path broke or could: the old 10 s idle
  *             deadline ("never loaded"), events kept from the cover (ptrX/ptrY
  *             stay 0), and the tile-only listener (an exit over the CTA).
@@ -959,8 +964,11 @@ async function checkRivePointer(browser) {
       const dMove = diff(imgA, imgB);
       const dStill = diff(imgB, imgB2);
       const pixels = role === 'grid' ? dMove > 3 * dStill && dMove > 0.002 : true;
+      // The hero's characters bounce: at a given moment neither sample point
+      // may be near one. Its tracking is held in heroLater, over a sweep.
+      const trackOk = role === 'grid' ? tA !== tB : true;
       check(
-        onCard && A.st?.role === role && Bp.st?.role === role && near(A.vm, wa) && near(Bp.vm, wb) && tA !== tB && pixels,
+        onCard && A.st?.role === role && Bp.st?.role === role && near(A.vm, wa) && near(Bp.vm, wb) && trackOk && pixels,
         `${tag} ${label}`,
         `events on the ${role === 'grid' ? 'card' : 'panel'}: ${onCard}; the ${role} instance got them (${Bp.st?.n} so far) at (${A.vm.ptrX.toFixed(1)}, ${A.vm.ptrY.toFixed(1)}) / (${Bp.vm.ptrX.toFixed(1)}, ${Bp.vm.ptrY.toFixed(1)}) — wanted (${wa.x.toFixed(1)}, ${wa.y.toFixed(1)}) / (${wb.x.toFixed(1)}, ${wb.y.toFixed(1)}); tracking left [${tA}] vs right [${tB}]` +
           (role === 'grid' ? `; pixels left vs right ${pct(dMove)} vs the tile's idle ${pct(dStill)}` : ''),
@@ -994,10 +1002,9 @@ async function checkRivePointer(browser) {
     // Into the detail view the way a person goes: a click on the tile.
     await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.62);
     await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
-    await page.waitForTimeout(600);
+    const landed = Date.now();
     // What was on screen from the click to the paper, before anything else moves it on.
     const landing = await page.evaluate(() => window.__covers.rive.status('nosey').swaps.map((w) => [w.from, w.to]));
-    await judge('hero', await heroRect(page), 'the hero after the morph, on the paper');
     // Alive, not just receiving: advancing, bouncing, uploaded to the plane,
     // the swap seen, and one instance through three 450 ms frames (a loaded
     // machine's arrival) — wall-time grace made each such frame a fresh hero.
@@ -1036,6 +1043,72 @@ async function checkRivePointer(browser) {
         `${z.f - a.f} frames advanced and ${z.up - a.up} uploads to the plane in ~2 s, the plane shows ${z.shows}; the headset Nosey bounced ${moved.toFixed(0)} units; hero instance #${a.inst} → #${z.inst} through three 450 ms frames${morph ? `; the swap: ${swapped ? swaps.filter(([fr, to]) => /morph card \(Main\)/.test(fr) && /Main Bounce/.test(to)).map(([fr, to]) => `${fr} → ${to}`)[0] : `not seen in ${JSON.stringify(swaps)}`}` : ''}`,
       );
     };
+    // Still alive LATER — 2 s and 5 s after landing, the pointer moving over it
+    // the whole time: a hero that lived through the hand-off and then froze
+    // (a plane no longer uploaded, an instance no longer advanced, the pointer
+    // no longer routed) fails here.
+    const heroLater = async (label, since) => {
+      const hr = await heroRect(page);
+      const read = () =>
+        page.evaluate(() => {
+          const st = window.__covers.rive.status('nosey');
+          return {
+            f: st.players.hero?.frames ?? 0,
+            inst: st.players.hero?.instances ?? 0,
+            up: st.plane?.uploads ?? 0,
+            shows: st.plane?.shows ?? 'none',
+            ptr: st.pointers.hero?.n ?? 0,
+            paper: window.__paper.state(),
+            raf: window.__rafN ?? 0,
+          };
+        });
+      // Each window at least 800 ms, whenever the check starts.
+      let windowFrom = Date.now();
+      let tracked = 0;
+      const until = async (ms) => {
+        tracked = 0;
+        for (let i = 0; Date.now() - since < ms || Date.now() - windowFrom < 800; i++) {
+          if (i % 8 === 0) {
+            tracked += await page.evaluate(() => {
+              const vm = window.__covers.rive.viewModel('nosey', 'hero') ?? {};
+              return Object.entries(vm).some(([k, v]) => (/isTracking/.test(k) && v === true) || (/lookX/.test(k) && Math.abs(v) > 0.05)) ? 1 : 0;
+            });
+          }
+          await page.mouse.move(hr.x + hr.w * (0.5 + 0.35 * Math.sin(i / 5)), hr.y + hr.h * (0.4 + 0.2 * Math.cos(i / 7)));
+          await page.waitForTimeout(30);
+        }
+      };
+      const shot = () => grab(page, hr, dpr, 200, 260);
+      await page.evaluate(() => {
+        if (window.__rafN !== undefined) return;
+        window.__rafN = 0;
+        const f = () => {
+          window.__rafN++;
+          requestAnimationFrame(f);
+        };
+        requestAnimationFrame(f);
+      });
+      const samples = [];
+      let prev = await read();
+      let prevImg = await shot();
+      for (const at of [2000, 5000]) {
+        await until(at);
+        const cur = await read();
+        const img = await shot();
+        const moved = diff(prevImg, img);
+        samples.push({ tracked, ms: Date.now() - windowFrom, raf: cur.raf - prev.raf, at, frames: cur.f - prev.f, uploads: cur.up - prev.up, ptr: cur.ptr - prev.ptr, inst: cur.inst, shows: cur.shows, paper: cur.paper, moved, instSame: cur.inst === prev.inst });
+        prev = cur;
+        prevImg = img;
+        windowFrom = Date.now();
+      }
+      check(
+        samples.every((x) => x.frames > 30 && x.uploads > 30 && x.ptr > 5 && x.tracked > 0 && x.shows === 'live' && x.paper === 'on' && x.instSame && x.moved > 0.005),
+        `${tag} ${label}: still alive at 2 s and 5 s`,
+        samples.map((x) => `${x.at / 1000} s (a ${x.ms} ms window, ${x.raf} rAF): +${x.frames} frames, +${x.uploads} uploads, +${x.ptr} pointer events, a character tracking it in ${x.tracked} of its checks, plane ${x.shows}, instance #${x.inst}${x.instSame ? '' : ' (NEW)'}, ${pct(x.moved)} of the hero's pixels changed`).join('; '),
+      );
+    };
+    await heroLater('the hero after the morph', landed);
+    await judge('hero', await heroRect(page), 'the hero after the morph, on the paper');
     await heroAlive('the hero after the morph', true);
 
     // …and a direct load of #item-04, the pointer moving from the first frame.
@@ -1049,9 +1122,11 @@ async function checkRivePointer(browser) {
       live = await page.evaluate(() => window.__covers?.rive.status('nosey').plane?.shows === 'live');
     }
     const liveMs = Date.now() - d0;
+    const liveAt = Date.now();
     check(live && liveMs <= 4000, `${tag} direct load: the hero goes live`, live ? `the plane shows Main Bounce ${liveMs} ms after navigation, the pointer moving (≤ 4000)` : 'never live');
     if (live) {
       await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 10000 });
+      await heroLater('the hero on a direct load', liveAt);
       await judge('hero', await heroRect(page), 'the hero on a direct load');
       await heroAlive('the hero on a direct load', false);
     }
