@@ -950,6 +950,6 @@ paper's effects on and the sky there.
    and warm, and a second direct arrival hold one vsync (p95 16.7–16.8 ms, no
    frame dropped in a production build). A cold direct load of `#item-NN` is
    the page's load and drops 3–6 frames of 67–133 ms whether the paper is
-   there or not: the compositor and GPU with the page's first frames, and
+   there or not (`verify:detail`'s `arrival` prints those rows, informational): the compositor and GPU with the page's first frames, and
    card 04's runtime and import, which load for the grid's tiles hidden under
    the detail view.
