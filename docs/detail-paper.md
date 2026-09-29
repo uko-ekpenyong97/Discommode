@@ -19,7 +19,8 @@ else moves them.
 > **On the numbers in this file.** Architecture and dials are as shipped.
 > Every *measurement* comes from `npm run verify:detail` on 2026-09-21 (46/46,
 > re-run after `heroRipple`; 62/62 with the cover-life checks): headless Chrome, at 1728×996 and 1440×900, 1× and
-> 2×, on an Apple M1 Max.
+> 2×, on an Apple M1 Max. [The arrival](#the-arrival)'s numbers are from 2026-09-28,
+> two runs each of a production build and a dev one.
 
 | | rest, paper on | rest, paper off |
 | --- | --- | --- |
@@ -33,7 +34,9 @@ side, held at full amplitude, with a 4× crop of the top corner under each.
 
 | File | What it is |
 | --- | --- |
-| `src/components/DetailPaperLayer.tsx` | The canvas: renderer, planes, textures, the hand-off state machine, hover / velocity / fold drivers, the dev probe `window.__paper`. |
+| `src/components/DetailPaperLayer.tsx` | The engine: planes, the hand-off state machine, hover / velocity / fold drivers, the dev probe `window.__paper`. It renders an empty host; the canvas is paperGL's. |
+| `src/components/detailPaper/paperGL.ts` | The GL, made once for the page ([the arrival](#the-arrival)): the renderer and its canvas, the programs, the crease map, the live covers' renderers, every face texture and the upload pump, and the warm-up that makes them. |
+| `src/components/detailPaper/span.ts` | `span(name, fn)`: a `paper:<name>` User Timing measure in a dev build, nothing in production. `verify:detail`'s `arrival` prints them against its long frames. |
 | `src/components/detailPaper/paperMaterial.ts` | The card material (vertex deformation, crease fragment stage) and the shadow material. |
 | `src/components/detailPaper/paperMath.ts` | Pure helpers: tweens, fold targets, strip velocity, pointer → UV, sprite rects, the cover crop. Tested in `paperMath.test.ts`. |
 | `src/components/detailPaper/paperDials.ts` | Every dial, as a module store (`paper`, `setPaper`, `subscribePaper`). |
@@ -48,8 +51,10 @@ side, held at full amplitude, with a 4× crop of the top corner under each.
 
 `DetailView.tsx` changes in three places. At the end of every tick it hands the
 layer each panel's rect, scale, opacity, z-order and slot, taken from the same
-numbers that just laid the strip out. It mounts the canvas as the view's first
-child. And its Read issue / Open project actions go through `afterHandOut`.
+numbers that just laid the strip out. It mounts the layer's host, which the
+shared canvas is moved into, as the view's first child (and tells it the
+active item, whose faces upload first). And its Read issue / Open project
+actions go through `afterHandOut`.
 `useDetail.close` goes through it too, which covers the pill, Escape, the
 backdrop and the swipe.
 
@@ -85,11 +90,11 @@ at half alpha would let the sky through between them. The state is written to
 
 | | when | what happens |
 | --- | --- | --- |
-| `dom → in` | the view is `active`, nothing above it wants the cards, and every texture for this viewport has decoded | the canvas paints, *then* becomes visible, in the same task; the DOM faces fade out; the DOM shadows go and the canvas's arrive on that frame |
+| `dom → in` | the view is `active`, nothing above it wants the cards, the GL is warm ([the arrival](#the-arrival)) and every texture for this viewport is uploaded | the canvas paints, *then* becomes visible, in the same task; the DOM faces fade out; the DOM shadows go and the canvas's arrive on that frame |
 | `in → on` | 120ms later | the DOM faces go `visibility: hidden`; the paper starts to settle in |
 | `on → out` | a leave: close, Read issue, Open project | the DOM faces fade back in; the DOM shadows come back and the canvas stops drawing its own on that frame; the paper goes flat |
 | `out → dom` | 120ms later | the canvas hides, *then* the leave runs |
-| any `→ dom` | `live` drops without a leave having asked (browser Back, a hash edit, the reader mounting by URL), or the viewport's size or ratio changes | instantly; for a size change the textures are rebuilt and the hand-in runs again |
+| any `→ dom` | `live` drops without a leave having asked (browser Back, a hash edit, the reader mounting by URL), or the viewport's size or ratio changes (or `detailSideScale`) | instantly; for a size change the new size's faces are asked for and the hand-in runs again once they are in |
 
 **Presence.** Every effect is multiplied by one `presence`, which is 0 at both
 hand-offs. The canvas takes the cards over as an exact copy of the DOM (the
@@ -119,6 +124,117 @@ closing the reader the canvas takes the cards back.
 **`live`** is `phase === 'active' && (!suspended || authoring)`, where
 `authoring` is the dev `#item-NN?intro` dock. That dock suspends the view on
 purpose, and it is where the dials live.
+
+## The arrival
+
+Arriving in the detail view stuttered on every card: 120–480 ms frames for
+~1.5 s in real Chrome, dev and production builds alike. The paper made its GL
+as it mounted, and it mounts with the grid→detail morph, on the click. Now the
+GL is made ONCE for the page, before the click, and nothing is destroyed on
+close (`paperGL.ts`).
+
+**Where the long frames came from** (a Chrome trace and Long Animation Frames
+of `#item-01` from its tile, 1728×996 @2×, 2026-09-28, before the change):
+
+| | cost | where |
+| --- | --- | --- |
+| the WebGL context and its drawing buffer | 170–370 ms of the click's own task | `new WebGLRenderer` on a 300×150 canvas, then `setPixelRatio` and `setSize`: four drawing buffers (300×150 → 600×300 → 3456×300 → 3456×1992, 4× multisampled). In a dev build StrictMode's second mount made a second renderer on the same canvas, whose `setPixelRatio` doubled the canvas's already-doubled width: 6912×1992, 6912×3984, then back. Each was a shared image the GPU thread made while it was busy: 50–280 ms in `GLContextEGL::MakeCurrent`, and the main thread waited on it |
+| every face uploaded in one task | 20–25 ms; 276–608 ms blocked in `GetGLError` behind the buffers above | nine `initTexture`s in the microtask that finished the build |
+| the faces decoded twice, during the morph | 100 ms frames with no script at all | `img.decode()` of every 2000×2600 file for its natural size, then the resize from the blob — on the same workers the morph's own images decode on |
+| the programs | ~10 ms at the hand-in | the paper's and the shadow's, compiled and linked in the first `render`; card 02's cover renderer made and compiled (sync) in its first hero draw |
+| contexts | +1 on every arrival (+2 in dev) | `renderer.dispose()` on close does not lose the context: each arrival made a new one |
+
+**The model now:**
+
+1. **The first hover of a grid card** (or the first press) starts the
+   warm-up, one idle callback a step: the context on a 1×1 canvas (5–8 ms),
+   its drawing buffer sized once to the viewport (~6 ms), the paper's and the
+   shadow's programs compiled WITHOUT blocking (`compileAsync`,
+   KHR_parallel_shader_compile) and then drawn once, invisibly (the driver
+   builds its pipeline on the first draw), the crease map, every face for this
+   viewport — decoded off the main thread, the natural size read without a
+   decode, uploaded one at a time, a few ms a frame — and card 02's renderer,
+   compiled the same way and drawn once into an 8×10 target. Not at app start
+   and not on a key: a grid that is only looked at, or steered with the
+   arrows, never makes the context (verify:cover's `contexts` holds the grid
+   at 2).
+2. **The click.** The detail view mounts; the layer moves the shared canvas
+   into its host and asks for its faces, which are in. A click before the
+   warm-up finished leaves the rest to the morph, which is 450 ms of runway.
+3. **The landing.** One frame before the hand-in, the hero's live cover gets
+   its targets at the hero's size (`primeHeroCover`); then the hand-in's
+   first render, ~1 ms.
+4. **Close.** The canvas leaves the view, hidden; the context, the programs
+   (two never-drawn materials keep them — three frees a program with its last
+   material), the crease map, the covers' renderers and the faces stay. A
+   second arrival uploads nothing. A new viewport size or `detailSideScale`
+   asks for the new size's faces; the old set is dropped once the new one is
+   in.
+5. **A direct load or a keyboard open** warms up as the view mounts, under the
+   fade.
+
+Card 02's text SDF (`riveText.ts`, ~140 ms) and its half-float conversion
+(~20–40 ms) were one task each, on every page load; they run in ≤ 6 ms slices
+now, with the same output.
+
+**Numbers.** `verify:detail`'s `arrival`: the rAF intervals from the tile's
+pointerdown (or the navigation; for a cold direct load, the first contentful
+paint) to the settled hero (hand-in + `SETTLE_MS`), the pointer moving
+throughout, 1728×996 @2×, headless Chrome, M1 Max. A production build
+(`vite preview`), `main` against this change:
+
+| | `main`: worst / p95 | now: worst / p95 | frames dropped, now |
+| --- | --- | --- | --- |
+| tile, cold | 83–117 / 33–50 ms | **16.8 / 16.7–16.8 ms** | 0 |
+| tile, warm | 67–100 / 33–50 ms | **16.7–16.8 / 16.7–16.8 ms** | 0 |
+| direct, warm | 67–83 / 33–67 ms | **16.8 / 16.7–16.8 ms** | 0 |
+| direct, cold | 133–150 / 67 ms | 83–117 / 17–33 ms | 3–6 — **misses**, below |
+| WebGL contexts, detail view | 3 on the first arrival, 4 on the second, … | 3, then 3 | |
+
+A dev build (`?nodials`, below) is the same bar: every tile and warm route
+within budget, the worst frame 16.8–33.4 ms, p95 16.7–16.8 ms; card 04's hero
+stays instance #1 through each.
+
+**Direct, cold, misses, and it is not the paper.** A cold direct load IS the
+page load. After the first paint the page is still loading: 67–133 ms frames
+at 100–300 ms after it, most of them with under 10 ms of script (the
+compositor and GPU busy with the page's first frames and decodes), plus card
+04's Rive runtime and file import (a 38–41 ms idle task) and the SDF's slices.
+With the paper removed from the page altogether, the same load has the same
+frames (83–100 ms at 90–270 ms after the first paint, three runs); with Rive
+blocked as well, still 67–133 ms. The paper's own share of a cold direct load
+is now its uploads (1–4 ms each) and a ~1 ms first render. The window opens at
+the first contentful paint, because before it nothing is on screen; the boot
+frames before it (one of 133–167 ms: the bundle, React's first render, the
+sky's context) are printed and not judged.
+
+**In a dev build, the dock.** Every change of a DialKit readout (card 04's
+COVER status, once a second when it changes) re-renders the dev dock, 30–50 ms
+frames four in a row, and the dock's lazy mount on a load is 260–400 ms. A
+production build has neither, so `arrival` loads the page with `?nodials`
+(App.tsx), which leaves the dock out; a production build ignores it. Deferring
+the readout's writes out of the arrival was tried and dropped: it moved the
+re-render into `life`'s boil window (a 50 ms frame there, 16.8 ms without).
+
+### detailSideScale at 1
+
+At `detailSideScale` 1 card 04's hero was made afresh forever: #2, #3, … for
+as long as the pointer moved over it (on `main`: #1 → #5 in 2.5 s). Two
+causes, both fixed:
+
+- The layer took the hero's face by SCALE: "bigger than halfway to the side
+  scale", `scale > (1 + side) / 2`. At 1 every panel is scale 1, none passed,
+  and the hero plane was a neighbour — the still, and card 04's live hero never
+  drawn. It is by distance now, `dist < 0.5`: the same test below 1.
+- The Rive hero's "has the user left" test (`HERO_GRACE_FRAMES` and
+  `HERO_GRACE_MS` without a draw) ran in `rivePlayer()`, which the pointer
+  path called too: handing a hero nobody drew an event made a fresh one. The
+  pointer goes to the instance on screen now, or waits for the next draw to
+  make one (`rivePointer`).
+
+`verify:detail`'s `sidescale` sweeps 0.3 → 1 → 0.3 at `#item-04` with the
+pointer moving on the hero: at every value the cards are handed back in, the
+plane is live Main Bounce, and the hero is #1.
 
 ## The planes
 
@@ -157,15 +273,20 @@ its `cover-plate.webp` at the hero's size. The plate is used exactly while a
 `.cover-anim__plate` is in the panel, i.e. while the CoverAnimLayer is drawing
 the sprites. A MutationObserver re-renders on the paint where that layer mounts
 or unmounts, so the cover never shows for a frame with its objects missing.
-Everything is uploaded (`initTexture`) at hand-in, never mid-slide.
+Everything is uploaded (`initTexture`) before the hand-in, never mid-slide:
+since 2026-09-28 on the first hover of a grid card, one face at a time, and
+kept for the page's life ([the arrival](#the-arrival)).
 
-GPU cost at 1728×996 @2×: four faces at two sizes plus one plate, about 65 MB.
+GPU cost at 1728×996 @2×: four faces at two sizes plus one plate, about 65 MB,
+resident from the first hover of a card (it was allocated and freed on every
+open and close before).
 
 ### The live cover plane
 
 A card with a live cover (`cover` in content.ts; cards 02 and 04) is the face
 that is not a texture made once. As the HERO its plane samples the render target of
-a `CoverRenderer` held by this layer, on this layer's renderer, drawn every
+a `CoverRenderer` on the paper's renderer (made, compiled and drawn once by
+the warm-up, and kept: [the arrival](#the-arrival)), drawn every
 frame on the shared cover clock at the hero's device size (`coverMaxDpr`
 capped) — a texture cannot cross WebGL contexts, so the cover is drawn where the
 plane is (docs/covers.md). As a neighbour it is its still, like any other face.
@@ -345,12 +466,18 @@ above is read from the same inline px, so it was off by the same amount.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life
+npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale
+
+# the arrival against a production build (it needs no dev hooks):
+npm run build && npx vite preview --port 5231 --strictPort
+npm run verify:detail -- --url http://localhost:5231 --only arrival
 ```
 
-About two minutes. It drives the layer through `window.__paper` (dev only):
+About six minutes (`arrival` is three of them). It drives the layer through `window.__paper` (dev only):
 `state`, `presence`, `rects`, `projected`, `uniforms`, `folds`, `override({ zero })`,
-`freezePresence`, `holdOut`, `handOut`, `set`. Pixel checks hide the sky and the
+`freezePresence`, `holdOut`, `handOut`, `set`, and `contexts` (the paper's, ever: 1) and
+`faces` (what is resident); `sidescale` sets the dial through `window.__config`
+(`get`, `set`: the live config, dev only). Pixel checks hide the sky and the
 dev overlays first. A pixel counts as different past 32 levels, the portfolio
 view's tolerance and for its reason.
 
@@ -483,5 +610,14 @@ are identical (0 levels).
    over a card that is crumpling in. For the ±1 slot this is at most `foldMs` of
    a label hanging over a half-revealed card (see `neighbour-unfold-mid.webp`).
 4. **A third WebGL context.** The sky and the portfolio sheet each have one. This
-   canvas is a third, mounted for as long as the detail view is. (The live
-   covers' stage is one more, for the whole page: docs/covers.md.)
+   canvas is a third, made on the first hover of a grid card and kept for the
+   page's life — one, however many arrivals (it was one per arrival, destroyed
+   on close). With it go ~65 MB of face textures at 1728×996 @2×, resident from
+   that hover. (The live covers' stage is one more, for the whole page:
+   docs/covers.md.)
+5. **A cold direct load still drops frames** — page load, not the paper
+   ([the arrival](#the-arrival)): 67–133 ms frames in the first 300 ms after the
+   first paint, with or without the paper. Where to look: what the compositor
+   and GPU are doing in them (little of it is script), and card 04's Rive
+   runtime and import, which load for the grid's hidden tiles under a detail
+   view that does not show card 04 live.

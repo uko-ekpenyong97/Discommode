@@ -260,6 +260,11 @@
    so it paints under the strip; `pointer-events: none`, so every panel keeps its
    clicks and the hover sprites keep resolving from the panel. Hidden until the
    layer hands in. */
+/* The canvas is the paper's one, for the page's life (paperGL.ts): moved into
+   this host while the view is mounted. The host lays nothing out. */
+.detail__paper-host {
+  display: contents;
+}
 .detail__paper {
   position: absolute;
   inset: 0;

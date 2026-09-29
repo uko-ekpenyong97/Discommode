@@ -157,6 +157,30 @@ export class CoverRenderer {
   }
 
   /**
+   * Compile both programs WITHOUT blocking the main thread (three polls
+   * KHR_parallel_shader_compile), then, once the assets are in, draw once
+   * into a throwaway 8×10 target: the first draw of a program is where the
+   * driver builds its pipeline. The detail paper's warm-up (paperGL.ts).
+   */
+  async warmAsync() {
+    await this.gl.compileAsync(this.sceneA, this.camera);
+    await this.gl.compileAsync(this.sceneB, this.camera);
+    while (!this.ready_) await new Promise((r) => setTimeout(r, 50));
+    const rt = CoverRenderer.outputTarget(8, 10);
+    const crop = coverCropOf(this.def.frame.w, this.def.frame.h, 8, 10, { x0: 0, y0: 0, w: 1, h: 1 });
+    this.draw(rt, { t: 0, crop, pxW: 8, pxH: 10, dome: { x: 0, y: 0, amp: 0 }, backdrop: null });
+    rt.dispose();
+  }
+
+  /** Allocate (and clear) the pass-A target a draw of `crop` `pxW` wide will
+   *  use, now rather than on that draw. */
+  prepare(crop: Crop, pxW: number) {
+    const m = this.def.rtMargin;
+    const units = crop.w / pxW / Math.max(0.05, this.def.rtScale(this.values));
+    this.gl.initRenderTarget(this.passTarget(Math.ceil((crop.w + 2 * m) / units), Math.ceil((crop.h + 2 * m) / units)));
+  }
+
+  /**
    * Draw one instance. `target` null draws into the renderer's canvas at
    * (0, 0, pxW, pxH) of its framebuffer (the caller sizes the canvas); an RT
    * is drawn whole. Leaves the renderer's target as it found it.

@@ -16,11 +16,16 @@ import { useEnvState } from './env';
 import { cardHeight, cellSpanX, config, useConfig } from './config';
 import { CONTENT, CONTENT_COUNT, contentIndex } from './content';
 import { mod } from './grid';
+import { armPaperWarmup } from './components/detailPaper/paperGL';
 import './App.css';
 
-const DevDials = import.meta.env.DEV ? lazy(() => import('./dev/Dials')) : null;
-const DevEnvReadout = import.meta.env.DEV ? lazy(() => import('./dev/EnvReadout')) : null;
-const DevCoverDials = import.meta.env.DEV ? lazy(() => import('./dev/coverDials')) : null;
+/** DEV: `?nodials` leaves the dev dock and readouts out — the page as a
+ *  production build has it, for timing it (verify:detail `arrival`: every
+ *  change of a DialKit readout is a 30–50 ms dev re-render of the dock). */
+const DOCK = import.meta.env.DEV && !new URLSearchParams(window.location.search).has('nodials');
+const DevDials = DOCK ? lazy(() => import('./dev/Dials')) : null;
+const DevEnvReadout = DOCK ? lazy(() => import('./dev/EnvReadout')) : null;
+const DevCoverDials = DOCK ? lazy(() => import('./dev/coverDials')) : null;
 
 /** Small buffer so the morph finishes painting at its end before the phase flips. */
 const TRANS_BUFFER_MS = 60;
@@ -75,6 +80,9 @@ export default function App({ suspended = false }: AppProps) {
   }, []);
 
   const pan = usePanController({ isSuspended, onTap });
+  // The detail paper's GL is made on the first hover of a card, not on the
+  // click that opens it (docs/detail-paper.md, "The arrival").
+  useEffect(() => armPaperWarmup(), []);
   const detail = useDetail(suspended);
   const envSnapshot = useEnvState();
   // The one hero rect the detail panel, the FLIP morph, and the reader all use.

@@ -5,9 +5,12 @@
  * Drawn once to a 2D canvas and turned into distances on the CPU — Felzenszwalb
  * & Huttenlocher, as in Mapbox's TinySDF — because the rings need the distance
  * up to ~250 units from the glyphs and the particles read it at up to six
- * points a pixel: one texture tap each is the cheapest there is. ~100ms, once
- * per `textTop`, shared by every renderer on the page (the grid's and the
- * detail paper's upload the same array).
+ * points a pixel: one texture tap each is the cheapest there is. ~100–140 ms,
+ * once per `textTop`, shared by every renderer on the page (the grid's and the
+ * detail paper's upload the same array) — in SLICES of a few ms, yielding
+ * between them: in one task it was a 133–150 ms frame in the first second of
+ * every page load, a direct #item-NN arrival's included (docs/detail-paper.md,
+ * "The arrival").
  *
  * The font is SHIPPED (public/fonts/inter-latin-400.woff2, fontsource 4.5.15 =
  * Inter 3.19, OFL): it rasterises "Rive" pixel-identical to the Inter the cover
@@ -62,6 +65,23 @@ export function riveTextSdf(textTop: number): Promise<RiveTextSdf> {
   return p;
 }
 
+/** Main-thread ms per slice of the build before it yields a frame. */
+const SLICE_MS = 6;
+const yieldTask = () => new Promise<void>((r) => setTimeout(r, 0));
+
+/** `fn(0) … fn(n − 1)`, yielding whenever a slice has run SLICE_MS. The same
+ *  calls in the same order as one loop: the output does not change. */
+export async function sliced(n: number, fn: (i: number) => void): Promise<void> {
+  let t0 = performance.now();
+  for (let i = 0; i < n; i++) {
+    fn(i);
+    if (performance.now() - t0 > SLICE_MS) {
+      await yieldTask();
+      t0 = performance.now();
+    }
+  }
+}
+
 async function build(textTop: number): Promise<RiveTextSdf> {
   await loadFont();
   const y0 = textTop - STRIP_ABOVE;
@@ -81,6 +101,7 @@ async function build(textTop: number): Promise<RiveTextSdf> {
   // Three copies, so the distance across the tile seam sees its neighbours.
   for (let k = -1; k <= 1; k++) ctx.fillText('Rive', PAD + k * STRIP_W, baseline - y0);
   const px = ctx.getImageData(0, 0, W, H).data;
+  await yieldTask();
 
   let stemX = 0;
   const row = Math.round(baseline - 300 - y0);
@@ -95,39 +116,41 @@ async function build(textTop: number): Promise<RiveTextSdf> {
   const N = W * H;
   const outer = new Float64Array(N);
   const inner = new Float64Array(N);
-  for (let i = 0; i < N; i++) {
-    const a = px[i * 4 + 3] / 255;
-    if (a >= 1) {
-      outer[i] = 0;
-      inner[i] = INF;
-    } else if (a <= 0) {
-      outer[i] = INF;
-      inner[i] = 0;
-    } else {
-      const d = 0.5 - a;
-      outer[i] = d > 0 ? d * d : 0;
-      inner[i] = d < 0 ? d * d : 0;
+  await sliced(H, (y) => {
+    for (let i = y * W; i < (y + 1) * W; i++) {
+      const a = px[i * 4 + 3] / 255;
+      if (a >= 1) {
+        outer[i] = 0;
+        inner[i] = INF;
+      } else if (a <= 0) {
+        outer[i] = INF;
+        inner[i] = 0;
+      } else {
+        const d = 0.5 - a;
+        outer[i] = d > 0 ? d * d : 0;
+        inner[i] = d < 0 ? d * d : 0;
+      }
     }
-  }
-  edt(outer, W, H, INF);
-  edt(inner, W, H, INF);
+  });
+  await edt(outer, W, H, INF);
+  await edt(inner, W, H, INF);
   const data = new Float32Array(STRIP_W * H);
-  for (let y = 0; y < H; y++) {
+  await sliced(H, (y) => {
     for (let x = 0; x < STRIP_W; x++) {
       const i = y * W + x + PAD;
       data[y * STRIP_W + x] = Math.sqrt(outer[i]) - Math.sqrt(inner[i]);
     }
-  }
+  });
   return { data, width: STRIP_W, height: H, y0, baseline, stemX, advance: m.width };
 }
 
-function edt(grid: Float64Array, w: number, h: number, INF: number) {
+async function edt(grid: Float64Array, w: number, h: number, INF: number) {
   const n = Math.max(w, h);
   const f = new Float64Array(n);
   const z = new Float64Array(n + 1);
   const v = new Uint32Array(n);
-  for (let x = 0; x < w; x++) edt1d(grid, x, w, h, f, v, z, INF);
-  for (let y = 0; y < h; y++) edt1d(grid, y * w, 1, w, f, v, z, INF);
+  await sliced(w, (x) => edt1d(grid, x, w, h, f, v, z, INF));
+  await sliced(h, (y) => edt1d(grid, y * w, 1, w, f, v, z, INF));
 }
 
 function edt1d(
