@@ -14,6 +14,7 @@ import {
 } from './doorway';
 import { useDetailPaperDials } from '../dev/detailPaperDials';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
+import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { persistedPanelId } from '../dev/dialState';
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
@@ -68,7 +69,7 @@ interface DoorwayDialKitProps {
  * mounted over the real detail view via `#item-NN?intro`. It writes the same
  * `--doorway-*` variables + `doorway` singleton and drives the same cover turn
  * as production, so scrubbing any point shows a true intermediate state —
- * neighbours clearing, sky → wood, the cover settling, and the mid-open slide.
+ * neighbours clearing, the sky ground arriving, the cover settling, and the mid-open slide.
  *
  * TODO(production): DialKit's clip.current values are the scrubbable authoring
  * preview. The tuned timings/transitions live in `doorway.ts` (Copy from the
@@ -129,6 +130,8 @@ export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKi
   useDetailPaperDials();
   // Page hover and the boil, on the cover this dock sits over.
   useCoverLifeDials();
+  // The ground its TABLE channel brings in: the washes, the shadow, the wake.
+  useReaderGroundDials();
 
   // REST on mount; restore the normal reader / detail baseline on unmount.
   useLayoutEffect(() => {
@@ -158,6 +161,17 @@ export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKi
     });
     driveFlipOpen(engine, open, forward, autoOpen, flipRef.current, onResetToCover);
   }, [time, autoOpen, engine, tl.clear, tl.table, tl.settle, tl.chrome, tl.open, onResetToCover]);
+
+  // For `reader-verify`: set the channels to exact values, through the SAME
+  // module the app reads them from (a test that imports `doorway.ts` itself can
+  // get a second copy after a hot update, whose singleton nobody reads).
+  useEffect(() => {
+    const w = window as unknown as { __doorwayApply?: typeof applyDoorwayValues };
+    w.__doorwayApply = applyDoorwayValues;
+    return () => {
+      delete w.__doorwayApply;
+    };
+  }, []);
 
   return (
     <>

@@ -4,7 +4,9 @@
  *    0ms  stage 0  REST     detail view; cover panel centred, neighbours, chrome
  *    0ms  stage 1  CLEAR    neighbours + detail chrome fade & drift outward;
  *                          sky begins to darken
- *  200ms  stage 2  TABLE    sky → wood + vignette crossfade beneath the cover
+ *  200ms  stage 2  TABLE    the sky ground arrives beneath the cover: its washes
+ *                          fade in over the same sky, and at 1 the reader takes
+ *                          the sky's canvas (ReaderGround.tsx)
  *  450ms  stage 3  SETTLE   the cover's page contact shadow fades in (a small
  *                          "set down" onto the table)
  *  750ms  stage 4  BREATH   nothing moves
@@ -13,7 +15,8 @@
  *                          (marker progress → flip t); first visit per session
  * 2100ms  stage 7  READING  handoff to the normal reader
  *
- * EXIT: 6 → 1 reversed. Cover closes (slide back), chrome out, wood → sky,
+ * EXIT: 6 → 1 reversed. Cover closes (slide back), chrome out, the ground's
+ *       washes out and the canvas back to the app,
  *       neighbours and detail chrome return. Then history.back().
  * ─────────────────────────────────────────────────────────────
  *
@@ -23,15 +26,15 @@
  * exact same schedule so what Uko tunes here is what ships. This file is where
  * the dock's Copy output is pasted back.
  *
- * The reader layer OWNS the wood, the cover shadow, the reader chrome and the
+ * The reader layer OWNS the ground, the cover shadow, the reader chrome and the
  * flip. The neighbours and the detail chrome live in the app BENEATH it. The
  * bridge is CSS variables on `:root` (written here) plus the live `doorway`
  * singleton (read by DetailView's ticker). No React state changes per frame.
  *
  * The reader COVER is opaque for the whole entrance (and reverse): it coincides
  * with the detail panel exactly (hero.ts, 10:13), so it reads as the same rect
- * throughout. That is why the wood — which sits ABOVE the panel but BELOW the
- * cover in the reader layer — never blanks the magazine as it fades in. */
+ * throughout. That is why the ground — which sits ABOVE the panel but BELOW the
+ * cover in the reader layer — never blanks the magazine as it arrives. */
 
 import type { FlipEngine } from './flipEngine';
 
@@ -39,7 +42,7 @@ import type { FlipEngine } from './flipEngine';
 export interface DoorwayValues {
   /** 0→1 neighbours + detail-chrome fade & drift outward. → `--doorway-clear` */
   clear: number;
-  /** 0→1 sky → wood + vignette crossfade. → `--doorway-table` */
+  /** 0→1 the sky ground arriving (its washes; the canvas at 1). → `--doorway-table` */
   table: number;
   /** 0→1 the cover's contact-shadow strength (its "set down" onto the table).
    *  The cover itself is opaque throughout — it coincides with the detail panel
@@ -54,7 +57,7 @@ export interface DoorwayValues {
 /** Clip start (`at`) and length (`dur`) in ms — the storyboard, as data. */
 export const TIMING = {
   clear: { at: 0, dur: 220 }, // neighbours + detail chrome fade & drift out
-  table: { at: 200, dur: 260 }, // sky → wood + vignette
+  table: { at: 200, dur: 260 }, // the sky ground arrives
   settle: { at: 450, dur: 300 }, // the cover's contact shadow "sets down"
   chrome: { at: 1000, dur: 250 }, // reader caption + ‹ ›
   open: { at: 1250, dur: 850 }, // cover turn to 01|02 (flip t)

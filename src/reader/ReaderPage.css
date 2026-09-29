@@ -1,11 +1,14 @@
-/* Full-viewport reading stage: the magazine lies on a wooden table. The stage
-   itself is fixed to the viewport, so the wood is cover-fit and never scrolls or
-   scales with the book. A dark fallback (#0d0d0d, matching index.css) shows
-   until the texture decodes, so nothing flashes. */
-.reader {
-  /* Vignette strength at the frame — dial to taste (0 = off). */
-  --stage-vignette: 0.4;
+/* Full-viewport reading stage: the magazine lies on the sky. The stage itself
+   is transparent and holds only the book and the chrome; the ground under it —
+   the app's one sky canvas, and the washes over it — is ReaderGround, the
+   layer's first child. At REST (--doorway-table 0) the detail view and its sky
+   show straight through.
 
+   The WOOD IS RETIRED. It used to be this element's ::before (the texture,
+   cover-fit, fading in on --doorway-table) and ::after (a vignette over it).
+   `public/backgrounds/wood.webp` and `npm run backgrounds` are still in the
+   repo, and nothing loads them. */
+.reader {
   position: fixed;
   inset: 0;
   display: flex;
@@ -14,42 +17,7 @@
   justify-content: center;
   gap: 20px;
   overflow: hidden;
-  /* The wood is a fade layer (::before) so the doorway can crossfade sky → wood.
-     The stage itself is transparent; at REST (--doorway-table 0) the detail view
-     and sky show straight through the reader layer. */
   background: transparent;
-}
-
-/* The table: a dark base + wood texture that crossfades in with the doorway
-   (--doorway-table 0 → 1). This IS the sky-darkening overlay — the WebGL sky
-   beneath is untouched; the wood simply covers and darkens it as it arrives.
-   Defaults to 1 so the ordinary reader (no doorway) is fully wood. */
-.reader::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  pointer-events: none;
-  background: #0d0d0d url(/backgrounds/wood.webp) center / cover no-repeat;
-  opacity: var(--doorway-table, 1);
-}
-
-/* Darken the wood toward the frame so the magazine stays the subject. Sits above
-   the wood but BELOW the book and caption (z-index: -1 inside the stage's own
-   stacking context), so it dims the table without ever touching the pages. Rides
-   in with the table so it never darkens the detail view at REST. */
-.reader::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: var(--doorway-table, 1);
-  background: radial-gradient(
-    ellipse at center,
-    transparent 40%,
-    rgba(0, 0, 0, var(--stage-vignette)) 100%
-  );
 }
 
 /* ── the chrome ──────────────────────────────────────────────────────────

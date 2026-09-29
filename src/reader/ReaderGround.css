@@ -1,0 +1,43 @@
+/* THE READER'S GROUND — the sky, and two washes over it (ReaderGround.tsx).
+
+   Full-viewport, under the book and the chrome (it is first in the reader
+   layer). It arrives on the doorway's TABLE channel, the one the wood used:
+   `--doorway-table` 0 → 1 fades the washes in over the app's own sky, and at 1
+   the ground takes the canvas. Unset (the plain reader) reads as 1. */
+.reader-ground {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--doorway-table, 1);
+}
+
+/* How far back the sky sits behind the book. A look; nothing is printed on it
+   that is measured against it alone. */
+.reader-ground__scrim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: var(--reader-scrim, 0.35);
+}
+
+/* The chrome's bands — the one the 4.5:1 rests on. FLAT across the band the
+   pill and the bar sit in (72px: margin + chip + 8), so the type sits on one
+   value and the probe's figure is exact; then faded out over the same height
+   again, where there is no type, so the band has no edge. Same recipe as the
+   project view's letterhead wash. `--reader-chrome-band` is `CHROME_BAND_PX`. */
+.reader-ground__band {
+  --reader-chrome-band: 72px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: calc(var(--reader-chrome-band) * 2);
+  opacity: var(--reader-chrome-scrim, 0.75);
+}
+.reader-ground__band--top {
+  top: 0;
+  background: linear-gradient(#000 0 50%, transparent 100%);
+}
+.reader-ground__band--bottom {
+  bottom: 0;
+  background: linear-gradient(transparent 0, #000 50% 100%);
+}

@@ -14,6 +14,8 @@ import { animate } from 'motion';
 import type { Page, Spread } from './issue-01';
 import { CUT_MS, INNER_LEAF_EASE, JUMP, LAST_LEAF_EASE, cubicBezier, planRiffle } from './jump';
 import type { RiffleLeaf } from './jump';
+import { flipWake } from './flipWake';
+import type { BookGeometry } from './flipWake';
 
 export type TurnDir = 'next' | 'prev';
 
@@ -310,8 +312,14 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   const curls: { next: Curl | null; prev: Curl | null } = { next: null, prev: null };
 
   // --- sizing -------------------------------------------------------------
+  /** The book's laid-out size, CSS px — read here, on a resize, and nowhere
+   *  per frame (see {@link geometry}). */
+  let bookW = 0;
+  let bookH = 0;
   const syncWidth = (): void => {
-    book.style.setProperty('--bw', `${book.clientWidth}px`);
+    bookW = book.clientWidth;
+    bookH = book.clientHeight;
+    book.style.setProperty('--bw', `${bookW}px`);
   };
   syncWidth();
   const ro = new ResizeObserver(syncWidth);
@@ -363,7 +371,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   // --- the curl math ------------------------------------------------------
   function applyTurn(t: number): void {
     if (state) state.t = t;
-    bend(book, strips, t);
+    const tt = bend(book, strips, t);
 
     // Book slide, tied to t so it tracks a drag and springs back on cancel. Only
     // written for a cover/back turn; other turns leave the CSS data-pos value.
@@ -371,6 +379,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       const k = state.slideFromK + (state.slideToK - state.slideFromK) * t;
       book.style.setProperty('--book-slide', `${(k * book.clientWidth).toFixed(2)}px`);
     }
+
+    // The air the leaf pushes — for a turn the engine is running (a tween or a
+    // drag). A curl driven from outside with neither is the doorway's cover
+    // turn, which makes its own wake, or the dev scrub, which should make none.
+    if (state && (tween || drag)) flipWake('flip:turn', geometry(), state.dir, tt);
   }
 
   /**
@@ -404,6 +417,21 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       st.setProperty('--a2', ((1 - l2) * 0.55 * taper).toFixed(3));
     }
     return tt;
+  }
+
+  /**
+   * Where the book is on screen, for the leaf's wake (`flipWake.ts`), without a
+   * layout read: `.book-stage` centres the book on the viewport, and the only
+   * thing that moves it is the half-page slide — inline while a turn or a
+   * riffle owns it, else the CSS `data-pos` value (a quarter of the book either
+   * way at the cover and the back).
+   */
+  function geometry(): BookGeometry {
+    const inline = book.style.getPropertyValue('--book-slide');
+    const pos = book.dataset.pos;
+    const slide = inline ? Number.parseFloat(inline) : pos === 'cover' ? -bookW / 4 : pos === 'back' ? bookW / 4 : 0;
+    const cy = window.innerHeight / 2;
+    return { spineX: window.innerWidth / 2 + slide, pageW: bookW / 2, top: cy - bookH / 2, bottom: cy + bookH / 2 };
   }
 
   // --- turn control -------------------------------------------------------
@@ -780,7 +808,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     layer.className = 'book__turn';
     const nearSlot = buildPlate(nearSide, spreads[from][near]?.src ?? null);
     const farSlot = buildPlate(farSide, spreads[from][1 - near]?.src ?? null);
-    // Slots, not landing plates: under every leaf, and casting the table shadow.
+    // Slots, not landing plates: under every leaf, and casting the contact shadow.
     for (const slot of [nearSlot, farSlot]) slot.classList.replace('book__page--plate', 'book__page--slot');
     layer.append(nearSlot, farSlot);
     turnHost.append(layer);
@@ -1020,6 +1048,13 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       slide = a + (b - a) * (l.phase === 'landed' ? 1 : l.t);
     }
     if (slide !== null) book.style.setProperty('--book-slide', `${(slide * book.clientWidth).toFixed(2)}px`);
+
+    // Each leaf in the air pushes its own air, keyed by leaf so each has its
+    // own velocity. Not while the dev probe holds the riffle still.
+    if (r.held === null) {
+      const geo = geometry();
+      for (const l of air) flipWake(`flip:leaf:${l.k}`, geo, r.dir, l.tt);
+    }
   }
 
   /** The last leaf's landing plate, crossfaded in over it exactly as a turn's. */
@@ -1069,7 +1104,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     const [left, right] = spreads[to];
     const plates = [buildPlate('left', left?.src ?? null), buildPlate('right', right?.src ?? null)];
     for (const plate of plates) {
-      // Not a landing plate: these cast the table shadow, since the static slots
+      // Not a landing plate: these cast the contact shadow, since the static slots
       // (and their shadows) are fading out underneath.
       plate.classList.replace('book__page--plate', 'book__page--cut');
       layer.append(plate);

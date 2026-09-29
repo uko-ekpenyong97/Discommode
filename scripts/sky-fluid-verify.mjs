@@ -42,8 +42,8 @@
  *      never wakes.
  *   6  THE PAGE DISTURBS THE SKY. With the POINTER's strength at 0, so that
  *      only the page can be what put anything in: the detail view's Next, a
- *      grid drag, the portfolio sheet's roll-in and the reader's doorway each
- *      wake the field on their own.
+ *      grid drag, the portfolio sheet's roll-in, the reader's doorway, and a
+ *      page flip and a riffle in the reader each wake the field on their own.
  *   8  THE MOON HAS THE SHAPE IT SHOULD. The disc is counted, pixel by pixel,
  *      at three phases: full is at least 98% lit, new is at most 3% (the moon
  *      is not drawn at all below 2% illumination, so what is counted there is
@@ -550,6 +550,12 @@ async function main() {
 
   // ── 6  the page ─────────────────────────────────────────────────────────────
   if (ONLY.includes('6')) {
+    const toReader = async (p) => {
+      await p.evaluate(() => {
+        location.hash = '#read-01/3';
+      });
+      await p.waitForFunction(() => !!window.__flip);
+    };
     console.log('\n── 6  the page disturbs the sky (pointer strength 0)');
     const cases = [
       ['the detail slide', '#item-02', (p) => p.keyboard.press('ArrowRight')],
@@ -568,13 +574,19 @@ async function main() {
       ],
       ['the sheet rolling in', '#item-02', (p) => p.evaluate(() => { location.hash = '#view-02'; })],
       ['the reader doorway', '#item-01', (p) => p.click('.detail__btn--read')],
+      // The reader's own page motion (src/reader/flipWake.ts). Loaded from an
+      // item, so the app's dial handle exists, then into the reader by its hash
+      // — the plain open, which splats nothing — before the field is checked.
+      ['a reader page flip', '#item-01', (p) => p.evaluate(() => window.__flip.turn('next')), toReader],
+      ['a reader riffle', '#item-01', (p) => p.evaluate(() => window.__flip.turnTo(20)), toReader],
     ];
-    for (const [label, hash, act] of cases) {
+    for (const [label, hash, act, setup] of cases) {
       const context = await browser.newContext({ viewport: VIEWPORT });
       const page = await context.newPage();
       await page.goto(`${URL.replace(/\/$/, '')}/${hash}`, { waitUntil: 'networkidle' });
       await page.waitForFunction(() => typeof window.__skyFluidAwake === 'function', null, { timeout: 20_000 });
       await page.evaluate(() => window.__setConfig({ fluidStrength: 0 }));
+      if (setup) await setup(page);
       await page.waitForTimeout(1500);
       const before = await page.evaluate(() => window.__skyFluidAwake());
       await act(page);

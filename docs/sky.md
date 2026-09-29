@@ -1,8 +1,9 @@
 # The sky
 
 Everything behind everything: a full-viewport WebGL2 fragment shader driven by
-San Francisco's live weather. It is Layer 0 of the grid, and since this change
-it is also the ground the project view's paper sits on. Code is in `src/sky/`,
+San Francisco's live weather. It is Layer 0 of the grid, the ground the project
+view's paper sits on, and the ground the reader's magazine lies on
+([docs/reader.md](reader.md#the-ground)). Code is in `src/sky/`,
 the React wiring in `src/components/SkyLayer.tsx`, the data in `src/env/`.
 
 Reference: `docs/prototypes/sky-prototype.html` — a standalone page whose
@@ -807,6 +808,7 @@ turns the page's wake off and leaves the pointer's):
 | **Grid drag** | `usePanController` ticker, drag branch | the card under the finger (`cardHitAt`), its four edge midpoints, keyed by absolute cell so moving onto the next card starts a new wake |
 | **Portfolio sheet roll-in and tear-off** | `Scroller.apply`, after `canvas.show` | the sheet's leading edge, top or bottom, at u = 0.1 / 0.5 / 0.9, through `sheetPoint`, which is the CPU port of the vertex shader's bend. So the wake follows the edge as it is drawn, rolled or folded |
 | **Reader doorway open/close** | `useDoorwayMotion` frame | the neighbours drifting out on CLEAR (and back in on the way out), and the cover's free edge swinging over the spine on OPEN |
+| **Reader page flip and riffle** | `flipEngine` `applyTurn` (a tween or a drag) and the riffle's `render` | each leaf's free edge at the top, middle and bottom of the page, keyed per leaf, × `readerFlipSplat` (`flipWake.ts`). Not the doorway's cover turn, which has its own |
 
 The pointer's splat and the page's are the same splat, so they add. A card
 dragged under the cursor gets both.
@@ -835,9 +837,9 @@ whole app, and the components that want it *claim* it: a claim appends the
 element to the claimant's host, and releasing hands it back to whoever had it
 before (last in wins, which is also paint order).
 
-This exists because the sky is drawn in two places — behind the grid, and under
-the paper in the project view, which is a layer *above* the grid and so cannot
-be the same element showing through. The alternative is two contexts, which is
+This exists because the sky is drawn in three places — behind the grid, under
+the paper in the project view, and under the book in the reader, both layers
+*above* the grid and so unable to be the same element showing through. The alternative is two contexts, which is
 two programs, two rAF loops and two five-octave fbm passes for one sky, on a
 machine that is also running a three.js sheet.
 
@@ -845,7 +847,12 @@ Moving a canvas in the DOM does not touch its drawing buffer, so the context,
 the program and the eased state all survive the move: the sky a project opens
 onto is the sky you left, mid-drift, in the same weather. Verified — opening
 `#view-01` and closing it again leaves exactly one canvas, which travels from
-`.app` to `.pv-ground` and back.
+`.app` to `.pv-ground` and back. The reader's ground (`.reader-ground`) is the
+third host, and it claims later than the others: not on mount but on the frame
+the doorway's TABLE channel reaches 1, so the doorway never has to cross-fade
+two layers that both need the sky ([docs/reader.md](reader.md#the-ground)).
+`verify:reader` checks that opening it makes no WebGL context and that its sky
+is the grid's, pixel for pixel.
 
 ### The claim is re-asserted, not taken once
 
@@ -885,7 +892,8 @@ And `pv-verify` now asserts it in light rather than in structure — see
 The one thing that does not travel with it is the WASH. On the grid the sky is
 bare; in the project view it is under `groundScrim`, and the letterhead's band
 under `letterheadScrim` on top of that. Both live in the project view's look —
-the grid has nothing printed on the sky and needs neither.
+the grid has nothing printed on the sky and needs neither. The reader has its
+own pair, `readerScrim` and `readerChromeScrim` (`src/reader/ground.ts`).
 
 Every host paints a CSS gradient of the current sky *behind* the canvas
 (`skyFallbackCss` — a zenith→horizon gradient plus a flat cloud-grey wash
@@ -1086,7 +1094,7 @@ grain or a flash. Run 2026-09-22, Apple M1 Max, 1440×900 @2x:
 | 3 | fog at noon / dusk (reported, see below) | −8.8% / −9.6%; both back at 3s |
 | 4 | frame time, fluid awake, five sizes, cap off as shipped | worst p95 **5.64ms**, fog at 5K @2x, against 5.75 before this branch (see [Frame time](#frame-time)). The moon cannot appear in this row: section 4 benchmarks **noon**, where `nightAmt` is 0 and the whole star-and-moon block is branched past. The 0.75ms between this and the 4.89 of the run before it is the machine |
 | 5 | reduced motion, a sweep and a direct `splat` | **0.000%** differ; the field never wakes |
-| 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway | each wakes the field on its own |
+| 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway, reader page flip, reader riffle | each wakes the field on its own (the last two added 2026-09-28) |
 | 7 | a diagonal sweep across a clear **dusk** | **31.9%** of the frame moved by ≥ 8 levels; **0.00%** still shifted at 3s |
 | 8 | the moon's disc, counted pixel by pixel | full **100.0%** lit, new **0.0%**, first quarter **49.9%** with **100%** of it on the right (and a last quarter 100% on the left) |
 | 8 | the letterhead's band moved onto a full moon | **7.50:1**, which is the pure-white floor, against 9.25:1 where the strip actually is (2026-09-23). The row is now asked of the sky being measured (`__skyMoonAt(target)`): the moon moves, and asked of the live one the band missed the disc and read 10.4 |
@@ -1248,6 +1256,8 @@ same minutes.
 | `src/sky/fluid.ts` | The wake: the fluid solver, in the sky's context. |
 | `src/sky/skyStage.ts` | The one canvas and the claim stack, and `skySplat` / `skyWake` / `skyWakeLeading` for the page. |
 | `src/sky/envToTarget.ts` | The mapping: `EnvState` → `SkyTarget`. |
+| `src/reader/ReaderGround.tsx` | The reader's host: claims the canvas when the doorway's TABLE arrives. |
+| `src/reader/flipWake.ts` | A turning leaf's splat, for the reader. |
 | `src/components/SkyLayer.tsx` | The host. Claims the canvas; feeds the target in; the dev hooks (`__skyPinTime`, `__skyHoldFluid`, `__skyFluidAwake`, `__skySplat`). |
 | `src/env/wmo.ts` | WMO code → condition, cloudiness, precipitation. |
 | `src/env/moon.ts` | The moon from the clock, as one geometry: Meeus's lunar series → its phase (elongation from the sun), altitude and azimuth over SF, rise and set, and the bright limb. Pure, tested against the almanac, and nothing to do with the network. |

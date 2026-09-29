@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import App from '../App';
 import ReaderPage from './ReaderPage';
+import ReaderGround from './ReaderGround';
 import { clearOpener, hasOpener } from './readerNav';
 import { consumeDoorwayReversed, resetDoorwayValues } from './doorway';
 import { issueForSlug } from '../content';
@@ -143,6 +144,9 @@ export default function ReaderGate({ suspended = false }: ReaderGateProps) {
           data-enter={(animateIn && !exiting && plain) || undefined}
           data-exiting={exiting || undefined}
         >
+          {/* The ground — the sky — is first, so it paints under the page. A
+              doorway (the entrance, or the dev dock) owns its arrival. */}
+          <ReaderGround doorwayDriven={entrance || authoring} />
           <ReaderPage
             issue={shown.issue}
             debug={shown.debug}
