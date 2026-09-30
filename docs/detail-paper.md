@@ -44,6 +44,7 @@ side, held at full amplitude, with a 4× crop of the top corner under each.
 | `src/dev/detailPaperDials.ts` | The DETAIL PAPER DialKit panel. |
 | `src/reader/coverLife.ts` | Page hover and the boil (docs/reader.md): the dials, the stepped signal, and the registry this layer reads the hero's boil from. |
 | `src/dev/coverLifeDials.ts` | The COVER LIFE DialKit panel. |
+| `src/chrome/` | The chrome — the back shape and the row — shared with the reader ([Chrome](#chrome)). |
 | `scripts/cover-life-checks.mjs` | The page-hover and boil checks `verify:detail` and `verify:reader` share. |
 | `scripts/make-crease-map.mjs` | `npm run creases`, which writes `public/textures/paper-creases.webp`. |
 | `scripts/detail-verify.mjs` | `npm run verify:detail`, the browser suite. |
@@ -71,7 +72,8 @@ Bottom to top, while the canvas carries the cards:
    still DOM and still on top: the number, the name and its scrim, and **the
    CoverAnimLayer's sprites**. The panels keep every click, and the sprites keep
    resolving hover from the panel, exactly as before.
-4. **The chrome**, the back pill and the bar.
+4. **The chrome**, the back shape and the row: paper shapes on the sky
+   ([Chrome](#chrome)).
 
 **The canvas draws the shadows** because the DOM cannot. A DOM panel whose face
 is hidden still casts its `box-shadow`, and it casts it *on top of the canvas*:
@@ -239,6 +241,51 @@ causes, both fixed:
 `verify:detail`'s `sidescale` sweeps 0.3 → 1 → 0.3 at `#item-04` with the
 pointer moving on the hero: at every value the cards are handed back in, the
 plane is live Main Bounce, and the hero is #1.
+
+## Chrome
+
+The detail view's buttons are the reader's: **hand-cut paper shapes that take
+their colour from the sky** (`src/chrome/`). The shapes, the assets pipeline,
+the colour model, the contrast sweep, the interaction and the CHROME dials
+are one system and are written down once, in
+[docs/reader.md, Chrome](reader.md#chrome). What is the detail view's own:
+
+**The row**, bottom-centre, the frame's language extrapolated:
+
+| shape | size | action |
+| --- | --- | --- |
+| ‹ prev | 46×46 | Previous item (←) |
+| card pill "02 \| 04" | 131×46 | this card \| all of them; a native `<select>` over it jumps to any card |
+| action pill "Read issue" / "Open project" | as wide as its label (≈160 / ≈174) | what the card opens |
+| next › | 46×46 | Next item (→) |
+
+The two pills are Uko's pill outline with its straight run stretched and its
+round ends as drawn — [why that and not a procedural edge](reader.md#the-pills-the-middle-stretched-not-generated).
+The card pill is the old "Jump to item" select, kept: the `<select>` lies over
+the whole pill, invisible, so the pill is what shows and the select is what
+is pressed, focused and read out. Its focus ring is the pill's.
+
+**The back shape**, top-centre, is the reader's: the prev shape cut again (its
+paper turned over), labelled "Back to the grid".
+
+**Nothing about how the chrome behaves changed.** It is still `.detail__back`
+and `.detail__bar`: the morph fades them in after the cards land and out before
+they leave, the ticker drifts and fades them out on the doorway's CLEAR (the
+transforms it writes are the same `translateX(-50%) translateY(…)`), the bar
+stops its clicks from reaching the backdrop, and Read issue / Open project
+still go through `afterHandOut`. The colour sampling pauses while the view is
+suspended under the reader, which has its own.
+
+**`data-chrome`, not `data-paper`.** The shapes are marked `data-chrome`
+because `data-paper` on `.detail` is this layer's hand-off state
+([the hand-off](#the-hand-off)); a first cut used `data-paper` and painted the
+whole view as a shape.
+
+**The checks.** `verify:detail` presses "Previous item", "Next item", "Read
+issue" and "Back to the grid" by role, and reads `.detail__select`: the names
+and the class are kept, and the back shape's name lost its "←". Contrast:
+`scripts/sky-contrast.mjs` measures this row at `#item-01` beside the reader's
+(worst 5.21:1 at both viewports, no clamps; reader.md has the table).
 
 ## The planes
 

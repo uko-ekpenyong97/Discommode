@@ -893,7 +893,9 @@ The one thing that does not travel with it is the WASH. On the grid the sky is
 bare; in the project view it is under `groundScrim`, and the letterhead's band
 under `letterheadScrim` on top of that. Both live in the project view's look —
 the grid has nothing printed on the sky and needs neither. The reader has its
-own pair, `readerScrim` and `readerChromeScrim` (`src/reader/ground.ts`).
+own wash, `readerScrim` (`src/reader/ground.ts`). The reader's and the detail
+view's chrome carries no wash at all: it takes its colour FROM the sky
+([docs/reader.md, Chrome](reader.md#chrome)).
 
 Every host paints a CSS gradient of the current sky *behind* the canvas
 (`skyFallbackCss` — a zenith→horizon gradient plus a flat cloud-grey wash
@@ -1262,14 +1264,15 @@ same minutes.
 | `src/env/wmo.ts` | WMO code → condition, cloudiness, precipitation. |
 | `src/env/moon.ts` | The moon from the clock, as one geometry: Meeus's lunar series → its phase (elongation from the sun), altitude and azimuth over SF, rise and set, and the bright limb. Pure, tested against the almanac, and nothing to do with the network. |
 | `src/env/astro.ts` | Julian day, sidereal time, the frame conversions, refraction, the sun's real position. Shared, so the next thing that needs a real position does not copy them. |
-| `src/sky/bandSweep.ts` | Dev: the brightest pixel of the letterhead's band for thousands of skies at once, reduced on the GPU. What makes the sweep a minute. |
+| `src/sky/bandSweep.ts` | Dev: the brightest pixel of the letterhead's band for thousands of skies at once, reduced on the GPU. What makes the sweep a minute. And `createRectMeans`: the MEAN of one rect, the same way, for the chrome's sweep. |
+| `SkyEngine.readMeans` | The chrome's sky: the mean colour under each paper shape, read back through a pixel buffer and a fence twice a second — never a stall, never per frame ([docs/reader.md, Chrome](reader.md#chrome)). |
 | `src/portfolio/contrastProbe.ts` | `bandCenter`: the letterhead's band, read somewhere other than where the letterhead is. |
 | `src/dev/skyPreview.ts` | Dev: what each condition and each time of day means as numbers. |
 | `src/dev/EnvReadout.tsx` | Dev: the readout and the override buttons, FORCE UP and its altitude slider. |
 | `scripts/sky-sheet.mjs` | The 24-image contact sheet. |
 | `scripts/sky-perf.mjs` | The frame-time table above; `--fluid` for the wake awake. |
 | `scripts/sky-fluid-verify.mjs` | `npm run verify:sky`: the wake's checks, and the four captures in `docs/sky/fluid/`. |
-| `scripts/sky-contrast.mjs` | The letterhead against all 24 still skies, **the sweep** (a whole day, both moons, a hand in it), and the `letterheadScrim` sweep that set the dial. |
+| `scripts/sky-contrast.mjs` | The letterhead against all 24 still skies, **the sweep** (a whole day, both moons, a hand in it), and the `letterheadScrim` sweep that set the dial. And the chrome, per shape, in the reader and the detail view. |
 
 ## Not done
 

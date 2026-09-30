@@ -546,9 +546,10 @@ export interface SkyEngine {
   /**
    * THE CHROME'S SKY: the MEAN colour of the live sky inside each rect, as
    * 0..255 sRGB — what the chrome's paper takes its hue from
-   * (src/chrome/chromeColor.ts). ASYNCHRONOUS, and never a stall: the rects
-   * are copied into a pixel buffer right after the next frame is drawn (in
-   * the same task, while the back buffer still holds it), a fence is set, and
+   * (src/chrome/chromeColor.ts). The sky WITHOUT its wake: the weather, not
+   * the air the page stirs. ASYNCHRONOUS, and never a stall: at the next
+   * frame the rects are drawn (scissored, wake off) and copied into a pixel
+   * buffer just before the frame is drawn over them, a fence is set, and
    * the bytes are fetched once the GPU has passed the fence — a frame or two
    * later. One request at a time; a newer one replaces a queued one (which
    * resolves null). Null when there is nothing to read (a hidden tab, no
@@ -944,10 +945,10 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     if (settled) for (const key of KEYS) cur[key] = tgt[key];
 
     stepFluid(dt);
+    // The chrome's read-back, if one is waiting: its rects drawn without the
+    // wake and copied out, just before the frame is drawn over them.
+    if (meansQueued) issueMeans(now);
     render(now);
-    // The chrome's read-back, if one is waiting: now, while the back buffer
-    // still holds the frame just drawn.
-    if (meansQueued) issueMeans();
 
     // The sky moves continuously while visible — keep going unless reduced
     // motion has frozen it AND everything has settled.
@@ -998,9 +999,16 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   } | null = null;
   let pbo: WebGLBuffer | null = null;
 
-  /** Copy the queued rects of the frame just drawn into the pixel buffer and
-   *  fence it. Must run in the task that drew the frame. */
-  function issueMeans(): void {
+  /**
+   * Draw the queued rects of this moment's sky WITHOUT THE WAKE (and without a
+   * lightning flash) into the back buffer, scissored to the rects, copy them
+   * into the pixel buffer and fence it. The paper takes its colour from the
+   * weather, not from the air a page turn or the pointer stirs: read with the
+   * wake, the chrome re-coloured itself through every flip, cross-fading on
+   * nearly every frame for nothing anyone asked for (docs/reader.md, Chrome).
+   * The caller draws the full frame over the rects straight after.
+   */
+  function issueMeans(now: number): void {
     const job = meansQueued;
     meansQueued = null;
     if (!job) return;
@@ -1016,7 +1024,14 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     // Fresh storage every time (a few KB), so no read-back ever writes into
     // storage the browser is still shadowing for the last one.
     gl!.bufferData(gl!.PIXEL_PACK_BUFFER, bytes, gl!.STREAM_READ);
-    gl!.bindFramebuffer(gl!.READ_FRAMEBUFFER, null);
+    gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
+    gl!.enable(gl!.SCISSOR_TEST);
+    rects.forEach((r, i) => {
+      gl!.scissor(r.x, r.y, r.w, r.h);
+      if (i === 0) render(now, cur, 0, false);
+      else gl!.drawArrays(gl!.TRIANGLES, 0, 3);
+    });
+    gl!.disable(gl!.SCISSOR_TEST);
     let offset = 0;
     rects.forEach((r, i) => {
       gl!.readPixels(r.x, r.y, r.w, r.h, gl!.RGBA, gl!.UNSIGNED_BYTE, offset);
@@ -1140,8 +1155,9 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
         // The loop picks it up after its next draw. A loop that has stopped
         // (reduced motion, settled) draws once for it, here.
         if (!running) {
-          render(performance.now());
-          issueMeans();
+          const now = performance.now();
+          issueMeans(now);
+          render(now);
         }
       });
     },

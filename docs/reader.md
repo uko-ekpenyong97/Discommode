@@ -15,14 +15,14 @@ numbers that decided how they work.
 | File | What it is |
 | --- | --- |
 | `ReaderGate.tsx` | Outermost gate. The app is always mounted; the reader mounts as a fixed layer above it whenever the hash is `#read-…` (or, in dev, `#item-NN?intro`). |
-| `ReaderPage.tsx` | The stage: chrome (back pill, page bar), the hash ↔ spread sync, Escape, the dev docks. |
+| `ReaderPage.tsx` | The stage: the chrome (the back shape, the row), the hash ↔ spread sync, Escape, the dev docks. |
 | `FlipBook.tsx` | The static spread (two `<img>` slots), the host the engine builds its turn layers in, and the two hover layers (cover, back). |
 | `flipEngine.ts` | Plain TS, no React. Turns, drags, jumps (riffle and cut). Writes CSS variables and inline styles; React hears back once per landed spread. |
 | `jump.ts` | The jump dials (`JUMP`) and the riffle's pure schedule, `planRiffle`. |
 | `ReaderGround.tsx` | The ground: the app's one sky canvas, claimed when the doorway's TABLE channel arrives, and the two washes over it. See [the ground](#the-ground). |
 | `ground.ts` | The ground's dials (`READER_GROUND`). |
 | `flipWake.ts` | A turning leaf's splat into the sky's wake. |
-| `chromeFloor.ts`, `chromeContrast.ts` | The chrome over the sky: the arithmetic, and the dev probe and sweep. |
+| `../chrome/` | The chrome, shared with the detail view: Uko's paper shapes, their colour from the sky, the dials, the probe and sweep. See [Chrome](#chrome). |
 | `doorway.ts` | The entrance storyboard as data (`TIMING`, `EASE`), its sampler, and the `--doorway-*` channels. |
 | `useDoorwayMotion.ts` | The production driver of the doorway: one linear clock sampling `doorway.ts`. |
 | `DoorwayDialKit.tsx` | The dev authoring driver of the same doorway, at `#item-NN?intro`. |
@@ -39,9 +39,9 @@ Bottom to top, while the reader is open:
 
 1. **The app**, suspended (`inert`), exactly as it was — detail view, and the sky
    until the reader takes its canvas.
-2. **`.reader-ground`** — the sky (the app's one canvas, once TABLE is 1), black
-   at `readerScrim` over it, and black at `readerChromeScrim` in the chrome's two
-   bands. Opacity `--doorway-table`. See [the ground](#the-ground).
+2. **`.reader-ground`** — the sky (the app's one canvas, once TABLE is 1), and
+   black at `readerScrim` over it. Opacity `--doorway-table`. See
+   [the ground](#the-ground).
 3. **`.reader`** — transparent; holds the book and the chrome.
 4. **`.book-stage`**, centred on the viewport, holding **`.book`**: two static page
    slots React renders, and `.book__turn-host`, which React keeps empty and the
@@ -52,9 +52,10 @@ Bottom to top, while the reader is open:
    with nothing turning; the back's only at the last spread with nothing turning.
    At `data-pos="cover"` and `data-pos="back"` the book slides half a page so
    the one occupied slot lands on the hero rect, so both use the same box.
-6. **Chrome** — the back pill (top-centre) and the page bar (bottom-centre).
-   They ARE the detail view's (`detail__back`, `detail__bar`, `detail__btn`), so
-   the two grammars cannot drift; `ReaderPage.css` only adds what differs.
+6. **Chrome** — the back shape (top-centre) and the row (bottom-centre): paper
+   shapes on the sky, no band behind them. They are the detail view's
+   components (`src/chrome`), so the two cannot drift; `ReaderPage.css` only
+   adds the doorway's gating. See [Chrome](#chrome).
 
 A **turn layer** (`.book__turn`) is what the engine puts in the host for the
 length of a turn: the revealed page, the 28-strip curl, and near the end a flat
@@ -96,11 +97,12 @@ the same schedule reversed at `EXIT_RATE`.
 for the plain reader. The chrome's own opacity transition is taken off, since a
 200ms transition on a value written every frame would trail the storyboard.
 
-**There is one way out.** The back pill and Escape both call `exit` in
+**There is one way out.** The back shape and Escape both call `exit` in
 `ReaderPage`: land any jump in the air, then `requestExit → closeReader`. The
-pill is first in the DOM so it is the first thing Tab reaches — this is a
+back shape is first in the DOM so it is the first thing Tab reaches — this is a
 modal. At an identical playhead (table 0.4007) the pill's and Escape's exits
-differ in 439 of 1.72M px, all JPEG noise and the live sky.
+differ in 439 of 1.72M px, all JPEG noise and the live sky (measured with the
+old pill, 2026-09-21).
 
 None of the chrome exists while authoring at `#item-NN?intro`; the dock owns that
 screen.
@@ -137,13 +139,16 @@ canvas at once and its layer cross-fades over the app, which for those 250ms
 shows the sky's CSS fallback where the canvas was. That is what the project view
 does on every open.
 
-**Two washes**, for the project view's two reasons
+**One wash.** There were two, for the project view's two reasons
 ([two washes](portfolio-view.md#two-washes-because-there-are-two-questions)):
+`readerScrim` over everything, and `readerChromeScrim` (0.75, measured) in two
+72px bands the chips' type was held to 4.5:1 against. The chrome is paper
+shapes now and carries its own contrast ([Chrome](#chrome)), so the bands and
+their dial are gone. `readerScrim` stays:
 
 | dial | shipped | |
 | --- | --- | --- |
 | `readerScrim` | 0.35 | Black over the whole ground: how far back the sky sits behind the book. **A look.** Defaults to the project view's `groundScrim` (read from it, not copied). |
-| `readerChromeScrim` | 0.75 | Black over the two 72px bands the back pill and the page bar sit in, flat across the band and faded out over the same height again. **Measured**; floor 0.72. |
 | `readerBookShadow` | 0.22 | The book's contact shadow at full settle. The wood's was 0.35. |
 | `readerFlipSplat` | 0.5 | How hard a turning leaf splats into the sky's wake, × `pageSplat`. 0 is off. |
 
@@ -152,35 +157,13 @@ dock (`#read-NN?intro`) and the doorway dock (`#item-NN?intro`), not persisted.
 
 ### The chrome over the sky
 
-The back pill and the page bar are the detail view's chips, and they are held to
-**4.5:1** (WCAG AA — it is chrome, not a page of reading) on every condition ×
-time. The brightest thing a sky can put under them is a **pure white** band: the
-lit top of a noon deck clips to it, and a star at its twinkle peak and the wake
-both reach it ([the sweep](sky.md#the-sweep-the-letterhead-under-a-moving-sky)).
-So the question is whether the chrome reads over white, under both washes.
-
-The run that decides it is the caption's **"SPREAD n / N"**, white at 0.5 on a
-grey 0.4 chip — the dimmest type on the chrome. Over white at `readerScrim`
-0.35: 4.43:1 at a chrome wash of 0.70, **4.51 at 0.72**, 4.62 at 0.75. The
-buttons (white on the same chip) pass from 0.1 and the pill from 0.
-`ground.test.ts` fails under 0.72. If the bands ever have to be lighter, the
-lever is the caption's colour (at white 0.72 the floor drops to about 0.3), not
-`readerScrim`.
-
-`scripts/sky-contrast.mjs` now walks the reader too (`#read-01/6`, all four
-buttons live): the twenty-four states, and the whole-day sweep — 3,456 skies,
-both moons, the wake's dials at their maxima, a swipe along each band and a
-diagonal through both. 2026-09-28, Apple M1 Max:
-
-| | 24 states, worst | sweep, worst | white band |
-| --- | --- | --- | --- |
-| 1728×996 @2x | 4.63 (clear dawn) | **4.62** | 4.62 |
-| 1440×900 @2x | 4.62 (clear dawn) | **4.62** | 4.62 |
-
-Every condition reaches the white floor; none goes under it. The worst run is
-always the bottom band's caption. Disabled buttons (0.35 opacity) are not
-measured: WCAG exempts an inactive control's text. The MiniMap is not reader
-chrome — it is the app's, under the reader layer, and the reader never shows it.
+Until 2026-09-30 the chrome was the detail view's grey chips, and the sky
+under them was darkened to hold their type: `readerChromeScrim` 0.75 over two
+72px bands, measured against a pure white band (the caption's "SPREAD n / N",
+white 0.5 on its chip, was the run that set the floor at 0.72). The chips are
+gone, and with them the bands: each paper shape is opaque, its glyph sits
+inside it, and the glyph is held to 4.5:1 against its own paper whatever the
+sky does. See [Chrome](#chrome) for the model and the sweep that checks it.
 
 ### The book's shadow
 
@@ -225,6 +208,226 @@ was already rendering the sky every frame under the wood (covered, not stopped),
 so the same sum there is ~9.2. What this change adds is the fluid being awake
 (+0.3ms GPU at 2×) and ~0.2ms of main thread. It is reported, not asserted. No
 frame over 20ms through five flips and a 3→20 riffle at either DPR.
+
+## Chrome
+
+The reader's buttons, and the detail view's, are **hand-cut paper shapes that
+take their colour from the sky**. The design is Uko's Figma frame "readerview"
+(Discommode-Website, node 6:2); the outlines are his SVG exports, used as
+drawn. Code is in `src/chrome/`, shared by both views
+([docs/detail-paper.md, Chrome](detail-paper.md#chrome) has the detail view's
+row).
+
+> **On the numbers here.** The sizes are the frame's, as the brief gives them
+> (the Figma file itself was not reachable from this session: no file key in
+> the repo). Measurements are `scripts/sky-contrast.mjs` and captures of the
+> dev build, headless Chrome on an Apple M1 Max, 2026-09-30.
+
+### The shapes
+
+Five floating shapes in a row, bottom-centre, and one at the top — no band
+behind any of them:
+
+| | shape | size (the base) | action |
+| --- | --- | --- | --- |
+| top | back ‹ | 46×46 | the way out (Escape) |
+| row | cover-jump (book) | 58×58 | the riffle to spread 0 (Home) |
+| | ‹ prev | 46×46 | Prev (←) |
+| | spread pill "07 \| 22" | 131×46 | — (this spread \| all of them) |
+| | next › | 46×46 | Next (→) |
+| | back-cover-jump (book) | 58×58 | the riffle to the last spread (End) |
+
+The row's shapes are 26 apart (`chromeGap`), on one centre line; its bottom
+edge, and the top shape's top edge, are 35 from the viewport's
+(`chromeMargin`). All of it scales with `chromeScale`.
+
+**Each shape is its outline, not a redraw.** An export is a BASE (a circle, or
+the pill's rounded rect) plus a scalloped EDGE around it (an outlined stroke),
+both Figma grey, and the glyph in white on top. The site uses the paper as one
+CSS mask and the glyph as a second, over colours that come from the sky. The
+base is the size the frame gives and the layout box; the edge overhangs it by
+3–4 units, as in the file.
+
+**The back shape** has no export. It is the prev shape cut again: the same ‹
+glyph, with the paper turned top for bottom about the base's centre, so the
+top of the screen and the row do not carry the same piece twice.
+
+**The pill's text is live**: Bowlby One 15px (`public/fonts/bowlby-one-latin-400.woff2`,
+fontsource 5.3.0, OFL — `BowlbyOne-OFL.txt` beside it), two digits either
+side of the file's own hairline (the thin wobbly vertical, kept from the
+export as the pill's ink), 18 units off it, centred on the capitals
+(`text-box: trim-both cap alphabetic`) as the frame has them.
+
+### The assets pipeline
+
+```
+npm run chrome     # ~/Discommode-pages/ui/reader-bar/*.svg → public/ui/chrome/, src/chrome/shapes.json
+```
+
+`scripts/make-chrome.mjs`. The sources stay outside the repo, like the pages.
+It does not redraw or recolour anything: it sorts each export's elements by
+the fill Figma gave them — grey is paper, white is ink — and writes each set to
+its own file with the export's viewBox, so the two masks stay registered. What
+it does change: numbers are rounded to 2 decimals (0.01 of a Figma px);
+`preserveAspectRatio="none"` goes on the root (so the pill can stretch —
+at the viewBox's own ratio it is the same picture); and the pill's two
+numbers are dropped (they are live text). The manifest records each shape's
+viewBox and base box. Byte-stable: a re-run on unchanged sources writes
+identical files. 296 KB of exports ship as 228 KB, 57 KB gzipped.
+
+### The pills: the middle stretched, not generated
+
+The detail view needs pills of other widths ("Read issue", "Open project"),
+and the brief offered two ways: 9-slice the pill's SVG, or generate the
+scalloped edge procedurally with a `chromeEdgeWobble` dial. **It is the
+stretch** (`PillFace` in `Paper.tsx`). The pill's two round ends — half its
+height either side of the straight run — are drawn exactly as exported, and
+only the run between them is stretched: three masks of the one SVG, the middle
+one scaled `137 / 85` of its own width and aligned so the run starts at its
+left edge, 1px into each cap so no half-covered seam shows. Pure CSS: the pill
+follows its label's width with nothing measured.
+
+Why: every edge on screen stays one Uko cut. At 131 it IS the export,
+unstretched, and the numbers pills are 131. The cost is that the run's wobble
+stretches with the pill — 1.35× on "Read issue" (≈160 wide), 1.5× on "Open
+project" (≈174) — gentler waves along the top and bottom than at the ends.
+Past about 2× it would start to read as stretched; nothing on the site is. A
+procedural edge would make any width, and would not be his.
+
+### Colour: the sky, made paper
+
+`chromeColor.ts`, pure, with a unit test (`chromeColor.test.ts`).
+
+1. **The sky under each shape.** About twice a second (`chromeSampleMs` 500)
+   `useSkyChrome` asks the sky engine for the MEAN colour of the live canvas
+   inside each shape's base box (`SkyEngine.readMeans`). The rects are copied
+   into a pixel buffer right after a frame is drawn, a fence is set, and the
+   bytes are fetched once the GPU has passed it, a frame or two later: **no
+   per-frame readback and no stall**. Where the shapes are is measured only
+   when it can have changed (the set of shapes, a resize, a dial), never per
+   sample: a `getBoundingClientRect` mid-riffle would force a layout the flip
+   engine has just dirtied. With no WebGL2, and before the first
+   read-back lands, the colour comes from the palette and cloud cover instead
+   (`skyFallbackColorAt`: the same colours the CSS fallback paints).
+2. **Paper.** The sky's HSL hue and saturation (× `chromeFillSaturation`), at
+   lightness `chromeFillLightness`: 0.22 ships, ink-dark paper cut from the
+   sky; ~0.92 is the paper-white direction.
+3. **Ink.** Whichever of white and the site's ink-black (`#14120f`) reads harder
+   on that paper, mixed `chromeInkMix` (0.12) of the way toward the paper's hue
+   at the ink's own lightness, so a little of the sky gets into the glyphs.
+4. **The clamp.** If a glyph would be under 4.5:1 on its paper, the paper's
+   lightness is moved away from the ink, 0.005 at a time, until it is not. It
+   is reported: the probe and the sweep print every one.
+5. **The cross-fade.** A shape whose paint changes by 3 levels or more on any
+   channel (the wake and the twinkle move the mean by a level or two all the
+   time) eases to the new one over `chromeColorEase` (600ms), writing a
+   variable only on the frames its rounded value changes, held to the bar on the way (an ink flipping from
+   white to black crosses grey on grey, so the mixture's paper is clamped
+   too). A snap under reduced motion.
+
+Each shape is painted from the sky under ITSELF, so the chrome carries the
+sky's own gradient: at a clear dusk the row runs from a deeper amber on the
+left to a lighter one toward the sun, and the back shape at the top is violet.
+
+**What the sky decides is which paper, not whether the glyph reads.** The paper
+is opaque and the glyph is inside it, so contrast is fill against ink and the
+sky is not in it. That is why the band scrims could go.
+
+### Contrast
+
+`node scripts/sky-contrast.mjs` (with the dev server; `--chrome-only` skips the
+letterhead) opens `#read-01/6` and `#item-01` at both signed-off viewports @2x,
+and for every shape on screen prints, over each of the twenty-four states, the
+glyph's ratio on the paper the chrome would make there — the shape's mean sky
+read out of the back buffer (`__chromeProbe`) — with a `*` and a line for every
+clamp. Then the whole day, the letterhead's way: every condition × every 5
+minutes × two moons, at rest and through a swipe along each chrome line and a
+diagonal through both, the wake's dials at their maxima, each shape's sky
+reduced to its mean on the GPU (`sweepMeans`, `createRectMeans`). `--fill L`
+measures at another `chromeFillLightness`, which is how to check a tuned value
+before it is pasted. Exits non-zero under 4.5:1.
+
+| 2026-09-30 | 24 states, worst | the sweep (3,456 skies), worst | clamps |
+| --- | --- | --- | --- |
+| reader, 1728×996 | 7.76 (clear dawn, cover) | **5.21** (clear 06:55, sun 0.14, prev) | 0 |
+| reader, 1440×900 | 7.53 (clear dawn, cover) | **5.21** | 0 |
+| detail, 1728×996 | 7.61 (clear dawn, prev) | **5.21** | 0 |
+| detail, 1440×900 | 7.30 (clear dawn, prev) | **5.21** | 0 |
+
+The worst sky is a clear sunrise at the horizon: a golden hue, which at HSL
+0.22 is the lightest-reading dark there is. **At the shipped dials nothing
+clamps**, anywhere. The clamp is there for the dial:
+
+| `--fill` | worst | clamps, 24 states (per view × viewport) | the sweep |
+| --- | --- | --- | --- |
+| 0.22 (ships) | 5.21 | 0 | 0 |
+| 0.5 | **4.50** | reader 111 and 104 of 144, detail 106 and 107 of 120 | every condition clamps; the worst of every condition is 4.50 |
+| 0.92 (paper-white, ink-black) | 13.43 | 0 | 0 |
+
+Mid-lightness paper is where neither ink reaches 4.5 (a grey of luminance
+0.18–0.20 is under it against white AND ink-black): there the paper is moved,
+never more than 0.03 at 0.5 (0.47–0.52). `chromeColor.test.ts` holds every hue ×
+saturation × lightness a sky could give, at lightness 0.05–0.98, ink mix 0–0.5
+and saturation 0–1.5, to ≥ 4.5 after the clamp, and the cross-fade through an
+ink flip.
+
+Disabled buttons keep their paper and dim their glyph to 0.3; WCAG exempts an
+inactive control's text, and they are not measured.
+
+### Interaction
+
+- **Hover** (`chromeHoverLift` 1.04, `chromeHoverTilt` 2°, `chromeHoverMs`
+  120): the shape scales and tilts, the sign alternating along the row. Nothing
+  else. Under reduced motion, the scale without the tilt or the transition.
+- **Press:** the paper steps `chromePressNudge` (0.05) further from the ink —
+  so a press only ever adds contrast.
+- **Focus:** a round ring outside the paper's overhang, 2px white inside 2px
+  ink-black, so it reads on any sky and any paper. Tab order is unchanged.
+- **Hit areas:** every control is at least 44×44 whatever `chromeScale` says
+  (the face centres in it); at 1 they are 46, 58 and 131×46.
+
+### Dials
+
+CHROME panel — in the READER NAV dock (`#read-NN?intro`), the doorway dock
+(`#item-NN?intro`) and the app's dev dock at `#item-NN`; one id, persisted.
+**Copy** writes a paste-ready `CHROME_DEFAULTS` to the clipboard.
+`src/chrome/chromeDials.ts` is the source of truth.
+
+| dial | shipped | |
+| --- | --- | --- |
+| `chromeFillLightness` | 0.22 | the paper's HSL lightness; ~0.92 is paper-white (the ink follows) |
+| `chromeFillSaturation` | 1 | × the sky's saturation |
+| `chromeInkMix` | 0.12 | how much of the paper's hue gets into the ink |
+| `chromeColorEase` | 600 | the cross-fade, ms |
+| `chromeSampleMs` | 500 | how often the sky under the chrome is read back |
+| `chromeHoverLift` | 1.04 | hover scale |
+| `chromeHoverTilt` | 2 | hover tilt, degrees |
+| `chromeHoverMs` | 120 | hover in and out |
+| `chromePressNudge` | 0.05 | press: lightness away from the ink |
+| `chromeScale` | 1 | the whole chrome × the frame's sizes |
+| `chromeMargin` | 35 | the row's bottom / the top shape's top, px from the edge |
+| `chromeGap` | 26 | between shapes in a row, px |
+
+There is no `chromeEdgeWobble`: the edge is Uko's, not generated (above).
+
+### Not done
+
+- **The row overlaps the book at 1440×900.** The hero (and so the book) is
+  `detailCardScale` 0.82 of the viewport's height, which leaves 81px bands at
+  900 tall; the row needs 93 (35 + the 58 book icons), so it sits ~12px over
+  the pages' bottom edge, plus the scallops' overhang, and the back shape's
+  edge touches the top. At 1728×996 the bands are 90: the row overlaps by ~3px
+  and the top is clear. The detail view's row is 46 tall and just fits at 900.
+  Nothing was changed about the hero: it is the doorway's shared rect and the
+  detail view's size. Levers, all dials: `detailCardScale` ≤ 0.78 clears it at
+  900; or `chromeMargin` / `chromeScale`; or raising `MIN_BAND` in
+  `layout/hero.ts` to the new chrome (it still describes the old 40px chip).
+- **Paper against the sky is not measured.** Only glyph against paper is. Where
+  the sky under a shape is itself near L 0.22 — a clear dusk's violet zenith
+  behind the back shape, a clear night's warm horizon behind the row — the
+  paper's cut edge is faint against the sky (the glyph still reads 12–14:1).
+  If that should read louder, it wants a dial of its own (a minimum lightness
+  step between paper and sky), which the brief did not ask for.
 
 ## Cover and back animations
 
@@ -372,10 +575,12 @@ device. Same trade the cover makes, for the same reason.
 
 ## Navigation
 
-The bar: `|‹ Cover`, `‹ Prev`, `SPREAD n / N · pages`, `Next ›`, `Back cover ›|`.
-Keys: ←/→ turn, Home/End jump, Escape leaves. Drag turns (release past t 0.42
-commits). Cover and Prev disable at spread 0, Next and Back cover at the last.
-The caption chip is a fixed width so the buttons never move under the cursor.
+The row: cover-jump, ‹ prev, the spread pill ("07 | 22": this spread | all of
+them), next ›, back-cover-jump ([Chrome](#chrome)). Keys: ←/→ turn, Home/End
+jump, Escape leaves. Drag turns (release past t 0.42 commits). Cover and Prev
+disable at spread 0, Next and Back cover at the last. The pill is a fixed 131
+wide so the buttons never move under the cursor; the pages it used to name
+("pages 11 – 12") are read out to a screen reader with the spread.
 
 **Jumps** — Cover, Back cover, Home, End — are `flipEngine.turnTo(index)`, in one
 of two modes (`JUMP.mode`): the riffle, or a cut (the target spread's plates fade
@@ -529,7 +734,7 @@ exits non-zero on any ✗.
 - **Navigation.** Prev / Next / arrows / drag / Home / End / Cover / Back cover
   land on one spread index; drag, arrows and Next during a riffle are ignored;
   Escape mid-riffle lands the riffle (the caption reaches 22/22) and then exits.
-- **Pill vs Escape.** The doorway exit from each, opened from `#item-01`,
+- **Back shape vs Escape.** The doorway exit from each, opened from `#item-01`,
   screencast three times over. Every exit must end on `#item-01` with the reader
   unmounted, and the Escape exit must pass through a frame the pill exit also
   shows, to under 0.1% of pixels. Frames are paired by IMAGE, not by the

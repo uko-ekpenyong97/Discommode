@@ -21,9 +21,13 @@ import type { ChromePaint, RGB } from './chromeColor';
  * CSS fallback paints — so the chrome is never the stylesheet's grey.
  *
  * The paints are written as `--paper`, `--paper-press` and `--ink` on each
- * shape, and the first shape's on `root` too, so a shape that mounts between
- * two samples (the detail view's action pill changing kind) inherits a paint
- * from its row until its own arrives.
+ * shape, and each row's first shape's on the ROW too (the shape's parent), so a
+ * shape that mounts between two samples (the detail view's action pill
+ * changing kind) inherits a paint from its row until its own arrives. Never on
+ * `root`: these are inherited properties, and a write on `.reader` or
+ * `.detail` restyles the whole book or strip under it — on every frame of a
+ * cross-fade, which the flip's wake keeps starting (measured: +1.1ms of main
+ * thread at p95 per flip frame, docs/reader.md).
  */
 
 interface Shape {
@@ -49,11 +53,27 @@ function fallbackSky(r: ViewRect): RGB {
   return skyFallbackColorAt(g, t.cloud, (r.y + r.h / 2) / Math.max(1, window.innerHeight));
 }
 
+/** What each element was last given, so a frame of the cross-fade that
+ *  rounds to the same colours writes nothing (and invalidates no style). */
+const written = new WeakMap<HTMLElement, string>();
 function write(el: HTMLElement, p: ChromePaint): void {
-  el.style.setProperty('--paper', css(p.fill));
-  el.style.setProperty('--paper-press', css(p.press));
-  el.style.setProperty('--ink', css(p.ink));
+  const fill = css(p.fill);
+  const press = css(p.press);
+  const ink = css(p.ink);
+  const key = `${fill}|${press}|${ink}`;
+  if (written.get(el) === key) return;
+  written.set(el, key);
+  el.style.setProperty('--paper', fill);
+  el.style.setProperty('--paper-press', press);
+  el.style.setProperty('--ink', ink);
 }
+
+/** A new sky is only a new paint past this many levels on any channel of the
+ *  paper or the ink: the wake and the twinkle move the mean by a level or two
+ *  all the time, and a cross-fade for each would be restyling the chrome
+ *  continuously for nothing anyone can see. */
+const REPAINT_LEVELS = 3;
+const far = (a: RGB, b: RGB) => a.some((c, j) => Math.abs(c - b[j]) >= REPAINT_LEVELS);
 
 /** Everything the probe needs about what is on screen now (dev). */
 export interface ChromeShapeState {
@@ -73,12 +93,16 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
   useLayoutEffect(() => {
     const host = root.current;
     if (!enabled || !host) return;
-    const shapes = [...host.querySelectorAll<HTMLElement>('[data-chrome]')];
-    shapes.forEach((el, i) => {
+    const rows = new Set<HTMLElement>();
+    for (const el of host.querySelectorAll<HTMLElement>('[data-chrome]')) {
       const p = chromePaint(fallbackSky(faceRect(el)));
       write(el, p);
-      if (i === 0) write(host, p);
-    });
+      const row = el.parentElement;
+      if (row && row !== host && !rows.has(row)) {
+        rows.add(row);
+        write(row, p);
+      }
+    }
   }, [root, enabled]);
 
   useEffect(() => {
@@ -94,16 +118,20 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
       const now = performance.now();
       const ease = reducedMotion() ? 0 : CHROME.chromeColorEase;
       let moving = false;
+      const rows = new Set<HTMLElement>();
       for (const [el, s] of state) {
         const t = ease > 0 ? Math.min(1, (now - s.t0) / ease) : 1;
         // ease-in-out on the cross-fade
         const k = t * t * (3 - 2 * t);
         s.shown = mixPaint(s.from, s.to, k);
         write(el, s.shown);
+        const row = el.parentElement;
+        if (row && row !== host && !rows.has(row)) {
+          rows.add(row);
+          write(row, s.shown);
+        }
         if (t < 1) moving = true;
       }
-      const first = state.values().next().value;
-      if (first) write(host, first.shown);
       if (moving) raf = requestAnimationFrame(frame);
     };
 
@@ -117,8 +145,7 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
           return;
         }
         s.sky = skies[i];
-        const same = to.fill.every((c, j) => Math.abs(c - s.to.fill[j]) < 1) && to.ink.every((c, j) => c === s.to.ink[j]);
-        if (same) return;
+        if (!far(to.fill, s.to.fill) && !far(to.ink, s.to.ink)) return;
         s.from = s.shown;
         s.to = to;
         s.t0 = now;
@@ -127,10 +154,28 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
       if (!raf) raf = requestAnimationFrame(frame);
     };
 
+    // WHERE the shapes are is measured only when it can have changed — the
+    // set of shapes, the window, a dial — not on every sample: a
+    // getBoundingClientRect forces a layout, and mid-riffle the flip engine
+    // has dirtied it every frame.
+    let els: HTMLElement[] = [];
+    let rects: ViewRect[] = [];
+    let stale = true;
+    const measure = () => {
+      const now = [...host.querySelectorAll<HTMLElement>('[data-chrome]')];
+      if (!stale && now.length === els.length && now.every((el, i) => el === els[i])) return;
+      stale = false;
+      const all = now.map((el) => ({ el, r: faceRect(el) }));
+      const shown = all.filter((x) => x.r.w > 0 && x.r.h > 0);
+      els = shown.map((x) => x.el);
+      rects = shown.map((x) => x.r);
+    };
+    const onResize = () => (stale = true);
+    window.addEventListener('resize', onResize);
+
     const sample = async (snap = false) => {
       window.clearTimeout(timer);
-      const els = [...host.querySelectorAll<HTMLElement>('[data-chrome]')].filter((el) => el.getClientRects().length > 0);
-      const rects = els.map(faceRect);
+      measure();
       let skies: RGB[] | null = null;
       const engine = skyEngine();
       if (engine && rects.length) skies = await engine.readMeans(rects);
@@ -147,8 +192,9 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
     void sample();
     // A dial moved: repaint at once, from the skies already read.
     const unsub = subscribeChrome(() => {
-      const els = [...state.keys()];
-      paint(els, els.map((el) => state.get(el)!.sky), true);
+      stale = true;
+      const shapes = [...state.keys()];
+      paint(shapes, shapes.map((el) => state.get(el)!.sky), true);
     });
     const report = () =>
       [...state].map(([el, s]) => ({ el, kind: el.dataset.chrome ?? '', sky: s.sky, paint: s.shown }));
@@ -159,6 +205,7 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
       window.clearTimeout(timer);
       cancelAnimationFrame(raf);
       unsub();
+      window.removeEventListener('resize', onResize);
       live.delete(report);
     };
   }, [root, enabled]);
