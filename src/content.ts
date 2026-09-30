@@ -39,7 +39,9 @@ export interface PosterItem {
    */
   title: string;
   /**
-   * What the thing is CALLED, once there is something real behind the card.
+   * What the thing is CALLED, once there is something real behind the card: the
+   * grid overlay's headline, and nowhere else. Nothing is set over the cover —
+   * the tile and the detail hero carry the number and only the number.
    *
    * Absent on a placeholder, and the overlay falls back to {@link title} — the
    * headline is then the number, which is what every card showed before the
@@ -48,12 +50,6 @@ export interface PosterItem {
    * front of it says nothing twice.
    */
   name?: string;
-  /**
-   * One line about it, under the headline. A sentence, not a tagline: it is the
-   * only prose anywhere on the grid, and the only thing that tells you what a
-   * card is before you open it.
-   */
-  description?: string;
   /** URL-hash slug for deep-linking the detail view (e.g. "item-02"). */
   slug: string;
   /** Magazine cards open the reader; portfolio cards open the project view. */
@@ -130,7 +126,6 @@ export const CONTENT: PosterItem[] = [
     id: 3,
     title: '04',
     name: 'Nosey',
-    description: 'A proof-of-concept for what Notion’s character system could become.',
     slug: 'item-04',
     kind: 'portfolio',
     project: '04',

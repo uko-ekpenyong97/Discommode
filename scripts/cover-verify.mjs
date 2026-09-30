@@ -841,11 +841,11 @@ async function checkRiveSwap(browser) {
     await page.mouse.move(3, 3);
     await page.waitForTimeout(400);
     const hr = await heroRect(page);
-    // The labels are the DOM hero's alone (the name, its line, the number):
-    // this compares the cover.
+    // The number is the DOM hero's alone (the tile's is hidden too): this
+    // compares the cover.
     await page.evaluate(() => {
       const st = document.createElement('style');
-      st.textContent = '.detail__panel-meta, .detail__panel-num, .grid-card__index { visibility: hidden !important; }';
+      st.textContent = '.detail__panel-num, .grid-card__index { visibility: hidden !important; }';
       document.head.append(st);
     });
     const role = await page.evaluate(() => document.querySelector('.detail-morph .cover-tile[data-cover="nosey"]')?.dataset.role);
@@ -1338,13 +1338,13 @@ async function checkRiveGround(browser) {
         }
         st.textContent = css;
       }, css);
-    // The panel's name and number are DOM over the hero: out of the way, so the
-    // mask is the cover's alone.
-    await under('.detail__panel-meta, .detail__panel-num { visibility: hidden !important; } .sky-layer { visibility: hidden !important; } html, body, #root { background: #000 !important; }');
+    // The panel's number is DOM over the hero: out of the way, so the mask is
+    // the cover's alone.
+    await under('.detail__panel-num { visibility: hidden !important; } .sky-layer { visibility: hidden !important; } html, body, #root { background: #000 !important; }');
     const k = await raw();
-    await under('.detail__panel-meta, .detail__panel-num { visibility: hidden !important; } .sky-layer { visibility: hidden !important; } html, body, #root { background: #fff !important; }');
+    await under('.detail__panel-num { visibility: hidden !important; } .sky-layer { visibility: hidden !important; } html, body, #root { background: #fff !important; }');
     const w = await raw();
-    await under('.detail__panel-meta, .detail__panel-num { visibility: hidden !important; }');
+    await under('.detail__panel-num { visibility: hidden !important; }');
     const mask = new Uint8Array(k.n);
     let ground = 0;
     for (let i = 0; i < k.n; i++) {

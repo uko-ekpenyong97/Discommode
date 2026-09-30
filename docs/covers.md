@@ -28,11 +28,26 @@ so what is tuned there is what ships.
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 | the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
 | the grid→detail morph at 0 / 0.5 / 1, before and after | `docs/covers/bare-morph.webp` |
-| card 04: the grid row, live, the sky through its ground (the file before 2026-09-28; it is opaque now) | `docs/covers/nosey-grid-row.webp` |
-| card 04: the detail hero at rest and mid-bounce | `docs/covers/nosey-hero.webp` |
+| card 04: the grid row, live, hovered: "Nosey" in the overlay's headline and nothing over the cover (2026-09-30) | `docs/covers/nosey-grid-row.webp` |
+| card 04: the detail hero at rest and mid-bounce, the number alone at its foot (2026-09-30) | `docs/covers/nosey-hero.webp` |
 | card 04: the same tile over NOON and over NIGHT (the file before 2026-09-28) | `docs/covers/nosey-noon-night.webp` |
 
 ## Handoff
+
+**Card 04's labels (2026-09-30).** Card 04 is labelled as cards 01–03 are:
+the number bottom-left and its name, "Nosey", as the grid overlay's headline.
+Nothing else is set over the cover. The description's rendering (the overlay's
+second line, the detail hero's name + line on a scrim, and PR #31's soft text
+shadow in place of that scrim) is gone, and so is `description` from the
+manifest: the project view never read it. The stills (`npm run covers`) come
+out byte-identical: they are the cover alone. At the last runs:
+`verify:cover` all passed (3 skipped, as above), `verify:detail` all passed
+(card 04 as the hero 0.133–0.387%). One thing seen and left alone: in the
+GRID, `.grid-card__index` is an unpositioned span, so the face above it (01's
+and 03's `<img>`, 02's and 04's cover canvas) paints over it. Card 04's tile
+number has been hidden under its opaque ground since 2026-09-28, as 01's and
+03's are under their images; only card 02's shows, through its translucent
+shader. `position: relative` on the index would put the number on every tile.
 
 **The detail view's arrival (2026-09-28).** [Not done](#not-done) 9. The
 paper's GL — context, programs, crease map, card 02's renderer in it, every
@@ -265,7 +280,7 @@ detail slot:
 | the DOM panel | `.detail__panel--bare`: no corners, a TRANSPARENT shadow. Not `none`: `none` on an off-screen panel changes how Chrome layers the strip and re-rasterises the other cards' images (`#item-04`, DOM faces: 8% of pixels, up to 111 levels). |
 | the paper | `uRadius` 0 (no rounded clip), no shadow quad. |
 | the paper's light | the crease screen-blend and trough shading are weighted by `coverPaperShade × alpha`: the full paper under opaque ink, none where the ground is transparent. The dent, squash, ripple, fold and crease refraction move the sheet and are unchanged. Card 04 has its own `coverPaperShade` (its JSON); card 02's is the site dial. |
-| the name's scrim | card 04 has a name and a line under it (card 02 has neither), and their scrim — a dark gradient up from the panel's foot — was a dark band across the sky over a transparent cover: `.detail__panel--bare` drops it, and the type carries a soft shadow (`0 1px 14px` at .4) instead. A design call: say if the scrim should come back. |
+| the labels | the number, bottom-left, as on every card, and nothing else. Card 04 had its name and a line under it here, on a scrim (and, from PR #31, a soft text shadow instead of it); since 2026-09-30 its name is only the grid overlay's headline, and the description is gone from the manifest. |
 | the morph | the card's chrome (6px corners, `0 24px 70px` at .55) fades to none over the travel, on its easing, and back on the way out. |
 
 Every other card is untouched: `verify:detail` as before, and before/after
@@ -757,8 +772,8 @@ Bounce, as card 02 switches its still to live ([Not done](#not-done) 1).
 `rswap`, the clock pinned and both instances fresh: the morph held on its last
 frame (Main) against the DOM hero it lands on (Main Bounce) — **0.51% (1×),
 0.53–0.54% (2×)**; the control, the hero a second of bounce later, 16%. With
-`start`, 0.51% (the name and number, which only the DOM hero has, are hidden:
-this compares the cover).
+`start`, 0.51% (the number, which only the DOM hero has, is hidden: this
+compares the cover).
 
 ### The still
 

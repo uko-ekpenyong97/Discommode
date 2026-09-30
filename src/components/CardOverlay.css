@@ -45,15 +45,9 @@
   );
 }
 
-/* Sits ABOVE the card's top edge, so it grows upward: a card with a one-line
-   description is taller here than a card with only a number, and anchoring the
-   block by its bottom keeps the name on the same line on every card.
-
-   The bare number keeps the -18px it has always had — it overlaps the card's
-   top corner, which is what made it read as a label ON the card. A description
-   wraps to two lines at this measure, and the second one would land across the
-   card's edge: `is-described` lifts the whole block clear so the sentence is
-   read against the ground and nothing else. */
+/* Sits ABOVE the card's top edge, anchored by its bottom, and overlaps the
+   card's top corner by 18px — which is what makes it read as a label ON the
+   card. The number or the name, the same place on every card. */
 .card-overlay__headline {
   bottom: 100%;
   margin-bottom: -18px;
@@ -62,14 +56,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
   font-family: ui-sans-serif, system-ui, sans-serif;
   color: #fff;
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
-}
-
-.card-overlay__headline.is-described {
-  margin-bottom: 10px;
 }
 
 .card-overlay__name {
@@ -77,18 +66,6 @@
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.03em;
-}
-
-/* One sentence, and the only prose on the grid. Held to a measure rather than
-   the card's width: a line that ran the whole face would read as a caption on
-   the art instead of as a label above it. */
-.card-overlay__desc {
-  max-width: 24em;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.35;
-  letter-spacing: 0;
-  color: rgba(255, 255, 255, 0.82);
 }
 
 .card-overlay__captions {
