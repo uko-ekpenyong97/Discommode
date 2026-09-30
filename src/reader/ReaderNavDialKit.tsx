@@ -7,6 +7,7 @@ import 'dialkit/styles.css';
 import { JUMP } from './jump';
 import type { JumpMode, RiffleCurve } from './jump';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
+import { useReaderGroundDials } from '../dev/readerGroundDials';
 
 /** The shipped values, so leaving the dock puts them back. */
 const SHIPPED = { ...JUMP };
@@ -56,6 +57,9 @@ export default function ReaderNavDialKit() {
 
   // The closed cover's and back's page hover and boil (coverLife.ts).
   useCoverLifeDials();
+
+  // The sky under the book: its washes, the book's shadow, the flip's wake.
+  useReaderGroundDials();
 
   useEffect(
     () => () => {

@@ -1,7 +1,7 @@
 /* The reader as a layer over the app: a fixed full-viewport pane above the
-   detail/morph/minimap stack (minimap is z-index 30). The inner `.reader` keeps
-   its own dark wood background, so animating this wrapper's opacity crossfades
-   the whole reader over the app beneath.
+   detail/morph/minimap stack (minimap is z-index 30). Its ground is the sky
+   (ReaderGround), opaque once it holds the canvas, so animating this wrapper's
+   opacity crossfades the whole reader over the app beneath.
 
    The fade is a CSS animation, not a JS opacity toggle: the layer mounts
    synchronously from the hash (so it works in a background tab), and the
@@ -46,3 +46,31 @@
 /* Reduced motion takes the PLAIN crossfade for BOTH open and close (spec 4c-2:
    "crossfade only"): the doorway entrance never plays, and a gentle opacity fade
    carries no vestibular motion, so it is kept rather than snapped to instant. */
+
+/* THE APP UNDER THE DOORWAY. Until the TABLE channel reaches 1 the reader's
+   ground is transparent and the app's own sky shows through it (see
+   ReaderGround.tsx), so everything the app still draws over that sky has to be
+   gone by then — or it would vanish in one frame when the ground takes the
+   canvas. The wood used to cover it all as it arrived; now it goes on the same
+   channel, 1 − TABLE:
+
+     .detail       CLEAR has already taken the neighbours and the chrome. What
+                   is left is the centre panel, under the opaque cover — and
+                   the panel's drop shadow round it, which is what this is for
+                   (measured: a 70px halo, up to 12 levels, popping out at the
+                   hand-over without it). Its own opacity transition is off
+                   here: the value is written every frame.
+     .mini-map     not cleared by CLEAR; the wood covered it.
+     .env-readout  the sky's readout, in dev.
+
+   `--doorway-table` UNSET reads as 0 here, unlike everywhere else: the plain
+   reader (direct URL, reduced motion) writes no TABLE, holds the canvas from
+   its first frame, and cross-fades its opaque layer over the app exactly as it
+   did with the wood — the app under it stays as it was. So does a close from
+   Back, which removes the variable and fades the layer out over the app. */
+.app:has(~ .reader-layer) :is(.detail, .mini-map, .env-readout) {
+  opacity: calc(1 - var(--doorway-table, 0));
+}
+.app:has(~ .reader-layer) .detail {
+  transition: none;
+}

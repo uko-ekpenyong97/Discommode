@@ -50,7 +50,7 @@ function parseHash(): { spread: number; query: string } {
 const clamp = (n: number, max: number): number => Math.min(Math.max(n, 0), max);
 
 /**
- * The reader stage: the magazine on the wooden table. The spread index lives in
+ * The reader stage: the magazine on the sky. The spread index lives in
  * the hash (`#read-01/5`) so a reload keeps your place; this component owns that
  * sync in both directions (replaceState, which fires neither hashchange nor
  * popstate). During doorway authoring (`#item-NN?intro`) that sync is disabled so
@@ -81,7 +81,7 @@ export default function ReaderPage({
   const resetToCover = useCallback(() => setSpread(0), []);
 
   // The DialKit harness is lazy — pin REST synchronously so the reader starts
-  // transparent (detail view showing through) rather than flashing full wood.
+  // transparent (detail view showing through) rather than flashing the full ground.
   useLayoutEffect(() => {
     if (authoringActive) applyDoorwayRest();
   }, [authoringActive]);

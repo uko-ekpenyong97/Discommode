@@ -63,7 +63,7 @@ export function FlipBook({
   const leftSlotRef = useRef<HTMLDivElement>(null);
   const rightSlotRef = useRef<HTMLDivElement>(null);
   // The closed face under each hover layer, which boils with it (the layer's
-  // plate covers it, but not its table shadow or its edge): the cover sits in
+  // plate covers it, but not its contact shadow or its edge): the cover sits in
   // the right slot at data-pos="cover", the back in the left at "back".
   const coverSlot = useCallback(() => [rightSlotRef.current], []);
   const backSlot = useCallback(() => [leftSlotRef.current], []);

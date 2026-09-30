@@ -1,7 +1,7 @@
 /**
  * The reader, in Chrome. `npm run verify:reader` with the dev server running
  * (`npm run dev`; `--url` for another origin, `--runs N` for the frame budget,
- * `--only frames,zorder,nav,exit,hover,life` for a subset).
+ * `--only frames,zorder,nav,exit,hover,life,sky` for a subset).
  *
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
@@ -38,6 +38,22 @@
  *                         over 20ms; leaving, each object is home within its
  *                         pass + stagger + fade and nothing is moved at all.
  *                         Writes docs/reader-nav/boil-steps.webp.
+ *   the sky (`sky`)        the ground is the app's one sky (ReaderGround.tsx):
+ *                         ONE canvas and no new WebGL context when the reader
+ *                         opens, the canvas in the app while TABLE < 1 and in
+ *                         the ground once it is 1, and back after the exit;
+ *                         the hand-over at TABLE 1 changes no pixels; the
+ *                         reader's sky is the grid's sky, pixel for pixel;
+ *                         a page flip and a riffle wake the sky's field (and
+ *                         at readerFlipSplat 0 a flip does not); and the frame
+ *                         budget — main-thread work per frame during page
+ *                         flips plus the sky's own GPU frame with the fluid
+ *                         awake, ≤ 8ms at p95, at 1× and 2× (a riffle's is
+ *                         reported beside it), and 60fps through both.
+ *
+ * The z-order and exit checks photograph the book over the sky now, so they
+ * hold the sky still first (`stillSky`: its clock pinned, its wake frozen) —
+ * two captures must differ only by what the reader did.
  *
  * It drives the reader through `window.__flip`, the dev-only engine handle, and
  * its `probe` (hold a riffle at any ms, paint leaves flat hues, read their state).
@@ -50,11 +66,13 @@ const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,exit,hover,life` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,exit,hover,life').split(',');
+/** `--only frames,zorder,nav,exit,hover,life,sky` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,exit,hover,life,sky').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORT = { width: 1728, height: 996 };
 const FRAME_BUDGET_MS = 20;
+/** Sky + fluid + the reader's flip, per frame, at p95. */
+const WORK_BUDGET_MS = 8;
 const ZORDER_TOLERANCE = 1e-4;
 
 let failures = 0;
@@ -127,6 +145,20 @@ async function frameTimes(page, act) {
   return page.evaluate(() => {
     window.__frOn = false;
     return window.__fr;
+  });
+}
+
+/**
+ * Hold the sky still: its clock pinned (no drift, twinkle, grain or flash) and
+ * its wake frozen (splats dropped, the field left asleep). The ground is the
+ * live sky now, and a check that compares two photographs of the book must not
+ * be comparing two moments of the weather.
+ */
+async function stillSky(page) {
+  await page.waitForFunction(() => typeof window.__skyPinTime === 'function' && typeof window.__skyHoldFluid === 'function');
+  await page.evaluate(() => {
+    window.__skyPinTime(0);
+    window.__skyHoldFluid(true);
   });
 }
 
@@ -208,6 +240,7 @@ async function checkZOrder(browser) {
       [0, 20],
     ]) {
       await open(page, from);
+      await stillSky(page);
       await page.evaluate((to) => {
         window.__flip.probe.colours(true);
         window.__flip.turnTo(to);
@@ -364,6 +397,7 @@ async function checkNavigation(browser) {
 async function exitFrames(browser, how) {
   const page = await newPage(browser);
   await page.goto(`${B}#item-01`);
+  await stillSky(page);
   await page.waitForTimeout(2500);
   await page.getByRole('button', { name: 'Read issue', exact: true }).click();
   await page.waitForTimeout(3500);
@@ -636,6 +670,322 @@ async function checkLife(browser) {
   }
 }
 
+// ── the sky: one canvas, the same sky, the flip's wake, the budget ───────────
+
+/** Count every WebGL context the page ever makes, by canvas. */
+const COUNT_CONTEXTS = () => {
+  const made = new Set();
+  const get = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+    const ctx = get.call(this, type, ...rest);
+    if (ctx && /webgl/.test(type)) made.add(this);
+    return ctx;
+  };
+  window.__glContexts = () => made.size;
+};
+
+/** Where the one sky canvas is: the reader's ground, the app, or nowhere. */
+const canvasHome = () => {
+  const all = document.querySelectorAll('canvas.sky-layer__canvas');
+  const c = all[0];
+  return {
+    count: all.length,
+    home: !c || !c.isConnected ? 'none' : c.closest('.reader-ground') ? 'reader' : c.closest('.app') ? 'app' : 'other',
+  };
+};
+
+const differing = (A, B, levels = 8) => {
+  let n = 0;
+  for (let i = 0; i < A.length; i += 4) {
+    if (Math.abs(A[i] - B[i]) + Math.abs(A[i + 1] - B[i + 1]) + Math.abs(A[i + 2] - B[i + 2]) > levels) n++;
+  }
+  return n / (A.length / 4);
+};
+const raw = async (page, clip) => sharp(await page.screenshot(clip ? { clip } : {})).ensureAlpha().raw().toBuffer();
+
+/**
+ * MAIN-THREAD WORK PER FRAME, from the frame's first rAF callback to the first
+ * task after the frame — which runs once every rAF callback, style, layout,
+ * paint and the commit are done. `requestAnimationFrame` is wrapped before the
+ * page's own scripts load (an init script), so "first" is first: timing from the
+ * rAF timestamp instead would count the gap between vsync and the main thread
+ * starting the frame, which is scheduling and not work. And the rAF intervals,
+ * for the 60fps question.
+ */
+const WRAP_RAF = () => {
+  const raf = window.requestAnimationFrame.bind(window);
+  const frame = { t: -1 };
+  const ch = new MessageChannel();
+  window.__work = [];
+  window.__gaps = [];
+  window.__workOn = false;
+  ch.port1.onmessage = (e) => window.__workOn && window.__work.push(performance.now() - e.data);
+  window.requestAnimationFrame = (cb) =>
+    raf((t) => {
+      if (t !== frame.t) {
+        if (window.__workOn && frame.t > 0) window.__gaps.push(t - frame.t);
+        frame.t = t;
+        ch.port2.postMessage(performance.now());
+      }
+      cb(t);
+    });
+};
+
+async function frameWork(page, act) {
+  await page.evaluate(() => {
+    window.__work = [];
+    window.__gaps = [];
+    window.__workOn = true;
+  });
+  await act();
+  return page.evaluate(() => {
+    window.__workOn = false;
+    return { work: window.__work, gaps: window.__gaps.slice(1) };
+  });
+}
+
+const p95 = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
+};
+
+async function checkSky(browser) {
+  console.log("\nthe sky: one canvas, the same sky, the flip's wake, the budget");
+
+  // ONE CANVAS. The doorway from the detail view, with the canvas's home
+  // logged every frame beside the TABLE channel.
+  {
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    await context.addInitScript(COUNT_CONTEXTS);
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(`${B}#item-01`);
+    await page.waitForTimeout(2500);
+    const before = await page.evaluate(canvasHome);
+    const ctx0 = await page.evaluate(() => window.__glContexts());
+    await page.evaluate((homeSrc) => {
+      const home = new Function(`return (${homeSrc})()`);
+      window.__homes = [];
+      const f = () => {
+        const t = document.documentElement.style.getPropertyValue('--doorway-table');
+        // Unset (before the click) is not the doorway yet; not logged.
+        if (t !== '') window.__homes.push([+t, home().home]);
+        if (window.__homes.length < 200) requestAnimationFrame(f);
+      };
+      requestAnimationFrame(f);
+    }, canvasHome.toString());
+    await page.getByRole('button', { name: 'Read issue', exact: true }).click();
+    await page.waitForTimeout(3500);
+    const homes = await page.evaluate(() => window.__homes);
+    const atRest = await page.evaluate(canvasHome);
+    const ctx1 = await page.evaluate(() => window.__glContexts());
+    // The claim follows TABLE in the same frame (a mutation observer on
+    // :root's style). Measured: exact, both ways.
+    const early = homes.filter(([t, h]) => t < 1 && h === 'reader').length;
+    const firstFull = homes.findIndex(([t]) => t >= 1);
+    const late = homes.filter(([t, h]) => t >= 1 && h !== 'reader').length;
+    check(
+      before.count === 1 && before.home === 'app' && atRest.count === 1 && atRest.home === 'reader' && ctx1 === ctx0,
+      'opening the reader moves the one sky canvas into its ground, with no new WebGL context',
+      `canvases ${before.count} → ${atRest.count}, home ${before.home} → ${atRest.home}, WebGL contexts ${ctx0} → ${ctx1}`,
+    );
+    check(
+      early === 0 && late === 0 && firstFull > 0,
+      'through the doorway the canvas stays in the app until TABLE is 1, then the reader holds it',
+      `${homes.filter(([t]) => t < 1).length} frames under 1 (${early} in the reader), ${homes.length - firstFull} at 1 (${late} not)`,
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(2600);
+    const after = await page.evaluate(canvasHome);
+    const hash = await page.evaluate(() => location.hash);
+    check(after.count === 1 && after.home === 'app' && hash === '#item-01', 'after the exit the canvas is back in the app', `${after.count} canvas, in ${after.home}, ${hash}`);
+    await context.close();
+  }
+
+  // THE HAND-OVER IS INVISIBLE. At the doorway's own dock (the dev authoring
+  // harness), with the sky held still: the frame at TABLE 0.9999, where the
+  // ground is transparent and the app's canvas shows through it, against the
+  // frame at TABLE 1, where the ground holds the canvas. Anything the app still
+  // drew over its sky would be in the first and not the second.
+  {
+    const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(`${B}#item-01?intro`);
+    await page.waitForSelector('.reader-ground');
+    await page.waitForFunction(() => typeof window.__doorwayApply === 'function');
+    await stillSky(page);
+    await page.waitForTimeout(2500);
+    // The dock is chrome for the author, not the picture.
+    await page.addStyleTag({ content: '.dialkit-root, [class*="dialkit"] { visibility: hidden !important; }' });
+    const at = async (table) => {
+      await page.evaluate((table) => window.__doorwayApply({ clear: 1, table, settle: 1, chrome: 1, open: 0 }), table);
+      await page.waitForTimeout(400);
+      return { img: await raw(page), home: (await page.evaluate(canvasHome)).home };
+    };
+    const a = await at(0.9999);
+    const b = await at(1);
+    const pct = differing(a.img, b.img);
+    check(
+      a.home === 'app' && b.home === 'reader' && pct < 1e-4,
+      'the ground taking the canvas at TABLE 1 changes no pixels',
+      `canvas in the ${a.home} at 0.9999, the ${b.home} at 1; ${(pct * 100).toFixed(4)}% px differ`,
+    );
+    await context.close();
+  }
+
+  // THE SAME SKY. The grid's sky, alone, against the reader's with the book,
+  // the chrome and the washes hidden: one engine, one state, one picture.
+  {
+    const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(B);
+    await page.waitForFunction(() => typeof window.__skyPreview === 'function');
+    await stillSky(page);
+    const results = [];
+    for (const [c, t] of [
+      ['cloudy', 'noon'],
+      ['clear', 'night'],
+    ]) {
+      await page.evaluate(() => {
+        if (location.hash) location.hash = '';
+      });
+      await page.waitForTimeout(600);
+      await page.evaluate(([c, t]) => window.__skyPreview(c, t), [c, t]);
+      const hideApp = await page.addStyleTag({
+        content: '.app > :not(.sky-layer), [class*="dialkit"] { visibility: hidden !important; }',
+      });
+      // Settled means two photographs a beat apart agree: the moon eases to
+      // its place on screen on its own clock, and a sky still arriving is not
+      // a state to compare.
+      let grid = await raw(page);
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(500);
+        const next = await raw(page);
+        const still = differing(grid, next) < 1e-5;
+        grid = next;
+        if (still) break;
+      }
+      await hideApp.evaluate((el) => el.remove());
+      await page.evaluate(() => {
+        location.hash = '#read-01/6';
+      });
+      await page.waitForSelector('.reader__bar');
+      await page.waitForTimeout(900);
+      const hideReader = await page.addStyleTag({
+        content: '.reader, .reader-ground__scrim, .reader-ground__band { visibility: hidden !important; }',
+      });
+      const reader = await raw(page);
+      const home = await page.evaluate(canvasHome);
+      await hideReader.evaluate((el) => el.remove());
+      results.push({ state: `${c} ${t}`, pct: differing(grid, reader), home });
+    }
+    check(
+      results.every((r) => r.pct < 1e-4 && r.home.count === 1 && r.home.home === 'reader'),
+      "the reader's sky is the grid's sky, pixel for pixel",
+      results.map((r) => `${r.state}: ${(r.pct * 100).toFixed(4)}% px differ, ${r.home.count} canvas in the ${r.home.home}`).join('; '),
+    );
+    await context.close();
+  }
+
+  // THE FLIP'S WAKE. No pointer anywhere near the page, so only the book can
+  // be what wakes the field.
+  {
+    const awakeWithin = async (page, ms) => {
+      for (let t = 0; t < ms; t += 100) {
+        if (await page.evaluate(() => window.__skyFluidAwake())) return true;
+        await page.waitForTimeout(100);
+      }
+      return false;
+    };
+    const page = await newPage(browser);
+    await page.goto(`${B}#read-01/3`);
+    await page.waitForSelector('.reader__bar');
+    await page.waitForTimeout(1500);
+    const asleep0 = !(await page.evaluate(() => window.__skyFluidAwake()));
+    const shipped = await page.evaluate(() => window.__readerGround.dials.readerFlipSplat);
+    await page.evaluate(() => window.__readerGround.set({ readerFlipSplat: 0 }));
+    await page.evaluate(() => window.__flip.turn('next'));
+    const offWoke = await awakeWithin(page, 1300);
+    await settled(page, 4);
+    await page.evaluate((k) => window.__readerGround.set({ readerFlipSplat: k }), shipped);
+    await page.evaluate(() => window.__flip.turn('next'));
+    const onWoke = await awakeWithin(page, 1300);
+    await page.context().close();
+    check(
+      asleep0 && !offWoke && onWoke,
+      'a page flip wakes the sky; at readerFlipSplat 0 it does not',
+      `asleep before: ${asleep0}; at 0: ${offWoke ? 'woke' : 'stayed asleep'}; at the shipped ${shipped}: ${onWoke ? 'woke' : 'stayed asleep'}`,
+    );
+    const riffle = await newPage(browser);
+    await riffle.goto(`${B}#read-01/12`);
+    await riffle.waitForSelector('.reader__bar');
+    await riffle.waitForTimeout(1500);
+    const asleep1 = !(await riffle.evaluate(() => window.__skyFluidAwake()));
+    await riffle.evaluate(() => window.__flip.turnTo(0));
+    const riffleWoke = await awakeWithin(riffle, 1500);
+    await riffle.context().close();
+    check(asleep1 && riffleWoke, 'a riffle wakes the sky', `asleep before: ${asleep1}, awake during: ${riffleWoke}`);
+  }
+
+  // THE BUDGET. Fog noon, the sky's most expensive condition, with the flip's
+  // wake keeping the fluid awake. Two figures, at p95: the MAIN THREAD's work
+  // per frame (the flip's own JS, style, layout, paint, commit, and the sky's
+  // per-frame JS) through five Next turns, and separately through a 3→20
+  // riffle; and the SKY'S GPU FRAME with the fluid awake and splatting, by the
+  // sky's own benchmark (`sky-perf.mjs`), median of three. They are ADDED, which is the
+  // conservative figure: the GPU shades the sky while the main thread builds
+  // the next frame, so the two overlap in practice.
+  //
+  // THE FLIP is held to it. THE RIFFLE is reported beside it: its main thread
+  // alone is ~6.3ms at p95, the same on `main` under the wood (where the sky was
+  // already rendering, covered), so the sum is over 8 at 2× whatever the ground
+  // is — see docs/reader.md. Its 60fps is asserted, like the flips'.
+  for (const dpr of [1, 2]) {
+    const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: dpr });
+    await context.addInitScript(WRAP_RAF);
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(`${B}#read-01/3`);
+    await page.waitForSelector('.reader__bar');
+    await page.waitForFunction(() => typeof window.__skyPreview === 'function');
+    await page.evaluate(() => window.__skyPreview('fog', 'noon'));
+    await page.waitForTimeout(2500);
+    const flips = await frameWork(page, async () => {
+      for (let i = 0; i < 5; i++) {
+        await page.evaluate(() => window.__flip.turn('next'));
+        await settled(page, 4 + i);
+        await page.waitForTimeout(120);
+      }
+    });
+    const riffle = await frameWork(page, async () => {
+      await page.evaluate(() => window.__flip.turnTo(20));
+      await settled(page, 20);
+    });
+    const awake = await page.evaluate(() => window.__skyFluidAwake());
+    // The median p95 of three benchmark runs, as `sky-perf.mjs` takes it: the
+    // GPU also drives the display, and one run on a busy machine is noise.
+    const runs = [];
+    for (let i = 0; i < 3; i++) runs.push(p95(await page.evaluate(() => window.__skyBenchmark(300, 10, true))));
+    const sky95 = runs.sort((a, b) => a - b)[1];
+    await context.close();
+    const flip95 = p95(flips.work);
+    const riffle95 = p95(riffle.work);
+    check(
+      flip95 + sky95 <= WORK_BUDGET_MS && awake,
+      `@${dpr}× sky + fluid + a page flip ≤ ${WORK_BUDGET_MS}ms a frame`,
+      `flip main thread p95 ${flip95.toFixed(2)}ms + sky GPU (fluid awake) p95 ${sky95.toFixed(2)}ms = ${(flip95 + sky95).toFixed(2)}ms`,
+    );
+    console.log(
+      `    riffle @${dpr}×: main thread p95 ${riffle95.toFixed(2)}ms + sky ${sky95.toFixed(2)}ms = ${(riffle95 + sky95).toFixed(2)}ms (reported, not asserted)`,
+    );
+    const gaps = [...flips.gaps, ...riffle.gaps];
+    const over = gaps.filter((g) => g > FRAME_BUDGET_MS).length;
+    check(over === 0, `@${dpr}× the flips and the riffle hold 60fps over the sky`, `worst frame ${Math.max(...gaps).toFixed(1)}ms, ${over} over ${FRAME_BUDGET_MS}ms of ${gaps.length}`);
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   const probe = await newPage(browser);
@@ -654,6 +1004,7 @@ async function run() {
   if (ONLY.includes('exit')) await checkExit(browser);
   if (ONLY.includes('hover')) await checkHover(browser);
   if (ONLY.includes('life')) await checkLife(browser);
+  if (ONLY.includes('sky')) await checkSky(browser);
 
   check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
   await browser.close();

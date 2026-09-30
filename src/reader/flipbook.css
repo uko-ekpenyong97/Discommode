@@ -27,8 +27,8 @@
      data-pos rules below own the settled/direct-open value. */
   --book-slide: 0px;
 
-  /* Table shadow under each page. Light from top-left, offsets small so a page
-     reads as lying ON the table, not floating. Two layers: a tight, dark contact
+  /* Contact shadow under each page. Light from top-left, offsets small so a
+     page reads as lying ON the ground, not floating. Two layers: a tight, dark contact
      layer and a soft, wide ambient one. The ambient is biased OUTWARD, away from
      the spine (--page-shadow-x), with a negative spread — so the wide soft part
      falls on the outer edges while the gutter side is pulled in and the spine
@@ -37,10 +37,14 @@
      The shadow STRENGTH is driven by the doorway SETTLE channel: 0 at the start
      of the entrance — the cover lies flush on the detail panel it coincides with
      (same rect + image, so the cover being present is invisible) — fading to full
-     as the cover "sets down" on the table. 1 for the ordinary reader (no doorway),
-     and it fades back out on the reverse while the cover stays fully opaque. */
+     as the cover "sets down". 1 for the ordinary reader (no doorway), and it
+     fades back out on the reverse while the cover stays fully opaque.
+
+     Its strength is the `readerBookShadow` dial (ground.ts). On the wood it was
+     0.35; on the sky, under a 0.35 scrim, that read as a dark halo, so it ships
+     softer. */
   --page-shadow-x: 10px;
-  --page-shadow-alpha: calc(0.35 * var(--doorway-settle, 1));
+  --page-shadow-alpha: calc(var(--reader-book-shadow, 0.22) * var(--doorway-settle, 1));
   --page-shadow-contact: 1px 2px rgba(0, 0, 0, var(--page-shadow-alpha));
   --page-shadow-ambient: 18px 40px -6px rgba(0, 0, 0, var(--page-shadow-alpha));
 
@@ -98,10 +102,10 @@
   -webkit-user-drag: none;
 }
 
-/* Every OCCUPIED slot casts the table shadow. `:has(img)` catches exactly the
+/* Every OCCUPIED slot casts the contact shadow. `:has(img)` catches exactly the
    filled ones — the static React slots AND the revealed slot inside .book__turn
    both carry an <img> only when their page exists, so an empty half (the cover's
-   left, the back's right) stays flush to the table with no shadow.
+   left, the back's right) stays flush to the ground with no shadow.
    `:has()` is Baseline-widely-available; the repo sets no browserslist / Vite
    target, so it ships as authored.
 
@@ -144,7 +148,7 @@
 }
 
 /* A cut's incoming spread (flipEngine `cutTo`): above the static slots it fades
-   in over, and — unlike the landing plate — it casts the table shadow, because
+   in over, and — unlike the landing plate — it casts the contact shadow, because
    the static slots' shadows are fading out with them underneath. */
 .book__page--cut {
   z-index: 7;
