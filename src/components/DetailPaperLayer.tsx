@@ -1,22 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
-import {
-  CanvasTexture,
-  ClampToEdgeWrapping,
-  ColorManagement,
-  LinearFilter,
-  LinearSRGBColorSpace,
-  Mesh,
-  NoColorSpace,
-  OrthographicCamera,
-  PlaneGeometry,
-  Scene,
-  Texture,
-  Vector3,
-  WebGLRenderer,
-} from 'three';
-import { CONTENT, itemHeroFace } from '../content';
-import { faceOf, loadCoverAnims } from '../reader/coverAnims';
-import { issueAnims } from '../reader/issue-01';
+import { Mesh, OrthographicCamera, PlaneGeometry, Scene, Vector3 } from 'three';
+import type { Texture } from 'three';
+import { CONTENT } from '../content';
 import { boilFor, subscribeBoil } from '../reader/coverLife';
 import type { HeroRect } from '../layout/hero';
 import { HANDOFF_MS, registerHandOut } from './detailPaper/handoff';
@@ -31,7 +16,6 @@ import {
 } from './detailPaper/paperMaterial';
 import type { PaperMaterial, ShadowMaterial } from './detailPaper/paperMaterial';
 import {
-  coverCrop,
   effectiveFold,
   foldTarget,
   lerpK,
@@ -44,6 +28,26 @@ import {
 } from './detailPaper/paperMath';
 import type { CardRect, Tween } from './detailPaper/paperMath';
 import { CoverRenderer, coverCropOf } from '../covers/coverRenderer';
+import {
+  MAX_DPR,
+  faceKey,
+  faceKeys,
+  faceSettled,
+  faceTexture,
+  flatTexture,
+  liveCover,
+  liveCoverEntries,
+  onPaperProgress,
+  paperContexts,
+  paperCreases,
+  paperGL,
+  paperReady,
+  plateKey,
+  sizePaper,
+  wantFaces,
+  warmPaper,
+} from './detailPaper/paperGL';
+import { span } from './detailPaper/span';
 import { riveCover, shaderCover } from '../covers/covers';
 import { riveCost, riveFrame, rivePlane, rivePlayer } from '../covers/rive/riveCover';
 import type { RivePlayer } from '../covers/rive/riveCover';
@@ -53,7 +57,6 @@ import { cssRgb } from '../covers/color';
 import { heroDome } from '../covers/dome';
 import type { Crop } from '../covers/types';
 import { benchCoverDraw } from '../covers/bench';
-import type { WebGLRenderTarget } from 'three';
 
 /**
  * THE DETAIL CARDS AS PAPER — one fixed WebGL canvas under the detail strip,
@@ -86,7 +89,8 @@ import type { WebGLRenderTarget } from 'three';
  * (`out`) across {@link HANDOFF_MS}. Two surfaces at half alpha would let the sky
  * through between them.
  *
- *   dom  → in    `live`, and every texture this viewport needs has decoded
+ *   dom  → in    `live`, the shared GL warm (paperGL.ts), and every texture
+ *                this viewport needs uploaded
  *   in   → on    HANDOFF_MS later; the DOM faces go `visibility: hidden`
  *   on   → out   a leave (close, Read issue, Open project) — see handoff.ts
  *   out  → dom   HANDOFF_MS later; then the leave runs
@@ -95,6 +99,15 @@ import type { WebGLRenderTarget } from 'three';
  *
  * The state is written to the `.detail` element as `data-paper`, which is all
  * DetailView.css needs.
+ *
+ * ── THE GL IS NOT THIS COMPONENT'S ────────────────────────────────────────
+ *
+ * The renderer, its canvas, its programs, the crease map, the live covers'
+ * renderers and the face textures are made once for the page, warmed up on
+ * the first hover of a grid card, and kept across every open and close
+ * (paperGL.ts, docs/detail-paper.md "The arrival"). This component renders an
+ * empty host; the engine moves the shared canvas into it, and out on unmount.
+ * Made here, on mount, they were the detail view's janky arrival.
  *
  * ── TEXTURES ──────────────────────────────────────────────────────────────
  *
@@ -112,9 +125,6 @@ import type { WebGLRenderTarget } from 'three';
  * on card 01's line art is 1.1–6.4% of the card. The direct resize is kept: it
  * is the simplest, the cheapest, and no alternative held at both ratios.
  */
-
-/** Hard cap on the canvas's backing store — the portfolio sheet's rule. */
-const MAX_DPR = 2;
 
 /**
  * How long the paper takes to SETTLE IN once the canvas has the cards.
@@ -171,6 +181,8 @@ interface DetailPaperLayerProps {
   interactive: boolean;
   hero: HeroRect;
   sideScale: number;
+  /** The active item: its faces are uploaded first. */
+  active: number;
 }
 
 type State = 'dom' | 'in' | 'on' | 'out';
@@ -194,58 +206,15 @@ export interface PaperOverride {
   hideCovers?: boolean;
 }
 
-const hueFill = (hue: number): string => `hsl(${hue}, 28%, 32%)`;
-
-async function decode(url: string): Promise<HTMLImageElement> {
-  const img = new Image();
-  img.src = url;
-  await img.decode();
-  return img;
-}
-
-/** The face at exactly `w × h` device pixels, cropped as `object-fit: cover`.
- *  `premultiply` for a live cover's still, which is not opaque: the plane
- *  samples it as it samples the live cover (premultiplied).
- *
- *  From the file's BLOB, not the decoded <img>: from an image element Chrome
- *  crops and resizes on the main thread, and the eight-odd faces the layer
- *  builds as the detail view mounts — during the grid→detail morph — were
- *  ~1 s of it (createImageBitmap, 981 ms in one real-Chrome profile), a run
- *  of 60–500 ms frames over the morph and the landing, on every card. From a
- *  blob it decodes and resizes off the main thread. The <img> only gives the
- *  natural size (its decode is off the main thread too). */
-async function resized(url: string, w: number, h: number, premultiply = false): Promise<ImageBitmap> {
-  const [img, blob] = await Promise.all([decode(url), fetch(url).then((r) => r.blob())]);
-  const c = coverCrop(img.naturalWidth, img.naturalHeight, w, h);
-  return createImageBitmap(blob, c.sx, c.sy, c.sw, c.sh, {
-    resizeWidth: w,
-    resizeHeight: h,
-    resizeQuality: 'high',
-    premultiplyAlpha: premultiply ? 'premultiply' : 'default',
-  });
-}
-
-function flatTexture(source: TexImageSource | HTMLCanvasElement): Texture {
-  const tex = source instanceof HTMLCanvasElement ? new CanvasTexture(source) : new Texture(source);
-  tex.flipY = false; // read downward in the shader
-  tex.colorSpace = NoColorSpace;
-  tex.generateMipmaps = false;
-  tex.minFilter = LinearFilter;
-  tex.magFilter = LinearFilter;
-  tex.wrapS = ClampToEdgeWrapping;
-  tex.wrapT = ClampToEdgeWrapping;
-  tex.needsUpdate = true;
-  return tex;
-}
-
 export const DetailPaperLayer = forwardRef<DetailPaperHandle, DetailPaperLayerProps>(
-  function DetailPaperLayer({ live, interactive, hero, sideScale }, ref) {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
+  function DetailPaperLayer({ live, interactive, hero, sideScale, active }, ref) {
+    const hostRef = useRef<HTMLDivElement>(null);
     // Props the imperative engine reads every frame.
     const liveRef = useRef(live);
     const interactiveRef = useRef(interactive);
     const heroRef = useRef(hero);
     const sideRef = useRef(sideScale);
+    const activeRef = useRef(active);
     const engineRef = useRef<ReturnType<typeof createEngine> | null>(null);
 
     useLayoutEffect(() => {
@@ -253,17 +222,19 @@ export const DetailPaperLayer = forwardRef<DetailPaperHandle, DetailPaperLayerPr
       interactiveRef.current = interactive;
       heroRef.current = hero;
       sideRef.current = sideScale;
+      activeRef.current = active;
       engineRef.current?.sync();
     });
 
     useEffect(() => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const engine = createEngine(canvas, {
+      const host = hostRef.current;
+      if (!host) return;
+      const engine = createEngine(host, {
         live: () => liveRef.current && paper.paper === 'on',
         interactive: () => interactiveRef.current,
         hero: () => heroRef.current,
         side: () => sideRef.current,
+        active: () => activeRef.current,
       });
       engineRef.current = engine;
       return () => {
@@ -274,7 +245,8 @@ export const DetailPaperLayer = forwardRef<DetailPaperHandle, DetailPaperLayerPr
 
     useImperativeHandle(ref, () => ({ frame: (f) => engineRef.current?.frame(f) }), []);
 
-    return <canvas ref={canvasRef} className="detail__paper" aria-hidden="true" />;
+    // The canvas is the shared one (paperGL.ts), moved in here while mounted.
+    return <div ref={hostRef} className="detail__paper-host" />;
   },
 );
 
@@ -283,16 +255,17 @@ interface EngineInputs {
   interactive: () => boolean;
   hero: () => HeroRect;
   side: () => number;
+  active: () => number;
 }
 
-function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
-  const root = canvas.parentElement as HTMLElement;
-  const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, premultipliedAlpha: true });
-  // No colour management, as on the portfolio sheet: the faces' sRGB bytes go
-  // in and come out untouched, which is what makes the plane match the <img>.
-  renderer.outputColorSpace = LinearSRGBColorSpace;
-  ColorManagement.enabled = false;
-  renderer.setClearColor(0x000000, 0);
+function createEngine(host: HTMLElement, input: EngineInputs) {
+  const root = host.parentElement as HTMLElement;
+  // The shared GL (paperGL.ts): made by the warm-up — on the first hover of a
+  // grid card, or here for a direct load — and never by this mount. Until it
+  // is ready the layer stays on the DOM, which is showing the cards anyway.
+  warmPaper();
+  let canvas: HTMLCanvasElement | null = null;
+  const R = () => paperGL()!.renderer;
 
   const scene = new Scene();
   const camera = new OrthographicCamera(0, 1, 0, -1, -10, 10);
@@ -303,26 +276,40 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   let geometry = new PlaneGeometry(1, 1, paper.segments, paper.segments);
   const shadowGeometry = new PlaneGeometry(1, 1, 1, 1);
 
-  let creases: Texture | null = null;
-  void decode('/textures/paper-creases.webp')
-    .then((img) => {
-      creases = flatTexture(img);
-      renderer.initTexture(creases);
+  // Resident in paperGL.ts; it arrives with the warm-up.
+  let creases: Texture | null = paperCreases();
+  /** Take the GL in once the warm-up has it: the canvas into this mount's
+   *  host, the crease map into the cards. */
+  function adopt() {
+    const g = paperGL();
+    if (g && !canvas) {
+      canvas = g.canvas;
+      canvas.style.visibility = state === 'dom' ? 'hidden' : 'visible';
+      host.appendChild(canvas);
+      dirty = true;
+    }
+    if (!creases && paperCreases()) {
+      creases = paperCreases();
       for (const c of cards.values()) c.mesh.material.uniforms.uCreases.value = creases;
       dirty = true;
-    })
-    .catch(() => {});
+    }
+  }
+  const unsubProgress = onPaperProgress(() => {
+    adopt();
+    sync();
+    maybeHandIn();
+  });
 
   // ── textures ───────────────────────────────────────────────────────────
-  // Keyed by `${url}@${w}x${h}`. Built for a SIZE KEY (the hero's device size
-  // and the neighbours'); a new key rebuilds the set and drops the old one.
-  const textures = new Map<string, Texture>();
+  // Keyed by `${url}@${w}x${h}` (an issue's plate by `plate:${idx}`). Wanted
+  // for a SIZE KEY (the hero's device size and the neighbours'); a new key
+  // wants a new set, and the old one is dropped once it has arrived. The
+  // textures themselves live in paperGL.ts, uploaded a few ms a frame, and
+  // outlive this mount: a second arrival at the same size uploads nothing.
   let sizeKey = '';
-  let building = '';
+  let wanted: string[] = [];
   let disposed = false;
   let texturesReady = false;
-  let buildToken = 0;
-  const plates = new Map<number, string>(); // content idx → plate url
 
   function dims() {
     const h = input.hero();
@@ -335,58 +322,17 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     };
   }
 
-  const texKey = (src: string, w: number, h: number) => `${src}@${w}x${h}`;
-
-  async function makeFace(idx: number, w: number, h: number): Promise<[string, Texture]> {
-    const item = CONTENT[idx];
-    const url = itemHeroFace(item);
-    if (!url) {
-      const c = document.createElement('canvas');
-      c.width = 2;
-      c.height = 2;
-      const g = c.getContext('2d')!;
-      g.fillStyle = hueFill(item.hue);
-      g.fillRect(0, 0, 2, 2);
-      return [texKey(`hue:${item.hue}`, w, h), flatTexture(c)];
-    }
-    return [texKey(url, w, h), flatTexture(await resized(url, w, h, !!item.cover))];
+  /** Ask for every face this size needs (paperGL.ts); most are already in
+   *  when the warm-up ran on a hover. */
+  function wantTextures() {
+    wanted = wantFaces(input.active(), dims());
+    texturesReady = false;
   }
 
-  async function buildTextures(key: string) {
-    const token = ++buildToken;
-    texturesReady = false;
-    const d = dims();
-    const jobs: Promise<[string, Texture]>[] = [];
-    for (let idx = 0; idx < CONTENT.length; idx++) {
-      jobs.push(makeFace(idx, d.heroW, d.heroH), makeFace(idx, d.sideW, d.sideH));
-      const anims = CONTENT[idx].issue ? issueAnims(CONTENT[idx].issue!) : undefined;
-      if (anims) {
-        jobs.push(
-          loadCoverAnims(anims).then(async (m) => {
-            const plate = faceOf(m, 'cover')?.plate;
-            if (!plate) throw new Error('no plate');
-            plates.set(idx, plate);
-            return [texKey(plate, d.heroW, d.heroH), flatTexture(await resized(plate, d.heroW, d.heroH))];
-          }),
-        );
-      }
-    }
-    const built = await Promise.allSettled(jobs);
-    if (token !== buildToken) {
-      for (const r of built) if (r.status === 'fulfilled') r.value[1].dispose();
-      return;
-    }
-    for (const t of textures.values()) t.dispose();
-    textures.clear();
-    for (const r of built) {
-      if (r.status !== 'fulfilled') continue;
-      const [k, tex] = r.value;
-      // Upload now, not on the first frame a card is drawn — which would be in
-      // the middle of a slide.
-      renderer.initTexture(tex);
-      textures.set(k, tex);
-    }
-    sizeKey = key;
+  /** Every wanted face has arrived (or failed for good). */
+  function checkTextures() {
+    if (texturesReady || !wanted.length) return;
+    if (!wanted.every(faceSettled)) return;
     texturesReady = true;
     dirty = true;
   }
@@ -396,8 +342,9 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   // renderer IN THIS CONTEXT, into a target whose texture IS the hero plane's
   // map — a texture cannot cross WebGL contexts, and copying a 2 MP frame across
   // from the grid's stage every frame would cost more than drawing it here.
-  // Only the hero is live; the neighbours use the still (itemHeroFace).
-  const liveCovers = new Map<string, { r: CoverRenderer; rt: WebGLRenderTarget | null; bound: number }>();
+  // Only the hero is live; the neighbours use the still (itemHeroFace). The
+  // renderer (and its target) is made, compiled and first drawn by the
+  // warm-up, and kept (paperGL.ts).
   const coverCrop_: Crop = { x0: 0, y0: 0, w: 1, h: 1 };
   let coversDrawn = 0;
 
@@ -407,13 +354,8 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
    *  moment is not drawn twice. */
   function liveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
     const def = shaderCover(id);
-    if (!def) return null;
-    let c = liveCovers.get(id);
-    if (!c) {
-      c = { r: new CoverRenderer(renderer, def, coverValues(id)), rt: null, bound: coverDialsVersion() };
-      c.r.warm();
-      liveCovers.set(id, c);
-    }
+    const c = def ? liveCover(id) : null;
+    if (!def || !c) return null;
     if (c.bound !== coverDialsVersion()) {
       c.bound = coverDialsVersion();
       c.r.setValues(coverValues(id));
@@ -438,6 +380,32 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     if (!drawn) return null;
     coversDrawn++;
     return c.rt.texture;
+  }
+
+  /**
+   * Before the hand-in: the hero's live cover is ready to draw at its size —
+   * its renderer's assets in, and its two targets allocated now, one frame
+   * ahead, instead of inside the hand-in's first draw. True once it is (or
+   * the hero has no shader cover).
+   */
+  function primeHeroCover(): boolean {
+    const item = CONTENT[input.active()];
+    const def = item.cover && !reduced.matches ? shaderCover(item.cover.id) : undefined;
+    if (!def) return true;
+    const c = liveCover(def.id);
+    if (!c || !c.r.ready()) return false;
+    const d = dims();
+    const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
+    const pxW = Math.round(d.heroW * cap);
+    const pxH = Math.round(d.heroH * cap);
+    if (c.rt && c.rt.width === pxW && c.rt.height === pxH) return true;
+    span('prime cover', () => {
+      c.rt?.dispose();
+      c.rt = CoverRenderer.outputTarget(pxW, pxH);
+      R().initRenderTarget(c.rt);
+      c.r.prepare(coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_), pxW);
+    });
+    return false; // the hand-in waits for the next frame
   }
 
   // A RIVE cover's hero (card 04) is its hero player's canvas — the same
@@ -476,7 +444,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       c.version = player.version;
       c.tex.needsUpdate = true;
       const t0 = performance.now();
-      renderer.initTexture(c.tex); // the upload, now, so it can be timed
+      R().initTexture(c.tex); // the upload, now, so it can be timed
       riveUploadMs = performance.now() - t0;
       riveCost('upload', riveUploadMs);
       riveUploads++;
@@ -577,7 +545,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     state = next;
     if (next === 'dom') root.removeAttribute('data-paper');
     else root.setAttribute('data-paper', next);
-    canvas.style.visibility = next === 'dom' ? 'hidden' : 'visible';
+    if (canvas) canvas.style.visibility = next === 'dom' ? 'hidden' : 'visible';
     dirty = true;
   }
 
@@ -639,8 +607,6 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     dpr = nextDpr;
     vw = w;
     vh = h;
-    renderer.setPixelRatio(dpr);
-    renderer.setSize(vw, vh, false);
     camera.left = 0;
     camera.right = vw;
     camera.top = 0;
@@ -652,16 +618,15 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   /** Reconcile with the inputs: size, textures, and whether to hand in or out. */
   function sync() {
     resize();
+    if (sizePaper()) dirty = true; // the shared drawing buffer, to this viewport
     const d = dims();
     const key = `${d.heroW}x${d.heroH}/${d.sideW}x${d.sideH}`;
     if (key !== sizeKey && !disposed) {
       // A new size: the textures are the wrong resolution. Give the cards back
-      // at once and rebuild; the hand-in runs again once they are ready.
+      // at once and ask for the new set; the hand-in runs again once it is in.
       if (state !== 'dom') toDomNow();
-      if (building !== key) {
-        building = key;
-        void buildTextures(key);
-      }
+      sizeKey = key;
+      wantTextures();
     }
     const live = input.live();
     if (!live) {
@@ -671,8 +636,9 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   }
 
   function maybeHandIn() {
-    if (state !== 'dom' || !input.live() || !texturesReady || !creases || !last) return;
+    if (state !== 'dom' || !input.live() || !paperReady() || !canvas || !texturesReady || !creases || !last) return;
     if (performance.now() < heldOutUntil) return;
+    if (!primeHeroCover()) return;
     handIn();
   }
 
@@ -680,6 +646,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   function frame(f: PaperFrame) {
     last = f;
     sync();
+    checkTextures();
     const v = stripVelocity(f.dpos, f.panelStep, input.hero().w, f.dt);
     velocity += (v - velocity) * lerpK(0.2, f.dt);
     if (Math.abs(velocity) < 1e-5) velocity = 0;
@@ -689,7 +656,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
 
   function render(force: boolean) {
     const f = last;
-    if (!f) return;
+    if (!f || !canvas) return;
     riveFrame(); // a frame of cover work, for the Rive hero's "left" test
     const now = performance.now();
     const still = reduced.matches;
@@ -731,12 +698,17 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       // Which face: the plate under the hover sprites while the CoverAnimLayer
       // is drawing them, else the face at the size nearer this panel's scale.
       const plateEl = p.el.querySelector<HTMLImageElement>('.cover-anim__plate');
-      const plate = plateEl ? plates.get(p.idx) : undefined;
+      const plateTex = plateEl ? faceTexture(plateKey(p.idx, d.heroW, d.heroH)) : null;
+      const plate = !!plateTex;
       const item = CONTENT[p.idx];
-      const big = p.scale > (1 + input.side()) / 2;
+      // The hero's face while the panel is nearer the hero slot than a
+      // neighbour's. By DISTANCE, not scale: the two are the same test while
+      // detailSideScale < 1, and at 1 every panel is scale 1 — "bigger than
+      // halfway to the side scale" was true of none, the hero was a
+      // neighbour, and card 04's live hero was never drawn (below).
+      const big = p.dist < 0.5;
       const [tw, th] = plate || big ? [d.heroW, d.heroH] : [d.sideW, d.sideH];
-      const src = plate ?? itemHeroFace(item) ?? `hue:${item.hue}`;
-      let tex = textures.get(texKey(src, tw, th)) ?? null;
+      let tex = plateTex ?? faceTexture(faceKey(p.idx, tw, th));
       // The hero's live cover, at the hero's device size (coverMaxDpr caps it;
       // a Rive cover's riveMaxDpr), on the shared cover clock. Under reduced
       // motion it stays the still.
@@ -899,7 +871,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     if (!force && !dirty && !changed) return;
     lastSig = sig; // what is now ON the canvas
     dirty = false;
-    renderer.render(scene, camera);
+    span(frames === 0 ? 'render first' : 'render', () => R().render(scene, camera));
     frames++;
   }
 
@@ -921,7 +893,11 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
   if (import.meta.env.DEV) {
     (window as unknown as { __paper?: unknown }).__paper = {
       state: () => state,
-      ready: () => texturesReady && !!creases,
+      ready: () => texturesReady && !!creases && paperReady(),
+      /** WebGL contexts the paper has ever made: 1, however many arrivals. */
+      contexts: paperContexts,
+      /** The resident faces and their state. */
+      faces: faceKeys,
       frames: () => frames,
       velocity: () => velocity,
       /** Every plane's rect as the shader is told it, keyed by content idx. */
@@ -957,7 +933,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
           const t0 = performance.now();
           for (let i = 0; i < n; i++) {
             c.tex.needsUpdate = true;
-            renderer.initTexture(c.tex);
+            R().initTexture(c.tex);
           }
           return (performance.now() - t0) / n;
         }
@@ -965,7 +941,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       },
       /** GPU ms for one hero draw of the live cover, in THIS renderer. */
       benchCover: () => {
-        for (const [id, c] of liveCovers) {
+        for (const [id, c] of liveCoverEntries()) {
           if (!c.rt || !c.r.ready()) continue;
           const def = shaderCover(id)!;
           const crop: Crop = coverCropOf(def.frame.w, def.frame.h, c.rt.width, c.rt.height, { x0: 0, y0: 0, w: 1, h: 1 });
@@ -973,7 +949,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
             id,
             pxW: c.rt.width,
             pxH: c.rt.height,
-            ...benchCoverDraw(renderer, c.r, c.rt, {
+            ...benchCoverDraw(R(), c.r, c.rt, {
               t: 1,
               crop,
               pxW: c.rt.width,
@@ -1014,6 +990,7 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
     };
   }
 
+  adopt();
   sync();
 
   return {
@@ -1032,22 +1009,22 @@ function createEngine(canvas: HTMLCanvasElement, input: EngineInputs) {
       document.documentElement.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('blur', onLeave);
       window.removeEventListener('resize', onResize);
+      unsubProgress();
       root.removeAttribute('data-paper');
       const then = pendingLeave;
       pendingLeave = null;
       for (const k of [...cards.keys()]) dropCard(k);
-      for (const t of textures.values()) t.dispose();
-      for (const c of liveCovers.values()) {
-        c.r.dispose();
-        c.rt?.dispose();
-      }
       for (const c of riveTex.values()) c.tex.dispose();
-      creases?.dispose();
       geometry.dispose();
       shadowGeometry.dispose();
-      renderer.dispose();
+      // The GL is NOT disposed: the canvas leaves this mount, hidden, and the
+      // context, its programs, the crease map, the covers' renderers and the
+      // faces stay for the next arrival (paperGL.ts).
+      if (canvas) {
+        canvas.style.visibility = 'hidden';
+        canvas.remove();
+      }
       disposed = true;
-      buildToken++;
       then?.();
     },
   };

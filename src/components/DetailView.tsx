@@ -288,6 +288,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         interactive={!suspended && phase === 'active'}
         hero={hero}
         sideScale={config.detailSideScale}
+        active={activeIndex}
       />
 
       <button

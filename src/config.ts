@@ -387,3 +387,8 @@ export function cellSpanX(): number {
 export function cellSpanY(): number {
   return cardHeight() + config.gap;
 }
+
+// DEV: verify:detail's `sidescale` sweeps detailSideScale through this.
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  (window as unknown as { __config?: unknown }).__config = { get: () => ({ ...config }), set: setConfig };
+}

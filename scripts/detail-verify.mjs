@@ -1,8 +1,9 @@
 /**
  * The detail view's paper, in Chrome. `npm run verify:detail` with the dev
  * server running (`npm run dev`; `--url` for another origin, `--only
- * rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life`
- * for a subset).
+ * rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale`
+ * for a subset). `--only arrival` also runs against a production build
+ * (`vite preview`): it needs none of the dev hooks.
  *
  * Every check is about what the browser DRAWS, which no unit test can answer:
  *
@@ -55,6 +56,25 @@
  *              + fade, and then nothing is moved at all. Under reduced motion
  *              the objects still play and nothing boils. Writes
  *              docs/detail-paper/boil-steps.webp (two consecutive steps).
+ *   arrival    the frame timeline from the tile click (or the navigation) to
+ *              the settled hero, for every card, both routes — the grid tile's
+ *              click (the morph) and a direct #item-NN — cold (the first
+ *              arrival after the page loads) and warm (the second), at
+ *              1728×996 @2×, the pointer moving throughout: no frame over two
+ *              vsyncs (33.4 ms), p95 one vsync (16.8 ms). Each long frame is
+ *              printed with what ran in it (Long Animation Frames, and the
+ *              paper's own `paper:*` measures in a dev build). And the WebGL
+ *              contexts: counted in the grid and in the detail view, and no
+ *              more after the second arrival than after the first. The four
+ *              COLD DIRECT rows are informational (printed with ·, never a
+ *              failure): a cold direct load is the page's load, and its dropped
+ *              frames are there with the paper removed (docs/detail-paper.md,
+ *              "The arrival"). The other twelve are enforced.
+ *   sidescale  detailSideScale swept across its whole range (0.3 → 1 → 0.3)
+ *              at #item-04, the pointer moving on the hero: at every value the
+ *              paper hands the cards back in, its hero plane is card 04's live
+ *              Main Bounce, and the hero is instance #1 throughout. At 1 it was
+ *              #2, #3, … for as long as the pointer moved.
  *
  * Pixel checks hide the sky and the dev overlays first: the sky drifts, the
  * neighbours are 85% opaque over it, and the env readout's numbers tick.
@@ -69,7 +89,7 @@ import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registra
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
-const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life').split(',');
+const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -135,6 +155,18 @@ const budget = (r) =>
 const HANDOFF = 0.02;
 const handoffBudget = (r) => Math.max(HANDOFF, budget(r));
 const FRAME_BUDGET_MS = 20;
+/**
+ * The arrival's budget: no frame over 33 ms, p95 ≤ 16.7 ms. rAF timestamps
+ * are vsync-aligned, so an interval is a whole number of 16.67 ms vsyncs give
+ * or take ~0.2 ms of jitter: "over 33 ms" is three vsyncs (50 ms) or more,
+ * and 33.3 is two — one frame dropped. So the budget is counted in vsyncs:
+ * every interval ≤ two, the 95th percentile ≤ one.
+ */
+const VSYNC = 1000 / 60;
+const ARRIVAL = { worst: 2, p95: 1 };
+const vsyncs = (ms) => Math.round(ms / VSYNC);
+/** The paper's SETTLE_MS: the hero is settled this long after it hands in. */
+const SETTLE_MS = 500;
 
 let failures = 0;
 const ok = (label, extra = '') => console.log(`  ✓ ${label}${extra ? `  ${extra}` : ''}`);
@@ -841,6 +873,285 @@ async function checkLife(browser) {
   await page.context().close();
 }
 
+// ── arrival ──────────────────────────────────────────────────────────────
+
+/** Installed before the page's own scripts: WebGL contexts made (each canvas
+ *  counted once), every rAF interval, every Long Animation Frame, and when
+ *  the paper hands in. Nothing here needs the dev hooks. */
+function arrivalProbe() {
+  const orig = HTMLCanvasElement.prototype.getContext;
+  window.__glMade = 0;
+  HTMLCanvasElement.prototype.getContext = function (type, ...a) {
+    const had = this.__glMade;
+    const c = orig.call(this, type, ...a);
+    if (c && /webgl/.test(type) && !had) {
+      this.__glMade = true;
+      window.__glMade++;
+    }
+    return c;
+  };
+  const A = (window.__arr = { frames: [], loaf: [], onAt: 0, fcp: 0 });
+  new PerformanceObserver((l) => {
+    for (const e of l.getEntries()) if (e.name === 'first-contentful-paint') A.fcp = e.startTime;
+  }).observe({ type: 'paint', buffered: true });
+  let last = 0;
+  const f = (t) => {
+    if (last) A.frames.push([last, t]);
+    if (A.frames.length > 4000) A.frames.splice(0, 2000);
+    last = t;
+    requestAnimationFrame(f);
+  };
+  requestAnimationFrame(f);
+  try {
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) {
+        A.loaf.push({
+          start: e.startTime,
+          end: e.startTime + e.duration,
+          render: e.renderStart ? e.startTime + e.duration - e.renderStart : 0,
+          scripts: e.scripts
+            .filter((s) => s.duration >= 2)
+            .map((s) => `${s.invoker}${s.sourceFunctionName ? ` ${s.sourceFunctionName}` : ''} (${(s.sourceURL || '').split('/').pop().split('?')[0]}) ${Math.round(s.duration)}`),
+        });
+      }
+    }).observe({ type: 'long-animation-frame', buffered: true });
+  } catch {
+    /* no LoAF: the frames still count */
+  }
+  // The hand-in: `.detail` gets data-paper="in".
+  new MutationObserver((ms) => {
+    for (const m of ms) {
+      if (m.attributeName === 'data-paper' && m.target.dataset?.paper === 'in') A.onAt = performance.now();
+    }
+  }).observe(document, { attributes: true, subtree: true, attributeFilter: ['data-paper'] });
+  // The click's own time, for the tile route.
+  window.addEventListener('pointerdown', (e) => (A.downAt = e.timeStamp), { capture: true });
+}
+
+/** A pointer that never rests: moves around `at()` every ~16 ms until stopped. */
+function movingPointer(page, at) {
+  const st = { stop: false, at };
+  const done = (async () => {
+    let k = 0;
+    while (!st.stop) {
+      k++;
+      const p = st.at();
+      await page.mouse.move(p.x + 6 * Math.sin(k / 3), p.y + 5 * Math.cos(k / 4)).catch(() => {});
+      await page.waitForTimeout(16).catch(() => {});
+    }
+  })();
+  return { set: (fn) => (st.at = fn), stop: async () => ((st.stop = true), await done) };
+}
+
+/** The frames from `t0` to the settled hero (hand-in + SETTLE_MS), and what
+ *  ran in the long ones. Waits for the settle itself. */
+async function arrivalWindow(page, t0Expr) {
+  await page.waitForFunction(() => window.__arr.onAt > 0, null, { timeout: 20000 });
+  await page.waitForFunction((ms) => performance.now() > window.__arr.onAt + ms + 120, SETTLE_MS, { timeout: 5000 });
+  return page.evaluate(
+    ({ t0Expr, SETTLE_MS }) => {
+      const A = window.__arr;
+      const t0 = eval(t0Expr);
+      const end = A.onAt + SETTLE_MS;
+      const frames = A.frames.filter(([s, e]) => e > t0 && s < end).map(([s, e]) => ({ s: s - t0, dt: e - s }));
+      const measures = performance.getEntriesByType('measure').filter((m) => m.name.startsWith('paper:') && m.startTime + m.duration > t0);
+      const long = frames
+        .filter((f) => f.dt > 17)
+        .map((f) => {
+          const a = f.s + t0;
+          const b = a + f.dt;
+          const lo = A.loaf.filter((l) => l.start < b && l.end > a);
+          const ms = measures.filter((m) => m.startTime < b && m.startTime + m.duration > a && m.duration >= 1);
+          return {
+            at: Math.round(f.s),
+            dt: f.dt,
+            what: [
+              ...lo.map((l) => `LoAF ${Math.round(l.end - l.start)}ms (render ${Math.round(l.render)})${l.scripts.length ? `: ${l.scripts.join(', ')}` : ''}`),
+              ...ms.map((m) => `${m.name} ${m.duration.toFixed(1)}`),
+            ].join('; '),
+          };
+        });
+      return {
+        frames: frames.map((f) => f.dt),
+        long,
+        handIn: A.onAt - t0,
+        gl: window.__glMade,
+        paperContexts: window.__paper?.contexts?.() ?? null,
+      };
+    },
+    { t0Expr, SETTLE_MS },
+  );
+}
+
+/** `enforce` false: printed against the budget, never a failure (a cold
+ *  direct load, which waits on the page's own load — see checkArrival). */
+function judgeArrival(label, w, { enforce = true } = {}) {
+  const sorted = [...w.frames].sort((a, b) => a - b);
+  const worst = sorted.at(-1) ?? Infinity;
+  const p95 = sorted[Math.floor(0.95 * (sorted.length - 1))] ?? Infinity;
+  const over = w.frames.filter((d) => vsyncs(d) > 1).length;
+  const within = vsyncs(worst) <= ARRIVAL.worst && vsyncs(p95) <= ARRIVAL.p95;
+  const detail = `${w.frames.length} frames, worst ${worst.toFixed(1)}ms, p95 ${p95.toFixed(1)}ms, ${over} of them dropped a frame or more; handed in at ${Math.round(w.handIn)}ms, settled at ${Math.round(w.handIn + SETTLE_MS)}ms`;
+  if (enforce) check(within, label, detail);
+  else {
+    console.log(`  · ${label} (informational)  ${detail}; ${within ? 'within' : 'over'} the budget`);
+    if (!within) console.log('      waits on page-load work, not the paper: the same frames are there with the paper removed (docs/detail-paper.md, "The arrival")');
+  }
+  for (const l of w.long) console.log(`      ${String(l.at).padStart(5)}ms  ${l.dt.toFixed(1)}ms  ${l.what || '(nothing on the main thread: compositor / GPU)'}`);
+  return { worst, p95 };
+}
+
+/** Focus card `idx` in the grid with the arrow keys; its tile's centre. */
+async function focusTile(page, idx) {
+  for (let i = 0; i < idx; i++) {
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(300);
+  }
+  await page.waitForTimeout(1200);
+  return page.evaluate(() => {
+    let best = null;
+    for (const el of document.querySelectorAll('.grid-card')) {
+      const r = el.getBoundingClientRect();
+      const d = Math.hypot(r.x + r.width / 2 - innerWidth / 2, r.y + r.height / 2 - innerHeight / 2);
+      if (!best || d < best.d) best = { d, x: r.x + r.width / 2, y: r.y + r.height * 0.35 };
+    }
+    return best;
+  });
+}
+
+async function checkArrival(browser) {
+  console.log('\narrival: the tile click (or the navigation) to the settled hero, 1728×996 @2×, pointer moving');
+  // `?nodials`: without the dev dock (App.tsx), which a production build does
+  // not have and whose readouts re-render it for 30–50 ms a change in a dev
+  // build. A production build ignores it.
+  const B = `${ORIGIN}/?nodials`;
+  const contexts = [];
+  const worst = [];
+  for (const card of ['01', '02', '03', '04']) {
+    const idx = +card - 1;
+    // The tile's morph: the grid first, the pointer moving from its first
+    // frame; the card focused with the keys, hovered, clicked. Then back to
+    // the grid and the same card again.
+    {
+      const page = await newPage(browser, VIEWPORTS[0], 2);
+      await page.addInitScript(arrivalProbe);
+      const ptr = movingPointer(page, () => ({ x: 300, y: 300 }));
+      await page.goto(B);
+      await page.waitForSelector('.grid-card');
+      await page.waitForTimeout(1500);
+      const grid = await page.evaluate(() => window.__glMade);
+      for (const temp of ['cold', 'warm']) {
+        const tile = await focusTile(page, temp === 'cold' ? idx : 0);
+        ptr.set(() => tile);
+        await page.waitForTimeout(600); // on the tile, as a person is before a click
+        await page.evaluate(() => (window.__arr.onAt = 0));
+        await page.mouse.down();
+        await page.mouse.up();
+        const w = await arrivalWindow(page, 'window.__arr.downAt');
+        worst.push(judgeArrival(`#${card} tile ${temp}`, w));
+        contexts.push({ label: `#${card} tile ${temp}`, grid, detail: w.gl, paper: w.paperContexts });
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => !document.querySelector('.detail'), null, { timeout: 10000 });
+        ptr.set(() => ({ x: 300, y: 300 }));
+        await page.waitForTimeout(1500);
+      }
+      await ptr.stop();
+      await page.context().close();
+    }
+    // Direct: a fresh load of #item-NN, then back to the grid and the hash
+    // again. The cold window opens at the page's first contentful paint:
+    // before it there is nothing on screen to stutter (the boot — the
+    // bundle's evaluation, React's first render, the sky's context — is page
+    // load, and is printed below the check, not judged). The cold row is
+    // INFORMATIONAL: after the first paint the page is still loading (the
+    // compositor and GPU with its first frames and decodes, card 04's Rive
+    // runtime for the hidden grid's tiles), and those frames drop whether the
+    // paper is there or not. It waits on page-load work; the warm row is
+    // enforced.
+    {
+      const page = await newPage(browser, VIEWPORTS[0], 2);
+      await page.addInitScript(arrivalProbe);
+      const ptr = movingPointer(page, () => ({ x: 864, y: 498 }));
+      await page.goto(`${B}#item-${card}`);
+      const cold = await arrivalWindow(page, 'window.__arr.fcp');
+      worst.push(judgeArrival(`#${card} direct cold`, cold, { enforce: false }));
+      const boot = await page.evaluate(() => ({ fcp: window.__arr.fcp, first: window.__arr.frames.filter(([, e]) => e <= window.__arr.fcp).map(([s, e]) => Math.round(e - s)) }));
+      console.log(`      (the page's boot, not judged: first contentful paint at ${Math.round(boot.fcp)}ms; frames before it ${boot.first.join(', ') || 'none'} ms)`);
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('.detail'), null, { timeout: 10000 });
+      await page.waitForTimeout(1500);
+      const grid = await page.evaluate(() => window.__glMade);
+      await page.evaluate((c) => {
+        window.__arr.onAt = 0;
+        window.__arr.navAt = performance.now();
+        location.hash = `#item-${c}`;
+      }, card);
+      const warm = await arrivalWindow(page, 'window.__arr.navAt');
+      worst.push(judgeArrival(`#${card} direct warm`, warm));
+      contexts.push({ label: `#${card} direct`, grid, detail: warm.gl, first: cold.gl, paper: warm.paperContexts });
+      await ptr.stop();
+      await page.context().close();
+    }
+  }
+  // Contexts: however many arrivals, the paper's is made once.
+  const tiles = contexts.filter((c) => c.label.includes('tile'));
+  const direct = contexts.filter((c) => c.label.includes('direct'));
+  const byCard = (xs) => xs.map((c) => `${c.label}: grid ${c.grid}, detail ${c.detail}${c.paper !== null ? ` (paper ${c.paper})` : ''}`).join('; ');
+  const pairs = [];
+  for (let i = 0; i < tiles.length; i += 2) pairs.push([tiles[i], tiles[i + 1]]);
+  check(
+    pairs.every(([a, b]) => b.detail === a.detail && a.detail <= a.grid + 1) &&
+      direct.every((c) => c.detail === c.first) &&
+      contexts.every((c) => c.paper === null || c.paper === 1),
+    'WebGL contexts: the paper makes one, once',
+    byCard(contexts),
+  );
+  return worst;
+}
+
+// ── detailSideScale ─────────────────────────────────────────────────────
+
+async function checkSideScale(browser) {
+  console.log('\nsidescale: detailSideScale across its range, card 04 the hero, pointer moving on it');
+  const page = await newPage(browser, VIEWPORTS[0], 2);
+  await page.goto(B);
+  await page.waitForFunction(() => !!window.__covers && !!window.__config, null, { timeout: 10000 });
+  await page.goto(`${B}#item-04`);
+  await page.waitForFunction(
+    () => window.__paper?.state() === 'on' && window.__covers.rive.players().some((p) => p.role === 'hero' && p.version > 0),
+    null,
+    { timeout: 20000 },
+  );
+  const hero = await page.evaluate(() => window.__paper.rects().find((r) => r.slot === 0));
+  const ptr = movingPointer(page, () => ({ x: hero.cx - hero.w * 0.2, y: hero.cy }));
+  const read = () =>
+    page.evaluate(() => {
+      const st = window.__covers.rive.status('nosey');
+      return {
+        paper: window.__paper.state(),
+        inst: st.players.hero?.instances ?? 0,
+        plane: st.plane && performance.now() - st.plane.t < 500 ? st.plane.shows : 'not drawn',
+      };
+    });
+  const seen = [];
+  for (const s of [0.3, 0.45, 0.6, 0.75, 0.85, 0.95, 0.99, 1, 0.99, 0.85, 0.3]) {
+    await page.evaluate((s) => window.__config.set({ detailSideScale: s }), s);
+    // A new side size is a new set of faces: the paper hands back, uploads
+    // and hands in again.
+    await page.waitForFunction(() => window.__paper.state() === 'on', null, { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1200); // three grace periods of pointer moves
+    seen.push({ s, ...(await read()) });
+  }
+  await page.evaluate(() => window.__config.set({ detailSideScale: 0.85 }));
+  await ptr.stop();
+  check(
+    seen.every((x) => x.paper === 'on' && x.plane === 'live' && x.inst === 1),
+    'the hero stays instance #1, live on the paper, at every side scale',
+    seen.map((x) => `${x.s}: ${x.paper}, plane ${x.plane}, #${x.inst}`).join(' | '),
+  );
+  await page.context().close();
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   try {
@@ -855,6 +1166,8 @@ async function run() {
     if (ONLY.includes('frames')) await checkFrames(browser);
     if (ONLY.includes('reduced')) await checkReduced(browser);
     if (ONLY.includes('life')) await checkLife(browser);
+    if (ONLY.includes('arrival')) await checkArrival(browser);
+    if (ONLY.includes('sidescale')) await checkSideScale(browser);
   } finally {
     await browser.close();
   }

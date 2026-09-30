@@ -1,0 +1,505 @@
+import {
+  CanvasTexture,
+  ClampToEdgeWrapping,
+  ColorManagement,
+  LinearFilter,
+  LinearSRGBColorSpace,
+  Mesh,
+  NoColorSpace,
+  OrthographicCamera,
+  PlaneGeometry,
+  Scene,
+  Texture,
+  WebGLRenderer,
+} from 'three';
+import type { WebGLRenderTarget } from 'three';
+import { CoverRenderer } from '../../covers/coverRenderer';
+import { COVERS, shaderCover } from '../../covers/covers';
+import { coverDialsVersion, coverValues } from '../../covers/coverDials';
+import { CONTENT, itemHeroFace } from '../../content';
+import { config } from '../../config';
+import { computeHeroRect } from '../../layout/hero';
+import { faceOf, loadCoverAnims } from '../../reader/coverAnims';
+import { issueAnims } from '../../reader/issue-01';
+import { createPaperMaterial, createShadowMaterial } from './paperMaterial';
+import { coverCrop } from './paperMath';
+import { span } from './span';
+
+/**
+ * THE PAPER'S GL, MADE ONCE — the renderer, its canvas, its programs, the
+ * crease map, the live covers' renderers and every face texture, shared by
+ * every mount of the detail view and never destroyed.
+ *
+ * Until 2026-09-28 DetailPaperLayer made all of this as it mounted, which is
+ * on the tile click (the detail view mounts with the grid→detail morph) and
+ * on a direct load, and destroyed it on close. The arrival paid for a WebGL
+ * context, its drawing buffer, the shader programs, the crease map and every
+ * face's upload, on every card, every time: 120–480 ms frames for ~1.5 s
+ * (docs/detail-paper.md, "The arrival"). Now:
+ *
+ *   warm-up    on the first hover of a grid card (or the first mount, for a
+ *              direct load or a keyboard open), in idle callbacks, one step
+ *              each: the context and its drawing buffer; the programs,
+ *              compiled without blocking (KHR_parallel_shader_compile) and
+ *              then drawn once; the crease map; each shader cover's renderer.
+ *   faces      every card's, wanted as the last warm-up step (and again by
+ *              the mounted layer, which is a no-op when they are in):
+ *              decoded off the main thread, UPLOADED one at a time, a few ms
+ *              a frame (`pumpUploads`), and kept: an arrival at the same
+ *              size uploads nothing. A click before they are in leaves the
+ *              rest to the morph, which is 400+ ms of runway.
+ *   the canvas moved into each mount's host and out again; its context lives
+ *              as long as the page. One context, ever (`paperContexts`).
+ */
+
+/** Hard cap on the canvas's backing store — the portfolio sheet's rule. */
+export const MAX_DPR = 2;
+
+export interface PaperGL {
+  canvas: HTMLCanvasElement;
+  renderer: WebGLRenderer;
+}
+
+let gl: PaperGL | null = null;
+let contexts = 0;
+let creases: Texture | null = null;
+let programsReady = false;
+let warmStarted = false;
+const readyListeners = new Set<() => void>();
+
+/** WebGL contexts this module has ever made: 1 after the first warm-up, and
+ *  it never goes up (verify:detail `arrival`). */
+export const paperContexts = () => contexts;
+
+/** The GL, once the warm-up has made it (null before). */
+export const paperGL = (): PaperGL | null => gl;
+
+/** Context, programs and crease map all ready: the layer may hand in. */
+export const paperReady = () => !!gl && programsReady && !!creases;
+
+export const paperCreases = () => creases;
+
+/** Called whenever a warm-up step completes. */
+export function onPaperProgress(fn: () => void): () => void {
+  readyListeners.add(fn);
+  return () => readyListeners.delete(fn);
+}
+const progress = () => {
+  for (const fn of readyListeners) fn();
+};
+
+const idle = (fn: () => void) =>
+  window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 150 }) : window.setTimeout(fn, 16);
+
+export function flatTexture(source: TexImageSource | HTMLCanvasElement): Texture {
+  const tex = source instanceof HTMLCanvasElement ? new CanvasTexture(source) : new Texture(source);
+  tex.flipY = false; // read downward in the shader
+  tex.colorSpace = NoColorSpace;
+  tex.generateMipmaps = false;
+  tex.minFilter = LinearFilter;
+  tex.magFilter = LinearFilter;
+  tex.wrapS = ClampToEdgeWrapping;
+  tex.wrapT = ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+async function decode(url: string): Promise<HTMLImageElement> {
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  return img;
+}
+
+/** An image's natural size, WITHOUT decoding it: an <img> that is not in the
+ *  document fires `load` with its size known and its pixels still undecoded.
+ *  (`decode()` here was nine full decodes of 2000×2600 files, for two numbers
+ *  each, on the same workers the morph's own images decode on.) */
+function naturalSize(url: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => reject(new Error(`no image: ${url}`));
+    img.src = url;
+  });
+}
+
+const nextIdle = () => new Promise<void>((r) => idle(() => r()));
+
+/** The face at exactly `w × h` device pixels, cropped as `object-fit: cover`.
+ *  `premultiply` for a live cover's still, which is not opaque: the plane
+ *  samples it as it samples the live cover (premultiplied).
+ *
+ *  From the file's BLOB, not the decoded <img>: from an image element Chrome
+ *  crops and resizes on the main thread, and the eight-odd faces the layer
+ *  builds as the detail view mounts — during the grid→detail morph — were
+ *  ~1 s of it (createImageBitmap, 981 ms in one real-Chrome profile), a run
+ *  of 60–500 ms frames over the morph and the landing, on every card. From a
+ *  blob it decodes and resizes off the main thread. */
+async function resized(url: string, w: number, h: number, premultiply = false): Promise<ImageBitmap> {
+  const [n, blob] = await Promise.all([naturalSize(url), fetch(url).then((r) => r.blob())]);
+  const c = coverCrop(n.w, n.h, w, h);
+  return createImageBitmap(blob, c.sx, c.sy, c.sw, c.sh, {
+    resizeWidth: w,
+    resizeHeight: h,
+    resizeQuality: 'high',
+    premultiplyAlpha: premultiply ? 'premultiply' : 'default',
+  });
+}
+
+// ── the canvas's size ───────────────────────────────────────────────────
+
+let size = { dpr: 0, vw: 0, vh: 0 };
+
+/** Size the drawing buffer to the viewport — a no-op when it already is.
+ *  Every change reallocates the buffer (4× multisampled): ~10 ms of GPU work
+ *  at 3456×1992 on an idle GPU, 50–280 ms behind a busy one. */
+export function sizePaper(): boolean {
+  if (!gl) return false;
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (dpr === size.dpr && vw === size.vw && vh === size.vh) return false;
+  size = { dpr, vw, vh };
+  const r = gl.renderer;
+  span('size', () => {
+    r.setPixelRatio(dpr);
+    r.setSize(vw, vh, false);
+  });
+  return true;
+}
+
+// ── the warm-up ─────────────────────────────────────────────────────────
+
+// A card and its shadow, never drawn visibly and never disposed: they hold
+// the two programs, so no card's material ever compiles or links again (three
+// frees a program when its last material goes).
+const warmScene = new Scene();
+const warmCamera = new OrthographicCamera(0, 1, 0, -1, -10, 10);
+
+let warmActive = 0;
+/**
+ * Start the warm-up (idempotent). Each step is its own idle callback, so none
+ * of it is a long task, and it runs under the morph as well as before it.
+ * `active`: the card most likely to open, whose faces come first.
+ */
+export function warmPaper(active = 0) {
+  if (warmStarted) return;
+  warmActive = active;
+  warmStarted = true;
+  const steps: (() => void | Promise<void>)[] = [
+    () => {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'detail__paper';
+      canvas.setAttribute('aria-hidden', 'true');
+      // 1×1 until sized: the default 300×150, then 600×300 at 2×, then the
+      // viewport was three drawing buffers where one is needed.
+      canvas.width = canvas.height = 1;
+      const renderer = span('context', () => new WebGLRenderer({ canvas, antialias: true, alpha: true, premultipliedAlpha: true }));
+      contexts++;
+      // No colour management, as on the portfolio sheet: the faces' sRGB bytes
+      // go in and come out untouched, which is what makes the plane match the
+      // <img>.
+      renderer.outputColorSpace = LinearSRGBColorSpace;
+      ColorManagement.enabled = false;
+      renderer.setClearColor(0x000000, 0);
+      gl = { canvas, renderer };
+    },
+    () => void sizePaper(),
+    async () => {
+      const geo = new PlaneGeometry(1, 1, 1, 1);
+      const paper = createPaperMaterial(null);
+      paper.uniforms.uAlpha.value = 0;
+      const shadow = createShadowMaterial();
+      shadow.uniforms.uAlpha.value = 0;
+      const a = new Mesh(geo, shadow);
+      const b = new Mesh(geo, paper);
+      a.frustumCulled = b.frustumCulled = false;
+      warmScene.add(a, b);
+      await gl!.renderer.compileAsync(warmScene, warmCamera);
+    },
+    () => {
+      // One draw, invisible (alpha 0, the canvas hidden and detached): the
+      // first draw of a program is where the driver builds its pipeline.
+      span('warm draw', () => gl!.renderer.render(warmScene, warmCamera));
+      programsReady = true;
+    },
+    async () => {
+      const img = await decode('/textures/paper-creases.webp');
+      await new Promise<void>((r) => idle(() => r()));
+      const tex = flatTexture(img);
+      span('upload creases', () => gl!.renderer.initTexture(tex));
+      creases = tex;
+    },
+    // Every face, for the viewport as it is: the ones any arrival needs (the
+    // strip shows every card). Decoded and uploaded while the pointer is
+    // still on the grid, so a first arrival uploads nothing, like a second.
+    () => void wantFaces(warmActive),
+    ...Object.keys(COVERS)
+      .filter((id) => shaderCover(id))
+      .map((id) => async () => {
+        const c = liveCover(id);
+        if (c) await c.r.warmAsync();
+      }),
+  ];
+  const run = (i: number) => {
+    if (i >= steps.length) return;
+    idle(() => {
+      Promise.resolve(steps[i]())
+        .catch((e) => console.warn('[paper] warm-up step failed', e))
+        .then(() => {
+          progress();
+          run(i + 1);
+        });
+    });
+  };
+  run(0);
+}
+
+/**
+ * Warm up on the first hover of a grid card — the earliest sign that the
+ * detail view is coming — or the first press. Not at app start, and not on a
+ * key: a page that is only looked at, or steered with the arrows, never pays
+ * for the context (verify:cover's `contexts` counts the grid's, steered with
+ * the arrows, at 2). A keyboard open (Enter) warms up as the view mounts, and
+ * the morph is its runway.
+ */
+export function armPaperWarmup(): () => void {
+  const EVENTS = ['pointerover', 'pointerdown'] as const;
+  const on = (e: Event) => {
+    const t = e.target as Element | null;
+    if (e.type === 'pointerover' && !t?.closest?.('.grid-card')) return;
+    off();
+    warmPaper();
+  };
+  const off = () => {
+    for (const ev of EVENTS) document.removeEventListener(ev, on, true);
+  };
+  for (const ev of EVENTS) document.addEventListener(ev, on, true);
+  return off;
+}
+
+// ── the live covers' renderers ───────────────────────────────────────────
+
+export interface LiveCover {
+  r: CoverRenderer;
+  rt: WebGLRenderTarget | null;
+  bound: number;
+}
+const liveCovers = new Map<string, LiveCover>();
+
+/** A shader cover's renderer in the paper's context: made once (at the
+ *  warm-up), kept. Null before the context exists or for any other kind. */
+export function liveCover(id: string): LiveCover | null {
+  if (!gl) return null;
+  let c = liveCovers.get(id);
+  if (!c) {
+    const def = shaderCover(id);
+    if (!def) return null;
+    const r = span(`cover ${id}`, () => new CoverRenderer(gl!.renderer, def, coverValues(id)));
+    c = { r, rt: null, bound: coverDialsVersion() };
+    liveCovers.set(id, c);
+  }
+  return c;
+}
+export const liveCoverEntries = () => liveCovers.entries();
+
+// ── faces ───────────────────────────────────────────────────────────────
+
+interface Face {
+  state: 'loading' | 'decoded' | 'ready' | 'failed';
+  tex: Texture | null;
+  source: TexImageSource | HTMLCanvasElement | null;
+  prio: number;
+}
+const faces = new Map<string, Face>();
+/** The set the last `wantFaces` asked for: once it has all arrived, every
+ *  other face is dropped (a new size makes the old set useless). */
+let wantedSet: Set<string> | null = null;
+
+export const texKey = (src: string, w: number, h: number) => `${src}@${w}x${h}`;
+export const faceKey = (idx: number, w: number, h: number) => {
+  const item = CONTENT[idx];
+  return texKey(itemHeroFace(item) ?? `hue:${item.hue}`, w, h);
+};
+export const plateKey = (idx: number, w: number, h: number) => texKey(`plate:${idx}`, w, h);
+
+export interface FaceDims {
+  heroW: number;
+  heroH: number;
+  sideW: number;
+  sideH: number;
+}
+
+/** The faces' device sizes for the viewport as it is now — the numbers the
+ *  mounted layer computes from its props (hero.ts, the side scale dial). */
+export function faceDims(): FaceDims {
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  const h = computeHeroRect(window.innerWidth, window.innerHeight);
+  const s = config.detailSideScale;
+  return {
+    heroW: Math.round(h.w * dpr),
+    heroH: Math.round(h.h * dpr),
+    sideW: Math.round(h.w * s * dpr),
+    sideH: Math.round(h.h * s * dpr),
+  };
+}
+
+const hueFill = (hue: number): string => `hsl(${hue}, 28%, 32%)`;
+
+function makeFace(idx: number, w: number, h: number): () => Promise<TexImageSource | HTMLCanvasElement> {
+  return async () => {
+    const item = CONTENT[idx];
+    const url = itemHeroFace(item);
+    if (!url) {
+      const c = document.createElement('canvas');
+      c.width = 2;
+      c.height = 2;
+      const g = c.getContext('2d')!;
+      g.fillStyle = hueFill(item.hue);
+      g.fillRect(0, 0, 2, 2);
+      return c;
+    }
+    // Handed to the browser in an idle moment: the decode and resize run off
+    // the main thread, but starting nine of them in one task is not free.
+    await nextIdle();
+    return resized(url, w, h, !!item.cover);
+  };
+}
+
+/**
+ * Ask for every face a size needs: every card at the hero's size and at the
+ * neighbours', and each issue's plate at the hero's. The `active` card's
+ * first, then its neighbours', so the likeliest to be needed land first.
+ * Returns the keys, for {@link faceSettled}.
+ */
+export function wantFaces(active: number, d: FaceDims = faceDims()): string[] {
+  const n = CONTENT.length;
+  const keys: string[] = [];
+  const want = (k: string, make: () => Promise<TexImageSource | HTMLCanvasElement>, prio: number) => {
+    keys.push(k);
+    requestFace(k, make, prio);
+  };
+  for (let idx = 0; idx < n; idx++) {
+    const near = idx === active ? 0 : idx === (active + 1) % n || idx === (active + n - 1) % n ? 1 : 2;
+    want(faceKey(idx, d.heroW, d.heroH), makeFace(idx, d.heroW, d.heroH), near === 0 ? 0 : 4 + near);
+    want(faceKey(idx, d.sideW, d.sideH), makeFace(idx, d.sideW, d.sideH), near === 1 ? 2 : 5 + near);
+    const anims = CONTENT[idx].issue ? issueAnims(CONTENT[idx].issue!) : undefined;
+    if (anims) {
+      want(
+        plateKey(idx, d.heroW, d.heroH),
+        async () => {
+          const m = await loadCoverAnims(anims);
+          const plate = faceOf(m, 'cover')?.plate;
+          if (!plate) throw new Error('no plate');
+          await nextIdle();
+          return resized(plate, d.heroW, d.heroH);
+        },
+        near === 0 ? 1 : 5 + near,
+      );
+    }
+  }
+  wantedSet = new Set(keys);
+  return keys;
+}
+
+/**
+ * Ask for a face texture by key; `make` decodes it (off the main thread). It
+ * is uploaded by {@link pumpUploads}, lowest `prio` first, and kept until
+ * {@link retainFaces} drops it.
+ */
+export function requestFace(key: string, make: () => Promise<TexImageSource | HTMLCanvasElement>, prio: number) {
+  const f = faces.get(key);
+  if (f) {
+    f.prio = Math.min(f.prio, prio);
+    return;
+  }
+  const face: Face = { state: 'loading', tex: null, source: null, prio };
+  faces.set(key, face);
+  make().then(
+    (src) => {
+      if (faces.get(key) !== face) return;
+      face.source = src;
+      face.state = 'decoded';
+      pump();
+    },
+    () => {
+      if (faces.get(key) === face) face.state = 'failed';
+    },
+  );
+}
+
+/** The uploaded texture for `key`, or null. */
+export const faceTexture = (key: string): Texture | null => faces.get(key)?.tex ?? null;
+
+/** Uploaded, or given up on (a missing file): nothing more will come. */
+export function faceSettled(key: string): boolean {
+  const s = faces.get(key)?.state;
+  return s === 'ready' || s === 'failed';
+}
+
+/** Anything decoded and waiting for its upload. */
+function uploadsPending(): boolean {
+  for (const f of faces.values()) if (f.state === 'decoded') return true;
+  return false;
+}
+
+// Uploads run in their own rAF callback, grid or detail view, while any
+// decoded face is waiting.
+let pumping = false;
+function pump() {
+  if (pumping) return;
+  pumping = true;
+  const tick = () => {
+    pumpUploads();
+    settle();
+    if (uploadsPending()) requestAnimationFrame(tick);
+    else pumping = false;
+  };
+  requestAnimationFrame(tick);
+}
+
+/** Once the wanted set is all in, drop everything else. */
+function settle() {
+  if (!wantedSet) return;
+  for (const k of wantedSet) if (!faceSettled(k)) return;
+  retainFaces(wantedSet);
+  wantedSet = null;
+}
+
+/**
+ * Upload decoded faces, one at a time, until `budgetMs` of this frame is
+ * spent (at least one). A face at the hero's device size is ~8 MB, 1.5–5 ms
+ * of main thread in texImage2D; nine of them in one task were a 20–25 ms
+ * frame on their own.
+ */
+function pumpUploads(budgetMs = 4): number {
+  if (!gl) return 0;
+  const t0 = performance.now();
+  let n = 0;
+  for (;;) {
+    let next: [string, Face] | null = null;
+    for (const e of faces) if (e[1].state === 'decoded' && (!next || e[1].prio < next[1].prio)) next = e;
+    if (!next) break;
+    const [key, f] = next;
+    const tex = flatTexture(f.source!);
+    span(`upload ${key.split('/').pop()}`, () => gl!.renderer.initTexture(tex));
+    f.tex = tex;
+    f.state = 'ready';
+    n++;
+    if (performance.now() - t0 >= budgetMs) break;
+  }
+  return n;
+}
+
+/** Drop every face not in `keys`. */
+function retainFaces(keys: Set<string>) {
+  for (const [k, f] of faces) {
+    if (keys.has(k)) continue;
+    f.tex?.dispose();
+    faces.delete(k);
+  }
+}
+
+/** DEV: what is resident. */
+export const faceKeys = () => [...faces].map(([k, f]) => `${k} ${f.state}`);

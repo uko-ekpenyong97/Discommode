@@ -14,7 +14,7 @@ import {
 import type { Texture } from 'three';
 import glsl from './rive-site.glsl?raw';
 import dials from './rive-site.json';
-import { STRIP_H, STRIP_W, TEXT_X, riveTextSdf } from './riveText';
+import { STRIP_H, STRIP_W, TEXT_X, riveTextSdf, sliced } from './riveText';
 import { cssRgb } from '../color';
 import type { DialValues } from '../dialValues';
 import type { CoverDef, InstanceFrame, Uniforms } from '../types';
@@ -371,7 +371,7 @@ function frameUniforms(values: DialValues, a: Uniforms, b: Uniforms, fr: Instanc
 async function assets(values: DialValues): Promise<Record<string, Texture>> {
   const v = values as unknown as V;
   const sdf = await riveTextSdf(v.base.textTop);
-  const half = halfOf(sdf.data);
+  const half = await halfOf(sdf.data);
   const t = new DataTexture(half, sdf.width, sdf.height, RedFormat, HalfFloatType);
   t.colorSpace = NoColorSpace;
   t.flipY = false; // row 0 = the strip's top, as the shader reads it
@@ -386,12 +386,18 @@ async function assets(values: DialValues): Promise<Record<string, Texture>> {
 }
 
 /** Half floats, converted once per strip and shared by every renderer. */
-const halves = new WeakMap<Float32Array, Uint16Array>();
-function halfOf(data: Float32Array): Uint16Array {
+// Two million conversions: ~20–40 ms, so in slices too (riveText.ts). Shared,
+// like the SDF: the stage's renderer and the paper's upload the same array.
+const halves = new WeakMap<Float32Array, Promise<Uint16Array>>();
+function halfOf(data: Float32Array): Promise<Uint16Array> {
   let h = halves.get(data);
   if (!h) {
-    h = new Uint16Array(data.length);
-    for (let i = 0; i < data.length; i++) h[i] = DataUtils.toHalfFloat(data[i]);
+    const out = new Uint16Array(data.length);
+    const ROW = 4096;
+    h = sliced(Math.ceil(data.length / ROW), (k) => {
+      const end = Math.min(data.length, (k + 1) * ROW);
+      for (let i = k * ROW; i < end; i++) out[i] = DataUtils.toHalfFloat(data[i]);
+    }).then(() => out);
     halves.set(data, h);
   }
   return h;

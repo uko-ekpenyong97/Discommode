@@ -671,10 +671,18 @@ export function rivePlane(id: string, shows: 'live' | 'still' | 'none', uploads:
  * replayed into the instance when it is made.
  */
 export function rivePointer(id: string, role: RivePlayerRole, kind: RivePointerKind, u: number, v: number, w: number, h: number) {
-  const player = rivePlayer(id, role);
-  if (player) player.pointer(kind, u, v, w, h);
-  else if (kind === 'exit') pendingPointer.delete(`${id}/${role}`);
-  else if (kind === 'move') pendingPointer.set(`${id}/${role}`, { kind, u, v, w, h });
+  // To the instance on screen, never to a fresh one: asking for the player to
+  // hand it an event is not the user coming back. Through `rivePlayer` it was
+  // — a hero nobody was drawing (the paper took it for a neighbour at
+  // detailSideScale 1) was LEFT, so every pointer move past the grace made a
+  // fresh hero, #2, #3, … for as long as the pointer moved. Only a draw makes
+  // one now; a move kept here is replayed into it when it is made.
+  ensureRive(id);
+  const key = `${id}/${role}`;
+  const player = players.get(key);
+  if (player && !heroLeft(player)) player.pointer(kind, u, v, w, h);
+  else if (kind === 'exit') pendingPointer.delete(key);
+  else if (kind === 'move') pendingPointer.set(key, { kind, u, v, w, h });
 }
 
 function makePlayer(id: string, role: RivePlayerRole, idle = false): RivePlayer | null {
@@ -711,7 +719,7 @@ export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null 
   ensureRive(id);
   const key = `${id}/${role}`;
   let p = players.get(key);
-  if (p && role === 'hero' && riveFrame() - p.lastFrame > HERO_GRACE_FRAMES && performance.now() - p.lastUsed > HERO_GRACE_MS) {
+  if (p && heroLeft(p)) {
     p.dispose();
     players.delete(key);
     p = undefined;
@@ -739,6 +747,11 @@ export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null 
     }
   }
   return p;
+}
+
+/** A hero player not drawn for the grace (frames AND time) has been left. */
+function heroLeft(p: RivePlayer): boolean {
+  return p.role === 'hero' && riveFrame() - p.lastFrame > HERO_GRACE_FRAMES && performance.now() - p.lastUsed > HERO_GRACE_MS;
 }
 
 /** The player a role would draw with right now, without creating one. */

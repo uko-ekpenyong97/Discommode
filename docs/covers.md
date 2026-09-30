@@ -34,6 +34,18 @@ so what is tuned there is what ships.
 
 ## Handoff
 
+**The detail view's arrival (2026-09-28).** [Not done](#not-done) 9. The
+paper's GL — context, programs, crease map, card 02's renderer in it, every
+face — is made once, on the first hover of a grid card, and kept across
+every open and close (docs/detail-paper.md, "The arrival", which has the
+numbers and the model). Two cover changes came with it: card 02's text SDF
+and its half-float copy are built in ≤ 6 ms slices (the same output; they were
+a 140 ms and a 20–40 ms task on every page load), and a Rive pointer event goes
+to the hero instance on screen or waits for the next draw — through
+`rivePlayer` it made a fresh hero whenever nobody was drawing one, which at
+`detailSideScale` 1 was forever. Grid contexts are 2 until the first hover of a
+card, 3 after; the detail view 3, on every arrival.
+
 **Card 04's new file (2026-09-28).** Branch `update-nosey-cover-riv` ships
 Uko's updated Nosey file (from `publish.sh`, signed, 872,152 bytes). The
 interactions changed inside the file: the free hat is pushed and hit by the
@@ -292,12 +304,15 @@ three.js renderer, so the paper holds a second one, for the same cover, with the
 same dials and the same clock. Why there and not in the stage: a texture cannot
 cross WebGL contexts. The alternative is copying a 2 MP frame from the stage's
 canvas into the paper's context every frame (`texImage2D` from a canvas), which
-costs more than drawing it. The paper's renderer exists whenever the hero does.
+costs more than drawing it. The paper's renderer exists from the first hover
+of a grid card (or the first detail view) for the page's life, and card 02's
+renderer in it is made, compiled and drawn once then (docs/detail-paper.md,
+"The arrival").
 
 | | main | with covers |
 | --- | --- | --- |
-| grid | 1 (the sky) | **2** (+ the stage) |
-| detail view | 2 (the sky, the paper) | **3** (+ the stage) |
+| grid | 1 (the sky) | **2** (+ the stage); 3 from the first hover of a card, when the paper's is made early |
+| detail view | 2 (the sky, the paper) | **3** (+ the stage) — on every arrival: the paper's is made once (it was one more per arrival) |
 
 The stage also draws the morph card and the hero's DOM face (until the paper
 takes it over): 10:13 instead of 3:4, so a group of its own.
@@ -701,7 +716,11 @@ Chrome crops and resizes there) — now from the file's blob, off the main
 thread (docs/detail-paper.md, Textures) — and the paper's WebGL context
 (~0.2 s) and first uploads. What remains is 120–480 ms frames for ~1.5 s after
 the click in a production build, on every card (card 02: 150–350 ms); `main`
-had 0.8–2.0 s frames there in the dev build. [Not done](#not-done) 9.
+had 0.8–2.0 s frames there in the dev build. [Not done](#not-done) 9 —
+resolved 2026-09-28 for the tile's morph and a second arrival: the paper's GL
+is made once, on the first hover of a card, and kept (docs/detail-paper.md,
+"The arrival"). A cold direct load still drops frames, and they are the
+page's load, there with the paper removed.
 
 **The cover is hover-only, by design.** The headset's colour steps on
 pointer-ENTER: in the file, the listener "Headset.Pointer.Enter" fires
@@ -926,9 +945,11 @@ paper's effects on and the sky there.
 8. **The Rive runtime's image-mesh context is withheld** for card 04's file,
    which draws none. A file that deforms or shows images needs that lifted
    ([Rendering](#rendering-two-players-no-webgl)).
-9. **The detail view's arrival is janky, on every card** — 120–480 ms frames for
-   ~1.5 s after the click in a production build (the paper's WebGL context,
-   shader compiles and texture uploads as it mounts; unattributed main-thread
-   time, not script). Pre-existing: `main` is as bad or worse. Building the
-   paper's textures and context after the morph has landed, or ahead of it,
-   is the place to look.
+9. **The detail view's arrival: resolved, except a cold direct load**
+   (2026-09-28; docs/detail-paper.md, "The arrival"). The tile's morph, cold
+   and warm, and a second direct arrival hold one vsync (p95 16.7–16.8 ms, no
+   frame dropped in a production build). A cold direct load of `#item-NN` is
+   the page's load and drops 3–6 frames of 67–133 ms whether the paper is
+   there or not (`verify:detail`'s `arrival` prints those rows, informational): the compositor and GPU with the page's first frames, and
+   card 04's runtime and import, which load for the grid's tiles hidden under
+   the detail view.
