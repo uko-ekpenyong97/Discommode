@@ -250,13 +250,16 @@ the colour model, the contrast sweep, the interaction and the CHROME dials
 are one system and are written down once, in
 [docs/reader.md, Chrome](reader.md#chrome). What is the detail view's own:
 
+Captures: `docs/chrome/detail-noon.webp`, `detail-dusk`, `detail-night`,
+`detail-hover` and `pills`.
+
 **The row**, bottom-centre, the frame's language extrapolated:
 
 | shape | size | action |
 | --- | --- | --- |
 | ‹ prev | 46×46 | Previous item (←) |
 | card pill "02 \| 04" | 131×46 | this card \| all of them; a native `<select>` over it jumps to any card |
-| action pill "Read issue" / "Open project" | as wide as its label (≈160 / ≈174) | what the card opens |
+| action pill "Read issue" / "Open project" | as wide as its label (158 / 174) | what the card opens |
 | next › | 46×46 | Next item (→) |
 
 The two pills are Uko's pill outline with its straight run stretched and its

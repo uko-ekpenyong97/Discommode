@@ -223,6 +223,12 @@ row).
 > the repo). Measurements are `scripts/sky-contrast.mjs` and captures of the
 > dev build, headless Chrome on an Apple M1 Max, 2026-09-30.
 
+Captures in `docs/chrome/`, 1440×900 @2x, a clear sky: `reader-noon`,
+`reader-dusk`, `reader-night` and the detail view's three; `reader-hover` and
+`detail-hover` (the row at rest over the row with one shape hovered, at
+dusk); `pills` (the three pill widths: 131, "Read issue" 158, "Open project"
+174).
+
 ### The shapes
 
 Five floating shapes in a row, bottom-centre, and one at the top — no band
@@ -289,8 +295,8 @@ follows its label's width with nothing measured.
 
 Why: every edge on screen stays one Uko cut. At 131 it IS the export,
 unstretched, and the numbers pills are 131. The cost is that the run's wobble
-stretches with the pill — 1.35× on "Read issue" (≈160 wide), 1.5× on "Open
-project" (≈174) — gentler waves along the top and bottom than at the ends.
+stretches with the pill — 1.3× on "Read issue" (158 wide), 1.5× on "Open
+project" (174) — gentler waves along the top and bottom than at the ends.
 Past about 2× it would start to read as stretched; nothing on the site is. A
 procedural edge would make any width, and would not be his.
 
@@ -300,9 +306,11 @@ procedural edge would make any width, and would not be his.
 
 1. **The sky under each shape.** About twice a second (`chromeSampleMs` 500)
    `useSkyChrome` asks the sky engine for the MEAN colour of the live canvas
-   inside each shape's base box (`SkyEngine.readMeans`). The rects are copied
-   into a pixel buffer right after a frame is drawn, a fence is set, and the
-   bytes are fetched once the GPU has passed it, a frame or two later: **no
+   inside each shape's base box (`SkyEngine.readMeans`) — **the sky without
+   its wake**: the weather, not the air a page turn or the pointer stirs. At
+   the next frame the rects are drawn with the wake off, scissored, copied
+   into a pixel buffer, and the frame is drawn over them; a fence is set, and
+   the bytes are fetched once the GPU has passed it, a frame or two later: **no
    per-frame readback and no stall**. Where the shapes are is measured only
    when it can have changed (the set of shapes, a resize, a dial), never per
    sample: a `getBoundingClientRect` mid-riffle would force a layout the flip
@@ -373,6 +381,38 @@ ink flip.
 
 Disabled buttons keep their paper and dim their glyph to 0.3; WCAG exempts an
 inactive control's text, and they are not measured.
+
+### What it costs
+
+A page flip is the moment that matters: `verify:reader`'s budget holds the
+flip's main thread plus the sky's GPU frame to 8ms. The first cut failed it
+at 2× — **+1.1ms of main thread at p95** against `main` (5.2–5.4 against
+4.1–4.2, the two dev servers measured alternately, 2026-09-30). Bisected with
+the section's own instrument, one change at a time:
+
+| | flip main thread p95, 1× |
+| --- | --- |
+| `main` | 4.2 – 4.3 |
+| the first cut | 5.3 – 5.5 |
+| … with the masks off / each shape on its own layer | 5.2 – 5.3 (not the masks) |
+| … with sampling off | 4.1 – 4.3 |
+| … with `chromeColorEase` 0 | 4.3 |
+| **as shipped** | **4.0 – 4.5** (sampling off in the same run: 4.0 – 4.2) |
+
+Two things, both in the cross-fade. It wrote the row's paint on the hook's
+ROOT too — `.reader` — and these are inherited properties, so every frame
+of a fade restyled the whole book. And the flip's own wake stirs the sky
+under the row, so reading the sky WITH the wake started a new fade on nearly
+every sample: 1,340 colour writes in five flips (300 frames). Now the row's
+paint goes on the row, the sky is read without the wake, the shapes' rects
+are cached (a `getBoundingClientRect` mid-flip forces the layout the engine
+has just dirtied), a repaint needs 3 levels of change, and a variable is only
+written when its rounded value changes: ~310 writes in the same five flips.
+
+The riffle, measured the way [the budget](#the-budget) was — interleaved
+with `main`, run by run, 15 per DPR alternating 20→0 and 0→20: a frame over
+20ms in **1 of 30 on the branch and 5 of 30 on `main`** (first cut,
+2026-09-30). The misses are the machine's, as before.
 
 ### Interaction
 
