@@ -28,33 +28,24 @@ so what is tuned there is what ships.
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 | the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
 | the grid→detail morph at 0 / 0.5 / 1, before and after | `docs/covers/bare-morph.webp` |
-| card 04: the grid row, live, hovered: "Nosey" in the overlay's headline, the number (`difference` ink) and nothing else over the cover (2026-09-30) | `docs/covers/nosey-grid-row.webp` |
+| card 04: the grid row, live, at rest and hovered: no label on the tile, "04" as the overlay's headline (2026-09-30) | `docs/covers/nosey-grid-row.webp` |
 | card 04: the detail hero at rest and mid-bounce, the number alone at its foot (2026-09-30) | `docs/covers/nosey-hero.webp` |
 | card 04: the same tile over NOON and over NIGHT (the file before 2026-09-28) | `docs/covers/nosey-noon-night.webp` |
 
 ## Handoff
 
-**Card 04's labels (2026-09-30).** Card 04 is labelled as cards 01–03 are:
-the number bottom-left and its name, "Nosey", as the grid overlay's headline.
-Nothing else is set over the cover. The description's rendering (the overlay's
+**The cards' labels (2026-09-30).** Every card is labelled the same way. In
+the GRID the tile is its art alone — the bold mono number that sat in its
+bottom-left corner (`.grid-card__index`) is gone — and the hover overlay's
+headline is the card's number ("02", "04"), in the headline's type and place;
+the mono captions bottom-right stay. In the DETAIL view the hero carries the
+number bottom-left and nothing else. Card 04's name and description are gone
+from the manifest, and with them their rendering: the overlay's name and
 second line, the detail hero's name + line on a scrim, and PR #31's soft text
-shadow in place of that scrim) is gone, and so is `description` from the
-manifest: the project view never read it. The stills (`npm run covers`) come
+shadow in place of that scrim. The project view never read either. The stills (`npm run covers`) come
 out byte-identical: they are the cover alone. At the last runs:
 `verify:cover` all passed (3 skipped, as above), `verify:detail` all passed
 (card 04 as the hero 0.133–0.387%).
-
-**The number on every grid tile (same day).** `.grid-card__index` was an
-unpositioned span, so the face above it (01's and 03's `<img>`, 02's and
-04's cover canvas) painted over it: card 04's number had been hidden under its
-opaque ground since 2026-09-28, as 01's and 03's always were under their
-images, and only card 02's showed, through its translucent shader. It is
-positioned now, over every face, and its ink is three GRID dials:
-`gridIndexInk` (#ffffff), `gridIndexInkOpacity` (1) and `gridIndexBlend`
-(`difference`). The blend inverts the white against the face under it — deep
-blue on 01's yellow, near-black on 04's grey, light on 03's navy, dark on
-02's pale shader — where plain white vanished on 01 and 04, and a dark ink on
-03. The cover checks hide the index where they compare pixels, as before.
 
 **The detail view's arrival (2026-09-28).** [Not done](#not-done) 9. The
 paper's GL — context, programs, crease map, card 02's renderer in it, every
@@ -287,7 +278,7 @@ detail slot:
 | the DOM panel | `.detail__panel--bare`: no corners, a TRANSPARENT shadow. Not `none`: `none` on an off-screen panel changes how Chrome layers the strip and re-rasterises the other cards' images (`#item-04`, DOM faces: 8% of pixels, up to 111 levels). |
 | the paper | `uRadius` 0 (no rounded clip), no shadow quad. |
 | the paper's light | the crease screen-blend and trough shading are weighted by `coverPaperShade × alpha`: the full paper under opaque ink, none where the ground is transparent. The dent, squash, ripple, fold and crease refraction move the sheet and are unchanged. Card 04 has its own `coverPaperShade` (its JSON); card 02's is the site dial. |
-| the labels | the number, bottom-left, as on every card, and nothing else. Card 04 had its name and a line under it here, on a scrim (and, from PR #31, a soft text shadow instead of it); since 2026-09-30 its name is only the grid overlay's headline, and the description is gone from the manifest. |
+| the labels | the number, bottom-left, as on every card, and nothing else. Card 04 had its name and a line under it here, on a scrim (and, from PR #31, a soft text shadow instead of it); both are gone from the manifest since 2026-09-30. |
 | the morph | the card's chrome (6px corners, `0 24px 70px` at .55) fades to none over the travel, on its easing, and back on the way out. |
 
 Every other card is untouched: `verify:detail` as before, and before/after

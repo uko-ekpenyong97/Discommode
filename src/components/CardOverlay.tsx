@@ -39,9 +39,9 @@ export function CardOverlay({ item, onOpen }: CardOverlayProps) {
 
   return (
     <div className="card-overlay" style={{ animationDuration: `${cfg.overlayFadeMs}ms` }}>
-      {/* The NAME if the card has one, the number if it does not. */}
+      {/* The card's NUMBER, on every card: the one place the grid shows it. */}
       <div className="card-overlay__headline" style={depth(cfg.overlayDepthHeadline)}>
-        <span className="card-overlay__name">{item.name ?? item.title}</span>
+        <span className="card-overlay__number">{item.title}</span>
       </div>
 
       <div className="card-overlay__captions" style={depth(cfg.overlayDepthCaptions)}>

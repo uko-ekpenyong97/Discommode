@@ -33,23 +33,12 @@ export type CardKind = 'magazine' | 'portfolio';
 export interface PosterItem {
   id: number;
   /**
-   * The card's NUMBER, and only ever that: "01" … "04". It is set in 44px mono
-   * in the corner of every detail panel and it is how the jump list reads, so
-   * it stays two digits however much of a name the thing behind it grows.
+   * The card's NUMBER, and only ever that: "01" … "04". It is the grid's hover
+   * headline, it is set in 44px mono in the corner of every detail panel, and
+   * it is how the jump list reads, so it stays two digits. Nothing else names a
+   * card over its art: the grid tile carries no label at all.
    */
   title: string;
-  /**
-   * What the thing is CALLED, once there is something real behind the card: the
-   * grid overlay's headline, and nowhere else. Nothing is set over the cover —
-   * the tile and the detail hero carry the number and only the number.
-   *
-   * Absent on a placeholder, and the overlay falls back to {@link title} — the
-   * headline is then the number, which is what every card showed before the
-   * first real project landed. Card 02 is real and still has none: the Rive
-   * study's name IS "Rive", and a headline repeating the mark on the art in
-   * front of it says nothing twice.
-   */
-  name?: string;
   /** URL-hash slug for deep-linking the detail view (e.g. "item-02"). */
   slug: string;
   /** Magazine cards open the reader; portfolio cards open the project view. */
@@ -125,7 +114,6 @@ export const CONTENT: PosterItem[] = [
   {
     id: 3,
     title: '04',
-    name: 'Nosey',
     slug: 'item-04',
     kind: 'portfolio',
     project: '04',

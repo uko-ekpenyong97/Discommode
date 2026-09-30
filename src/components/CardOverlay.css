@@ -47,7 +47,8 @@
 
 /* Sits ABOVE the card's top edge, anchored by its bottom, and overlaps the
    card's top corner by 18px — which is what makes it read as a label ON the
-   card. The number or the name, the same place on every card. */
+   card. The card's number, the same place on every card — and the only
+   place the grid shows it: the tile itself carries no number. */
 .card-overlay__headline {
   bottom: 100%;
   margin-bottom: -18px;
@@ -61,7 +62,7 @@
   text-shadow: 0 2px 18px rgba(0, 0, 0, 0.6);
 }
 
-.card-overlay__name {
+.card-overlay__number {
   font-size: 44px;
   font-weight: 800;
   line-height: 1;

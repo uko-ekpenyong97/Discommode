@@ -2051,14 +2051,14 @@ are worth keeping.
    becomes whatever is at 110s now. The frame is the thing a reader sees first
    on the grid, so it is worth more than a comment — a committed contact sheet,
    or the frame's own hash, would make a face that has quietly moved visible.
-12. **`name` exists on one card.** It is the grid overlay's headline — the
-   one place a card says what it IS; the tile and the detail hero carry only
-   the number — and it is optional because the placeholders have nothing to
-   say yet. The overlay's fallback to the card NUMBER is a fallback rather than
-   a design — a grid where three cards name themselves and one says "03" is
-   worse than either of the two consistent states. (`description`, card 04's
-   one line over its cover, was removed on 2026-09-30: nothing is set over a
-   cover, and the project view never read it.)
+12. **No card is named on the grid.** `name` and `description` were card 04's
+   alone, and both were removed on 2026-09-30: the grid's hover headline is
+   the card's NUMBER on every card, the tile carries no label, and the detail
+   hero carries only the number. The project view never read either. A card
+   that wants to say what it IS before it is opened has nowhere to now; if
+   that comes back, it wants to come back on every real card at once — a grid
+   where three cards name themselves and one says "03" is worse than either
+   consistent state.
 
 ## Running the checks
 

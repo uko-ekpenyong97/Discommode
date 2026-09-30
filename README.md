@@ -138,7 +138,8 @@ leaves the viewport; pan/snap, being user-initiated, remain.
 ## Hover overlay
 
 Hovering **any** card (the one under the cursor, only while the grid is settled —
-not dragging, not gliding) fades in a `CardOverlay`: a bold headline overlapping
+not dragging, not gliding) fades in a `CardOverlay`: a bold headline — the card's
+number, the only place the grid shows it; the tile is its art alone — overlapping
 the top-left corner, monospace captions along the bottom-right edge, and a
 circular CTA centred on the card, all from the item's data in
 [`src/content.ts`](src/content.ts). Only one shows at a time; the hovered cell is
@@ -576,9 +577,7 @@ The DEPTH group includes the per-card facing dials (`cursorDepthPx`,
 both are independently dialable. The FOCUS group dials the focus emphasis
 (`focusScale`, `unfocusedOpacity`, `farOpacity`) plus `hoverLiftOpacity` (the
 hovered card's opacity lift). The GRID group dials `clickCenterMaxMs` (the
-click-to-centre glide cap) and the tile number's ink: `gridIndexInk`,
-`gridIndexInkOpacity` and `gridIndexBlend` (`difference` by default, so one
-white ink inverts to read on every face — 01's yellow and 04's grey included). The DETAIL group dials the 3-card layout
+click-to-centre glide cap). The DETAIL group dials the 3-card layout
 (`detailCardScale`, `detailSideScale`, `detailSideOpacity`, `detailGap`), the
 hover-isolate dim (`detailHoverDim`), the sky scrim (`detailScrimOpacity`), the
 FLIP morph duration (`detailTransitionMs`) and chrome fade (`detailChromeFadeMs`),

@@ -184,8 +184,7 @@ const flatGrid = (page) =>
     const st = document.createElement('style');
     st.textContent =
       '.grid-plane__tilt, .grid-card__transform { transform: none !important; }' +
-      '.grid-card__fade { opacity: 1 !important; } .grid-card__face { filter: none !important; box-shadow: none !important; }' +
-      '.grid-card__index { visibility: hidden !important; }';
+      '.grid-card__fade { opacity: 1 !important; } .grid-card__face { filter: none !important; box-shadow: none !important; }';
     document.head.append(st);
   });
 
@@ -841,11 +840,10 @@ async function checkRiveSwap(browser) {
     await page.mouse.move(3, 3);
     await page.waitForTimeout(400);
     const hr = await heroRect(page);
-    // The number is the DOM hero's alone (the tile's is hidden too): this
-    // compares the cover.
+    // The number is the DOM hero's alone: this compares the cover.
     await page.evaluate(() => {
       const st = document.createElement('style');
-      st.textContent = '.detail__panel-num, .grid-card__index { visibility: hidden !important; }';
+      st.textContent = '.detail__panel-num { visibility: hidden !important; }';
       document.head.append(st);
     });
     const role = await page.evaluate(() => document.querySelector('.detail-morph .cover-tile[data-cover="nosey"]')?.dataset.role);
