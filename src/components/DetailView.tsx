@@ -19,6 +19,9 @@ import type { HeroRect } from '../layout/hero';
 import { useTicker } from '../hooks/useTicker';
 import { skySplat } from '../sky/skyStage';
 import type { DetailController } from '../hooks/useDetail';
+import { PillFace, ShapeFace } from '../chrome/Paper';
+import { two } from '../chrome/two';
+import { useSkyChrome } from '../chrome/useSkyChrome';
 import './DetailView.css';
 
 const SETTLE_DECAY = Math.log(100);
@@ -267,8 +270,15 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   const authoring = import.meta.env.DEV && window.location.hash.includes('?intro');
   const paperLive = phase === 'active' && (!suspended || authoring);
 
+  // The chrome's paper takes its colour from the sky under it — not while the
+  // reader is up over this view, which has its own.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useSkyChrome(rootRef, !suspended);
+  const tilt = (t: number) => ({ '--tilt': t }) as CSSProperties;
+
   return (
     <div
+      ref={rootRef}
       className="detail"
       data-phase={phase}
       data-trans={transition}
@@ -294,13 +304,16 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
       <button
         ref={backRef}
         type="button"
-        className="detail__back"
+        className="paper chrome-top detail__back"
+        data-paper="back"
+        style={tilt(-1)}
         onClick={(e) => {
           e.stopPropagation();
           close();
         }}
+        aria-label="Back to the grid"
       >
-        ← Back to the grid
+        <ShapeFace shape="prev" flip />
       </button>
 
       <div className="detail__strip" ref={trackRef}>
@@ -413,43 +426,52 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         })}
       </div>
 
-      <div className="detail__bar" ref={barRef} onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="detail__btn" onClick={prev} aria-label="Previous item">
-          ‹ Prev
+      <div className="chrome-row detail__bar" ref={barRef} onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="paper" data-paper="prev" style={tilt(-1)} onClick={prev} aria-label="Previous item">
+          <ShapeFace shape="prev" />
         </button>
-        <select
-          className="detail__select"
-          value={activeIndex}
-          onChange={(e) => goto(Number(e.target.value))}
-          aria-label="Jump to item"
-        >
-          {CONTENT.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.title} — {item.slug}
-            </option>
-          ))}
-        </select>
+        {/* current | total cards. The native select over it is what is pressed
+            and focused (jump to any card), so the pill is the only thing seen. */}
+        <div className="paper" data-paper="card" style={tilt(1)}>
+          <PillFace numbers={[two(activeIndex + 1), two(CONTENT_COUNT)]} />
+          <select
+            className="paper__select detail__select"
+            value={activeIndex}
+            onChange={(e) => goto(Number(e.target.value))}
+            aria-label="Jump to item"
+          >
+            {CONTENT.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.title} — {item.slug}
+              </option>
+            ))}
+          </select>
+        </div>
         {/* The primary action follows the card's kind: the magazine reads, a
             portfolio card opens its project view at `#view-NN`. */}
         {activeItem.issue ? (
           <button
             type="button"
-            className="detail__btn detail__btn--read"
+            className="paper detail__btn--read"
+            data-paper="action"
+            style={tilt(-1)}
             onClick={() => read(activeItem.issue!)}
           >
-            Read issue
+            <PillFace>Read issue</PillFace>
           </button>
         ) : activeItem.project ? (
           <button
             type="button"
-            className="detail__btn detail__btn--read"
+            className="paper detail__btn--read"
+            data-paper="action"
+            style={tilt(-1)}
             onClick={() => openProject(activeItem.project!)}
           >
-            Open project
+            <PillFace>Open project</PillFace>
           </button>
         ) : null}
-        <button type="button" className="detail__btn" onClick={next} aria-label="Next item">
-          Next ›
+        <button type="button" className="paper" data-paper="next" style={tilt(1)} onClick={next} aria-label="Next item">
+          <ShapeFace shape="next" />
         </button>
       </div>
     </div>

@@ -20,24 +20,6 @@
   opacity: var(--reader-scrim, 0.35);
 }
 
-/* The chrome's bands — the one the 4.5:1 rests on. FLAT across the band the
-   pill and the bar sit in (72px: margin + chip + 8), so the type sits on one
-   value and the probe's figure is exact; then faded out over the same height
-   again, where there is no type, so the band has no edge. Same recipe as the
-   project view's letterhead wash. `--reader-chrome-band` is `CHROME_BAND_PX`. */
-.reader-ground__band {
-  --reader-chrome-band: 72px;
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: calc(var(--reader-chrome-band) * 2);
-  opacity: var(--reader-chrome-scrim, 0.75);
-}
-.reader-ground__band--top {
-  top: 0;
-  background: linear-gradient(#000 0 50%, transparent 100%);
-}
-.reader-ground__band--bottom {
-  bottom: 0;
-  background: linear-gradient(transparent 0, #000 50% 100%);
-}
+/* (The chrome's two bands — black at `readerChromeScrim` behind the back pill
+   and the page bar — are gone: the chrome is paper shapes now, src/chrome, and
+   carries its own contrast.) */

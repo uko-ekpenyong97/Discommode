@@ -111,7 +111,7 @@ const settled = (page, target) =>
 /** What the reader says it is showing, every way it says it. */
 const readState = (page) =>
   page.evaluate(() => ({
-    caption: +document.querySelector('.reader__caption').textContent.match(/SPREAD (\d+)/)[1] - 1,
+    caption: +document.querySelector('.reader__caption').dataset.spread - 1,
     hash: +location.hash.split('/')[1],
     pos: document.querySelector('.book').dataset.pos,
     imgs: [...document.querySelectorAll('.book > .book__page img')]
@@ -376,8 +376,9 @@ async function checkNavigation(browser) {
     window.__caps = [];
     new MutationObserver(() => {
       const c = document.querySelector('.reader__caption');
-      if (c && window.__caps.at(-1) !== c.textContent) window.__caps.push(c.textContent);
-    }).observe(document.body, { subtree: true, childList: true, characterData: true });
+      const cap = c && `${c.dataset.spread} / ${c.dataset.spreads}`;
+      if (cap && window.__caps.at(-1) !== cap) window.__caps.push(cap);
+    }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-spread'] });
   });
   await page.keyboard.press('End');
   await page.waitForTimeout(300);
@@ -385,7 +386,7 @@ async function checkNavigation(browser) {
   await page.waitForTimeout(900);
   const esc = await page.evaluate(() => ({ last: window.__caps.at(-1), hash: location.hash, reader: !!document.querySelector('.reader') }));
   check(
-    /SPREAD 22 \/ 22/.test(esc.last ?? '') && esc.hash === '#item-01' && !esc.reader,
+    esc.last === '22 / 22' && esc.hash === '#item-01' && !esc.reader,
     'Escape mid-riffle lands the riffle, then exits',
     JSON.stringify(esc),
   );
@@ -419,7 +420,7 @@ async function exitFrames(browser, how) {
   });
   await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1 });
   await page.waitForTimeout(200);
-  if (how === 'pill') await page.getByRole('button', { name: '‹ Back', exact: true }).click();
+  if (how === 'pill') await page.getByRole('button', { name: 'Back', exact: true }).click();
   else await page.keyboard.press('Escape');
   await page.waitForTimeout(2600);
   await cdp.send('Page.stopScreencast');
@@ -874,7 +875,7 @@ async function checkSky(browser) {
       await page.waitForSelector('.reader__bar');
       await page.waitForTimeout(900);
       const hideReader = await page.addStyleTag({
-        content: '.reader, .reader-ground__scrim, .reader-ground__band { visibility: hidden !important; }',
+        content: '.reader, .reader-ground__scrim { visibility: hidden !important; }',
       });
       const reader = await raw(page);
       const home = await page.evaluate(canvasHome);

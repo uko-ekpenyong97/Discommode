@@ -200,3 +200,115 @@ export function createBandSweep(
     },
   };
 }
+
+/** Mean of each row of each slot: one texel per atlas row. */
+const ROW_MEAN_FRAG = `#version 300 es
+precision highp float;
+uniform sampler2D tIn;
+out vec4 o;
+void main() {
+  int w = textureSize(tIn, 0).x;
+  int y = int(gl_FragCoord.y);
+  vec3 sum = vec3(0.0);
+  for (int x = 0; x < w; x++) sum += texelFetch(tIn, ivec2(x, y), 0).rgb;
+  o = vec4(sum / float(w), 1.0);
+}`;
+
+/** Mean of a slot's rows, written to that slot's pixel of the batch's row. */
+const SLOT_MEAN_FRAG = `#version 300 es
+precision highp float;
+uniform sampler2D tIn;
+uniform int uBandH;
+out vec4 o;
+void main() {
+  int k = int(gl_FragCoord.x);
+  vec3 sum = vec3(0.0);
+  for (int y = 0; y < uBandH; y++) sum += texelFetch(tIn, ivec2(0, k * uBandH + y), 0).rgb;
+  o = vec4(sum / float(uBandH), 1.0);
+}`;
+
+/**
+ * DEV: the MEAN colour of one rect of the sky, for thousands of skies at once —
+ * what the chrome's paper takes its colour from (src/chrome/chromeColor.ts),
+ * as {@link createBandSweep} is what the letterhead is measured against. The
+ * same three steps, with a mean where that has a max: the rect of each sky is
+ * drawn into its slot of an atlas only as wide as the rect, each atlas row is
+ * averaged, then each slot's rows. The rect is `x0 … x0 + w` × `glY0 … glY0 +
+ * h` of a `width × height` frame, measured from the BOTTOM as GL does.
+ */
+export function createRectMeans(
+  gl: WebGL2RenderingContext,
+  width: number,
+  height: number,
+  x0: number,
+  w: number,
+  glY0: number,
+  h: number,
+): BandSweep {
+  const K = Math.max(1, Math.floor(ATLAS_MAX_H / h));
+  const atlas = target(gl, w, K * h);
+  const rowMeans = target(gl, 1, K * h);
+  let rows: ReturnType<typeof target> | null = null;
+  const pRow = program(gl, ROW_MEAN_FRAG);
+  const pSlot = program(gl, SLOT_MEAN_FRAG);
+  const uRow = gl.getUniformLocation(pRow, 'tIn');
+  const uSlot = { tIn: gl.getUniformLocation(pSlot, 'tIn'), bandH: gl.getUniformLocation(pSlot, 'uBandH') };
+
+  return {
+    run(count, draw) {
+      const batches = Math.ceil(count / K);
+      if (!rows || rows.h !== batches) {
+        if (rows) {
+          gl.deleteFramebuffer(rows.fbo);
+          gl.deleteTexture(rows.tex);
+        }
+        rows = target(gl, K, batches);
+      }
+      for (let base = 0; base < count; base += K) {
+        const n = Math.min(K, count - base);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, atlas.fbo);
+        gl.enable(gl.SCISSOR_TEST);
+        for (let k = 0; k < n; k++) {
+          gl.viewport(-x0, k * h - glY0, width, height);
+          gl.scissor(0, k * h, w, h);
+          draw(base + k);
+        }
+        gl.disable(gl.SCISSOR_TEST);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, rowMeans.fbo);
+        gl.viewport(0, 0, 1, K * h);
+        gl.useProgram(pRow);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, atlas.tex);
+        gl.uniform1i(uRow, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, rows.fbo);
+        gl.viewport(0, base / K, K, 1);
+        gl.useProgram(pSlot);
+        gl.bindTexture(gl.TEXTURE_2D, rowMeans.tex);
+        gl.uniform1i(uSlot.tIn, 0);
+        gl.uniform1i(uSlot.bandH, h);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+      const px = new Uint8Array(K * batches * 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, rows.fbo);
+      gl.readPixels(0, 0, K, batches, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      const out = new Uint8Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        out[i * 3] = px[i * 4];
+        out[i * 3 + 1] = px[i * 4 + 1];
+        out[i * 3 + 2] = px[i * 4 + 2];
+      }
+      return out;
+    },
+    dispose() {
+      for (const t of [atlas, rowMeans, rows]) {
+        if (!t) continue;
+        gl.deleteFramebuffer(t.fbo);
+        gl.deleteTexture(t.tex);
+      }
+      gl.deleteProgram(pRow);
+      gl.deleteProgram(pSlot);
+    },
+  };
+}

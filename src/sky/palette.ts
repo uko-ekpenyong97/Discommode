@@ -118,3 +118,16 @@ export function skyFallbackCss(gradient: SkyGradient, cloud: number): string {
     `linear-gradient(to bottom, ${css(gradient.zenith)}, ${css(gradient.horizon)})`
   );
 }
+
+/**
+ * The fallback's colour at one height — `y` 0 at the top of the screen, 1 at
+ * the bottom — as 0..255 sRGB: the same gradient and cloud wash
+ * {@link skyFallbackCss} paints. What the chrome's paper takes its hue from
+ * before the first read-back of the live sky lands, and always where there is
+ * no WebGL2 (src/chrome/useSkyChrome.ts).
+ */
+export function skyFallbackColorAt(gradient: SkyGradient, cloud: number, y: number): [number, number, number] {
+  const base = lerpRgb(gradient.zenith, gradient.horizon, clamp01(y));
+  const c = lerpRgb(base, CLOUD_GREY, clamp01(cloud) * 0.85);
+  return [c[0] * 255, c[1] * 255, c[2] * 255];
+}

@@ -21,62 +21,15 @@
 }
 
 /* ── the chrome ──────────────────────────────────────────────────────────
-   The back pill and the bar are the detail view's own (`detail__back`,
-   `detail__bar`, `detail__btn` from DetailView.css): same 24px margin, same 40px
-   chips, same fills. What differs is only what drives them. Here that is the
-   doorway's CHROME channel (--doorway-chrome: 0 through the entrance and the
-   exit, 1 at rest and for the plain reader), written every frame — so the
-   detail view's opacity transition is taken OFF, or the chrome would trail the
-   storyboard by 200ms. */
-.reader {
-  --detail-margin: 24px;
-  --detail-chrome: 40px;
-}
-
-.reader .reader__back {
-  opacity: var(--doorway-chrome, 1);
-  transition: background 160ms ease;
-}
-
+   The paper shapes (src/chrome, docs/reader.md "Chrome"): the back shape
+   top-centre, the row bottom-centre — the detail view's language, placed by
+   `.chrome-top` and `.chrome-row`. What differs here is only what drives
+   them: the doorway's CHROME channel (--doorway-chrome: 0 through the entrance
+   and the exit, 1 at rest and for the plain reader), written every frame — so
+   nothing on them may carry an opacity transition, or the chrome would trail
+   the storyboard. */
+.reader .reader__back,
 .reader .reader__bar {
   opacity: var(--doorway-chrome, 1);
   transition: none;
-}
-
-/* The detail bar never disables (its carousel wraps); this one does, at the
-   ends. Dimmed and inert, still gated by the chrome channel above. */
-.reader .detail__btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.reader .detail__btn:disabled:hover {
-  background: rgba(53, 53, 53, 0.4);
-}
-
-/* The middle segment: what used to float alone in the bottom band, now a chip
-   in the bar. Fixed width, so the buttons either side never shift under the
-   cursor as the numbers change — the widest caption is `SPREAD 22 / 22 · 39 – 40`. */
-.reader__caption {
-  box-sizing: border-box;
-  width: 31ch;
-  height: var(--detail-chrome);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
-  margin: 0;
-  padding: 0 14px;
-  border-radius: 2px;
-  background: rgba(53, 53, 53, 0.4);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: rgba(255, 255, 255, 0.5);
-  user-select: none;
-}
-
-.reader__pages {
-  color: rgba(255, 255, 255, 0.72);
 }

@@ -8,6 +8,7 @@ import { JUMP } from './jump';
 import type { JumpMode, RiffleCurve } from './jump';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
+import { useChromeDials } from '../dev/chromeDials';
 
 /** The shipped values, so leaving the dock puts them back. */
 const SHIPPED = { ...JUMP };
@@ -60,6 +61,9 @@ export default function ReaderNavDialKit() {
 
   // The sky under the book: its washes, the book's shadow, the flip's wake.
   useReaderGroundDials();
+
+  // The paper buttons, and their colour from the sky.
+  useChromeDials();
 
   useEffect(
     () => () => {

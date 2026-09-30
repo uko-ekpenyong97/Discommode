@@ -13,6 +13,7 @@
     "backgrounds": "node scripts/optimize-backgrounds.mjs",
     "placeholders": "node scripts/make-placeholders.mjs",
     "creases": "node scripts/make-crease-map.mjs",
+    "chrome": "node scripts/make-chrome.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "verify:pv": "node scripts/pv-verify.mjs",

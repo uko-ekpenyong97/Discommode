@@ -5,6 +5,7 @@ import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
 import { useDetailPaperDials } from './detailPaperDials';
 import { useCoverLifeDials } from './coverLifeDials';
+import { useChromeDials } from './chromeDials';
 import { clampDial, loadAppDials, saveAppDials } from './dialState';
 
 /**
@@ -135,6 +136,7 @@ function Dials() {
   // The detail cards' paper has its own store (paperDials.ts), not LiveConfig.
   useDetailPaperDials();
   useCoverLifeDials();
+  useChromeDials();
 
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
   // Reads the live `config` singleton directly, so it needs no stale-closure ref.

@@ -1,14 +1,16 @@
-import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { FlipBook } from './FlipBook';
 import type { FlipEngine } from './flipEngine';
 import { ISSUES, buildSpreads, issue01, issueAnims, pageLabel } from './issue-01';
 import { closeReader } from './readerNav';
 import { applyDoorwayRest } from './doorway';
 import { useDoorwayMotion } from './useDoorwayMotion';
-// The pill and the bar ARE the detail view's — same classes, same rules — so the
-// two chrome grammars cannot drift. Imported here as well as by DetailView so the
-// dependency is written down where it is taken.
-import '../components/DetailView.css';
+// The chrome is the detail view's too — the same paper shapes, the same sky
+// colour, the same rules (src/chrome) — so the two cannot drift.
+import { PillFace, ShapeFace } from '../chrome/Paper';
+import { two } from '../chrome/two';
+import { useSkyChrome } from '../chrome/useSkyChrome';
 import './ReaderPage.css';
 
 interface ReaderPageProps {
@@ -147,14 +149,26 @@ export default function ReaderPage({
   const atCover = spread === 0;
   const atBack = spread === lastSpread;
 
+  // The chrome's paper takes its colour from the sky under it.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useSkyChrome(rootRef, !authoring);
+  const tilt = (t: number) => ({ '--tilt': t }) as CSSProperties;
+
   return (
-    <div className="reader">
+    <div className="reader" ref={rootRef}>
       {/* The way out is first in the DOM, so it is the first thing Tab reaches:
           this is a modal. None of the chrome exists while authoring over
           `#item-NN?intro` — the dock owns that screen. */}
       {!authoring && (
-        <button type="button" className="detail__back reader__back" onClick={exit}>
-          ‹ Back
+        <button
+          type="button"
+          className="paper chrome-top reader__back"
+          data-paper="back"
+          style={tilt(-1)}
+          onClick={exit}
+          aria-label="Back"
+        >
+          <ShapeFace shape="prev" flip />
         </button>
       )}
       <FlipBook
@@ -166,53 +180,61 @@ export default function ReaderPage({
         anims={issueAnims(issue)}
       />
       {!authoring && (
-        <nav className="detail__bar reader__bar" aria-label="Pages">
+        <nav className="chrome-row reader__bar" aria-label="Pages">
           <button
             type="button"
-            className="detail__btn"
+            className="paper"
+            data-paper="cover"
+            style={tilt(-1)}
             disabled={atCover}
             onClick={() => engine?.turnTo(0)}
             onPointerEnter={() => engine?.prepareJump(0)}
             onFocus={() => engine?.prepareJump(0)}
             aria-label="Jump to the cover"
           >
-            |‹ Cover
+            <ShapeFace shape="cover" />
           </button>
           <button
             type="button"
-            className="detail__btn"
+            className="paper"
+            data-paper="prev"
+            style={tilt(1)}
             disabled={atCover}
             onClick={() => engine?.turn('prev')}
             aria-label="Previous spread"
           >
-            ‹ Prev
+            <ShapeFace shape="prev" />
           </button>
-          <p className="reader__caption">
-            <span>
-              SPREAD {spread + 1} / {spreads.length}
+          {/* current | total spreads. Not a control: no hover, no focus. */}
+          <p className="paper paper--static reader__caption" data-paper="spread" data-spread={spread + 1} data-spreads={spreads.length}>
+            <PillFace numbers={[two(spread + 1), two(spreads.length)]} />
+            <span className="visually-hidden">
+              Spread {spread + 1} of {spreads.length}, {labels.length > 1 ? 'pages' : 'page'} {labels.join(' – ')}
             </span>
-            <span aria-hidden="true">·</span>
-            <span className="reader__pages">{labels.join(' – ')}</span>
           </p>
           <button
             type="button"
-            className="detail__btn"
+            className="paper"
+            data-paper="next"
+            style={tilt(-1)}
             disabled={atBack}
             onClick={() => engine?.turn('next')}
             aria-label="Next spread"
           >
-            Next ›
+            <ShapeFace shape="next" />
           </button>
           <button
             type="button"
-            className="detail__btn"
+            className="paper"
+            data-paper="back-cover"
+            style={tilt(1)}
             disabled={atBack}
             onClick={() => engine?.turnTo(lastSpread)}
             onPointerEnter={() => engine?.prepareJump(lastSpread)}
             onFocus={() => engine?.prepareJump(lastSpread)}
             aria-label="Jump to the back cover"
           >
-            Back cover ›|
+            <ShapeFace shape="back-cover" />
           </button>
         </nav>
       )}
