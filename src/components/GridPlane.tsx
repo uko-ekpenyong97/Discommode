@@ -237,7 +237,6 @@ export function GridPlane({
                           loading={s.eager ? 'eager' : 'lazy'}
                         />
                       )}
-                      <span className="grid-card__index">{s.item.title}</span>
                     </div>
                     {overlayFace && (
                       <img

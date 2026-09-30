@@ -68,7 +68,7 @@ Bottom to top, while the canvas carries the cards:
    shadow falls under the hero exactly as the DOM's does.
 3. **The strip**, the DOM panels. Their faces (`.detail__media`, and the hover
    layer's `.cover-anim__plate`) are `visibility: hidden`. Everything else is
-   still DOM and still on top: the number, the name and its scrim, and **the
+   still DOM and still on top: the number, and **the
    CoverAnimLayer's sprites**. The panels keep every click, and the sprites keep
    resolving hover from the panel, exactly as before.
 4. **The chrome**, the back pill and the bar.
@@ -610,7 +610,7 @@ are identical (0 levels).
    bend with the paper. It was not done: animated WebP frames are not
    addressable from WebGL without decoding them ourselves (`ImageDecoder`), and
    that is a pipeline of its own.
-3. **The DOM labels do not fold.** The number, the name and its scrim stay DOM
+3. **The DOM labels do not fold.** The number stays DOM
    over a card that is crumpling in. For the ±1 slot this is at most `foldMs` of
    a label hanging over a half-revealed card (see `neighbour-unfold-mid.webp`).
 4. **A third WebGL context.** The sky and the portfolio sheet each have one. This

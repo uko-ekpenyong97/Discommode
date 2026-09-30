@@ -138,7 +138,8 @@ leaves the viewport; pan/snap, being user-initiated, remain.
 ## Hover overlay
 
 Hovering **any** card (the one under the cursor, only while the grid is settled —
-not dragging, not gliding) fades in a `CardOverlay`: a bold headline overlapping
+not dragging, not gliding) fades in a `CardOverlay`: a bold headline — the card's
+number, the only place the grid shows it; the tile is its art alone — overlapping
 the top-left corner, monospace captions along the bottom-right edge, and a
 circular CTA centred on the card, all from the item's data in
 [`src/content.ts`](src/content.ts). Only one shows at a time; the hovered cell is

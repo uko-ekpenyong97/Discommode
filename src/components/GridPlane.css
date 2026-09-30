@@ -67,12 +67,12 @@
   will-change: transform;
 }
 
-/* Inner face: carries the hue/image and the brightness filter. */
+/* Inner face: carries the hue/image and the brightness filter. No number on
+   it: a card's number is the hover headline (CardOverlay), and the tile is
+   its art alone. */
 .grid-card__face {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: flex-end;
   border-radius: 4px;
   overflow: hidden;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
@@ -116,14 +116,4 @@
   transition: opacity var(--overlay-fade-ms, 0ms) linear;
   user-select: none;
   -webkit-user-drag: none;
-}
-
-.grid-card__index {
-  padding: 14px 18px;
-  font-family: var(--mono);
-  font-size: 64px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  color: rgba(255, 255, 255, 0.82);
 }
