@@ -29,7 +29,7 @@ interface Face {
 
 function faces(): Face[] {
   const out: Face[] = [];
-  for (const el of document.querySelectorAll<HTMLElement>('[data-paper]')) {
+  for (const el of document.querySelectorAll<HTMLElement>('[data-chrome]')) {
     const face = el.querySelector<HTMLElement>('.paper__shape') ?? el;
     const r = face.getBoundingClientRect();
     if (r.width === 0) continue;
@@ -37,7 +37,7 @@ function faces(): Face[] {
     if (el.closest('[inert]')) continue;
     out.push({
       el,
-      kind: el.dataset.paper ?? '',
+      kind: el.dataset.chrome ?? '',
       rect: { x: r.left, y: r.top, w: r.width, h: r.height },
       disabled: (el as HTMLButtonElement).disabled === true,
     });

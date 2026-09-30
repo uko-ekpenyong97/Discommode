@@ -8,7 +8,7 @@ import { chromePaint, css, mixPaint } from './chromeColor';
 import type { ChromePaint, RGB } from './chromeColor';
 
 /**
- * THE CHROME TAKES ITS COLOUR FROM THE SKY. Every `[data-paper]` shape under
+ * THE CHROME TAKES ITS COLOUR FROM THE SKY. Every `[data-chrome]` shape under
  * `root` is painted from the sky under it: about twice a second
  * (`chromeSampleMs`) the sky engine reads back the MEAN colour of the live
  * canvas inside each shape's box — asynchronously, through a pixel buffer and
@@ -73,7 +73,7 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
   useLayoutEffect(() => {
     const host = root.current;
     if (!enabled || !host) return;
-    const shapes = [...host.querySelectorAll<HTMLElement>('[data-paper]')];
+    const shapes = [...host.querySelectorAll<HTMLElement>('[data-chrome]')];
     shapes.forEach((el, i) => {
       const p = chromePaint(fallbackSky(faceRect(el)));
       write(el, p);
@@ -129,7 +129,7 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
 
     const sample = async (snap = false) => {
       window.clearTimeout(timer);
-      const els = [...host.querySelectorAll<HTMLElement>('[data-paper]')].filter((el) => el.getClientRects().length > 0);
+      const els = [...host.querySelectorAll<HTMLElement>('[data-chrome]')].filter((el) => el.getClientRects().length > 0);
       const rects = els.map(faceRect);
       let skies: RGB[] | null = null;
       const engine = skyEngine();
@@ -142,7 +142,7 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
 
     // Seeded with the palette's paint (what the layout effect put up), so the
     // first read-back cross-fades from it rather than jumping.
-    const seed = [...host.querySelectorAll<HTMLElement>('[data-paper]')];
+    const seed = [...host.querySelectorAll<HTMLElement>('[data-chrome]')];
     paint(seed, seed.map((el) => fallbackSky(faceRect(el))), true);
     void sample();
     // A dial moved: repaint at once, from the skies already read.
@@ -151,7 +151,7 @@ export function useSkyChrome(root: RefObject<HTMLElement | null>, enabled = true
       paint(els, els.map((el) => state.get(el)!.sky), true);
     });
     const report = () =>
-      [...state].map(([el, s]) => ({ el, kind: el.dataset.paper ?? '', sky: s.sky, paint: s.shown }));
+      [...state].map(([el, s]) => ({ el, kind: el.dataset.chrome ?? '', sky: s.sky, paint: s.shown }));
     live.add(report);
 
     return () => {

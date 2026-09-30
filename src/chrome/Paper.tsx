@@ -9,11 +9,11 @@ import './chrome.css';
  * CSS mask (`public/ui/chrome/<shape>-paper.svg`, from `npm run chrome`) over a
  * fill that is the sky's colour made paper, and the glyph is a second mask
  * over the ink. The colours arrive as `--paper`, `--paper-press` and `--ink`
- * on the element carrying `data-paper` (`useSkyChrome`).
+ * on the element carrying `data-chrome` (`useSkyChrome`).
  *
  * These are FACES, not buttons: the caller owns the element (a `<button>`, or
  * the card pill's `<div>` with its native `<select>`), gives it `paper` and
- * `data-paper`, and puts a face in it. The face lays out the frame's BASE — the
+ * `data-chrome`, and puts a face in it. The face lays out the frame's BASE — the
  * circle, or the pill's rounded rect: 58, 46, 131×46 at `chromeScale` 1 — and
  * lets the scalloped edge overhang it, as it does in the file.
  */

@@ -3,7 +3,7 @@
 
    The dials arrive as variables on :root (chromeDials.ts); the fallbacks here
    are the shipped values. The colours arrive per shape, on the element that
-   carries `data-paper`: --paper, --paper-press, --ink. */
+   carries `data-chrome`: --paper, --paper-press, --ink. */
 
 @font-face {
   font-family: 'Bowlby One';

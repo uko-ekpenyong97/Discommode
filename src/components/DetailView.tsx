@@ -305,7 +305,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         ref={backRef}
         type="button"
         className="paper chrome-top detail__back"
-        data-paper="back"
+        data-chrome="back"
         style={tilt(-1)}
         onClick={(e) => {
           e.stopPropagation();
@@ -427,12 +427,12 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
       </div>
 
       <div className="chrome-row detail__bar" ref={barRef} onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="paper" data-paper="prev" style={tilt(-1)} onClick={prev} aria-label="Previous item">
+        <button type="button" className="paper" data-chrome="prev" style={tilt(-1)} onClick={prev} aria-label="Previous item">
           <ShapeFace shape="prev" />
         </button>
         {/* current | total cards. The native select over it is what is pressed
             and focused (jump to any card), so the pill is the only thing seen. */}
-        <div className="paper" data-paper="card" style={tilt(1)}>
+        <div className="paper" data-chrome="card" style={tilt(1)}>
           <PillFace numbers={[two(activeIndex + 1), two(CONTENT_COUNT)]} />
           <select
             className="paper__select detail__select"
@@ -453,7 +453,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           <button
             type="button"
             className="paper detail__btn--read"
-            data-paper="action"
+            data-chrome="action"
             style={tilt(-1)}
             onClick={() => read(activeItem.issue!)}
           >
@@ -463,14 +463,14 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
           <button
             type="button"
             className="paper detail__btn--read"
-            data-paper="action"
+            data-chrome="action"
             style={tilt(-1)}
             onClick={() => openProject(activeItem.project!)}
           >
             <PillFace>Open project</PillFace>
           </button>
         ) : null}
-        <button type="button" className="paper" data-paper="next" style={tilt(1)} onClick={next} aria-label="Next item">
+        <button type="button" className="paper" data-chrome="next" style={tilt(1)} onClick={next} aria-label="Next item">
           <ShapeFace shape="next" />
         </button>
       </div>

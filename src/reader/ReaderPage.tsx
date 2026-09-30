@@ -163,7 +163,7 @@ export default function ReaderPage({
         <button
           type="button"
           className="paper chrome-top reader__back"
-          data-paper="back"
+          data-chrome="back"
           style={tilt(-1)}
           onClick={exit}
           aria-label="Back"
@@ -184,7 +184,7 @@ export default function ReaderPage({
           <button
             type="button"
             className="paper"
-            data-paper="cover"
+            data-chrome="cover"
             style={tilt(-1)}
             disabled={atCover}
             onClick={() => engine?.turnTo(0)}
@@ -197,7 +197,7 @@ export default function ReaderPage({
           <button
             type="button"
             className="paper"
-            data-paper="prev"
+            data-chrome="prev"
             style={tilt(1)}
             disabled={atCover}
             onClick={() => engine?.turn('prev')}
@@ -206,7 +206,7 @@ export default function ReaderPage({
             <ShapeFace shape="prev" />
           </button>
           {/* current | total spreads. Not a control: no hover, no focus. */}
-          <p className="paper paper--static reader__caption" data-paper="spread" data-spread={spread + 1} data-spreads={spreads.length}>
+          <p className="paper paper--static reader__caption" data-chrome="spread" data-spread={spread + 1} data-spreads={spreads.length}>
             <PillFace numbers={[two(spread + 1), two(spreads.length)]} />
             <span className="visually-hidden">
               Spread {spread + 1} of {spreads.length}, {labels.length > 1 ? 'pages' : 'page'} {labels.join(' – ')}
@@ -215,7 +215,7 @@ export default function ReaderPage({
           <button
             type="button"
             className="paper"
-            data-paper="next"
+            data-chrome="next"
             style={tilt(-1)}
             disabled={atBack}
             onClick={() => engine?.turn('next')}
@@ -226,7 +226,7 @@ export default function ReaderPage({
           <button
             type="button"
             className="paper"
-            data-paper="back-cover"
+            data-chrome="back-cover"
             style={tilt(1)}
             disabled={atBack}
             onClick={() => engine?.turnTo(lastSpread)}
