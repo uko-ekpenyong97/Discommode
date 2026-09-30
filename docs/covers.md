@@ -28,7 +28,7 @@ so what is tuned there is what ships.
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 | the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
 | the grid→detail morph at 0 / 0.5 / 1, before and after | `docs/covers/bare-morph.webp` |
-| card 04: the grid row, live, hovered: "Nosey" in the overlay's headline and nothing over the cover (2026-09-30) | `docs/covers/nosey-grid-row.webp` |
+| card 04: the grid row, live, hovered: "Nosey" in the overlay's headline, the number (`difference` ink) and nothing else over the cover (2026-09-30) | `docs/covers/nosey-grid-row.webp` |
 | card 04: the detail hero at rest and mid-bounce, the number alone at its foot (2026-09-30) | `docs/covers/nosey-hero.webp` |
 | card 04: the same tile over NOON and over NIGHT (the file before 2026-09-28) | `docs/covers/nosey-noon-night.webp` |
 
@@ -42,12 +42,19 @@ shadow in place of that scrim) is gone, and so is `description` from the
 manifest: the project view never read it. The stills (`npm run covers`) come
 out byte-identical: they are the cover alone. At the last runs:
 `verify:cover` all passed (3 skipped, as above), `verify:detail` all passed
-(card 04 as the hero 0.133–0.387%). One thing seen and left alone: in the
-GRID, `.grid-card__index` is an unpositioned span, so the face above it (01's
-and 03's `<img>`, 02's and 04's cover canvas) paints over it. Card 04's tile
-number has been hidden under its opaque ground since 2026-09-28, as 01's and
-03's are under their images; only card 02's shows, through its translucent
-shader. `position: relative` on the index would put the number on every tile.
+(card 04 as the hero 0.133–0.387%).
+
+**The number on every grid tile (same day).** `.grid-card__index` was an
+unpositioned span, so the face above it (01's and 03's `<img>`, 02's and
+04's cover canvas) painted over it: card 04's number had been hidden under its
+opaque ground since 2026-09-28, as 01's and 03's always were under their
+images, and only card 02's showed, through its translucent shader. It is
+positioned now, over every face, and its ink is three GRID dials:
+`gridIndexInk` (#ffffff), `gridIndexInkOpacity` (1) and `gridIndexBlend`
+(`difference`). The blend inverts the white against the face under it — deep
+blue on 01's yellow, near-black on 04's grey, light on 03's navy, dark on
+02's pale shader — where plain white vanished on 01 and 04, and a dark ink on
+03. The cover checks hide the index where they compare pixels, as before.
 
 **The detail view's arrival (2026-09-28).** [Not done](#not-done) 9. The
 paper's GL — context, programs, crease map, card 02's renderer in it, every

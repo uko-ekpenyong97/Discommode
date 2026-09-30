@@ -174,6 +174,10 @@ export function GridPlane({
               // card, so retuning them costs one style write, not one per card.
               '--overlay-z': cfg.overlayZ,
               '--overlay-fade-ms': `${cfg.overlayLayerFadeMs}ms`,
+              // The tile number's ink, the same way.
+              '--grid-index-ink': cfg.gridIndexInk,
+              '--grid-index-ink-opacity': cfg.gridIndexInkOpacity,
+              '--grid-index-blend': cfg.gridIndexBlend,
             } as CSSProperties
           }
         >

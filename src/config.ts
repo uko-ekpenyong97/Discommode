@@ -107,6 +107,22 @@ export interface LiveConfig {
    * `overlayFadeMs`, which times the *text* overlay and the card opacity lift.
    */
   overlayLayerFadeMs: number;
+  // GRID — the number in each tile's bottom-left corner
+  /**
+   * The tile number's ink, a hex colour. One ink for every card, so it has to
+   * hold on the light faces (01's yellow, 04's #E0DDDD ground) as well as the
+   * dark ones (03's plate) — which is what {@link gridIndexBlend} is for.
+   */
+  gridIndexInk: string;
+  /** The ink's alpha, 0–1. */
+  gridIndexInkOpacity: number;
+  /**
+   * How the ink meets the face under it. `difference` (default): white ink
+   * becomes the face's inverse — deep blue on 01's yellow, near-black on 04's
+   * grey, light on 03's navy — so one ink reads on every card. `normal`: the
+   * ink as it is (white was the old number, and vanishes on 01 and 04).
+   */
+  gridIndexBlend: 'difference' | 'normal';
   // FOCUS — emphasis on the focused (centre-nearest) card (Phase 9)
   /** Scale of the focused card; eases to 1.0 by one cell of distance. */
   focusScale: number;
@@ -274,6 +290,9 @@ export const DEFAULTS: LiveConfig = {
   ctaHoverScale: 1.08,
   overlayZ: 24,
   overlayLayerFadeMs: 0,
+  gridIndexInk: '#ffffff',
+  gridIndexInkOpacity: 1,
+  gridIndexBlend: 'difference',
   focusScale: 1.12,
   unfocusedOpacity: 0.55,
   farOpacity: 0.4,

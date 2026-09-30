@@ -44,6 +44,17 @@ function Dials() {
 
   const grid = useDialKit('GRID', {
     clickCenterMaxMs: n('clickCenterMaxMs', 150, 1200),
+    // The tile number's ink. A saved value that is not a #rrggbb is dropped.
+    gridIndexInk: {
+      type: 'color',
+      default: /^#[0-9a-f]{6}$/i.test(start.gridIndexInk) ? start.gridIndexInk : DEFAULTS.gridIndexInk,
+    },
+    gridIndexInkOpacity: n('gridIndexInkOpacity', 0, 1, 0.01),
+    gridIndexBlend: {
+      type: 'select',
+      options: ['difference', 'normal'],
+      default: start.gridIndexBlend === 'normal' ? 'normal' : 'difference',
+    },
   });
 
   const depth = useDialKit('DEPTH', {
@@ -141,7 +152,7 @@ function Dials() {
   const onAction = useCallback((action: string) => {
     if (action !== 'copy') return;
     const body = (Object.keys(DEFAULTS) as (keyof LiveConfig)[])
-      .map((k) => `  ${k}: ${config[k]},`)
+      .map((k) => `  ${k}: ${typeof config[k] === 'string' ? `'${config[k]}'` : config[k]},`)
       .join('\n');
     const snippet = `// tuned values — paste over DEFAULTS in src/config.ts\n{\n${body}\n}`;
     navigator.clipboard?.writeText(snippet).catch(() => {});
@@ -174,6 +185,9 @@ function Dials() {
       velocityWindowMs: motion.velocityWindowMs,
       settleTauPerCell: motion.settleTauPerCell,
       clickCenterMaxMs: grid.clickCenterMaxMs,
+      gridIndexInk: grid.gridIndexInk,
+      gridIndexInkOpacity: grid.gridIndexInkOpacity,
+      gridIndexBlend: grid.gridIndexBlend === 'normal' ? 'normal' : 'difference',
       maxTiltDeg: depth.maxTiltDeg,
       parallaxShiftPx: depth.parallaxShiftPx,
       tiltLerpMs: depth.tiltLerpMs,

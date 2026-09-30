@@ -576,7 +576,9 @@ The DEPTH group includes the per-card facing dials (`cursorDepthPx`,
 both are independently dialable. The FOCUS group dials the focus emphasis
 (`focusScale`, `unfocusedOpacity`, `farOpacity`) plus `hoverLiftOpacity` (the
 hovered card's opacity lift). The GRID group dials `clickCenterMaxMs` (the
-click-to-centre glide cap). The DETAIL group dials the 3-card layout
+click-to-centre glide cap) and the tile number's ink: `gridIndexInk`,
+`gridIndexInkOpacity` and `gridIndexBlend` (`difference` by default, so one
+white ink inverts to read on every face — 01's yellow and 04's grey included). The DETAIL group dials the 3-card layout
 (`detailCardScale`, `detailSideScale`, `detailSideOpacity`, `detailGap`), the
 hover-isolate dim (`detailHoverDim`), the sky scrim (`detailScrimOpacity`), the
 FLIP morph duration (`detailTransitionMs`) and chrome fade (`detailChromeFadeMs`),

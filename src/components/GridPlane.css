@@ -118,12 +118,30 @@
   -webkit-user-drag: none;
 }
 
+/* The card's number, bottom-left (the face is a flex box aligned to its end).
+   POSITIONED, so it paints over the face's art: the <img> and the cover tile
+   are absolutely positioned, and an unpositioned span paints under them — the
+   number was hidden on every opaque face (01, 03, and 04 since its cover
+   became opaque) and showed only through card 02's translucent shader.
+
+   Its ink is three GRID dials, one set for every card: gridIndexInk,
+   gridIndexInkOpacity and gridIndexBlend. The blend is `difference` by
+   default: white becomes the inverse of the face under it — deep blue on 01's
+   yellow, near-black on 04's grey, light on 03's navy, dark on 02's pale
+   shader — where plain white vanished on 01 and 04 and a dark ink on 03. It
+   blends with the face alone: the face's brightness filter makes it the group.
+   `opacity` rather than an rgba colour: the number is one run of glyphs that
+   never overlap, so the two are the same pixels, and the dial stays a colour. */
 .grid-card__index {
+  position: relative;
+  z-index: 1;
   padding: 14px 18px;
   font-family: var(--mono);
   font-size: 64px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.04em;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--grid-index-ink, #fff);
+  opacity: var(--grid-index-ink-opacity, 1);
+  mix-blend-mode: var(--grid-index-blend, difference);
 }
