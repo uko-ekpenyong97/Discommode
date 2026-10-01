@@ -1098,6 +1098,21 @@ grain or a flash. Run 2026-09-22, Apple M1 Max, 1440×900 @2x:
 | 5 | reduced motion, a sweep and a direct `splat` | **0.000%** differ; the field never wakes |
 | 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway, reader page flip, reader riffle | each wakes the field on its own (the last two added 2026-09-28) |
 | 7 | a diagonal sweep across a clear **dusk** | **31.9%** of the frame moved by ≥ 8 levels; **0.00%** still shifted at 3s |
+
+**Those three effects were measured at the first fluid** (`fluidRadius` 0.08,
+`fluidStrength` 1, `fluidCurl` 20), and their bars — 30%, 15%, 20% — were
+written for it. At Uko's dials (0.02, 0.45, 7; 2026-09-30) the wake is much
+quieter by design: the same sweeps move **1.17%** of the star pixels, open the
+night fog by **−4.51%** and push **0.524%** of the dusk gradient (medians of
+five runs; spreads 1.06–1.23, 4.51–4.52, 0.520–0.525). So the bars now TRACK
+THE DEFAULTS: each is half of what the effect measures at the shipped dials,
+recorded in the script beside the dials it was measured at
+(`WAKE_MEASURED`, `WAKE_MEASURED_AT`), and the run first checks that the page
+is on those dials — if the defaults move, it fails and says to re-measure
+(`--measure`, five runs, the median). They catch an effect that stops
+working, not a tuning. The returns (≤ 2% still moved at 3s) are unchanged,
+and section 5 now also checks `fluidOn` off on its own: a sweep and a splat
+change 0 pixels and the field never wakes.
 | 8 | the moon's disc, counted pixel by pixel | full **100.0%** lit, new **0.0%**, first quarter **49.9%** with **100%** of it on the right (and a last quarter 100% on the left) |
 | 8 | the letterhead's band moved onto a full moon | **7.50:1**, which is the pure-white floor, against 9.25:1 where the strip actually is (2026-09-23). The row is now asked of the sky being measured (`__skyMoonAt(target)`): the moon moves, and asked of the live one the band missed the disc and read 10.4 |
 | 8 | **below the horizon there is no moon** (FORCE UP's azimuth, 2026-09-23) | forced to **−1°**: the disc stands 0.9 levels off the sky, so it is not drawn. At **1.5°**, half way through its fade: 127 of the 210 levels it has at 45° (61%) |
