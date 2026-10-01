@@ -15,8 +15,11 @@
  *                           shared draw (drawImage)                ≤ 0.15
  *               total       the worst frame of cover work: in the grid,
  *                           the shared draw + the hovered tile's
- *                           own + every visible tile's copy; in the
- *                           detail view, the hero                   ≤ 1.2
+ *                           own + a copy for every visible tile (at
+ *                           least 4); in the detail view, the hero  ≤ 1.2
+ *             The hovered tile's own draw and the hero are benched WARM —
+ *             under the pointer, card 02's lava warmth full on (bench.ts,
+ *             `benchDome`) — which is what they draw while hovered.
  *               sky+covers  the sky's own benchmark (fluid awake, p95)
  *                           + that total                            ≤ 8
  *             The shared draw (one per frame for every tile at rest) is
@@ -49,6 +52,25 @@
  *             `riso4.paperOpacity` 0 — ink on nothing — and measures the
  *             alpha on the page (over black, then white). A control, the same
  *             pixels with the stock back at 0.439, has to fail.
+ *
+ * CARD 02's LAVA (docs/covers.md, "Card 02's lava"), on the real path: the
+ * clock running and the pointer moving from the first frame, through the
+ * browser, at the tile's and the hero's on-screen positions:
+ *
+ *   lmove     the marquee held, a tile and the hero 2 s apart: > 3% of pixels
+ *             moved; the control (riseSpeed and wobble 0) < 1%; and at one
+ *             moment some blobs rise while others sink.
+ *   lpointer  the dots' dome off. Hovered: the warmth is full, the blobs near
+ *             the pointer are drawn toward it (away, with the sign) and run
+ *             ahead of the shared timeline; warm against the same moment at
+ *             rest (the clock pinned before the pointer arrives), > 3% near
+ *             the pointer and < 1% beyond two radii, and < 0.5% with strength 0;
+ *             leaving, every frame: no jump, back on the shared draw within
+ *             150 frames. The same on the hero under the paper.
+ *   lsweep    1728×996 @2×: the pointer swept through every card-02 tile on
+ *             screen in ~1 s; the most of them drawn for themselves in one
+ *             frame, and that frame's cover work (the shared draw + that many
+ *             warm draws + 4 copies, benched) ≤ 1.2.
  *
  * CARD 04, the Rive cover (nosey: "Main" in the grid, "Main Bounce" as the
  * hero; docs/covers.md "Rive covers"). The Rive players advance by the cover
@@ -127,7 +149,7 @@ const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) +
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg(
   '--only',
-  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,' +
+  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,' +
     'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets',
 ).split(',');
 const B = `${ORIGIN}/`;
@@ -323,9 +345,13 @@ async function checkBudgets(browser) {
       const sharedCost = await page.evaluate(([w, h]) => window.__covers.benchStage('rive-site', w, h), [drawW, drawH]);
       const shared = sharedCost.ms;
       const copy = await page.evaluate(([w, h]) => window.__covers.benchPresent(w, h), [drawW, drawH]);
-      // Hovered: the tile under the pointer is drawn again, for itself, at its size.
-      const hovered = shared;
-      const gridTotal = shared + hovered + pres.length * copy;
+      // Hovered: the tile under the pointer is drawn again, for itself, at its
+      // size, warm (the lava under the pointer).
+      const hovered = (await page.evaluate(([w, h]) => window.__covers.benchStage('rive-site', w, h, true), [drawW, drawH])).ms;
+      // At least four tiles' copies: the grid shows 3–4 of card 02 at these
+      // viewports, and the budget is held at 4.
+      const tiles = Math.max(4, pres.length);
+      const gridTotal = shared + hovered + tiles * copy;
       const sky = await page.evaluate(() => {
         const t = window.__skyBenchmark?.(300, 10, true) ?? [];
         t.sort((a, b) => a - b);
@@ -333,13 +359,13 @@ async function checkBudgets(browser) {
       });
       await heroOn02(page);
       await page.mouse.move(3, 3);
-      const hero = await page.evaluate(() => window.__paper.benchCover());
+      const hero = await page.evaluate(() => window.__paper.benchCover(undefined, true));
       const detailTotal = hero ? hero.ms : NaN;
       const total = Math.max(gridTotal, detailTotal);
       const tag = `${vp.width}×${vp.height} @${dpr}×`;
       check(hero && hero.ms <= BUDGET.hero, `${tag} hero`, `${hero ? `${hero.pxW}×${hero.pxH} ${ms(hero.ms)} (+ floor ${ms(hero.floor)} = ${ms(hero.total)})` : 'no hero draw'} ≤ ${BUDGET.hero}`);
       check(copy <= BUDGET.tile, `${tag} tile`, `${pres.length} visible, each ${ms(copy)} (copy ${drawW}×${drawH}, shown at ${big.pxW}×${big.pxH}) ≤ ${BUDGET.tile}; the shared draw ${drawW}×${drawH} ${ms(shared)} (+ floor ${ms(sharedCost.floor)})`);
-      check(total <= BUDGET.total, `${tag} total`, `grid ${ms(gridTotal)} (shared + hovered + ${pres.length} copies), detail ${ms(detailTotal)} ≤ ${BUDGET.total}`);
+      check(total <= BUDGET.total, `${tag} total`, `grid ${ms(gridTotal)} (shared + hovered ${ms(hovered)} warm + ${tiles} copies; ${pres.length} visible), detail ${ms(detailTotal)} warm ≤ ${BUDGET.total}`);
       check(sky + total <= BUDGET.all, `${tag} sky+fluid+covers`, `${ms(sky)} + ${ms(total)} = ${ms(sky + total)} ≤ ${BUDGET.all}`);
       await page.context().close();
     }
@@ -425,6 +451,9 @@ async function checkMorph(browser, { gridOn = gridOn02, label = '' } = {}) {
     await page.waitForFunction(() => window.__morphHeld, null, { timeout: 5000 });
     await page.mouse.move(3, 3);
     await page.waitForTimeout(1500); // the hero's dome back to rest
+    // …and card 02's lava warmth, which the clicked tile handed to the morph
+    // card (the hero's dome): settled, so both ends show the rest
+    await page.waitForFunction(() => window.__covers.lava?.warmth('hero')?.settled !== false, null, { timeout: 5000 });
     const hr = await heroRect(page);
     const morph = await grab(page, hr, dpr, 300, 390);
     await page.evaluate(() => {
@@ -481,6 +510,323 @@ async function checkReduced(browser) {
   for (let i = 0; i < c.length; i++) if (c[i] !== d[i]) moved2++;
   check(drawn === 0 && moved2 === 0, 'detail hero', `paper drew the live cover ${drawn} times (0 = the still), ${moved2} bytes changed over 1s`);
   await page.context().close();
+}
+
+// ── card 02's lava ──────────────────────────────────────────────────────
+
+/** Move the pointer in small circles for `ms` around (x, y), CSS px — a
+ *  person's pointer is never still. */
+async function circle(page, x, y, ms, r = 10) {
+  const n = Math.max(1, Math.round(ms / 16));
+  for (let i = 0; i < n; i++) {
+    const a = (i / 18) * Math.PI * 2;
+    await page.mouse.move(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    await page.waitForTimeout(16);
+  }
+}
+
+/** The share of pixels past TOL between two grabs of `w × h`, where `keep`(x, y) holds. */
+function diffWhere(a, b, w, h, keep) {
+  let d = 0;
+  let n = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!keep(x, y)) continue;
+      n++;
+      const i = (y * w + x) * 3;
+      if (Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2])) > TOL) d++;
+    }
+  }
+  return { d: n ? d / n : 0, n };
+}
+
+/** Frame (fx, fy) in a grab of `w × h` of an instance of aspect `aspect`. */
+function frameToGrab(fx, fy, aspect, w, h) {
+  const c = cropOf(aspect);
+  return [((fx - c.x0) / c.w) * w, ((fy - c.y0) / c.h) * h];
+}
+
+/** How far, on average, the blobs near the pointer are drawn TOWARD it (frame
+ *  units; negative: away): an instance against itself without the pull — the
+ *  same extra phase — so the speed-up's travel along the path is not counted. */
+const pullOf = (page, which) =>
+  page.evaluate((which) => {
+    const L = window.__covers.lava;
+    const t = window.__covers.time();
+    const w = L.warmth(which);
+    if (!w) return { pull: 0, heat: 0, extra: 0 };
+    const a = L.blobs(which, t, false);
+    const b = L.blobs(which, t);
+    const r = window.__covers.dials('rive-site').lava.cursorRadius;
+    let sum = 0;
+    let n = 0;
+    a.forEach((p, i) => {
+      const d0 = Math.hypot(p[0] - w.px, p[1] - w.py);
+      if (d0 > r || d0 < 1) return;
+      sum += d0 - Math.hypot(b[i][0] - w.px, b[i][1] - w.py);
+      n++;
+    });
+    return { pull: n ? sum / n : 0, n, heat: w.heat, extra: w.extra };
+  }, which);
+
+const OVERLAY_OFF = (page) =>
+  page.evaluate(() => {
+    const st = document.createElement('style');
+    st.textContent = '.card-overlay, .grid-card__overlay { opacity: 0 !important; }';
+    document.head.append(st);
+  });
+
+async function checkLavaMove(browser) {
+  console.log('\nlava move: the blobs move by themselves over 2 s, the clock running (the marquee held)');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    await gridOn02(page);
+    await quiet(page);
+    await flatGrid(page);
+    const tr = await focusedTile(page);
+    const run = async (rect, w, h, lava) => {
+      await page.evaluate((lava) => {
+        window.__covers.patchDials('rive-site', null);
+        window.__covers.patchDials('rive-site', { base: { marqueePx: 0 }, lava });
+      }, lava);
+      await circle(page, 12, 12, 300); // the pointer moving, off the cards
+      const a = await grab(page, rect, dpr, w, h);
+      await circle(page, 12, 12, 2000);
+      const b = await grab(page, rect, dpr, w, h);
+      return diff(a, b);
+    };
+    const moved = await run(tr, 300, 400, {});
+    // never in sync: at this moment some blobs rise and others sink
+    const sync = await page.evaluate(() => {
+      const L = window.__covers.lava;
+      const t = window.__covers.time();
+      const a = L.blobs('rest', t);
+      const b = L.blobs('rest', t + 0.5);
+      let up = 0;
+      let down = 0;
+      a.forEach((p, i) => (b[i][1] < p[1] - 0.01 ? up++ : b[i][1] > p[1] + 0.01 ? down++ : 0));
+      return { up, down, n: a.length };
+    });
+    const held = await run(tr, 300, 400, { riseSpeed: 0, wobble: 0 });
+    check(
+      moved > 0.03 && held < 0.01 && sync.up > 0 && sync.down > 0,
+      `@${dpr}× grid tile`,
+      `${pct(moved)} of pixels moved in 2 s (> 3%); control, riseSpeed and wobble 0: ${pct(held)} (< 1%); of ${sync.n} blobs ${sync.up} rising, ${sync.down} sinking`,
+    );
+    await heroOn02(page);
+    await quiet(page);
+    await page.evaluate(() => window.__paper.override({ zero: true }));
+    const hr = await heroRect(page);
+    const hmoved = await run(hr, 300, 390, {});
+    const hheld = await run(hr, 300, 390, { riseSpeed: 0, wobble: 0 });
+    const under = await page.evaluate(() => window.__paper.state());
+    check(under === 'on' && hmoved > 0.03 && hheld < 0.01, `@${dpr}× detail hero (paper ${under})`, `${pct(hmoved)} moved in 2 s (> 3%); control ${pct(hheld)} (< 1%)`);
+    await page.context().close();
+  }
+}
+
+/** Beyond two cursor radii, the share of pixels a warm instance may differ
+ *  from its rest: the swell and the pull stop at one radius. (`warmVsRest` pins
+ *  the clock before the pointer arrives, so no blob is sped up along its path:
+ *  with the clock running, a sped-up blob carried 1.0–1.8% of the hero's
+ *  pixels past two radii at `riseSpeed` 78. The speed-up is checked apart.) */
+const FAR = 0.01;
+
+async function checkLavaPointer(browser) {
+  console.log('\nlava pointer: the blobs near a moving pointer react — swell, drift, speed up — and ease back when it leaves');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    await gridOn02(page);
+    await quiet(page);
+    await flatGrid(page);
+    await OVERLAY_OFF(page);
+    // the dots' own dome off, so the lava is all that differs; the sign
+    // 'toward' unless a patch says otherwise (the default is the JSON's)
+    const patch = (lava) =>
+      page.evaluate((lava) => {
+        window.__covers.patchDials('rive-site', null);
+        window.__covers.patchDials('rive-site', { dots3: { dome: { strength: 0, scale: 0 } }, lava: { cursorSign: 'toward', ...lava } });
+      }, lava);
+    await patch({});
+    const tr = await focusedTile(page);
+    const at = { x: tr.x + tr.w * 0.32, y: tr.y + tr.h * 0.32 };
+    // the pointer moves from the first frame, the clock running; no waiting for anything
+    await circle(page, at.x, at.y, 1500);
+    const hov = await page.evaluate(
+      (tr) => window.__covers.presenters().findIndex((p) => p.visible && p.cover === 'rive-site' && p.domed && Math.abs(p.rect.x - tr.x) < 2 && Math.abs(p.rect.y - tr.y) < 2),
+      tr,
+    );
+    if (hov < 0) {
+      bad(`@${dpr}× grid tile`, 'the hovered tile is not drawn for itself (no dome up)');
+      await page.context().close();
+      continue;
+    }
+    const toward = await pullOf(page, hov);
+    await patch({ cursorSign: 'away' });
+    await circle(page, at.x, at.y, 1000);
+    const away = await pullOf(page, hov);
+    await patch({});
+    // the pixels: the tile warm, against the same moment once the pointer has
+    // gone and the tile is back at rest (the clock pinned; the pointer moving)
+    const wr = await warmVsRest(page, dpr, tr, at, 300, 400, hov, patch, {});
+    const wc = await warmVsRest(page, dpr, tr, at, 300, 400, hov, patch, { cursorStrength: 0 });
+    await page.evaluate(() => window.__covers.pin(null));
+    check(
+      toward.heat > 0.9 && toward.pull > 2 && toward.extra > 0.02 && away.pull < -2,
+      `@${dpr}× grid tile, the clock running`,
+      `warmth ${toward.heat.toFixed(2)}; ${toward.n} blobs near it drawn ${toward.pull.toFixed(1)} units toward the pointer (> 2), 'away' ${away.pull.toFixed(1)} (< -2); sped up: ${toward.extra.toFixed(2)} rad ahead of the shared timeline`,
+    );
+    check(
+      wr.near.d > 0.03 && wr.far.d < FAR && wc.near.d < 0.005,
+      `@${dpr}× grid tile, warm vs rest`,
+      `near the pointer ${pct(wr.near.d)} differ (> 3%), beyond 2 radii ${pct(wr.far.d)} (< 1%, ${wr.far.n} px); control, strength 0: ${pct(wc.near.d)} (< 0.5%)`,
+    );
+    // leaving: every frame recorded, the clock running, the pointer moving off the card
+    await patch({});
+    await circle(page, at.x, at.y, 1500);
+    await page.evaluate((i) => {
+      window.__lavaLeave = [];
+      const t0 = performance.now();
+      const L = window.__covers.lava;
+      const f = () => {
+        const t = window.__covers.time();
+        const a = L.blobs('rest', t);
+        const b = L.blobs(i, t);
+        let dev = 0;
+        a.forEach((p, k) => (dev = Math.max(dev, Math.hypot(b[k][0] - p[0], b[k][1] - p[1]))));
+        const w = L.warmth(i);
+        window.__lavaLeave.push({ dev, heat: w ? w.heat : 0, domed: window.__covers.presenters()[i].domed });
+        if (performance.now() - t0 < 3500) requestAnimationFrame(f);
+      };
+      requestAnimationFrame(f);
+    }, hov);
+    await circle(page, 12, 12, 3700);
+    const rec = await page.evaluate(() => window.__lavaLeave);
+    let jump = 0;
+    let drop = 0;
+    for (let k = 1; k < rec.length; k++) {
+      jump = Math.max(jump, Math.abs(rec[k].dev - rec[k - 1].dev));
+      drop = Math.max(drop, rec[k - 1].heat - rec[k].heat);
+    }
+    const restAt = rec.findIndex((r) => !r.domed);
+    check(
+      rec.length > 30 && rec[0].dev > 2 && jump < 8 && drop < 0.1 && restAt > 0 && restAt < 150,
+      `@${dpr}× grid tile, leaving`,
+      `${rec.length} frames: off the shared timeline by ${rec[0].dev.toFixed(1)} units, back by at most ${jump.toFixed(1)} a frame (< 8); warmth down ≤ ${drop.toFixed(3)} a frame (< 0.1); on the shared draw again after ${restAt} frames (< 150)`,
+    );
+
+    // the hero, under the paper: its panel takes the pointer
+    await heroOn02(page);
+    await quiet(page);
+    await page.evaluate(() => window.__paper.override({ zero: true }));
+    await patch({});
+    const hr = await heroRect(page);
+    const hat = { x: hr.x + hr.w * 0.4, y: hr.y + hr.h * 0.4 };
+    await circle(page, hat.x, hat.y, 1500);
+    const hp = await pullOf(page, 'hero');
+    const h = await warmVsRest(page, dpr, hr, hat, 300, 390, 'hero', patch, {});
+    const hc = await warmVsRest(page, dpr, hr, hat, 300, 390, 'hero', patch, { cursorStrength: 0 });
+    const under = await page.evaluate(() => window.__paper.state());
+    check(
+      under === 'on' && hp.heat > 0.9 && hp.pull > 2 && hp.extra > 0.02 && h.near.d > 0.03 && h.far.d < FAR && hc.near.d < 0.005,
+      `@${dpr}× detail hero (paper ${under})`,
+      `warmth ${hp.heat.toFixed(2)}, ${hp.n} blobs ${hp.pull.toFixed(1)} units toward it, ${hp.extra.toFixed(2)} rad ahead; warm vs rest: near ${pct(h.near.d)} (> 3%), beyond 2 radii ${pct(h.far.d)} (< 1%); control, strength 0: ${pct(hc.near.d)} (< 0.5%)`,
+    );
+    await page.context().close();
+  }
+}
+
+async function checkLavaSweep(browser) {
+  console.log('\nlava sweep: the pointer swept across every visible tile in ~1 s, 1728×996 @2× — the worst grid frame');
+  const dpr = 2;
+  const page = await newPage(browser, VIEWPORTS[0], dpr);
+  await gridOn02(page);
+  await quiet(page); // the dev dock sits over the top-right tile's strip; production has none
+  const pres = await page.evaluate(() => window.__covers.presenters().filter((p) => p.visible && p.cover === 'rive-site'));
+  const big = pres.reduce((a, p) => (p.drawW > a.drawW ? p : a), { drawW: 0, drawH: 0 });
+  const [w, h] = [big.drawW, big.drawH];
+  const shared = (await page.evaluate(([w, h]) => window.__covers.benchStage('rive-site', w, h), [w, h])).ms;
+  const warm = (await page.evaluate(([w, h]) => window.__covers.benchStage('rive-site', w, h, true), [w, h])).ms;
+  const copy = await page.evaluate(([w, h]) => window.__covers.benchPresent(w, h), [w, h]);
+  // every frame's own draws of card 02, from the sweep until the grid is at rest again
+  await page.evaluate(() => {
+    window.__sweep = [];
+    const t0 = performance.now();
+    const f = () => {
+      window.__sweep.push(window.__covers.ownDraws('rive-site'));
+      if (performance.now() - t0 < 5000) requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+  // through the visible part of every card-02 tile on screen (they run
+  // diagonally across the grid, a row apart), in one ~1 s stroke
+  const V = VIEWPORTS[0];
+  const pts = pres
+    .map((p) => {
+      const x = Math.max(p.rect.x, 4);
+      const y = Math.max(p.rect.y, 4);
+      const xe = Math.min(p.rect.x + p.rect.w, V.width - 4);
+      const ye = Math.min(p.rect.y + p.rect.h, V.height - 4);
+      return [(x + xe) / 2, (y + ye) / 2];
+    })
+    .sort((a, b) => a[0] - b[0]);
+  const steps = 60;
+  const at = (s) => {
+    const k = Math.min(pts.length - 2, Math.floor(s * (pts.length - 1)));
+    const f = s * (pts.length - 1) - k;
+    return [pts[k][0] + (pts[k + 1][0] - pts[k][0]) * f, pts[k][1] + (pts[k + 1][1] - pts[k][1]) * f];
+  };
+  const t0 = Date.now();
+  for (let i = 0; i <= steps; i++) {
+    const [x, y] = pts.length > 1 ? at(i / steps) : pts[0];
+    await page.mouse.move(x + Math.sin(i / 3) * 20, y);
+    await page.waitForTimeout(Math.max(0, t0 + (1000 * i) / steps - Date.now()));
+  }
+  const sweepMs = Date.now() - t0;
+  await page.mouse.move(3, 3);
+  for (let i = 0; i < 40; i++) {
+    await page.mouse.move(3 + (i % 8), 3);
+    await page.waitForTimeout(100);
+  }
+  const rec = await page.evaluate(() => window.__sweep);
+  const most = Math.max(...rec);
+  const tiles = Math.max(4, pres.length);
+  const worst = shared + most * warm + tiles * copy;
+  check(
+    worst <= BUDGET.total,
+    '1728×996 @2× sweep',
+    `${pres.length} tiles swept in ${sweepMs} ms; at most ${most} drawn for themselves in one frame (of ${rec.length}); worst grid frame ${ms(worst)} = shared ${ms(shared)} + ${most} × warm ${ms(warm)} + ${tiles} copies × ${ms(copy)} ≤ ${BUDGET.total}`,
+  );
+  await page.context().close();
+}
+
+/**
+ * An instance (`rect`, CSS px) warm under the pointer circling `at`, against
+ * the same moment of the cover clock once the pointer has moved off and the
+ * instance is back at rest; `which` names it for `__covers.lava`. It starts at
+ * rest and the clock is pinned before the pointer arrives, so the warmth is
+ * the swell and the pull alone (the speed-up needs the clock to run). Pixels
+ * past TOL near the pointer (within the cursor radius) and beyond two radii.
+ */
+async function warmVsRest(page, dpr, rect, at, w, h, which, patch, lava) {
+  await patch(lava);
+  await circle(page, 12, 12, 300);
+  await page.waitForFunction((i) => window.__covers.lava.warmth(i)?.settled !== false, which, { timeout: 5000 }).catch(() => {});
+  await page.evaluate(() => window.__covers.pin(window.__covers.time()));
+  await circle(page, at.x, at.y, 1500);
+  const warm = await grab(page, rect, dpr, w, h);
+  const ptr = await page.evaluate((i) => window.__covers.lava.warmth(i), which);
+  await circle(page, 12, 12, 1500);
+  await page.waitForFunction((i) => window.__covers.lava.warmth(i)?.settled !== false, which, { timeout: 5000 }).catch(() => {});
+  await frames(page, 3);
+  const rest = await grab(page, rect, dpr, w, h);
+  await page.evaluate(() => window.__covers.pin(null));
+  const r = (await page.evaluate(() => window.__covers.dials('rive-site').lava.cursorRadius)) * (w / cropOf(rect.w / rect.h).w);
+  const [px, py] = frameToGrab(ptr.px, ptr.py, rect.w / rect.h, w, h);
+  return {
+    near: diffWhere(warm, rest, w, h, (x, y) => Math.hypot(x - px, y - py) < r),
+    far: diffWhere(warm, rest, w, h, (x, y) => Math.hypot(x - px, y - py) > 2 * r),
+  };
 }
 
 // ── no WebGL ────────────────────────────────────────────────────────────
@@ -1767,6 +2113,9 @@ async function run() {
     if (ONLY.includes('contexts')) await checkContexts(browser);
     if (ONLY.includes('sky')) await checkSky(browser);
     if (ONLY.includes('ground')) await checkGround(browser);
+    if (ONLY.includes('lmove')) await checkLavaMove(browser);
+    if (ONLY.includes('lpointer')) await checkLavaPointer(browser);
+    if (ONLY.includes('lsweep')) await checkLavaSweep(browser);
     if (ONLY.includes('rbudgets')) await checkRiveBudgets(browser);
     if (ONLY.includes('rswap')) await checkRiveSwap(browser);
     if (ONLY.includes('rpointer')) await checkRivePointer(browser);

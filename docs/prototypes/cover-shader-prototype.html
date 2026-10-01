@@ -86,6 +86,7 @@ import coverGlsl from '/src/covers/covers/rive-site.glsl?raw';
 import coverDials from '/src/covers/covers/rive-site.json';
 import { splitCoverGlsl } from '/src/covers/glsl.ts';
 import { riveTextSdf, STRIP_W, STRIP_H, TEXT_X } from '/src/covers/covers/riveText.ts';
+import { LavaInstance, LavaModel, MAX_BLOBS, WARM } from '/src/covers/covers/lava.ts';
 // ===========================================================================
 // THE FRAME. Figma's numbers, in frame units.
 // ===========================================================================
@@ -296,6 +297,7 @@ function layout() {
 // ===========================================================================
 function applyDials(v) {
   P = v;
+  lava = new LavaModel(v.lava, v.refraction5);
   S.mask = (v.stages.blobs1 ? 1 : 0) | (v.stages.rings2 ? 2 : 0) | (v.stages.dots3 ? 4 : 0) |
            (v.stages.riso4 ? 8 : 0) | (v.stages.refraction5 ? 16 : 0);
   parseColor(v.base.background, col3.bg);
@@ -320,11 +322,20 @@ function applyDials(v) {
   layout();
 }
 
-function slugUniforms(u, f) {
-  gl.uniform4f(u.uSlugA, f.slugCell, f.slugWidthMin, f.slugWidthMax, f.slugPresence);
-  gl.uniform4f(u.uSlugB, f.slugLengthMin, f.slugLengthMax, f.slugTilt * 2 * Math.PI / 180, f.slugBend);
-  gl.uniform1f(u.uSlugDrift, f.slugDrift);
-  gl.uniform1f(u.uSlugSeed, f.slugSeed);
+// Stage 5's blobs are card 02's lava (src/covers/covers/lava.ts): moved on the
+// CPU every frame and uploaded, as the app does it (rive-site.ts). The
+// pointer warms them through the same LavaInstance the app keeps per instance.
+let lava = null;
+const lavaInst = new LavaInstance(() => lava);
+const blobA = new Float32Array(MAX_BLOBS * 4), blobB = new Float32Array(MAX_BLOBS * 4), blobS = new Float32Array(MAX_BLOBS * 2);
+function lavaUniforms(u, v) {
+  gl.uniform4f(u.uLava, lava.count(), Math.max(0, v.lava.mergeSoftness), WARM.swell * Math.max(0, v.lava.cursorStrength) * lava.meanW, lava.minW);
+}
+function lavaFrame(u, v) {
+  gl.uniform4fv(u.uBlobA, blobA); gl.uniform4fv(u.uBlobB, blobB); gl.uniform2fv(u.uBlobS, blobS);
+  const r = Math.max(1, v.lava.cursorRadius);
+  if (lavaInst.heat > 0) gl.uniform4f(u.uLavaPtr, lavaInst.px / FRAME_W, lavaInst.py / FRAME_H, lavaInst.heat, r);
+  else gl.uniform4f(u.uLavaPtr, 0, 0, 0, r);
 }
 
 function uploadStatic() {
@@ -355,7 +366,7 @@ function uploadStatic() {
   const f = v.refraction5;
   gl.uniform4f(ua.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
   gl.uniform3f(ua.uR5s, f.slugs ? 1 : 0, f.minify, f.rimSmear);
-  slugUniforms(ua, f);
+  lavaUniforms(ua, v);
   gl.uniform1f(ua.uR5Half, f.noiseHalfRes ? 1 : 0);
   // pass B
   gl.useProgram(B.p);
@@ -396,7 +407,11 @@ function uploadStatic() {
   gl.uniform4f(ub.uR5a, blobFreq(f.scale), f.detail / 100, f.threshold / 100, f.softness / 100);
   gl.uniform2f(ub.uR5c, f.octaves, f.highlight);
   gl.uniform3f(ub.uR5s, f.slugs ? 1 : 0, f.minify, f.rimSmear);
-  slugUniforms(ub, f);
+  lavaUniforms(ub, v);
+  // the cover's own ground, under all of it (card 02 is opaque: 'solid')
+  const ground = [0, 0, 0];
+  parseColor(v.lava.background, ground);
+  gl.uniform4f(ub.uBackdrop, ground[0], ground[1], ground[2], 1);
 }
 
 // ===========================================================================
@@ -417,6 +432,8 @@ function draw(t, mask) {
   gl.uniform4f(A.u.uB1b, 0.075 * 900 * b.strength / 100, b.shift / 100, b.wobble / 100, t / loopSeconds(b.speed));
   gl.uniform1f(A.u.uS5, (mask >> 4) & 1);
   gl.uniform2f(A.u.uR5z, t / loopSeconds(v.refraction5.speed), v.refraction5.octaves);
+  lava.fill(t, lavaInst, blobA, blobB, blobS);
+  lavaFrame(A.u, v);
   gl.bindVertexArray(vao);
   if (timerExt && !benching) beginQuery(0);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -430,6 +447,7 @@ function draw(t, mask) {
   gl.uniform1f(B.u.uS2, (mask >> 1) & 1); gl.uniform1f(B.u.uS3, (mask >> 2) & 1);
   gl.uniform1f(B.u.uS4, (mask >> 3) & 1); gl.uniform1f(B.u.uS5, (mask >> 4) & 1);
   gl.uniform4f(B.u.uDome, S.domeX, S.domeY, v.dots3.dome.radius, S.amp);
+  lavaFrame(B.u, v);
   const f = v.refraction5;
   gl.uniform4f(B.u.uR5b, f.strength / 100, f.dispersionCut ? 0 : f.dispersion / 100, f.shadow / 100, t / loopSeconds(f.speed));
   if (timerExt && !benching) beginQuery(1);
@@ -460,8 +478,12 @@ function tick(now) {
   const dt = Math.min(0.1, (now - S.last) / 1000 || 0);
   S.last = now;
   S.rafDt += ((dt * 1000) - S.rafDt) * 0.1;
-  if (reduced()) { S.t = 0; S.amp = 0; S.ampV = 0; }
-  else { if (!P.view.freeze) S.t += dt; stepSpring(dt); }
+  if (reduced()) { S.t = 0; S.amp = 0; S.ampV = 0; lavaInst.reset(); }
+  else {
+    if (!P.view.freeze) S.t += dt;
+    stepSpring(dt);
+    lavaInst.step(now, S.t, { x: S.domeX, y: S.domeY, amp: S.amp }, P);
+  }
   draw(S.t, S.mask);
   if (timerExt) pollQueries();
   if (now - S.readoutAt > 500) { S.readoutAt = now; readout(); }

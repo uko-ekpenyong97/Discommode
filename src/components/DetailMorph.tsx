@@ -3,6 +3,8 @@ import { itemFace, itemHeroFace } from '../content';
 import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
 import { CoverTile } from '../covers/CoverTile';
+import { shaderCover } from '../covers/covers';
+import { heroDome } from '../covers/dome';
 import { coverValues } from '../covers/coverDials';
 import { morphRole as swapRole, riveSwapAt } from '../covers/rive/swap';
 import type { RivePlayerRole } from '../covers/rive/swap';
@@ -149,10 +151,13 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
               // A live cover travels live — the centre card, on the shared cover
               // clock, so it lands on the hero's frame and needs no cross-fade.
               // The neighbours are the still, as the detail view shows them.
+              // A cover that keeps state per instance (card 02's lava warmth)
+              // travels on the hero's dome, which the clicked tile handed its
+              // state to (CoverTile): the morph lands on the hero's moment.
               <CoverTile
                 coverId={c.item.cover.id}
                 live={i === 1}
-                dome={null}
+                dome={i === 1 && shaderCover(c.item.cover.id)?.instanceExtra ? heroDome : null}
                 role={morphRole(c.item.cover.id, entering)}
                 className="detail-morph__media"
               />

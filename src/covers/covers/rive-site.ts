@@ -15,6 +15,8 @@ import type { Texture } from 'three';
 import glsl from './rive-site.glsl?raw';
 import dials from './rive-site.json';
 import { STRIP_H, STRIP_W, TEXT_X, riveTextSdf, sliced } from './riveText';
+import { LavaInstance, LavaModel, MAX_BLOBS, WARM } from './lava';
+import type { LavaDials } from './lava';
 import { cssRgb } from '../color';
 import type { DialValues } from '../dialValues';
 import type { InstanceFrame, LiveCoverDef, Uniforms } from '../types';
@@ -25,6 +27,10 @@ import type { InstanceFrame, LiveCoverDef, Uniforms } from '../types';
  * bench's uniform code for three.js: the same dial → uniform mapping, line for
  * line (`applyDials`, `uploadStatic`, `draw` there). The shader and the tuned
  * values are the shared rive-site.glsl / rive-site.json.
+ *
+ * Stage 5's blobs are a lava lamp (lava.ts): moved here, on the CPU, every
+ * draw, and smooth-min'd into one field on the GPU. The cover is opaque: its
+ * own `lava.background` is under all of it (`coverBackdrop` 'solid').
  */
 
 const FRAME_W = 900;
@@ -43,6 +49,7 @@ const blobFreq = (scalePct: number) => 2.2 / Math.max(0.05, scalePct / 100);
 
 // The dial tree, typed as far as the uniforms read it.
 interface V {
+  lava: LavaDials;
   stages: { blobs1: boolean; rings2: boolean; dots3: boolean; riso4: boolean; refraction5: boolean };
   quality: { rtScale: number };
   base: {
@@ -130,15 +137,12 @@ interface V {
   };
   refraction5: {
     slugs: boolean;
-    slugCell: number;
     slugWidthMin: number;
     slugWidthMax: number;
     slugLengthMin: number;
     slugLengthMax: number;
     slugTilt: number;
     slugBend: number;
-    slugPresence: number;
-    slugDrift: number;
     slugSeed: number;
     minify: number;
     rimSmear: number;
@@ -163,13 +167,20 @@ const v3 = () => ({ value: new Vector3() });
 const v4 = () => ({ value: new Vector4() });
 const tex = () => ({ value: null as Texture | null });
 
-function slugUniforms(): Uniforms {
-  return { uSlugA: v4(), uSlugB: v4(), uSlugDrift: f(), uSlugSeed: f() };
+// The blobs: pass A's arrays, shared with pass B's (bind), filled per draw.
+function lavaUniforms(): Uniforms {
+  return {
+    uBlobA: { value: new Float32Array(MAX_BLOBS * 4) },
+    uBlobB: { value: new Float32Array(MAX_BLOBS * 4) },
+    uBlobS: { value: new Float32Array(MAX_BLOBS * 2) },
+    uLava: v4(),
+    uLavaPtr: v4(),
+  };
 }
 
 function uniformsA(): Uniforms {
   return {
-    ...slugUniforms(),
+    ...lavaUniforms(),
     uMap: v4(),
     uC0: v2(),
     uC1: v2(),
@@ -199,7 +210,7 @@ function uniformsA(): Uniforms {
 
 function uniformsB(): Uniforms {
   return {
-    ...slugUniforms(),
+    ...lavaUniforms(),
     uView: v4(),
     uAAB: f(1),
     uRT: tex(),
@@ -248,11 +259,26 @@ const setRgb = (u: Uniforms, name: string, css: string) => {
   (u[name].value as Vector3).set(c[0], c[1], c[2]);
 };
 
-function bindSlugs(u: Uniforms, r: V['refraction5']) {
-  (u.uSlugA.value as Vector4).set(r.slugCell, r.slugWidthMin, r.slugWidthMax, r.slugPresence);
-  (u.uSlugB.value as Vector4).set(r.slugLengthMin, r.slugLengthMax, (r.slugTilt * 2 * Math.PI) / 180, r.slugBend);
-  u.uSlugDrift.value = r.slugDrift;
-  u.uSlugSeed.value = r.slugSeed;
+/** The lava for one set of dial values (the values object is replaced on
+ *  every dial change, so it is the key). */
+const models = new WeakMap<DialValues, LavaModel>();
+export function lavaModel(values: DialValues): LavaModel {
+  let m = models.get(values);
+  if (!m) {
+    const v = values as unknown as V;
+    m = new LavaModel(v.lava, v.refraction5);
+    models.set(values, m);
+  }
+  return m;
+}
+
+function bindLava(values: DialValues, a: Uniforms, b: Uniforms) {
+  const m = lavaModel(values);
+  const l = (values as unknown as V).lava;
+  for (const name of ['uBlobA', 'uBlobB', 'uBlobS']) b[name].value = a[name].value;
+  for (const u of [a, b]) {
+    (u.uLava.value as Vector4).set(m.count(), Math.max(0, l.mergeSoftness), WARM.swell * Math.max(0, l.cursorStrength) * m.meanW, m.minW);
+  }
 }
 
 function bind(values: DialValues, a: Uniforms, b: Uniforms, assets: Record<string, Texture>) {
@@ -278,7 +304,7 @@ function bind(values: DialValues, a: Uniforms, b: Uniforms, assets: Record<strin
   const r5 = v.refraction5;
   (a.uR5a.value as Vector4).set(blobFreq(r5.scale), r5.detail / 100, r5.threshold / 100, r5.softness / 100);
   (a.uR5s.value as Vector3).set(r5.slugs ? 1 : 0, r5.minify, r5.rimSmear);
-  bindSlugs(a, r5);
+  bindLava(values, a, b);
   a.uR5Half.value = r5.noiseHalfRes ? 1 : 0;
 
   // pass B
@@ -323,7 +349,9 @@ function bind(values: DialValues, a: Uniforms, b: Uniforms, assets: Record<strin
   (b.uR5a.value as Vector4).set(blobFreq(r5.scale), r5.detail / 100, r5.threshold / 100, r5.softness / 100);
   (b.uR5c.value as Vector2).set(r5.octaves, r5.highlight);
   (b.uR5s.value as Vector3).set(r5.slugs ? 1 : 0, r5.minify, r5.rimSmear);
-  bindSlugs(b, r5);
+  // the cover's own ground, under all of it: it is opaque ('solid')
+  const ground = cssRgb(v.lava.background);
+  (b.uBackdrop.value as Vector4).set(ground[0], ground[1], ground[2], 1);
 }
 
 function frameUniforms(values: DialValues, a: Uniforms, b: Uniforms, fr: InstanceFrame, assets: Record<string, Texture>) {
@@ -362,9 +390,16 @@ function frameUniforms(values: DialValues, a: Uniforms, b: Uniforms, fr: Instanc
     r5.shadow / 100,
     t / loopSeconds(r5.speed),
   );
-  const bd = fr.backdrop;
-  if (bd) (b.uBackdrop.value as Vector4).set(bd[0], bd[1], bd[2], 1);
-  else (b.uBackdrop.value as Vector4).set(0, 0, 0, 0);
+  // the lava: where the blobs are now, and this instance's warmth
+  const lava = fr.dome.ext instanceof LavaInstance ? fr.dome.ext : null;
+  const m = lavaModel(values);
+  m.fill(t, lava, a.uBlobA.value as Float32Array, a.uBlobB.value as Float32Array, a.uBlobS.value as Float32Array);
+  const radius = Math.max(1, v.lava.cursorRadius);
+  for (const u of [a, b]) {
+    const ptr = u.uLavaPtr.value as Vector4;
+    if (lava && lava.heat > 0) ptr.set(lava.px / FRAME_W, lava.py / FRAME_H, lava.heat, radius);
+    else ptr.set(0, 0, 0, radius);
+  }
 }
 
 /** The "Rive" strip's SDF as a half-float texture (filterable everywhere). */
@@ -416,5 +451,7 @@ export const riveSite: LiveCoverDef = {
   assets,
   bind,
   domeMotion: (v) => (v as unknown as V).dots3.dome,
+  instanceExtra: () => new LavaInstance(lavaModel),
+  coverBackdrop: 'solid',
   frameUniforms,
 };

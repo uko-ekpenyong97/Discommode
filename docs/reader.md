@@ -892,9 +892,9 @@ it goes dark. `view: plate` shows it over the plate, as it ships. `x`, `y`, `w`
 Arrow keys nudge 1px, Shift+arrow 10px, while an animation is picked — ahead of
 the engine's own listener, so they do not turn the page. **Copy row** puts the
 `pageAnims.ts` row on the clipboard (and the console); **Reset to file** drops
-the panel's row. What persists (`DIAL_STATE_VERSION` 4): the pick and the view
+the panel's row. What persists (`DIAL_STATE_VERSION` 5): the pick and the view
 (the panel), and each animation's EDITED ROW, kept per id in localStorage
-(`dialkit:page-anim-align-rows-v4`, so "Reset dials" and a version bump clear
+(`dialkit:page-anim-align-rows-v5`, so "Reset dials" and a version bump clear
 it too): a reload draws it again, and a pick loads it into the sliders, until
 **Copy row** (it belongs in the file then) or **Reset to file** clears it. Copy
 keeps the row's `rest`. A row whose width changed rebuilds its atlas on the

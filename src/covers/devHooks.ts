@@ -2,7 +2,10 @@ import { pinCoverTime, coverTime } from './coverClock';
 import { coverStageProbe } from './coverStage';
 import { coverCropOf } from './coverRenderer';
 import { CachedCoverRenderer } from './cachedCoverRenderer';
-import { benchCoverDraw, benchPresent } from './bench';
+import { benchCoverDraw, benchDome, benchPresent } from './bench';
+import { heroDome } from './dome';
+import { LavaInstance, MAX_BLOBS } from './covers/lava';
+import { lavaModel } from './covers/rive-site';
 import { COVERS, shaderCover } from './covers';
 import { riveProbe } from './rive/riveCover';
 import { coverBackdrop, coverValues, setCoverValues, setSiteCoverDials, siteCoverDials } from './coverDials';
@@ -29,6 +32,10 @@ function merge(base: DialValues, patch: DialValues): DialValues {
  */
 export function installCoverDevHooks() {
   const probe = coverStageProbe();
+  const lavaExt = (which: 'rest' | 'hero' | number): LavaInstance | null => {
+    const d = which === 'rest' ? null : which === 'hero' ? heroDome.state : probe.domeOf(which);
+    return d?.ext instanceof LavaInstance ? d.ext : null;
+  };
   (window as unknown as { __covers: unknown }).__covers = {
     pin: (s: number | null) => pinCoverTime(s),
     stage: probe,
@@ -37,6 +44,7 @@ export function installCoverDevHooks() {
     presenters: probe.presenters,
     frames: probe.frames,
     lastMs: probe.lastMs,
+    ownDraws: probe.ownDraws,
     site: siteCoverDials,
     /** A cover's own backdrop, 'sky' or 'solid': the sky checks skip 'solid'. */
     backdrop: (id: string) => coverBackdrop(id),
@@ -46,8 +54,9 @@ export function installCoverDevHooks() {
     dials: (id: string) => coverValues(id),
     patchDials: (id: string, patch: DialValues | null) =>
       setCoverValues(id, patch ? merge(coverValues(id), patch) : dialDefaults(COVERS[id].dials)),
-    /** GPU ms for one stage draw of `id` at pxW × pxH (the shared tile draw). */
-    benchStage: (id: string, pxW: number, pxH: number) => {
+    /** GPU ms for one stage draw of `id` at pxW × pxH (the shared tile draw;
+     *  `warm`: the hovered tile's own, under the pointer). */
+    benchStage: (id: string, pxW: number, pxH: number, warm = false) => {
       const gl = probe.renderer;
       const cover = probe.cover(id);
       if (!gl || !cover || !cover.ready()) return null;
@@ -55,7 +64,7 @@ export function installCoverDevHooks() {
       if (!def) return null;
       probe.draw(id, pxW, pxH, 1); // sizes the stage canvas
       const crop: Crop = coverCropOf(def.frame.w, def.frame.h, pxW, pxH, { x0: 0, y0: 0, w: 1, h: 1 });
-      return benchCoverDraw(gl, cover, null, { t: 1, crop, pxW, pxH, dome: { x: 450, y: 600, amp: 0 }, backdrop: null });
+      return benchCoverDraw(gl, cover, null, { t: 1, crop, pxW, pxH, dome: benchDome(def, warm), backdrop: null });
     },
     /**
      * One draw of shader cover `id` at w × h by the stage's renderer, at `t`,
@@ -104,6 +113,39 @@ export function installCoverDevHooks() {
     benchPresent: (pxW: number, pxH: number) => {
       const gl = probe.renderer;
       return gl ? benchPresent(gl.domElement, pxW, pxH) : null;
+    },
+    /**
+     * Card 02's lava (src/covers/covers/lava.ts), for `lmove` / `lpointer`:
+     * `blobs(which, t)` — every blob's centre (frame units) at `t` (the
+     * clock's when omitted) for an instance: 'rest' (the shared draw), 'hero'
+     * (the hero's dome), or the n-th presenter — with `drift` false, its own
+     * extra phase but no pull, so the pull alone is the difference; `warmth(which)` — that
+     * instance's warmth, the pointer it is eased to, its largest extra phase
+     * (radians off the shared timeline) and whether it is settled.
+     */
+    lava: {
+      blobs: (which: 'rest' | 'hero' | number, t = coverTime(), drift = true) => {
+        const m = lavaModel(coverValues('rive-site'));
+        let ext = lavaExt(which);
+        if (ext && !drift) {
+          const still = new LavaInstance(() => m);
+          still.copyFrom(ext);
+          still.heat = 0;
+          ext = still;
+        }
+        const A = new Float32Array(MAX_BLOBS * 4);
+        m.fill(t, ext, A, new Float32Array(MAX_BLOBS * 4), new Float32Array(MAX_BLOBS * 2));
+        const out: [number, number][] = [];
+        for (let i = 0; i < m.count(); i++) out.push([A[i * 4], A[i * 4 + 1]]);
+        return out;
+      },
+      warmth: (which: 'rest' | 'hero' | number) => {
+        const ext = lavaExt(which);
+        if (!ext) return null;
+        let extra = 0;
+        for (const e of ext.extra) extra = Math.max(extra, Math.abs(e - 2 * Math.PI * Math.round(e / (2 * Math.PI))));
+        return { heat: ext.heat, px: ext.px, py: ext.py, extra, settled: ext.settled() };
+      },
     },
     /** Rive covers (card 04): `ready(id)`, `players()`, `player(id, role)`,
      *  `viewModel(id, role)`, `reset(id)`, and `costs()` — the main-thread ms
