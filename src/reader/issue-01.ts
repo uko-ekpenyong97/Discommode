@@ -6,6 +6,8 @@
  * true and prepend the file, and every spread re-pairs itself.
  */
 
+import { ANIMATED_PAGES } from './pageAnims';
+
 export interface Page {
   /** Reading position. The cover is 0 and the back cover is PAGE_COUNT + 1, so
    *  ordering stays meaningful; `label` is what keeps them out of the caption. */
@@ -20,6 +22,13 @@ export interface Page {
    * scale. Written by `npm run pages`; absent on the cover and back.
    */
   riffle?: string;
+  /**
+   * The page with its animated drawing HIDDEN, for a page that carries one
+   * (`pageAnims.ts`): what the open spread shows under the sprites once the book
+   * has settled. A turn always carries the baked `src`. Written by
+   * `npm run plates`.
+   */
+  plate?: string;
 }
 
 export interface Issue {
@@ -67,6 +76,11 @@ export interface Issue {
    * are built.
    */
   anims?: string;
+  /**
+   * URL of the inside pages' sprite-atlas manifest written by `npm run anims`
+   * (`pageAnims.ts` is where each sprite sits). Fetched, like `anims`.
+   */
+  pageAnims?: string;
 }
 
 /** One spread: [left, right]. A null slot renders empty (cover / back page). */
@@ -93,6 +107,7 @@ export const issue01: Issue = {
       n: i + 1,
       src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
       riffle: `/issues/01/riffle/${String(i + 1).padStart(2, '0')}.webp`,
+      ...(ANIMATED_PAGES.includes(i + 1) ? { plate: `/issues/01/plates/${String(i + 1).padStart(2, '0')}.webp` } : {}),
     })),
     { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
   ],
@@ -100,6 +115,7 @@ export const issue01: Issue = {
   coverRest: '/issues/01/cover-rest.webp',
   backRest: '/issues/01/back-rest.webp',
   anims: '/issues/01/anim/manifest.json',
+  pageAnims: '/issues/01/page-anim/manifest.json',
 };
 
 /** How a page reads in the caption: 'COVER', 'BACK', or a zero-padded number. */
@@ -141,6 +157,11 @@ export function issueCoverRest(id: string): string | undefined {
 /** The cover-animation manifest URL for an issue, if any have been built. */
 export function issueAnims(id: string): string | undefined {
   return ISSUES[id]?.anims;
+}
+
+/** The inside pages' sprite-atlas manifest URL for an issue, if it has one. */
+export function issuePageAnims(id: string): string | undefined {
+  return ISSUES[id]?.pageAnims;
 }
 
 export const ISSUES: Record<string, Issue> = {

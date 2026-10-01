@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { CSSProperties } from 'react';
 import { FlipBook } from './FlipBook';
 import type { FlipEngine } from './flipEngine';
-import { ISSUES, buildSpreads, folioText, issue01, issueAnims, spreadFolios } from './issue-01';
+import { ISSUES, buildSpreads, folioText, issue01, issueAnims, issuePageAnims, spreadFolios } from './issue-01';
 import { closeReader } from './readerNav';
 import { applyDoorwayRest } from './doorway';
 import { useDoorwayMotion } from './useDoorwayMotion';
@@ -183,6 +183,7 @@ export default function ReaderPage({
         debug={debug}
         onEngineReady={setEngine}
         anims={issueAnims(issue)}
+        pageAnims={issuePageAnims(issue)}
       />
       {!authoring && (
         <nav ref={barRef} className="chrome-row reader__bar" aria-label="Pages">

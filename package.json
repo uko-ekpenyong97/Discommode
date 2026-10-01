@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "pages": "node scripts/optimize-pages.mjs",
+    "plates": "node scripts/optimize-pages.mjs --plates",
     "anims": "node scripts/optimize-anims.mjs",
     "projects": "node scripts/optimize-projects.mjs && node scripts/make-cover-stills.mjs",
     "covers": "node scripts/make-cover-stills.mjs",

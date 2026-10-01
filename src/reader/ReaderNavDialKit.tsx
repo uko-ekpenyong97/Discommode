@@ -9,6 +9,7 @@ import type { JumpMode, RiffleCurve } from './jump';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
+import { usePageAnimAlign } from '../dev/pageAnimAlign';
 
 /** The shipped values, so leaving the dock puts them back. */
 const SHIPPED = { ...JUMP };
@@ -64,6 +65,9 @@ export default function ReaderNavDialKit() {
 
   // The paper buttons, and their colour from the sky.
   useChromeDials();
+
+  // Registering the inside pages' sprites on their pages (pageAnims.ts).
+  usePageAnimAlign();
 
   useEffect(
     () => () => {

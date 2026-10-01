@@ -93,7 +93,12 @@ export async function loadCover(path, coverW, coverH) {
  */
 export async function loadFrame(path) {
   const { data, info } = await sharp(path).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const { width: w, height: h } = info;
+  return frameFromRaw(path, data, info.width, info.height);
+}
+
+/** A frame from RGBA already in memory (the page animations register mirrored
+ *  and rotated copies of their frames). */
+export function frameFromRaw(path, data, w, h) {
   let minX = w, minY = h, maxX = -1, maxY = -1;
   for (let y = 0; y < h; y++) {
     const row = y * w;

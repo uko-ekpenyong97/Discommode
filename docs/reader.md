@@ -32,6 +32,10 @@ numbers that decided how they work.
 | `coverAnims.ts` | The hover-animation manifest's types and geometry (`faceOf`, `fitCover`, `hitTest`, leave timing). |
 | `coverLife.ts` | Page hover and the boil: the COVER LIFE dials, the stepped boil signal, the stagger, and the registry the detail view's paper reads the boil from. |
 | `cover-anim-placements.json` | INPUT to `npm run anims`: every animated object's rect, z and face. |
+| `pageAnims.ts` | INPUT to `npm run anims` and the reader: where each inside page's animation sits. See [inside-page animations](#inside-page-animations). |
+| `pageAnimPlayer.ts` | The inside pages' sprites on the open spread: the plate and one canvas per page, the settle, the preload. |
+| `pageAnimGeometry.ts` | The atlas manifest's types and the pure geometry and timing the player draws by. |
+| `../dev/pageAnimAlign.ts` | The PAGE ANIM ALIGN panel (dev): registering a sprite on its page. |
 
 ## Layers
 
@@ -694,6 +698,208 @@ opaque pixels; frames 2 and 3 on 24.9% and 20.3%). So `back-rest.webp` — what 
 closed book shows — differs from `back.webp` in about 60k px, all inside the
 device. Same trade the cover makes, for the same reason.
 
+## Inside-page animations
+
+Thirteen inside pages carry a hand-drawn Procreate loop, registered over the
+illustration the page prints: badges (08), sfmoma (10), cuffs (11), cubiculo
+(15), cuqui (17), highlander (18), the three sofas (24 green, 25 yellow, 27
+pink), op1-animation (34), ipad (35), halfframe (36) and carrito (37). The last
+four reuse the cover's frame folders; nothing is copied.
+
+**A turn never sees them.** While a page is in the air the strips, the landing
+plate and the static slots all carry the full baked page, exactly as before —
+`flipEngine.ts` does not know the animations exist. When the book settles, each
+animated page shows its PLATE (the page with the drawing hidden) and one 2D
+canvas drawing its sprites, over the baked `<img>` in the same static slot. On
+the next turn they go before the strips move.
+
+### The assets
+
+```
+~/Discommode-pages/01/anim/<id>/<Name>-<n>.png    frames (any canvas; -10 sorts after -9)
+~/Discommode-pages/01/anim/<id>/fps.json          optional: fps, mode, rest (as the cover's)
+~/Discommode-pages/01/plates/NN.png               the page, its animated drawing hidden
+
+npm run plates    → public/issues/01/plates/NN.webp            (2000×2600, as `npm run pages`)
+npm run anims     → public/issues/01/page-anim/<id>.webp        one atlas per animation
+                    public/issues/01/page-anim/manifest.json    their geometry (generated)
+npm run anims -- --pages-only    the inside pages alone, no cover registration
+npm run anims -- --suggest       print a registered row for every animation
+```
+
+**Plates.** `npm run plates` is `optimize-pages.mjs --plates`: the same
+encoder, quality, size check, up-to-date rule and `--force`, no riffle copies.
+The plates must be exactly the pages `pageAnims.ts` animates; an animated page
+with no plate, or a plate with no animation, stops the run and says which.
+
+**Atlases.** The second phase of `npm run anims` (`scripts/page-anims.mjs`),
+after the cover's, which it does not touch: the cover's sprites, stills, rests,
+plates and manifest come out byte-identical with it (checked by hash against a
+forced build before the change, 2026-10-01). Each animation's frames are
+cropped to the box all their drawing covers together, scaled to the row's
+placed size on the page × `PAGE_ANIM_SCALE` (1: the baked page's own
+resolution, so a sprite is as sharp as the plate around it at any display
+size), and laid out in a near-square grid with a 2px transparent gutter, WebP at
+the cover's quality 85. Byte-stable: no timestamp, deterministic encode. An
+animation rebuilds when a frame or its `fps.json` is newer than its atlas, or
+when its row's width moved by a pixel or more.
+
+A folder with no `fps.json` plays at the cover's boil rate, 6fps; the run lists
+which did (all thirteen, today). The REST frame — what the page shows under
+reduced motion, through the settle's fade, and in the align tool — is the row's
+`rest` (the frame the baked page prints; [the manifest](#the-manifest)), else
+the first frame with any drawing. It is copied into the build's manifest, and
+changing it rewrites the manifest, not the atlas. **badges' first frame is
+empty**; it rests on Badges-3 (both badges, as printed) and keeps the blank
+frame in its loop.
+
+The run reports what each spread costs (2026-10-01, ×1):
+
+| spread | pages | atlases | plates | decoded atlases | ±1 window |
+| --- | --- | --- | --- | --- | --- |
+| 4 | 08 | 569 KB | 372 KB | 14.3 MB | 19.4 MB |
+| 5 | 10 | 528 KB | 348 KB | 5.1 MB | 23.3 MB |
+| 6 | 11 | 217 KB | 254 KB | 4.0 MB | 9.1 MB |
+| 8 | 15 | 513 KB | 199 KB | 7.5 MB | 24.5 MB |
+| 9 | 17 \| 18 | 807 KB | 709 KB | 17.0 MB | 24.5 MB |
+| 12 | 24 | 285 KB | 401 KB | 2.9 MB | 5.9 MB |
+| 13 | 25 | 332 KB | 412 KB | 3.1 MB | 9.3 MB |
+| 14 | 27 | 300 KB | 125 KB | 3.3 MB | 6.4 MB |
+| 17 | 34 | 458 KB | 148 KB | 4.6 MB | 20.0 MB |
+| 18 | 35 \| 36 | 1107 KB | 488 KB | 15.3 MB | **27.8 MB** |
+| 19 | 37 | 621 KB | 667 KB | 7.9 MB | 23.2 MB |
+
+5.7 MB of atlases and 4.0 MB of plates in all. Only the open spread and one
+either side are kept, and a neighbour is only fetched until the book settles
+on it ([the runtime](#the-runtime)), so the "±1 window" column is the most
+there can be decoded at once — at worst 27.8 MB, around 35 | 36, after paging
+through all three — not what one settle decodes.
+
+### The manifest
+
+`src/reader/pageAnims.ts`, one row per animation, in page px (2000×2600):
+
+```ts
+{ page: 25, id: 'sofa-yellow', x: 1093.86, y: 2142.69, w: 612.83, h: 328.54, rotation: 0, flipX: true, rest: 1 }
+```
+
+The box is the drawing's (all frames together), turned `rotation` degrees
+CLOCKWISE about its centre, mirrored left–right first if `flipX`. Its h is
+always w over the drawing's own aspect (the build's manifest carries it); the
+align tool keeps it so and `pageAnims.test.ts` holds every row to it within
+1px. `rest` (0-based: `Name-3.png` is 2) is the frame the baked page prints;
+absent, the first drawn frame. The file has no imports: the build scripts
+import it directly.
+
+**How the rows were placed (2026-10-01).** Through the registration the cover
+uses (`cover-register.mjs`, wrapped by `scripts/page-anim-register.mjs`):
+EVERY frame of the animation is registered against the BAKED page, which
+prints the drawing, and the frame that agrees best is both the one the row is
+registered on and its `rest`. A match is taken when it agrees ≥ 80% or peaks
+by ≥ 15% (the cover's floors) and stays within 25% of the seed's scale and 15%
+of its diagonal; otherwise the fallback is the drawing fitted inside the seed
+box, centred (no row uses it now). The registration has no rotation or mirror
+axis: a rotated or mirrored row is registered at that rotation and mirror (the
+frames turned first, the result mapped back). First seeded from Figma's layer
+boxes; then registered on every frame seeded from those rows.
+
+| | rest | agree | margin | |
+| --- | --- | --- | --- | --- |
+| badges | 2 (Badges-3) | 92.6% | 5.5% | both badges, as printed |
+| sfmoma | 1 | 96.7% | 11.5% | at its 16.36° |
+| cuffs | 1 | **71.9%** | 26.1% | at −58.95°, found by a rotation search (below) |
+| cubiculo | 1 | 95.0% | 14.0% | |
+| cuqui | 1 | 94.4% | 33.7% | moved 7.6px: frame 2 agrees better than frame 1 did |
+| highlander | 0 | 86.5% | 11.6% | |
+| sofa-green | 0 | 96.1% | 13.8% | |
+| sofa-yellow | 1 | 95.7% | 12.1% | mirrored |
+| sofa-pink | 1 | 96.7% | 12.2% | |
+| op1-animation | 1 | 93.3% | 21.1% | |
+| ipad | 9 (frame 10) | 88.6% | 22.8% | the drawing on its screen |
+| halfframe | 0 | 98.0% | 17.6% | |
+| carrito | 9 (frame 10) | 91.0% | 31.6% | the full shelves |
+
+**sofa-yellow is printed mirrored**: its Figma layer is flipped, and Figma
+reports a flipped layer's x at its right edge (1722; the drawing runs
+~1093–1707) — hence `flipX`.
+
+**cuffs is printed turned**, and Figma's (931, 2234, 1013×1110) is a rotated
+layer's origin, not its box. Its row came from a rotation search: frames 1 and
+2 at every 0.5° from −50° to −20° (CSS sign, so anticlockwise), seeded on the
+drawing's bounds measured from Uko's Figma reference of page 11 (x 1075–1873,
+y 1659–2347), widened to −65° when the best sat at the end, then refined in
+0.25°, 0.1° and 0.05° steps from the best fit's own box. Best: frame 2 at
+**−58.95°, 71.9%** (peak margin 26.1%: pinned), which lands the drawing at x
+1073–1871, y 1658–2342 — within 5px of the measured bounds. It cannot agree
+better: **the print's chain is whole, and frame 2's is broken** (an open link
+at the upper left, which the difference view lights up), and frame 1 is the
+closed pair. The row is that best fit; the 90% the brief asked for is not
+reached, and the art is the reason.
+
+From now on `npm run anims` only SUGGESTS: for each animation it rebuilds (or
+every one with `--suggest`) it prints the registered row beside the file's, and
+never writes the file.
+
+### The runtime
+
+`pageAnimPlayer.ts`, plain TS like the engine; FlipBook renders, in each
+animated page's static slot, a `.page-anim` wrapper (the plate `<img>`, the
+canvas) keyed by page, hidden until the player shows it.
+
+- **The turn.** `setTurning(true)` comes from the engine's `onTurnActive`
+  synchronously — not through FlipBook's `turning` render, which can land a
+  frame later. The engine reports a turn before the strips first move, and for
+  its first two frames the static page IS what shows while the curl
+  rasterises, so the wrapper must already be gone.
+- **The settle.** When the turn layer comes down (after the landing plate's
+  crossfade and the handoff), each animated page decodes its plate, draws every
+  sprite on its **rest frame**, and fades its wrapper in over
+  `SETTLE_FADE_MS` (80). The loops start when the fade has landed: each page
+  has its own origin on the cover clock (`coverTime()`, untouched), so a loop
+  always restarts on its rest frame and the fade dissolves the plate and the
+  rest frame over the baked art they were registered against — not a sprite
+  mid-motion over the printed object.
+- **The clock.** `coverTime()` (src/covers/coverClock.ts) stops in a hidden tab
+  and is 0 under reduced motion, which holds every page on its rest frame for
+  good. Frames step on the boil's clock (`stepsIn`, coverLife.ts). There is no
+  boil wobble on inside pages. A canvas is redrawn only when one of its frames
+  changes (6 times a second); the rAF loop runs only while a page is shown, and
+  not at all under reduced motion.
+- **Preload.** On every settle the atlases of the open spread and one either
+  side are FETCHED, and only the open spread's are decoded (off the main
+  thread, `createImageBitmap` from the blob; the fade waits for them). Each
+  spread decodes its own at its own settle — never ahead: a decoded
+  neighbour resident at the next lift made that lift drop a frame about twice
+  as often as `main` ([running the checks](#running-the-checks)). A spread already
+  decoded stays so while it is within ±1. Anything beyond ±1 spread is
+  dropped (its bitmap `close()`d).
+  Neighbours' plates are fetched, not decoded. A riffle's inner landings preload nothing, and a
+  wrapper's plate `<img>` has no `src` until the player shows its page — a
+  riffle renders the wrapper of every animated spread it passes, and must not
+  fetch a full-size plate for each.
+- **Clipping.** One canvas per page, the size of its slot × DPR (≤ 2): a
+  sprite that runs off its page is cut at the page's edge.
+- The cover's and the back's hover layers, and the closed book, are untouched.
+
+### The align tool
+
+PAGE ANIM ALIGN, in the READER NAV dock at `#read-01?intro`
+(`src/dev/pageAnimAlign.ts`). Pick an animation: the book turns to its spread,
+and its rest frame (the row's `rest`) is drawn over the **baked** page with
+`mix-blend-mode: difference` — where it is off, its edges light up; registered,
+it goes dark. `view: plate` shows it over the plate, as it ships. `x`, `y`, `w`
+(h follows the drawing's shape) and `rotation` in 0.01 steps, and `flipX`.
+Arrow keys nudge 1px, Shift+arrow 10px, while an animation is picked — ahead of
+the engine's own listener, so they do not turn the page. **Copy row** puts the
+`pageAnims.ts` row on the clipboard (and the console); **Reset to file** drops
+the panel's row. What persists (`DIAL_STATE_VERSION` 4): the pick and the view
+(the panel), and each animation's EDITED ROW, kept per id in localStorage
+(`dialkit:page-anim-align-rows-v4`, so "Reset dials" and a version bump clear
+it too): a reload draws it again, and a pick loads it into the sliders, until
+**Copy row** (it belongs in the file then) or **Reset to file** clears it. Copy
+keeps the row's `rest`. A row whose width changed rebuilds its atlas on the
+next `npm run anims`; the reader draws any width meanwhile.
+
 ## Navigation
 
 The row: cover-jump, ‹ prev, the page pill (the printed page numbers of the
@@ -803,7 +1009,11 @@ npm run pages              # ~/Discommode-pages/<issue>/*.png → public/issues/
 npm run pages -- --force
 npm run anims              # frame stacks → animations, stills, plates, rests, manifest
 npm run anims -- --only libros
+npm run plates             # ~/Discommode-pages/<issue>/plates/NN.png → public/issues/<issue>/plates/NN.webp
 ```
+
+`npm run anims` also builds the inside pages' atlases, after the cover's
+objects ([inside-page animations](#inside-page-animations)).
 
 Sources live **outside the repo**, in `~/Discommode-pages/<issue>/`: gitignored
 files inside a checkout are invisible to every git safety net. Only WebPs are
@@ -829,7 +1039,7 @@ magenta.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                  # in another shell
-npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,chrome,exit,hover,life,sky
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,chrome,exit,hover,life,sky,pageanims
 ```
 
 `scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
@@ -907,6 +1117,61 @@ exits non-zero on any ✗.
   the same pixels (cloudy noon and clear night, reduced motion). A flip and a
   riffle wake the field; at `readerFlipSplat` 0 a flip does not. And
   [the budget](#the-budget).
+
+- **Inside-page animations** (`pageanims`), spread 17 | 18 at 1× and 2×:
+  both sprite canvases draw (ink on each), backed at the DPR, and step while
+  open; each loop's first drawn frame is its rest frame on open, after a
+  cancelled turn and after a real Prev lands; held mid-turn, both wrappers are
+  hidden, no plate is visible on the strips or under them, and the strips and
+  static slots carry the baked 17 | 18; on every rAF frame of a real Next and
+  Prev, no wrapper is shown while a turn layer is up; turning on to 21 | 22, a
+  newly-neighbouring atlas (sofa-green) is fetched at the settle and still not
+  decoded 1.5 s later, and on to 23 | 24 it is decoded at that settle; reduced motion holds the rest frame (1 draw). **The frame budget is gated on the machine**: the
+  animated spread and a plain one (19 | 20), interleaved run by run, each idle
+  1.5 s then a Next and a Prev; asserted only if the plain spread is clean,
+  otherwise reported as "the machine is busy". The load average is printed.
+
+  Measured 2026-10-01 (M1 Max, load average 5–8): every check green; the
+  budget reported, not asserted — the plain spread's Next missed in every run.
+  Split by phase, the animated spread's idle loop and its settle never went
+  over 16.8 ms at either DPR; the misses are all in the Next's lift, and with
+  the sprite layers removed from the DOM spread 9's Next missed in 8 of 8
+  runs at 2× against 7 of 8 with them — the cost is the 18 → 19 leaf, not the
+  sprites.
+
+  **What the animations cost the existing budgets.** The `sky` section's
+  flips run 3 → 8, onto badges, sfmoma, cuffs and cubiculo, then riffle to 20.
+  Interleaved with `main` (2026-10-01), its "60fps over the sky" missed a
+  single 33 ms frame in 5 of 6 runs on the first cut against 2 of 6 on `main`.
+  Two causes, found by alternating configurations run by run:
+
+  - a riffle rendered a plate `<img>` with its `src` for every animated spread
+    it passed, fetching each full-size plate mid-riffle. The plate's `src` is
+    now set when its page is shown. After it: 1 of 4 against `main`'s 1 of 4.
+  - **the neighbours' decoded atlases** make the FIRST lift off a spread next
+    to an animated one drop a frame more often. There is no long main-thread
+    task in it (Long Animation Frames: none); the frame drops two frames into
+    the lift, where the curl's faces rasterise — raster or GPU work, not
+    script. First cut (fetch and decode at the settle): a long frame in the
+    first lift in 5 of 12 runs, 2 of 12 with the preload off, 1 of 12 on
+    `main`. Deferring the neighbours' decode to idle time 400 ms into a quiet
+    settle did not help: pooled over three interleaved runs of that section's
+    sequence (3 → 8, then a riffle to 20), 2026-10-01, load average ~6:
+
+    | | first lift | riffle |
+    | --- | --- | --- |
+    | neighbours decoded after 400 ms, in idle time | 19 of 72 (26%) | 13 of 72 (18%) |
+    | **neighbours fetched, never decoded ahead (shipped)** | 5 of 48 (10%) | 5 of 48 (10%) |
+    | `main` | 9 of 72 (12.5%) | 9 of 72 (12.5%) |
+
+    It is a decoded atlas being RESIDENT at the lift that costs it, not when
+    it was decoded (both finish seconds before). So neighbours are fetched,
+    not decoded, and each spread decodes its own at its own settle — the fade
+    already waits for it — which brings the lift back to `main`'s rate, for
+    a decode at every settle.
+
+  `verify:reader`'s `sky` ≤ 8 ms budget holds at the same levels as `main`
+  (flip main thread p95 3.8–4.2 ms on both).
 
 The z-order and exit checks photograph the book over the sky now, so both hold
 it still first (`__skyPinTime`, `__skyHoldFluid`): two captures must differ by

@@ -95,6 +95,16 @@ export function staggerMs(index: number, stagger: number): number {
 
 // ── the boil signal ─────────────────────────────────────────────────────
 
+/**
+ * How many whole steps at `fps` fit in `ms`: the stepped clock hand-drawn
+ * animation runs on. The boil steps by it, and so do the inside pages' sprites
+ * (pageAnimPlayer.ts), so a page loop and a boil at one rate change drawing on
+ * the same beat.
+ */
+export function stepsIn(ms: number, fps: number): number {
+  return Math.floor((ms * Math.max(0, fps)) / 1000);
+}
+
 /** One boil step, each component in [-1, 1]: offset x, offset y, rotation. */
 export interface BoilStep {
   x: number;
@@ -227,7 +237,7 @@ export class Boil {
     let step = this.lastStep;
     if (this.running) {
       // max: a dial lowering the rate mid-boil must not walk the sequence back.
-      step = Math.max(step, this.base + Math.floor(((now - this.clock) * Math.max(0, d.boilFps)) / 1000));
+      step = Math.max(step, this.base + stepsIn(now - this.clock, d.boilFps));
       this.lastStep = step;
     }
     if (hold) {
