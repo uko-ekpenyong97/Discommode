@@ -485,9 +485,9 @@ The wake has its own panel, **SKY · FLUID**, next to it. See [The wake](#the-wa
 | Dial | Default | What it does |
 | --- | --- | --- |
 | `fluidOn` | on | Master switch. Off, the sky is exactly the sky without a wake. |
-| `fluidRadius` | 0.08 | Splat radius, as a fraction of the viewport height (the gaussian's 1/e). |
-| `fluidStrength` | 1.0 | What the pointer puts in: its push and its density. |
-| `fluidCurl` | 20 | Vorticity confinement: how much the wake curls into eddies. |
+| `fluidRadius` | 0.02 | Splat radius, as a fraction of the viewport height (the gaussian's 1/e). Uko's tuning, 2026-09-30 (was 0.08). |
+| `fluidStrength` | 0.45 | What the pointer puts in: its push and its density. Uko's tuning, 2026-09-30 (was 1.0). |
+| `fluidCurl` | 7 | Vorticity confinement: how much the wake curls into eddies. Uko's tuning, 2026-09-30 (was 20; the measurements in this file that name a curl were taken at 20). |
 | `velocityDissipation` | 0.98 | Velocity kept per 60 Hz frame. |
 | `densityDissipation` | 0.94 | Density kept per 60 Hz frame. A parting closes in about a second. |
 | `fluidWarp` | 0.02 | How far every noise sample moves with the wake. |

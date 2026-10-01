@@ -46,8 +46,8 @@ export interface PaperDials {
 
 export const PAPER_DEFAULTS: PaperDials = {
   paper: 'on',
-  creaseBlend: 0.2,
-  creaseDisplacement: 0.008,
+  creaseBlend: 0,
+  creaseDisplacement: 0,
   hoverRadius: 0.35,
   hoverDepth: 0.05,
   hoverMs: 300,
