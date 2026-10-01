@@ -3,8 +3,10 @@
 A card can have a LIVE cover: a shader or a Rive file, drawn every frame,
 reacting to the mouse, and transparent where its ground is unless it brings
 its own ([the backdrop](#transparency-and-the-backdrop)). Card 02 (rive-site) is
-the first: the tuned "Shader variation 3 — Soft contour field", with the
-weather sky showing through its ground. Card 04 (Nosey) is the second, and is
+the first: the tuned "Shader variation 3 — Soft contour field", its lenses a
+lava lamp that the pointer warms, on a solid dark ground of its own
+([Card 02's lava](#card-02s-lava); until 2026-10-01 the weather sky showed
+through its ground). Card 04 (Nosey) is the second, and is
 Rive: Nosey's four characters on an opaque grey ground of their own, looking at
 the pointer, on "Main" in the grid and bouncing off the walls on "Main Bounce"
 as the detail hero — see
@@ -21,13 +23,13 @@ so what is tuned there is what ships.
 
 > **On the numbers in this file.** Every measurement is from
 > `npm run verify:cover` and `npm run verify:detail` on 2026-09-24 (card 02),
-> 2026-09-27 (card 04) and 2026-10-01 (card 03), on an Apple M1 Max (ANGLE /
+> 2026-09-27 (card 04) and 2026-10-01 (card 03, and card 02's lava), on an Apple M1 Max (ANGLE /
 > Metal), headless Chromium for the first and the third and Chrome for the
 > second.
 
 | | |
 | --- | --- |
-| the grid, card 02 live, the sky through its ground | `docs/covers/grid-row.webp` |
+| the grid, card 02 live, the sky through its ground (before 2026-10-01) | `docs/covers/grid-row.webp` |
 | the detail hero, live on the paper | `docs/covers/hero.webp` |
 | the same tile over NOON and over NIGHT | `docs/covers/noon-night.webp` |
 | the detail hero before / after the card chrome came off, clear NOON | `docs/covers/bare-hero.webp` |
@@ -37,8 +39,33 @@ so what is tuned there is what ships.
 | card 04: the same tile over NOON and over NIGHT (the file before 2026-09-28) | `docs/covers/nosey-noon-night.webp` |
 | card 03: the grid tile at rest (drifting) and hovered, the detail hero hovered, under the paper (2026-10-01) | `docs/covers/drex.webp` |
 | card 03: the frame at 1000 × 1300, the pointer at (-1, -1), beside drexCover.js's `preview-figma-rest.png` (2026-10-01) | `docs/covers/drex-vs-figma.webp` |
+| card 02's lava: the grid tile and the detail hero, at rest and with the pointer over them, the clock pinned — `main` (top) and the lava (bottom) (2026-10-01) | `docs/covers/lava.webp` |
 
 ## Handoff
+
+**Card 02's lava (2026-10-01).** Card 02's lenses (stage 5's slugs) are a lava
+lamp: a list of up to 16 blobs that rise and sink on their own periods,
+stretch and wobble, and smooth-min into one field, so they merge and split;
+the pointer warms the ones near it — they swell, drift toward it (or away: a
+dial) and speed up — on the grid tile and on the hero, and the warmth eases
+out when it leaves. Their look (rim, the minified field inside, the dots, the
+inks) is the slugs'. The sky no longer shows through: card 02 is `solid` on
+its own `lava.background`, #0d1220 (Uko's tuning; the plan's pick was #425EB6, the navy ink). A LAVA panel at
+`#item-02?intro`; `slugCell`, `slugPresence` and `slugDrift` are gone;
+`DIAL_STATE_VERSION` is 5. See [Card 02's lava](#card-02s-lava). At the last
+runs, on the final defaults: `verify:cover` passed but for `lsweep` in the
+full run (6 skipped: card 02's `sky` and `ground` now, card 04's as
+before), with three new checks, `lmove`, `lpointer` and `lsweep`.
+`lsweep` measured 1.78 ms there, its draws benched at twice what they bench
+alone, straight after the other suites; alone, twice, 0.73 and 0.83 ms
+([At most two easing tiles](#the-pointers-warmth)). `verify:detail`'s
+identity and hand-off: card 02 as the hero 1.92% at 1728×996 @2×, held to
+3.5% (it was 2.5%; 3.04% on the first ground, #425EB6 — the same sub-pixel
+drift, see Checking); the full suite passed on #425EB6. `verify:gpu` flat
+(the GPU process 229.0 → 208.6 MB over 20 open/close cycles of project 02;
+`main` 206.1 → 197.3). `npm test` (402), `tsc -b`, `lint`, `build`. The
+stills (`npm run covers`): card 02's are opaque now, 239 KB and 36 KB (they
+were 1.1 MB and 181 KB).
 
 **Card 03, Drex (2026-10-01).** Branch `andorra` makes card 03's cover live:
 Figma's Frame 5 (Risograph → Dither → Hover reveal), ported from Uko's
@@ -156,8 +183,8 @@ npm run verify:detail -- --url http://localhost:5191
 
 | | |
 | --- | --- |
-| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h)`, `benchPresent(w, h)`, `setSite({...})`, `backdrop(id)` (the cover's own, `sky` or `solid`); `dials(id)`, `patchDials(id, {folder: {dial: v}} \| null)` (null: back to the JSON) |
-| `window.__paper` | the paper's own hooks (docs/detail-paper.md), plus `coversDrawn()` and `benchCover()` for the hero, and `override({ hideCovers: true })`: the live-cover planes undrawn |
+| `window.__covers` | `pin(t \| null)` holds the cover clock; `time()`, `presenters()`, `frames()`, `benchStage(id, w, h, warm)` (warm: under the pointer), `benchPresent(w, h)`, `setSite({...})`, `backdrop(id)` (the cover's own, `sky` or `solid`); `dials(id)`, `patchDials(id, {folder: {dial: v}} \| null)` (null: back to the JSON); card 02's `lava.blobs(which, t)` and `lava.warmth(which)` (`which`: 'rest', 'hero' or a presenter's index) |
+| `window.__paper` | the paper's own hooks (docs/detail-paper.md), plus `coversDrawn()` and `benchCover(only, warm)` for the hero, and `override({ hideCovers: true })`: the live-cover planes undrawn |
 
 **Gotchas that cost time:**
 
@@ -184,8 +211,9 @@ npm run verify:detail -- --url http://localhost:5191
 | `src/covers/rive/riveCover.ts` | Rive covers: the runtime and the file (once each), the players (grid, hero), the pointer, the one-off work's scheduling, per-frame cost, `__covers.rive`. |
 | `public/projects/nosey/cover.riv` | Card 04's file, copied in by `npm run projects` from `~/Discommode-pages/projects/nosey/cover.riv`. |
 | `src/covers/covers/rive-site.glsl` | Card 02's shader: `//#common`, `//#passA`, `//#passB`. Shared with the bench. |
-| `src/covers/covers/rive-site.json` | Card 02's dials, as a DialKit config; its defaults ARE the tuned values. Shared with the bench. |
-| `src/covers/covers/rive-site.ts` | Card 02's `CoverDef`: dial values → uniforms (the bench's code, for three.js). |
+| `src/covers/covers/rive-site.json` | Card 02's dials, as a DialKit config; its defaults ARE the tuned values. Shared with the bench. Its `lava` folder is the LAVA panel's. |
+| `src/covers/covers/rive-site.ts` | Card 02's `CoverDef`: dial values → uniforms (the bench's code, for three.js), the lava's blobs per draw, and its per-instance warmth (`instanceExtra`). |
+| `src/covers/covers/lava.ts` | Card 02's lava: the blobs' homes, periods and shapes from the seed (`LavaModel`), where they are at any moment, and one instance's warmth (`LavaInstance`). Shared with the bench. |
 | `src/covers/covers/riveText.ts` | The "Rive" strip as a signed distance field, built once on the CPU. Shared with the bench. |
 | `src/covers/covers/drex.glsl` | Card 03's two passes, `drexCover.js`'s FS_PRINT and FS_REVEAL ([Card 03](#card-03-drex-a-cached-pass-a)). |
 | `src/covers/covers/drex.json`, `drex.ts` | Card 03's dials (every DEFAULTS value of `drexCover.js`) and its `CachedCoverDef`: the input picture (`buildInputCanvas`), the uniforms, the light (`restLight`, `lightAt`). |
@@ -196,9 +224,9 @@ npm run verify:detail -- --url http://localhost:5191
 | `src/covers/coverStage.ts` | The DOM instances' ONE renderer: one draw per aspect at rest, one per domed instance, `drawImage` to each. |
 | `src/covers/CoverTile.tsx` | One DOM instance: a 2D canvas over the still. |
 | `src/covers/coverClock.ts` | The shared clock. |
-| `src/covers/dome.ts` | The mouse dome: a spring (card 02) or an ease (card 03); `heroDome`, shared by the DOM hero and the paper plane. |
+| `src/covers/dome.ts` | The mouse dome: a spring (card 02) or an ease (card 03); `heroDome`, shared by the DOM hero and the paper plane; the cover's per-instance state beside it (`advanceDome`, `domeUp`, `adopt`). |
 | `src/covers/coverDials.ts` | The live dial values (a module store), the site's dials, and `coverBackdrop(id)` / `backdropUnder(id)`: what is drawn behind each cover. |
-| `src/dev/coverDials.tsx` | The COVER panel (dev). |
+| `src/dev/coverDials.tsx` | The COVER panels and card 02's LAVA panel (dev). |
 | `src/covers/bench.ts`, `devHooks.ts` | Dev: `window.__covers`, the GPU benchmark. |
 | `scripts/make-cover-stills.mjs` | `npm run covers`: the stills. The tail of `npm run projects`. |
 | `scripts/cover-verify.mjs` | `npm run verify:cover`. |
@@ -261,10 +289,11 @@ backdrop describes the file. It is a legitimate choice per cover:
 
 | | |
 | --- | --- |
-| `sky` (default; card 02) | the cover's ground is transparent and the sky shows through it. The site dial below applies. |
-| `solid` (cards 03, 04) | the cover brings its own opaque ground (card 04's artboards are filled #E0DDDD; card 03's frame is white paper, under all of pass B) and **nothing is drawn behind it**, including the site dial's colour. The sky does not show through, by design. |
+| `sky` (default; no cover since 2026-10-01 — card 02 was) | the cover's ground is transparent and the sky shows through it. The site dial below applies. |
+| `solid` (cards 02, 03, 04) | the cover brings its own opaque ground (card 02's `lava.background`, #0d1220, under all of pass B; card 04's artboards are filled #E0DDDD; card 03's frame is white paper, under all of pass B) and **nothing is drawn behind it**, including the site dial's colour. The sky does not show through, by design. |
 
-**The site dial**, for a `sky` cover only (`backdropUnder(id)` in
+**The site dial**, for a `sky` cover only — none, now; the dials are still on
+card 02's COVER panel, for the next one (`backdropUnder(id)` in
 `coverDials.ts`, which the stage, the Rive players and the paper all ask):
 
 | | |
@@ -300,7 +329,8 @@ What that took, outside the covers:
   and the live hero composite the same way.
 
 `verify:cover`'s `sky` check: the cover ground inside the i's stem, over a clear
-NOON and a clear NIGHT: mean luminance 184.2 and 128.7, **30% apart**.
+NOON and a clear NIGHT: mean luminance 184.2 and 128.7, **30% apart** (card 02
+until 2026-10-01; skipped since, as `ground` is).
 
 ### No card in the detail view
 
@@ -407,7 +437,9 @@ CARD drives the dome in that tile's frame coordinates, and every other instance
 of the cover shows it at rest. The hero has one spring (`heroDome`), driven by
 the pointer over the hero's PANEL. The DOM face and the paper plane both read
 it, stepped by wall time so reading it twice in a frame integrates once. The
-paper's hover dent stays; both react at once. The morph card has no dome.
+paper's hover dent stays; both react at once. The morph card has no dome —
+except card 02's, which travels on `heroDome` with its lava warmth
+([Card 02's lava](#the-pointers-warmth)).
 (Until 2026-10-01 the listener was on the tile itself: the hover overlay's CTA
 sits over it and took the pointer, and under the paper the hero's DOM face is
 `visibility: hidden` and took none. Card 04's pointer was already read this
@@ -441,13 +473,14 @@ it crops exactly as the live cover does wherever it stands in for it:
 
 | | | |
 | --- | --- | --- |
-| `cover-still.webp` | 900 × 1326, 1.1 MB | where the still IS what shows: the detail neighbours, reduced motion, no WebGL. Drawn at 1800 and halved. |
-| `cover-still-sm.webp` | 360 × 530, 181 KB | under a live tile, for its first paint only |
+| `cover-still.webp` | 900 × 1326, 239 KB | where the still IS what shows: the detail neighbours, reduced motion, no WebGL. Drawn at 1800 and halved. |
+| `cover-still-sm.webp` | 360 × 530, 36 KB | under a live tile, for its first paint only |
 
-The full still is 1.1 MB because the particle field is noise, and noise does not
-compress: WebP at 900 px is ~1 MB at any quality that holds up, and AVIF was
-measured at 400–900 KB at the sizes that hold up. So it is loaded only where it
-shows, and the grid's first paint gets the small one. Card 02's old face (the
+The full still was 1.1 MB (and the small one 181 KB) while the cover let the
+sky through: most of that was its alpha, the particle field's noise in a
+fourth channel. Opaque on its own ground since 2026-10-01, it has none. It is
+still loaded only where it shows, and the grid's first paint gets the small
+one. Card 02's old face (the
 flat placeholder `/projects/02/card.webp`; it was never in `CARD_FACES`) is
 replaced by the still.
 
@@ -490,10 +523,12 @@ message.
 | `rings2` | stage 2: the contour rings, shown only through the lenses |
 | `dots3` | stage 3: the particle field (`cellK` / `density`, size, band, colour shift) and the mouse dome |
 | `riso4` | stage 4: paper, the four inks fitted to the reference, their opacities and misregistration; the grade (identity) |
-| `refraction5` | stage 5: the slug lenses (`slug*`, `minify`, `rimSmear`), the noise-blob fallback, the budget cuts (`noiseHalfRes`, `dispersionCut`) |
+| `refraction5` | stage 5: the slug lenses' shapes (`slugWidthMin/Max`, `slugLengthMin/Max`, `slugTilt`, `slugBend`, `slugSeed`), `minify`, `rimSmear`, the noise-blob fallback, the budget cuts (`noiseHalfRes`, `dispersionCut`). Where the slugs ARE is the lava's (`lava`, the LAVA panel) |
+| `lava` | card 02's lava and its ground: the LAVA panel ([Card 02's lava](#dials-lava)) |
 | site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr`, `coverRenderMax`, `coverPaperShade` | not the cover's: in `coverDials.ts`, not the JSON |
 
-The COVER panel persists (`dialkit:cover-rive-site-v1` in localStorage), as the other
+The COVER panel persists (`dialkit:cover-rive-site-v5` in localStorage; LAVA,
+`dialkit:cover-rive-site-lava-v5`), as the other
 dev panels do. A value set there overrides the JSON in that browser until reset,
 and the verify suites run in fresh contexts, so they always see the JSON.
 
@@ -560,6 +595,127 @@ line art, less. `docs/covers/tile-crop-2x.webp` is the focused tile at 1728×996
 capped at 896 (left) and uncapped (right). The dial goes up to
 2048 for the sharpness back, at the cost above; it is on the COVER panel's
 site folder (card 02's, at `#item-02?intro`).
+
+## Card 02's lava
+
+Card 02's lenses — stage 5's slugs, the bean shapes with a white rim and a
+finer field inside them — are a lava lamp (2026-10-01). Until then each slug
+circled its home by `slugDrift` (40 units) once a loop (69 s), and they
+barely moved. What changed is WHERE they are and how their field is made;
+how each one looks (`blob` in the GLSL is the slug's bent, tapered capsule,
+line for line) and everything drawn through them did not.
+
+**The field.** The slugs were one per cell of a jittered grid, the nearest
+of nine; a blob that travelled further than a cell would have popped at its
+edge. They are a LIST now: up to 16 blobs (`uBlobA`, `uBlobB`, `uBlobS`,
+uniform arrays: centre, length, width, axis, curvature, a bounding radius,
+taper, bulge), and the field is their distances SMOOTH-MIN'd (`uLava.y`,
+`mergeSoftness`), the lens direction blended with the same weights — so two
+that pass close merge into one and part again. A blob too far to touch the
+field is skipped by its bounding radius.
+
+**The motion** (`lava.ts`, on the CPU, every draw, from the shared clock):
+
+| | |
+| --- | --- |
+| homes | a jittered grid of `count` cells over the frame (3 × 3 at 9), as the slugs' were — so they read as separate blobs, not one mass |
+| rise and fall | each about its home by 0.5–1 of a cell's height, on its own period — `riseSpeed` (frame units a second) over a 500-unit travel, × 0.75–1.3, spread by the golden ratio so no two share one (10–17 s at 78) — and phase; lingering at the top and bottom (tanh of a sine) |
+| stretch | up to 1.3× longer at full speed and as much thinner (length × width kept), and straighter |
+| wobble | the width breathes (±20% × `wobble`), the bend flexes, it sways (±81 units × `wobble`), each on a period of its own (5.5–9 s × 0.8–1.4) |
+
+At rest that is a function of the clock alone, so every instance shows the
+same moment: the grid's one shared draw, `clock` (0.30–0.31%), `morph`
+(0.20–0.21%), the stills (t = 0). The motion does not loop exactly any more.
+Under reduced motion card 02 is its still, as every cover is: nothing changed
+there (`reduced`).
+
+**Why 9.** The plan was 12. Measured over the tile's crop (a CPU sampling of
+both fields, seven moments), the old slugs covered 27% of it in ~11 separate
+blobs; 12 lava blobs covered 34%, and the grid's columns pressed them into a
+few masses. At 9, 27% — today's density, with a few of them merged at any
+moment. It was chosen for the look, before any budget was measured, and the
+budget did not ask for less ([Frame time](#frame-time-lava)).
+
+### The pointer's warmth
+
+Each instance under the pointer keeps a `LavaInstance` beside its dome
+(`DomeSpring.extFor`, made by the cover's `instanceExtra`), stepped with
+the dome once a frame (`advanceDome`: the stage, and the paper for the
+hero):
+
+| | |
+| --- | --- |
+| warmth | eases toward the dome's height: in over 0.25 s, out over 0.45 s; a blob's is that × `(1 − (d/r)²)²` at distance d, `cursorRadius` r |
+| swell | on the GPU: the field's level drops by up to 0.45 × the mean width × `cursorStrength` near the pointer (`uLavaPtr`: the pointer in cover UV, the warmth, the radius — per draw, on the shared context), so the blobs bulge toward it |
+| drift | up to 0.8 × `cursorStrength` of the way toward the pointer (`cursorSign` toward) or away |
+| speed | up to 1.5 × `cursorStrength` faster, as extra phase per blob; once the pointer has gone it relaxes (0.35 s, by what warmth is left) to the nearest whole cycle, so the blob is back on the shared timeline |
+
+The instance is drawn for itself while its dome is up OR its warmth is not
+settled (`domeUp`), and rejoins the shared draw when the warmth is under
+0.01 and every blob within 0.005 rad of the timeline: ~2.2 s after the
+pointer leaves (`lpointer`: 130–139 frames), moving back at most 1.0–4.3
+units a frame. A click on a warm tile hands its dome and warmth to
+`heroDome` (`adopt`), which the morph card and the hero share, so the
+click does not snap the cover to rest; a state nobody shows within 800 ms
+(the click did not open the view) is dropped. That hand-off is only for a
+cover with `instanceExtra`: card 03's morph card still has no dome.
+
+**At most two easing tiles.** A pointer swept across the grid in a second
+leaves every card-02 tile it crossed easing at once — three at 1728×996 —
+and each is a draw of its own: `lsweep` measured the worst grid frame at
+1.415–1.850 ms over four runs, against 1.2. So no more than TWO grid tiles of
+a cover with `instanceExtra` are drawn for themselves (`MAX_OWN_TILES`,
+`coverStage.ts`): the one under the pointer, then the one it left most
+recently (`DomeSpring.priority`). A third — the one easing longest — goes
+back to the shared draw at once, on the shared timeline; the two that keep
+theirs ease out in full. With the cap: at most 2, the worst grid frame
+1.005–1.065 ms. The cost is that third tile: what was left of its warmth
+(about a tenth, a second after the pointer left it) stops at once.
+
+The dots' own dome (`dots3.dome`) is unchanged and reacts as before.
+
+### Dials (LAVA)
+
+**LAVA** (`src/dev/coverDials.tsx`), at `#item-02?intro` beside COVER ·
+rive-site, which no longer shows the folder. Copy pastes into
+`rive-site.json`'s `lava`.
+
+| dial | default | |
+| --- | --- | --- |
+| `count` | 9 | 1–16 blobs; the grid of homes follows it |
+| `size` | 1 | × the slugs' widths and lengths |
+| `riseSpeed` | 78 | frame units a second, over a 500-unit travel; 0 holds them where they are (the wobble still moves them) |
+| `wobble` | 0.31 | breathing, flexing and swaying, 0–1 |
+| `mergeSoftness` | 86 | the smooth-min's width, frame units; 0 is a plain min |
+| `cursorRadius` | 249 | frame units |
+| `cursorStrength` | 0.38 | 0 is no reaction |
+| `cursorSign` | away | or toward |
+| `background` | #0d1220 | the cover's ground, a colour picker |
+
+Those are Uko's tuning from the panel (2026-10-01); the first defaults were
+40, 0.35, 60, 260, 0.6, toward and #425EB6.
+
+### Frame time (lava)
+
+`budgets` now benches the hovered tile's own draw and the hero WARM (the
+pointer near the centre, the warmth full on: `benchDome`) and counts at least
+four tiles' copies. Two runs each, the same script against `main` and the
+branch, back to back:
+
+| GPU ms | `main` | lava | budget |
+| --- | --- | --- | --- |
+| hero, 1728×996 @2× (1256×1633) | 0.855 / 0.925 | 0.895 / 0.795 (0.710 in the full run) | ≤ 1.0 |
+| hero, 1440×900 @2× | 0.765 / 0.800 | 0.690 / 0.600 | ≤ 1.0 |
+| grid worst frame, 1728×996 @2× (shared + hovered + 4 copies) | 0.825 / 0.960 | 0.985 / 0.780 (1.065) | ≤ 1.2 |
+| grid worst frame, 1440×900 @2× | 0.960 / 1.090 | 0.895 / 0.840 | ≤ 1.2 |
+
+Those were on the first defaults. On the final ones (`riseSpeed` 78,
+`mergeSoftness` 86, …), the full run: the hero 0.800 ms at 1728×996 @2×, the
+grid's worst frame 0.615 ms.
+
+Within the run-to-run spread: the 9 blobs, each skipped where it cannot touch
+the field, cost about what the 9 cells did, and pass A is at half the
+output's resolution (`noiseHalfRes`). The CPU's part is under 0.02 ms a draw.
 
 ## Card 03, Drex: a cached pass A
 
@@ -1065,7 +1221,7 @@ canvas already is: no conversion).
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground,
+npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,
                               #   rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,
                               #   dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets
 npm run verify:detail         # its identity and hand-off cover cards 02 and 04
@@ -1076,7 +1232,21 @@ npm run verify:detail         # its identity and hand-off cover cards 02 and 04
 only; `nogl` now also shows card 04's tiles live without WebGL). Pixel checks
 hide the sky and the dev overlays, except `sky` and `ground`; a pixel differs
 past 32 levels. About ten minutes. `sky`, `ground`, `rsky` and `rground` are
-skipped for a cover whose `coverBackdrop` is `solid` (card 04 now).
+skipped for a cover whose `coverBackdrop` is `solid` (cards 02 and 04 now).
+
+Card 02's lava's three (2026-10-01), on the real path — the clock running and
+the pointer moving from the first frame, events through the browser at the
+tile's and the hero's on-screen positions, the hover overlay in place
+(transparent):
+
+| check | what | measured |
+| --- | --- | --- |
+| `lmove` | the marquee held, a tile and the hero (under the paper) 2 s apart; the control: `riseSpeed` and `wobble` 0. And the blobs at one moment: some rising, some sinking | 14.5–15.4% (tile), 14.4–15.2% (hero) of pixels moved > 3%; control 0.00%; of 9, 3 rising and 6 sinking |
+| `lpointer` | the dots' dome off. The tile hovered: warmth, the blobs near the pointer drawn toward it (and away, with the sign), extra phase; the tile warm against the same moment once the pointer has gone (clock pinned), near the pointer and beyond two radii, and with strength 0 (the control); every frame of leaving; the same on the hero under the paper | warmth 1.00; the pull, against the same instance without it: 8.6–9.9 units toward, −15.7 to −21.1 away (hero 10.3–13.6 toward); 0.33–0.37 rad ahead (hero 0.57–0.62); near 8.8–10.1% (hero 7.6–9.2%) > 3%, beyond 0.00%, control 0.00%; leaving 31–202 units back at ≤ 4.3 a frame, on the shared draw after 130–132 frames |
+| `lsweep` | 1728×996 @2×: the pointer swept through the visible part of every card-02 tile in ~1 s (the dev dock hidden — it covers the top-right tile's strip); every frame's own draws of card 02 counted until the grid is at rest; the worst grid frame = the shared draw + that many warm draws + 4 copies, each benched | uncapped: 3 tiles at once, 1.415–1.850 ms (four runs); capped at 2: 0.73–1.07 ms alone, 1.78 ms in the full run (its draws benched at twice their cost alone) |
+
+`lpointer` fails with the tile's pointer path cut (`spring.point` not
+called): the hovered tile is never drawn for itself.
 
 Card 04's eight, with the numbers of the last run. `rpointer` is the one that
 runs as a person does (below). The others need a still clock: the Rive players advance by
@@ -1126,7 +1296,7 @@ has two budgets of its own, documented in the script:
 
 | | measured | budget | why |
 | --- | --- | --- | --- |
-| hero | 0.000–0.004%; **2.1–2.2%** at 1728×996 @2× | 2.5% | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour |
+| hero | 0.000–0.004%; **1.92%** at 1728×996 @2× on #0d1220 (3.04% on #425EB6; 2.1–2.2% before 2026-10-01) | 3.5% (2.5% before) | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour. On the opaque navy ground the same drift puts more of the dot field past 32 levels: 3.04% every run, `main` 2.11% (the same script and machine), in the same pattern, no blob drawn apart |
 | as a neighbour (the still) | 1.0–5.0% | 7% (card 01's) | Chrome's scale(0.85) resampling of the `<img>` against a texture resized to the card — card 01's documented problem, on pure noise |
 
 Card 04, the same way: as the hero **0.149–0.434%**, the spec's 0.5% (the DOM
@@ -1182,8 +1352,8 @@ paper's effects on and the sky there.
    the live cover at the clock's current time, at the midpoint of the slide.
    The rest of the page is moving then, but the switch is there. A cross-fade,
    or the still drawn at the current time, would hide it.
-2. **The still is heavy** (1.1 MB), for the reason above. It is only fetched
-   where it shows.
+2. **The still was heavy** (1.1 MB). Resolved by card 02's own ground
+   (2026-10-01): 239 KB.
 3. **A lost context falls back to nothing, not the still.** If the stage's
    context is lost, the tiles keep their last frame. The still is behind them,
    hidden once the first frame landed, and it is not brought back.
@@ -1230,3 +1400,10 @@ paper's effects on and the sky there.
    hair short of its end, the scale is not quite 1, and a 1-px dither resampled
    that little still moves pixels past 32 levels. It lands on the same print,
    pixel for pixel.
+15. **A warm tile is drawn for itself for ~2.2 s after the pointer leaves**
+   (card 02's lava easing back onto the shared timeline). Two may ease at once
+   (`MAX_OWN_TILES`): the budget's one hovered tile and one more. A third
+   swept past drops its warmth on the spot rather than easing out.
+16. **The site's `coverBackdrop` and `coverBackdropColor` apply to no cover**
+   since card 02 became `solid`. They are on card 02's COVER panel still,
+   for the next cover that lets the sky through.

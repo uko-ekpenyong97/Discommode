@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { addPresenter, coverLiveAvailable } from './coverStage';
 import { coverStill as clockStill, subscribeReducedMotion } from './coverClock';
-import { coverStillUrl, riveCover } from './covers';
-import { DomeSpring } from './dome';
+import { coverStillUrl, riveCover, shaderCover } from './covers';
+import { DomeSpring, heroDome } from './dome';
 import { frameOf } from './frame';
 import { rivePointer } from './rive/riveCover';
 import type { RivePlayerRole, RivePointerKind } from './rive/riveCover';
@@ -95,11 +95,21 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       spring.point(f[0], f[1]);
     };
     const onLeave = () => spring?.leave();
+    // A click on a grid tile of a cover that keeps state per instance (card
+    // 02's lava warmth) hands that state to the hero's dome, which the morph
+    // card and the hero share: the warmth carries into the detail view and
+    // eases out there, instead of the morph starting at rest.
+    const def = shaderCover(coverId);
+    const onDown = () => {
+      if (spring && def?.instanceExtra && dome === 'own') heroDome.adopt(spring, performance.now(), def);
+    };
     target.addEventListener('pointermove', onMove, { passive: true });
     target.addEventListener('pointerleave', onLeave);
+    target.addEventListener('pointerdown', onDown);
     return () => {
       target.removeEventListener('pointermove', onMove);
       target.removeEventListener('pointerleave', onLeave);
+      target.removeEventListener('pointerdown', onDown);
       onLeave();
       remove();
     };

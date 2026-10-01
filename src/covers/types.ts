@@ -39,6 +39,23 @@ export interface Dome {
   x: number;
   y: number;
   amp: number;
+  /** What the cover keeps per instance beside it (`instanceExtra`; card 02's
+   *  lava warmth), or none. */
+  ext?: InstanceExtra;
+}
+
+/**
+ * Per-instance state a cover keeps beside an instance's dome (card 02's lava:
+ * the pointer's warmth, and each blob's extra phase), stepped once a frame by
+ * wall time with the dome (dome.ts, `advanceDome`). While it is not settled the
+ * instance is drawn for itself, as while its dome is up.
+ */
+export interface InstanceExtra {
+  step(now: number, t: number, dome: Dome, values: DialValues): void;
+  /** Back at rest: the instance shows what the shared draw shows. */
+  settled(): boolean;
+  copyFrom(other: InstanceExtra): void;
+  reset(): void;
 }
 
 /**
@@ -103,6 +120,10 @@ interface ShaderCoverBase {
   bind: (v: DialValues, a: Uniforms, b: Uniforms, assets: Record<string, Texture>) => void;
   /** How the mouse dome follows the pointer, from the dials. */
   domeMotion: (v: DialValues) => DomeMotion;
+  /** State it keeps per instance beside the dome (card 02's lava warmth). A
+   *  cover with it carries a clicked tile's state into the morph card and the
+   *  hero (CoverTile, DetailMorph), so the click does not snap it to rest. */
+  instanceExtra?: () => InstanceExtra;
   /** Per draw: time, crop, target mapping, dome. No allocation. */
   frameUniforms: (v: DialValues, a: Uniforms, b: Uniforms, f: InstanceFrame, assets: Record<string, Texture>) => void;
   /** The dials its STILL is drawn with (`npm run covers`), and that reduced

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useDialKit, useDialKitController } from 'dialkit';
 import type { DialConfig as KitConfig } from 'dialkit';
 import { COVERS } from '../covers/covers';
-import { SITE_COVER_DEFAULTS, setCoverValues, setSiteCoverDials } from '../covers/coverDials';
+import { SITE_COVER_DEFAULTS, coverValues, setCoverValues, setSiteCoverDials } from '../covers/coverDials';
 import type { DialValues } from '../covers/dialValues';
 import { riveStatus } from '../covers/rive/riveCover';
 import type { RivePlayerStatus, RivePointerStatus } from '../covers/rive/riveCover';
@@ -21,13 +21,16 @@ const S = SITE_COVER_DEFAULTS;
  * view is suspended there, which is why this host is mounted even then) and the
  * app's own everywhere else.
  *
+ * Card 02's `lava` folder is not here: it is the LAVA panel, below.
+ *
  * Card 03's (COVER · DREX) is its JSON only, below. A Rive cover's panel
  * (card 04, at #item-04?intro) is its JSON only too — riveSwapAt,
  * riveMaxDpr, and its own coverPaperShade — and no site folder: two persisted
  * panels writing the same site dials would each overwrite the other's.
  */
 function useCoverPanel(id: string) {
-  const def = COVERS[id];
+  const { lava: _lava, ...dials } = COVERS[id].dials as KitConfig;
+  void _lava;
   const v = useDialKit(
     `COVER · ${id}`,
     {
@@ -38,7 +41,7 @@ function useCoverPanel(id: string) {
         coverRenderMax: [S.coverRenderMax, 256, 2048, 16],
         coverPaperShade: [S.coverPaperShade, 0, 1, 0.01],
       },
-      ...(def.dials as KitConfig),
+      ...dials,
     } as KitConfig,
     { id: persistedPanelId(`cover-${id}`), persist: true },
   );
@@ -51,12 +54,30 @@ function useCoverPanel(id: string) {
       coverRenderMax: site.coverRenderMax,
       coverPaperShade: site.coverPaperShade,
     });
-    setCoverValues(id, cover);
+    // the LAVA panel's folder as that panel last set it
+    const lava = coverValues(id).lava;
+    setCoverValues(id, lava === undefined ? cover : { ...cover, lava });
   }, [id, v]);
 }
 
 function RiveSitePanel() {
   useCoverPanel('rive-site');
+  return null;
+}
+
+/**
+ * LAVA — card 02's blobs (src/covers/covers/lava.ts): how many, how big, how
+ * fast they rise, how much they wobble, how softly they merge; how the
+ * pointer warms them (radius, strength, toward or away); and the cover's solid
+ * background. Its own panel, at #item-02?intro with COVER · rive-site. Copy
+ * pastes into rive-site.json's `lava` folder.
+ */
+function LavaPanel() {
+  const v = useDialKit('LAVA', COVERS['rive-site'].dials.lava as KitConfig, {
+    id: persistedPanelId('cover-rive-site-lava'),
+    persist: true,
+  });
+  useEffect(() => setCoverValues('rive-site', { ...coverValues('rive-site'), lava: v as unknown as DialValues }), [v]);
   return null;
 }
 
@@ -196,6 +217,7 @@ export default function CoverDials() {
     <>
       <DialsPanel />
       <RiveSitePanel />
+      <LavaPanel />
       <DrexPanel />
       <NoseyPanel />
     </>

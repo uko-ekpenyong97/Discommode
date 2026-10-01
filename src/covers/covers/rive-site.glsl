@@ -97,65 +97,76 @@ float vnoise(vec2 p, float period){
 // 5 — the refraction field: the offset before strength (x900 x strength to use),
 // mask, rim.
 //
-// cover-ref.png's lenses are SLUGS: ~16 of them, spread evenly, 90–150 units
-// across and 100–550 long, mostly upright, some curved like bananas. Noise
-// thresholded (Figma's Moving blobs) gives either the thickness or the count,
-// never both, and clumps. So with slugs on (slug.x) each cell of a jittered
-// grid holds one BENT CAPSULE — its length, width, tilt and bend drawn from
-// the cell's hash — and the lens direction is the capsule's distance gradient.
-// Each slug circles its home once per loop, so the motion loops exactly.
+// cover-ref.png's lenses are SLUGS: ~16 of them, 90–150 units across and
+// 100–550 long, mostly upright, some curved like bananas. Noise thresholded
+// (Figma's Moving blobs) gives either the thickness or the count, never both,
+// and clumps. So with slugs on (slug.x) the lenses are a list of BENT
+// CAPSULES — length, width, tilt, bend, a taper and a bulge each — and the
+// lens direction is their field's distance gradient.
+//
+// They are a LAVA LAMP (lava.ts): the CPU moves them on the shared clock —
+// rising, sinking, stretching, wobbling, each on its own period — and passes
+// them here per draw. Their distances are SMOOTH-MIN'd (uLava.y), so two
+// blobs that pass close merge into one and split again. The instance's
+// pointer warms them (uLavaPtr): the field's level drops near it, so the
+// blobs there swell toward it.
 // Off: the noise blobs, as Figma has them.
-uniform vec4 uSlugA;      // cell, width min, width max, presence
-uniform vec4 uSlugB;      // length min, length max, tilt spread (rad), bend
-uniform float uSlugDrift; // how far a slug wanders from home, frame units
-uniform float uSlugSeed;  // which arrangement
+#define MAX_BLOBS 16
+uniform vec4 uBlobA[MAX_BLOBS];  // centre xy, length, width (frame units)
+uniform vec4 uBlobB[MAX_BLOBS];  // axis xy (unit), curvature (v = k u²), bounding radius
+uniform vec2 uBlobS[MAX_BLOBS];  // taper, bulge
+uniform vec4 uLava;              // count, smooth-min width, swell at full warmth (frame units), the narrowest width
+uniform vec4 uLavaPtr;           // the instance's eased pointer: cover uv, warmth 0..1, radius (frame units)
 
-// Distance (x) and its gradient (yz) to the nearest slug, frame units.
-vec3 slugs(vec2 p, float phase){
-  float G = uSlugA.x;
-  vec2 cell = floor(p/G);
+// Distance (x) and its gradient (yz) to blob i, frame units.
+vec3 blob(vec2 p, int i){
+  vec4 A = uBlobA[i];
+  vec4 B = uBlobB[i];
+  vec2 ax = B.xy;
+  float L = A.z, W = A.w, k = B.z;
+  vec2 d = p - A.xy;
+  float u = dot(d, ax), v = dot(d, vec2(-ax.y, ax.x));
+  float ub = clamp(u, -0.5*L, 0.5*L);                       // the bend stops at the ends: round caps
+  float vb = v - k*ub*ub;
+  float uc = max(abs(u) - 0.5*L, 0.0);
+  float len = length(vec2(uc, vb));
+  // a taper and a bulge at the ends, so they read as teardrops, peanuts and
+  // the reference's bulb-ended slugs rather than even brush strokes
+  float e = clamp(u/(0.5*L + 1.0), -1.0, 1.0);
+  float dist = len - 0.5*W*(1.0 + uBlobS[i].x*e + uBlobS[i].y*(e*e - 0.35));
+  vec2 gl = len > 1e-4 ? vec2(sign(u)*uc, vb)/len : vec2(0.0, 1.0);
+  gl.x -= 2.0*k*ub*gl.y;                                    // chain rule through the bend
+  return vec3(dist, gl.x*ax + gl.y*vec2(-ax.y, ax.x));
+}
+
+// Distance (x) and its gradient (yz) to the lava field, frame units.
+vec3 slugs(vec2 p){
   vec3 best = vec3(1e5, 0.0, 1.0);
-  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
-    vec2 c = cell + vec2(float(i), float(j));
-    vec2 cs = c + uSlugSeed*vec2(37.0, 11.0);
-    vec2 h1 = hash22(cs*7.31 + 117.3), h2 = hash22(cs*13.91 + 43.7), h3 = hash22(cs*5.73 - 91.1);
-    if (h3.x > uSlugA.w) continue;
-    float ph = phase + h3.y*6.2831853;
-    vec2 ctr = (c + 0.2 + 0.6*h1)*G + uSlugDrift*vec2(cos(ph), sin(ph*2.0)*0.5);
-    float ang = 1.5707963 + (h2.x - 0.5)*uSlugB.z + 0.25*sin(ph)*uSlugB.z*0.2;
-    float L = mix(uSlugB.x, uSlugB.y, h2.y);
-    float W = mix(uSlugA.y, uSlugA.z, 0.5*h1.y + 0.5*h2.y);    // the long ones are the thick ones
-    // curvature: the ends bow by up to ±bend off the chord (never more than 0.4 L)
-    float k = (h1.x - 0.5)*2.0*min(uSlugB.w, 0.4*L)*4.0/max(L*L, 1.0);
-    vec2 ax = vec2(cos(ang), sin(ang));
-    vec2 d = p - ctr;
-    float u = dot(d, ax), v = dot(d, vec2(-ax.y, ax.x));
-    float ub = clamp(u, -0.5*L, 0.5*L);                     // the bend stops at the ends: round caps
-    float vb = v - k*ub*ub;
-    float uc = max(abs(u) - 0.5*L, 0.0);
-    float len = length(vec2(uc, vb));
-    // a taper and a bulge at the ends, so they read as teardrops, peanuts and
-    // the reference's bulb-ended slugs rather than even brush strokes
-    float taper = (h3.y - 0.5)*0.6;
-    float bulge = fract(h2.x*7.31)*0.5;
-    float e = clamp(u/(0.5*L + 1.0), -1.0, 1.0);
-    float dist = len - 0.5*W*(1.0 + taper*e + bulge*(e*e - 0.35));
-    if (dist < best.x) {
-      vec2 gl = len > 1e-4 ? vec2(sign(u)*uc, vb)/len : vec2(0.0, 1.0);
-      gl.x -= 2.0*k*ub*gl.y;                                // chain rule through the bend
-      vec2 g = gl.x*ax + gl.y*vec2(-ax.y, ax.x);
-      best = vec3(dist, g/(length(g) + 1e-5));
-    }
+  float k = uLava.y;
+  for (int i = 0; i < MAX_BLOBS; i++) {
+    if (float(i) >= uLava.x) break;
+    // too far to touch the field, merged or not
+    if (length(p - uBlobA[i].xy) - uBlobB[i].w >= best.x + k) continue;
+    vec3 c = blob(p, i);
+    if (k <= 0.0) { if (c.x < best.x) best = c; continue; }
+    float h = clamp(0.5 + 0.5*(best.x - c.x)/k, 0.0, 1.0);
+    best = vec3(mix(best.x, c.x, h) - k*h*(1.0 - h), mix(best.yz, c.yz, h));
   }
+  if (uLavaPtr.z > 0.0) {
+    float r = length(p - uLavaPtr.xy*vec2(FRAME_W, FRAME_H))/max(uLavaPtr.w, 1.0);
+    float w = 1.0 - min(r*r, 1.0);
+    best.x -= uLava.z*uLavaPtr.z*w*w;
+  }
+  best.yz /= length(best.yz) + 1e-5;
   return best;
 }
 
 vec4 refrField(vec2 p, vec4 a, float z, float oct, vec3 slug){
   float mask; vec2 g;
   if (slug.x > 0.5) {
-    vec3 sl = slugs(p, z*6.2831853);
-    // softness: Figma's % of a slug's half-width, plus a unit
-    float s = a.w*0.5*uSlugA.y + 1.0;
+    vec3 sl = slugs(p);
+    // softness: Figma's % of the narrowest slug's half-width, plus a unit
+    float s = a.w*0.5*uLava.w + 1.0;
     mask = 1.0 - smoothstep(-s, s, sl.x);
     float rim = 4.0*mask*(1.0 - mask);
     // A slug is a MINIFYING lens, as cover-ref.png's are (a finer speckle and
@@ -300,7 +311,7 @@ uniform vec4 uR5b;        // strength, dispersion, shadow, z
 uniform vec2 uR5c;        // octaves, highlight
 uniform vec3 uR5s;        // slugs: on, breakup, stretch
 uniform float uDebug;     // 1: draw stage 5's lens mask alone
-uniform vec4 uBackdrop;   // the site's coverBackdrop: rgb, and 1 = 'solid' (0 = 'sky', nothing behind)
+uniform vec4 uBackdrop;   // the cover's own ground (lava.background): rgb, and 1 = laid under it (0 = nothing behind)
 
 vec4 tapRT(vec2 q){ return textureLod(uRT, (q - uRtUV.xy)/uRtUV.zw, 0.0); }
 // A pixel's footprint in the picture, frame units: uAAB, times what a lens
@@ -476,8 +487,8 @@ void main(){
     if (uS4 > 0.5) col = gradeP(col);
   }
   o = clamp(col, 0.0, 1.0);
-  // coverBackdrop: under 'sky' nothing is drawn behind the cover and whatever
-  // the page has there (the SkyLayer) shows through its ground; 'solid' lays
-  // one colour under it, premultiplied-over.
+  // The cover's own ground, one colour premultiplied under all of it: card 02
+  // is opaque (its coverBackdrop is 'solid'), and the sky no longer shows
+  // through its riso stock.
   if (uBackdrop.a > 0.5) o += vec4(uBackdrop.rgb, 1.0)*(1.0 - o.a);
 }

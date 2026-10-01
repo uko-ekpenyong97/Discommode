@@ -9,8 +9,8 @@ import { ensureRive, onRiveReady, riveAvailable, riveCost, riveDomRoles, riveFra
 import type { RivePlayerRole } from './rive/riveCover';
 import { cssRgb } from './color';
 import { computeHeroRect } from '../layout/hero';
-import { DomeSpring } from './dome';
-import type { Crop } from './types';
+import { DomeSpring, advanceDome, domeUp } from './dome';
+import type { Crop, Dome } from './types';
 
 /**
  * THE COVER STAGE — the DOM instances' one renderer.
@@ -24,8 +24,9 @@ import type { Crop } from './types';
  *      instances that show it at rest, at the largest of their sizes (capped
  *      by coverMaxDpr — and a grid tile's by coverRenderMax, its canvas
  *      upscaled by CSS), per aspect (tiles are 3:4, the hero 10:13);
- *   2. each instance with its own dome up (the hovered tile, the hero) is
- *      drawn once more, for itself;
+ *   2. each instance with its own dome up (the hovered tile, the hero) — or
+ *      its cover's per-instance state not yet back at rest (card 02's lava
+ *      warmth, easing out) — is drawn once more, for itself;
  *   3. each draw is copied, in this same task, into the instances' own 2D
  *      canvases with drawImage — so no preserveDrawingBuffer: the buffer is
  *      read before the frame it was drawn for is presented.
@@ -94,6 +95,8 @@ let stageW = 0;
 let stageH = 0;
 let frames = 0;
 let lastMs = 0;
+/** The last frame's draws of an instance for itself (its dome up), per cover. */
+const ownDraws = new Map<string, number>();
 
 /**
  * Where an instance HOLDS its last frame instead of drawing: somewhere a second
@@ -108,6 +111,31 @@ let lastMs = 0;
  * (The paper holds its own frame while it hands OUT, for the same reason.)
  */
 const HOLD = '.grid-stage--fading, .grid-stage--fading-in, .detail[data-paper="in"]';
+
+/**
+ * At most this many GRID TILES of a cover that keeps per-instance state (card
+ * 02's lava warmth, which eases out for ~2 s after the pointer leaves) are
+ * drawn for themselves at once. A pointer swept across the grid in a second
+ * left three of card 02's tiles easing together: 1.46–1.66 ms of cover work in
+ * one frame at 1728×996 @2×, over the grid's 1.2 (`lsweep`). The tile under the
+ * pointer keeps its draw, then the one it left most recently; the one easing
+ * longest goes back to the shared draw — at rest, on the shared timeline —
+ * and the two that keep theirs ease out in full.
+ */
+const MAX_OWN_TILES = 2;
+const easing: Presenter[] = [];
+const byPriority = (a: Presenter, b: Presenter) => b.dome!.priority() - a.dome!.priority();
+
+function capEasingTiles() {
+  easing.length = 0;
+  for (const p of presenters) {
+    // active(): up, or under the pointer — about to be up this very frame
+    if (p.capped && p.onScreen && p.dome?.active() && shaderCover(p.coverId)?.instanceExtra) easing.push(p);
+  }
+  if (easing.length <= MAX_OWN_TILES) return;
+  easing.sort(byPriority);
+  for (let i = MAX_OWN_TILES; i < easing.length; i++) easing[i].dome!.reset();
+}
 
 const io = new IntersectionObserver(
   (entries) => {
@@ -263,6 +291,7 @@ function tick(now: number) {
   }
   const backdrop = site.coverBackdrop === 'solid' ? cssRgb(site.coverBackdropColor) : null;
   const t = coverTime(now);
+  capEasingTiles();
 
   // 1. what is on screen, and at what size
   nGroups = 0;
@@ -312,7 +341,7 @@ function tick(now: number) {
         p.pxW = Math.max(1, Math.round((box ? box.w : p.host.offsetWidth || r.width) * dpr));
         p.pxH = Math.max(1, Math.round((box ? box.h : p.host.offsetHeight || r.height) * dpr));
       }
-      p.dome?.advance(now, def.domeMotion(coverValues(p.coverId)));
+      if (p.dome) advanceDome(p.dome, now, def, coverValues(p.coverId), t);
       if (def.passA === 'cached' && p.capped && p.dome && p.dome.state.amp > 0) warmHeroPrint(p.coverId, dpr);
     }
     // THE RENDER CAP (coverRenderMax): a grid tile's cover is rendered no
@@ -327,7 +356,7 @@ function tick(now: number) {
       p.drawW = p.pxW;
       p.drawH = p.pxH;
     }
-    if (!rive && p.dome && p.dome.state.amp !== 0) continue; // drawn for itself below
+    if (!rive && p.dome && domeUp(p.dome.state)) continue; // drawn for itself below
     const aspect = Math.round((p.pxW / p.pxH) * 100) / 100;
     const role: RivePlayerRole = rive ? p.role : 'grid';
     let g: Group | undefined;
@@ -372,15 +401,19 @@ function tick(now: number) {
     const cover = coverFor(g.coverId);
     if (!cover || !draw(cover, g.pxW, g.pxH, t, restDome, coverBackdrop(g.coverId) === 'solid' ? null : backdrop)) continue;
     for (const p of presenters) {
-      if (!p.visible || p.coverId !== g.coverId || (p.dome && p.dome.state.amp !== 0)) continue;
+      if (!p.visible || p.coverId !== g.coverId || (p.dome && domeUp(p.dome.state))) continue;
       if (p.capped !== g.capped || Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
       present(p, g.pxW, g.pxH);
     }
   }
+  for (const k of ownDraws.keys()) ownDraws.set(k, 0); // reused: no allocation once each cover has a key
   for (const p of presenters) {
-    if (!p.visible || !p.dome || p.dome.state.amp === 0 || riveCover(p.coverId)) continue;
+    if (!p.visible || !p.dome || !domeUp(p.dome.state) || riveCover(p.coverId)) continue;
     const cover = coverFor(p.coverId);
-    if (cover && draw(cover, p.drawW, p.drawH, t, p.dome.state, coverBackdrop(p.coverId) === 'solid' ? null : backdrop)) present(p, p.drawW, p.drawH);
+    if (cover && draw(cover, p.drawW, p.drawH, t, p.dome.state, coverBackdrop(p.coverId) === 'solid' ? null : backdrop)) {
+      present(p, p.drawW, p.drawH);
+      ownDraws.set(p.coverId, (ownDraws.get(p.coverId) ?? 0) + 1);
+    }
   }
 
   frames++;
@@ -393,7 +426,7 @@ function draw(
   pxW: number,
   pxH: number,
   t: number,
-  dome: { x: number; y: number; amp: number },
+  dome: Dome,
   backdrop: [number, number, number] | null,
 ): boolean {
   if (!renderer || !cover.ready()) return false;
@@ -486,6 +519,8 @@ export function coverStageProbe() {
     renderer,
     frames: () => frames,
     lastMs: () => lastMs,
+    /** How many instances of cover `id` drew for themselves last frame. */
+    ownDraws: (id: string) => ownDraws.get(id) ?? 0,
     presenters: () =>
       [...presenters].map((p) => ({
         cover: p.coverId,
@@ -496,9 +531,15 @@ export function coverStageProbe() {
         drawW: p.drawW,
         drawH: p.drawH,
         capped: p.capped,
-        domed: !!p.dome && p.dome.state.amp !== 0,
+        domed: !!p.dome && domeUp(p.dome.state),
+        /** Its box on screen, CSS px. */
+        rect: (({ x, y, width, height }) => ({ x, y, w: width, h: height }))(p.host.getBoundingClientRect()),
+        /** Its cover's per-instance state (card 02's lava warmth), if any. */
+        warmth: p.dome?.state.ext && 'heat' in p.dome.state.ext ? (p.dome.state.ext.heat as number) : null,
       })),
     cover: (id: string) => coverFor(id),
+    /** The `i`-th presenter's dome state (as `presenters()` lists them). */
+    domeOf: (i: number) => [...presenters][i]?.dome?.state ?? null,
     /** Draw cover `id` into the stage's canvas at pxW × pxH (its bottom-left),
      *  at `t`, under `dome` (at rest when omitted). */
     draw: (id: string, pxW: number, pxH: number, t: number, dome: { x: number; y: number; amp: number } = restDome) => {

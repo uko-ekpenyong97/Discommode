@@ -127,9 +127,18 @@ const COVER_STILL_SIDE = 0.07;
  * on whole device pixels: each is resampled by a fraction of a pixel, by two
  * different resamplers, over a field of noise. The diff grows steadily toward
  * the bottom-right — a 0.4px scale drift, not a clock or a colour. Flat art
- * does not show it; the speckle does. Held to 2.5%.
+ * does not show it; the speckle does. Held to 2.5% until 2026-10-01. Since
+ * then card 02 is opaque on its own navy ground (docs/covers.md, "Card 02's
+ * lava"), and the same drift over the same dot field — now green and yellow on
+ * #425EB6 rather than over the 44% stock with the sky hidden — puts more of its
+ * pixels past 32 levels: 3.04% there, every run (main, the same script, the
+ * same machine: 2.11%), in the same pattern (0.01% in the top-left ninth, 9.1%
+ * in the bottom-right; main 0.02% and 7.0%), and no blob drawn apart. Held to
+ * 3.5%. On the ground it shipped with, #0d1220, it is 1.92%: the dots on near
+ * black move fewer pixels past 32 levels than on the navy. The bar stays at
+ * 3.5%, for a ground tuned lighter again.
  */
-const COVER_HERO = 0.025;
+const COVER_HERO = 0.035;
 /**
  * CARD 04 AS A NEIGHBOUR. Card 04 is a Rive cover now (docs/covers.md, "Rive
  * covers"); as the hero it meets the spec's 0.5% (0.149–0.434%: the DOM face

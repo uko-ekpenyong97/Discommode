@@ -1,5 +1,8 @@
 import type { WebGLRenderTarget, WebGLRenderer } from 'three';
 import type { CoverDrawer, DrawInput } from './coverRenderer';
+import { coverValues } from './coverDials';
+import { DomeSpring, advanceDome } from './dome';
+import type { CoverDef, Dome } from './types';
 
 export interface DrawCost {
   /** Shading: the draw minus the floor — the prototype's number, and the budget's. */
@@ -87,4 +90,21 @@ export function benchPresent(src: CanvasImageSource, w: number, h: number, n = 4
   }
   out.sort((a, b) => a - b);
   return Math.max(0, out[4]);
+}
+
+/**
+ * DEV: the dome a benchmark draws under — at rest, or WARM: the pointer near
+ * the frame's centre, the dome up and the cover's per-instance state (card
+ * 02's lava warmth) full on, as on a hovered tile or the hero under the
+ * pointer. Two seconds of 60 Hz frames, stepped here, get it there.
+ */
+export function benchDome(def: CoverDef, warm: boolean): Dome {
+  const x = def.frame.w / 2;
+  const y = def.frame.h * 0.45;
+  if (!warm) return { x, y, amp: 0 };
+  const d = new DomeSpring();
+  d.point(x, y);
+  const v = coverValues(def.id);
+  for (let i = 1; i <= 120; i++) advanceDome(d, 1000 + (i * 1000) / 60, def, v, 1 + i / 60);
+  return d.state;
 }

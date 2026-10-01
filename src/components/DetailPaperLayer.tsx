@@ -55,9 +55,9 @@ import type { RivePlayer } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
 import { backdropUnder, coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
 import { cssRgb } from '../covers/color';
-import { heroDome } from '../covers/dome';
+import { advanceDome, heroDome } from '../covers/dome';
 import type { Crop } from '../covers/types';
-import { benchCoverDraw } from '../covers/bench';
+import { benchCoverDraw, benchDome } from '../covers/bench';
 
 /**
  * THE DETAIL CARDS AS PAPER — one fixed WebGL canvas under the detail strip,
@@ -366,11 +366,12 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       c.rt?.dispose();
       c.rt = CoverRenderer.outputTarget(pxW, pxH);
     }
-    heroDome.advance(performance.now(), def.domeMotion(coverValues(id)));
+    const t = coverTime();
+    advanceDome(heroDome, performance.now(), def, coverValues(id), t);
     coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_);
     const under = backdropUnder(id);
     const drawn = c.r.draw(c.rt, {
-      t: coverTime(),
+      t,
       crop: coverCrop_,
       pxW,
       pxH,
@@ -940,8 +941,8 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
         return null;
       },
       /** GPU ms for one hero draw of the live cover (`only`: that one's), in
-       *  THIS renderer. */
-      benchCover: (only?: string) => {
+       *  THIS renderer; `warm`: under the pointer (bench.ts, `benchDome`). */
+      benchCover: (only?: string, warm = false) => {
         for (const [id, c] of liveCoverEntries()) {
           if (!c.rt || !c.r.ready() || (only && id !== only)) continue;
           const def = shaderCover(id)!;
@@ -955,7 +956,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
               crop,
               pxW: c.rt.width,
               pxH: c.rt.height,
-              dome: { x: 450, y: 600, amp: 0 },
+              dome: benchDome(def, warm),
               backdrop: null,
             }),
           };

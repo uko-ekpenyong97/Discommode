@@ -38,17 +38,20 @@ describe('the cover registry', () => {
 });
 
 describe('the backdrop', () => {
-  it('card 04 is solid, card 02 lets the sky through', () => {
+  it('cards 02, 03 and 04 are solid; a cover that says nothing lets the sky through', () => {
+    expect(coverBackdrop('rive-site')).toBe('solid');
+    expect(coverBackdrop('drex')).toBe('solid');
     expect(coverBackdrop('nosey')).toBe('solid');
-    expect(coverBackdrop('rive-site')).toBe('sky');
+    expect(coverBackdrop('a-sky-cover')).toBe('sky');
   });
 
   it("lays the site's colour only under a cover that lets the sky through", () => {
+    expect(backdropUnder('a-sky-cover')).toBeNull();
     expect(backdropUnder('rive-site')).toBeNull();
-    expect(backdropUnder('nosey')).toBeNull();
     setSiteCoverDials({ coverBackdrop: 'solid' });
     try {
-      expect(backdropUnder('rive-site')).toBe(SITE_COVER_DEFAULTS.coverBackdropColor);
+      expect(backdropUnder('a-sky-cover')).toBe(SITE_COVER_DEFAULTS.coverBackdropColor);
+      expect(backdropUnder('rive-site')).toBeNull();
       expect(backdropUnder('nosey')).toBeNull();
     } finally {
       setSiteCoverDials({ coverBackdrop: 'sky' });
