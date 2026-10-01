@@ -1,4 +1,4 @@
-import type { Dome } from './types';
+import type { Dome, DomeMotion } from './types';
 
 /**
  * The mouse dome of one instance: its centre follows the pointer on a damped
@@ -6,6 +6,10 @@ import type { Dome } from './types';
  * to 0 when it leaves (the prototype's, on the CPU; the shader only gets the
  * result). Stepped by wall time, so calling `step` twice in one frame — the
  * hero's is read by both the DOM panel and the paper plane — integrates once.
+ *
+ * Or, for a cover whose `domeMotion` is an EASE (card 03's light), both close
+ * a fixed share of the way each frame (`ease`), and the height is how far the
+ * cover has gone from its rest toward the pointer.
  */
 export class DomeSpring {
   readonly state: Dome = { x: 450, y: 663, amp: 0 };
@@ -37,6 +41,35 @@ export class DomeSpring {
   /** Is anything still moving (or held up)? */
   active(): boolean {
     return this.on || this.state.amp !== 0;
+  }
+
+  /** One step of whichever motion the cover asks for. */
+  advance(now: number, m: DomeMotion) {
+    if ('ease' in m) this.ease(now, m.ease);
+    else this.step(now, m.spring, m.damping);
+  }
+
+  /**
+   * The ease: the centre and the height each close `perFrame` of the way to
+   * where they are going every 60 Hz frame — by wall time, so a 120 Hz display
+   * eases at the same speed. A dome that was at rest starts under the pointer
+   * (`point`), so it is the height that carries the cover from its rest to the
+   * pointer, and back once the pointer leaves.
+   */
+  ease(now: number, perFrame: number) {
+    if (now <= this.last) return;
+    const dt = this.last < 0 ? 0 : Math.min(0.1, (now - this.last) / 1000);
+    this.last = now;
+    if (dt <= 0) return;
+    const k = 1 - Math.pow(1 - Math.min(1, Math.max(0, perFrame)), dt * 60);
+    const s = this.state;
+    if (this.on) {
+      s.x += (this.tx - s.x) * k;
+      s.y += (this.ty - s.y) * k;
+    }
+    s.amp += ((this.on ? 1 : 0) - s.amp) * k;
+    this.ampV = 0;
+    if (!this.on && s.amp < 1e-3) s.amp = 0;
   }
 
   step(now: number, spring: number, damping: number) {

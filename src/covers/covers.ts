@@ -1,4 +1,5 @@
 import { riveSite } from './covers/rive-site';
+import { drex } from './covers/drex';
 import { nosey } from './covers/nosey';
 import type { AnyCoverDef, CoverDef, RiveCoverDef } from './types';
 
@@ -7,7 +8,8 @@ import type { AnyCoverDef, CoverDef, RiveCoverDef } from './types';
  * the manifest (content.ts):
  *
  *   `{ kind: 'shader', id }`  a GLSL file, a dial JSON and a `CoverDef` beside
- *                            them (rive-site, card 02)
+ *                            them (rive-site, card 02; drex, card 03, whose
+ *                            pass A is cached)
  *   `{ kind: 'rive', id, src, artboard, stateMachine }`  a .riv, and a
  *                            `RiveCoverDef` here for its frame and dials
  *                            (nosey, card 04; src/covers/rive/)
@@ -17,6 +19,7 @@ import type { AnyCoverDef, CoverDef, RiveCoverDef } from './types';
  */
 export const COVERS: Record<string, AnyCoverDef> = {
   [riveSite.id]: riveSite,
+  [drex.id]: drex,
   [nosey.id]: nosey,
 };
 

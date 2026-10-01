@@ -1,6 +1,7 @@
 import { pinCoverTime, coverTime } from './coverClock';
 import { coverStageProbe } from './coverStage';
 import { coverCropOf } from './coverRenderer';
+import { CachedCoverRenderer } from './cachedCoverRenderer';
 import { benchCoverDraw, benchPresent } from './bench';
 import { COVERS, shaderCover } from './covers';
 import { riveProbe } from './rive/riveCover';
@@ -55,6 +56,49 @@ export function installCoverDevHooks() {
       probe.draw(id, pxW, pxH, 1); // sizes the stage canvas
       const crop: Crop = coverCropOf(def.frame.w, def.frame.h, pxW, pxH, { x0: 0, y0: 0, w: 1, h: 1 });
       return benchCoverDraw(gl, cover, null, { t: 1, crop, pxW, pxH, dome: { x: 450, y: 600, amp: 0 }, backdrop: null });
+    },
+    /**
+     * One draw of shader cover `id` at w × h by the stage's renderer, at `t`,
+     * under `dome` (frame units; at rest when omitted), read back: straight
+     * RGBA, top row first, base64, and the smallest alpha in it.
+     */
+    renderFrame: (id: string, w: number, h: number, t: number, dome?: { x: number; y: number; amp: number }) => {
+      const gl = probe.renderer;
+      if (!gl || !probe.cover(id)?.ready() || !probe.draw(id, w, h, t, dome)) return null;
+      const ctx = gl.getContext();
+      const px = new Uint8Array(w * h * 4);
+      ctx.readPixels(0, 0, w, h, ctx.RGBA, ctx.UNSIGNED_BYTE, px); // the draw is the canvas's bottom-left
+      const out = new Uint8Array(w * h * 4);
+      let minA = 255;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = ((h - 1 - y) * w + x) * 4;
+          const j = (y * w + x) * 4;
+          const a = px[i + 3];
+          if (a < minA) minA = a;
+          for (let k = 0; k < 3; k++) out[j + k] = a ? Math.min(255, Math.round((px[i + k] * 255) / a)) : 0;
+          out[j + 3] = a;
+        }
+      }
+      let bin = '';
+      for (let i = 0; i < out.length; i += 0x8000) bin += String.fromCharCode(...out.subarray(i, i + 0x8000));
+      return { w, h, minA, b64: btoa(bin) };
+    },
+    /** A cached-pass cover in the stage (card 03): its prints (pass A's renders
+     *  so far, the last one's ms, the sizes kept), its programs and GL errors,
+     *  and pass A's GPU ms at the crop a w × h box shows. */
+    prints: (id: string) => {
+      const c = probe.cover(id);
+      return c instanceof CachedCoverRenderer ? c.printStats() : null;
+    },
+    diagnose: (id: string) => {
+      const c = probe.cover(id);
+      return c instanceof CachedCoverRenderer ? c.diagnose() : null;
+    },
+    benchPrint: (id: string, w: number, h: number) => {
+      const c = probe.cover(id);
+      if (!(c instanceof CachedCoverRenderer)) return null;
+      return c.benchPrint(coverCropOf(c.def.frame.w, c.def.frame.h, w, h, { x0: 0, y0: 0, w: 1, h: 1 }), w, h);
     },
     /** ms for one instance's copy (drawImage of a pxW × pxH draw). */
     benchPresent: (pxW: number, pxH: number) => {

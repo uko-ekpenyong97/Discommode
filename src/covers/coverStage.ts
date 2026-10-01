@@ -1,11 +1,14 @@
 import { WebGLRenderer } from 'three';
-import { CoverRenderer, coverCropOf } from './coverRenderer';
+import { coverCropOf } from './coverRenderer';
+import type { CoverDrawer } from './coverRenderer';
+import { makeCoverRenderer } from './cachedCoverRenderer';
 import { riveCover, shaderCover } from './covers';
 import { coverTime } from './coverClock';
 import { coverBackdrop, coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
 import { ensureRive, onRiveReady, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
 import type { RivePlayerRole } from './rive/riveCover';
 import { cssRgb } from './color';
+import { computeHeroRect } from '../layout/hero';
 import { DomeSpring } from './dome';
 import type { Crop } from './types';
 
@@ -77,7 +80,7 @@ interface Group {
 
 let renderer: WebGLRenderer | null = null;
 let failed = false;
-const covers = new Map<string, CoverRenderer>();
+const covers = new Map<string, CoverDrawer>();
 const presenters = new Set<Presenter>();
 let raf = 0;
 let running = false;
@@ -116,6 +119,16 @@ const io = new IntersectionObserver(
   { rootMargin: '64px' },
 );
 
+/** The untransformed size of each cached-pass cover's host, CSS px (below). */
+const layoutBox = new WeakMap<Element, { w: number; h: number }>();
+const ro = new ResizeObserver((entries) => {
+  for (const e of entries) {
+    const b = e.contentBoxSize[0];
+    layoutBox.set(e.target, { w: b.inlineSize, h: b.blockSize });
+  }
+  kick();
+});
+
 /** False if this browser cannot give the stage a WebGL2 context. */
 export function coverStageAvailable(): boolean {
   if (failed) return false;
@@ -146,12 +159,12 @@ export function coverStageAvailable(): boolean {
   return !failed;
 }
 
-function coverFor(id: string): CoverRenderer | null {
+function coverFor(id: string): CoverDrawer | null {
   let c = covers.get(id);
   if (!c && renderer) {
     const def = shaderCover(id);
     if (!def) return null;
-    c = new CoverRenderer(renderer, def, coverValues(id));
+    c = makeCoverRenderer(renderer, def, coverValues(id));
     c.warm();
     covers.set(id, c);
   }
@@ -178,13 +191,46 @@ export function addPresenter(p: Presenter): () => void {
   p.capped = !!p.host.closest('.grid-stage');
   presenters.add(p);
   io.observe(p.host);
+  const cached = shaderCover(p.coverId)?.passA === 'cached';
+  if (cached) ro.observe(p.host);
   if (rive) ensureRive(p.coverId);
   else coverFor(p.coverId);
   kick();
   return () => {
     presenters.delete(p);
     io.unobserve(p.host);
+    if (cached) ro.unobserve(p.host);
   };
+}
+
+/**
+ * A hovered grid tile of a cached-pass cover (card 03) is the likeliest sign
+ * the hero is next. Its print at the hero's size is pass A's one-off cost
+ * (8–11 ms at 1256 × 1633), and the morph card would otherwise pay it on the
+ * click's first frame — so it is rendered now, in an idle moment, once per
+ * hero size. (The paper renders its own a frame ahead of its hand-in.)
+ */
+const heroWarm = new Map<string, { vw: number; vh: number; dpr: number; v: number }>();
+function warmHeroPrint(id: string, dpr: number) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const v = coverDialsVersion();
+  const last = heroWarm.get(id);
+  if (last && last.vw === vw && last.vh === vh && last.dpr === dpr && last.v === v) return; // every hovered frame: no allocation
+  heroWarm.set(id, { vw, vh, dpr, v });
+  const hero = computeHeroRect(vw, vh);
+  const pxW = Math.max(1, Math.round(hero.w * dpr));
+  const pxH = Math.max(1, Math.round(hero.h * dpr));
+  const run = () => {
+    const c = coverFor(id);
+    if (!c?.ready()) {
+      heroWarm.delete(id); // try again on a later hover frame
+      return;
+    }
+    c.prepare(coverCropOf(c.def.frame.w, c.def.frame.h, pxW, pxH, { x0: 0, y0: 0, w: 1, h: 1 }), pxW);
+  };
+  if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 500 });
+  else window.setTimeout(run, 50);
 }
 
 function kick() {
@@ -252,9 +298,22 @@ function tick(now: number) {
       const lh = p.host.offsetHeight || r.height;
       p.pxW = Math.max(1, Math.round(r.width * rdpr));
       p.pxH = Math.max(1, Math.round((p.pxW * lh) / lw));
-    } else if (p.dome) {
-      const spring = shaderCover(p.coverId)!.domeSpring(coverValues(p.coverId));
-      p.dome.step(now, spring.spring, spring.damping);
+    } else {
+      const def = shaderCover(p.coverId)!;
+      // A cover with a CACHED pass A (card 03's print) is drawn at its LAYOUT
+      // box's size, not its bounding box's: the grid's focus scale and tilt
+      // and the morph's travel are transforms, and each frame of one would be
+      // a new size — a new print — where CSS scaling the canvas costs nothing.
+      // The layout box as the ResizeObserver last saw it: fractional CSS px
+      // (offsetWidth rounds — 816.72 → 817 drew the DOM hero a print 1 px
+      // taller than the paper's), and only updated when it changes.
+      if (def.passA === 'cached') {
+        const box = layoutBox.get(p.host);
+        p.pxW = Math.max(1, Math.round((box ? box.w : p.host.offsetWidth || r.width) * dpr));
+        p.pxH = Math.max(1, Math.round((box ? box.h : p.host.offsetHeight || r.height) * dpr));
+      }
+      p.dome?.advance(now, def.domeMotion(coverValues(p.coverId)));
+      if (def.passA === 'cached' && p.capped && p.dome && p.dome.state.amp > 0) warmHeroPrint(p.coverId, dpr);
     }
     // THE RENDER CAP (coverRenderMax): a grid tile's cover is rendered no
     // bigger than the tile was at the old cardWidth, and its 2D copy upscales
@@ -330,7 +389,7 @@ function tick(now: number) {
 }
 
 function draw(
-  cover: CoverRenderer,
+  cover: CoverDrawer,
   pxW: number,
   pxH: number,
   t: number,
@@ -440,9 +499,13 @@ export function coverStageProbe() {
         domed: !!p.dome && p.dome.state.amp !== 0,
       })),
     cover: (id: string) => coverFor(id),
-    draw: (id: string, pxW: number, pxH: number, t: number) => {
+    /** Draw cover `id` into the stage's canvas at pxW × pxH (its bottom-left),
+     *  at `t`, under `dome` (at rest when omitted). */
+    draw: (id: string, pxW: number, pxH: number, t: number, dome: { x: number; y: number; amp: number } = restDome) => {
       const c = coverFor(id);
-      return c ? draw(c, pxW, pxH, t, restDome, null) : false;
+      return c ? draw(c, pxW, pxH, t, dome, null) : false;
     },
+    /** The stage canvas's size (draws sit at its bottom-left). */
+    size: () => ({ w: stageW, h: stageH }),
   };
 }

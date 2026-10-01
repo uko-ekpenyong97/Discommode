@@ -83,7 +83,11 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       };
     }
     // The pointer, in frame units: the host is an object-fit: cover crop of the
-    // frame, so its box maps onto the crop.
+    // frame, so its box maps onto the crop. Read from the whole CARD (a grid
+    // tile) or PANEL (the hero), as a Rive cover's is (riveInput, below): the
+    // hover overlay's CTA sits over a tile and takes the pointer, and under
+    // the paper the hero's DOM face is `visibility: hidden` and takes none.
+    const target = (dome === 'own' ? host.closest<HTMLElement>('.grid-card') : host.closest<HTMLElement>('.detail__panel')) ?? host;
     const onMove = (e: PointerEvent) => {
       if (!spring || e.pointerType === 'touch') return;
       const r = host.getBoundingClientRect();
@@ -91,11 +95,11 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       spring.point(f[0], f[1]);
     };
     const onLeave = () => spring?.leave();
-    host.addEventListener('pointermove', onMove, { passive: true });
-    host.addEventListener('pointerleave', onLeave);
+    target.addEventListener('pointermove', onMove, { passive: true });
+    target.addEventListener('pointerleave', onLeave);
     return () => {
-      host.removeEventListener('pointermove', onMove);
-      host.removeEventListener('pointerleave', onLeave);
+      target.removeEventListener('pointermove', onMove);
+      target.removeEventListener('pointerleave', onLeave);
       onLeave();
       remove();
     };

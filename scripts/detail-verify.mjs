@@ -140,12 +140,21 @@ const COVER_HERO = 0.025;
  * 1440×900 @1×, where the old opaque photo face was 0.1–0.4%). Held to 2%.
  */
 const RIVE_STILL_SIDE = 0.02;
+/**
+ * CARD 03, the drex cover (docs/covers.md, "Card 03"), held to card 02's
+ * budgets for card 02's reason. Its still is a 1-px Bayer dither: noise edge to
+ * edge, like card 02's particle field. As a neighbour, Chrome's scale(0.85)
+ * resampling of the <img> against a texture resized to the card measured
+ * 2.5–6.1% on 2026-10-01 (card 01's line art beside it: 1.2–5.9%). As the hero
+ * (`verify:cover`'s `dmorph`: the DOM hero → the paper 0.29–0.56%) it is the
+ * same print on both sides, resampled by two resamplers off whole pixels.
+ */
 const budget = (r) =>
   r.idx === 0
     ? r.slot === 0
       ? CARD01_IDENTITY.hero
       : CARD01_IDENTITY.side
-    : r.idx === 1
+    : r.idx === 1 || r.idx === 2
       ? r.slot === 0
         ? COVER_HERO
         : COVER_STILL_SIDE
