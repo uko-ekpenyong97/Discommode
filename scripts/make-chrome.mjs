@@ -79,13 +79,40 @@ function pathBox(d) {
   return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
 }
 
+/** An element's own `transform` as [a b c d e f] (matrix or translate; Figma
+ *  writes a mirror as `matrix(-1 0 0 1 tx ty)`), or the identity. */
+function transformOf(el) {
+  const t = el.attrs.match(/\btransform="([^"]*)"/)?.[1];
+  if (!t) return [1, 0, 0, 1, 0, 0];
+  const n = (t.match(/-?\d*\.?\d+(?:e-?\d+)?/g) ?? []).map(Number);
+  if (/^\s*matrix\(/.test(t) && n.length === 6) return n;
+  if (/^\s*translate\(/.test(t)) return [1, 0, 0, 1, n[0] ?? 0, n[1] ?? 0];
+  throw new Error(`unsupported transform "${t}" — tell Uko which export, do not redraw it`);
+}
+
+/** A box through an affine transform: the box of its four corners. */
+function transformBox(b, [a, bb, c, d, e, f]) {
+  const pts = [
+    [b.x, b.y],
+    [b.x + b.w, b.y],
+    [b.x, b.y + b.h],
+    [b.x + b.w, b.y + b.h],
+  ].map(([x, y]) => [a * x + c * y + e, bb * x + d * y + f]);
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+}
+
 function boxOf(el) {
+  let box;
   if (el.tag === 'circle') {
     const n = (k) => Number(el.attrs.match(new RegExp(`\\b${k}="([^"]*)"`))[1]);
     const r = n('r');
-    return { x: n('cx') - r, y: n('cy') - r, w: 2 * r, h: 2 * r };
+    box = { x: n('cx') - r, y: n('cy') - r, w: 2 * r, h: 2 * r };
+  } else {
+    box = pathBox(el.attrs.match(/\bd="([^"]*)"/)[1]);
   }
-  return pathBox(el.attrs.match(/\bd="([^"]*)"/)[1]);
+  return transformBox(box, transformOf(el));
 }
 
 const r2 = (b) => Object.fromEntries(Object.entries(b).map(([k, v]) => [k, Math.round(v * 100) / 100]));
