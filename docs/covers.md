@@ -404,7 +404,7 @@ faces, so it has nothing to show.
 
 The COVER panel (`src/dev/coverDials.tsx`), one per cover: every dial the bench
 has, stage toggles included, plus the site's `coverBackdrop`,
-`coverBackdropColor`, `coverMaxDpr` (2) and `coverPaperShade` (1: in the
+`coverBackdropColor`, `coverMaxDpr` (2), `coverRenderMax` (896, below) and `coverPaperShade` (1: in the
 detail view, the paper's light per unit of the cover's alpha; 0 is no paper
 light on the cover at all). **Copy pastes into
 `src/covers/covers/<id>.json`** (the site's three are not the JSON's). It is at
@@ -433,7 +433,7 @@ message.
 | `dots3` | stage 3: the particle field (`cellK` / `density`, size, band, colour shift) and the mouse dome |
 | `riso4` | stage 4: paper, the four inks fitted to the reference, their opacities and misregistration; the grade (identity) |
 | `refraction5` | stage 5: the slug lenses (`slug*`, `minify`, `rimSmear`), the noise-blob fallback, the budget cuts (`noiseHalfRes`, `dispersionCut`) |
-| site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr`, `coverPaperShade` | not the cover's: in `coverDials.ts`, not the JSON |
+| site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr`, `coverRenderMax`, `coverPaperShade` | not the cover's: in `coverDials.ts`, not the JSON |
 
 The COVER panel persists (`dialkit:cover-rive-site-v1` in localStorage), as the other
 dev panels do. A value set there overrides the JSON in that browser until reset,
@@ -474,22 +474,34 @@ The design never draws one that way. It costs that much because the grid's tile
 is 300 × 400 CSS px, scaled 1.12 when focused: 672 × 896 at 2×, 2.4× the
 pixels of the 220 × 286 tile the prototype measured.
 
-**At `cardWidth` 480 the grid is over its budget at 2×.** Uko's LAYOUT tuning
-(2026-09-30) made the tile 480 wide: the shared draw is 1075 × 1434 at 2×, 2.56×
-the pixels, and it costs what that says. Measured interleaved with the build
-before the change, two rounds each, same session:
+**At `cardWidth` 480 the tiles' covers are rendered at the old tile's size**
+(`coverRenderMax`, 2026-09-30). Uko's LAYOUT tuning made the tile 480 wide,
+and a cover's cost is its pixels: the shared draw went to 1075 × 1434 at 2×,
+2.56× them, and the grid's worst frame of cover work to 1.56–1.71ms against
+its 1.2. The bar was not raised. Instead a GRID TILE's cover — shader and Rive
+alike, the shared draw and the hovered tile's own — is rendered no larger than
+`coverRenderMax` px on its long edge, **896**: the tile at the old `cardWidth`
+300 (400 tall × 1.12 focused × 2). The tile's 2D canvas has that backing
+store, so the copy is 1:1, and CSS stretches the canvas over the tile — the
+upscale is the compositor's, for nothing. The detail hero and the morph card
+that lands on it are not tiles and draw at their full size, so the hero, the
+clock check and the morph's hand-off are untouched.
 
-| @2× | `cardWidth` 300 | `cardWidth` 480 | budget |
-| --- | --- | --- | --- |
-| the shared tile draw | 0.26–0.57 (672×896) | **0.64–0.70** (1075×1434) | — |
-| each tile: its copy | 0.053–0.063 | 0.097–0.118 | ≤ 0.15 |
-| worst frame of cover work, grid | 0.71–1.30 | **1.56–1.71** | ≤ 1.2 |
-| sky + fluid (p95) + covers | 1.86–2.96 | 2.52–2.99 | ≤ 8 |
+| @2× | `cardWidth` 300 | 480, uncapped | 480, `coverRenderMax` 896 | budget |
+| --- | --- | --- | --- | --- |
+| the shared tile draw | 0.26–0.57 (672×896) | 0.64–0.70 (1075×1434) | **0.25–0.44** (672×896) | — |
+| each tile: its copy | 0.053–0.063 | 0.097–0.118 | **0.053–0.080** (1:1) | ≤ 0.15 |
+| worst frame of cover work, grid | 0.71–1.30 | 1.56–1.71 | **0.74–1.10** | ≤ 1.2 |
+| hero | 0.83–0.94 | 0.80–0.97 | 0.68–0.93 (unchanged: not capped) | ≤ 1.0 |
 
-So `verify:cover`'s grid total fails at 2× at both viewports, and the frame
-as a whole (sky, fluid and covers, under 3ms) is nowhere near its 8. The
-levers, if the 1.2 matters more than the tile's size: `coverMaxDpr` on the
-grid's shared draw, or drawing the shared tile at the unfocused size.
+What it costs is sharpness on the tile: a 960 × 1280 tile (and the focused
+1075 × 1434) shows a 672 × 896 render, upscaled ×1.43–1.6. On card 02's field
+of dots and its outlines that reads as a slight softening at 1:1; on card 04's
+line art, less. `docs/covers/tile-crop-2x.webp` is the focused tile at 1728×996 @2×,
+1:1 in device pixels, the clock pinned: card 02 (top) and card 04 (bottom),
+capped at 896 (left) and uncapped (right). The dial goes up to
+2048 for the sharpness back, at the cost above; it is on the COVER panel's
+site folder (card 02's, at `#item-02?intro`).
 
 ## Rive covers (card 04)
 
