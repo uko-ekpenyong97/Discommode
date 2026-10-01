@@ -116,6 +116,9 @@
  * `sky`, which is about the sky. A pixel differs past 32 levels (verify:detail's
  * tolerance).
  */
+import { readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 
@@ -124,7 +127,8 @@ const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) +
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg(
   '--only',
-  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts',
+  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,' +
+    'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets',
 ).split(',');
 const B = `${ORIGIN}/`;
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
@@ -382,12 +386,12 @@ async function checkClock(browser) {
 
 // ── morph ───────────────────────────────────────────────────────────────
 
-async function checkMorph(browser) {
-  console.log('\nmorph: grid → detail from the tile, the last morph frame vs the DOM hero');
+async function checkMorph(browser, { gridOn = gridOn02, label = '' } = {}) {
+  if (!label) console.log('\nmorph: grid → detail from the tile, the last morph frame vs the DOM hero');
   const T = 4.5;
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
-    await gridOn02(page);
+    await gridOn(page);
     await quiet(page);
     await page.evaluate((t) => {
       window.__covers.pin(t);
@@ -432,7 +436,7 @@ async function checkMorph(browser) {
     await frames(page, 6);
     const dom = await grab(page, hr, dpr, 300, 390);
     const d = diff(morph, dom);
-    check(d <= 0.02, `@${dpr}× morph → DOM hero`, `${pct(d)} of pixels differ ≤ 2%`);
+    check(d <= 0.02, `${label}@${dpr}× morph → DOM hero`, `${pct(d)} of pixels differ ≤ 2%`);
     // …and the DOM hero hands to the paper as an identity (verify:detail's step
     // does this at every size; once here for the chain).
     await page.evaluate(() => {
@@ -443,7 +447,7 @@ async function checkMorph(browser) {
     await frames(page, 4);
     const paper = await grab(page, hr, dpr, 300, 390);
     const d2 = diff(dom, paper);
-    check(d2 <= 0.02, `@${dpr}× DOM hero → paper`, `${pct(d2)} of pixels differ ≤ 2%`);
+    check(d2 <= 0.02, `${label}@${dpr}× DOM hero → paper`, `${pct(d2)} of pixels differ ≤ 2%`);
     await page.context().close();
   }
 }
@@ -1423,6 +1427,335 @@ async function checkRiveContexts(browser) {
   await page.context().close();
 }
 
+// ── card 03, the drex cover ─────────────────────────────────────────────
+
+/** Card 03's frame, and where its logo's mark is centred (drex.ts). */
+const DFRAME = { w: 1000, h: 1300 };
+const DLOGO = { x: 500, y: 649 };
+/** drexCover.js's handoff render of Figma's frame, pointer at (-1, -1): kept
+ *  with the masters, outside the repo. */
+const DREX_REF = arg('--drex-ref', join(homedir(), 'Discommode-pages', 'projects', 'drex', 'preview-figma-rest.png'));
+
+/** The grid, card 03 focused (two ArrowRights from 01), its print ready. */
+async function gridOn03(page) {
+  await page.goto(B, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => window.__covers && window.__covers.frames() > 3, null, { timeout: 20000 });
+  for (let i = 0; i < 2; i++) {
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(350);
+  }
+  await page.waitForFunction(() => window.__covers.stage.cover('drex')?.ready(), null, { timeout: 20000 });
+  await page.waitForTimeout(1200);
+}
+
+async function heroOn03(page, { settle = true } = {}) {
+  await page.goto(B, { waitUntil: 'networkidle' });
+  await page.goto(`${B}#item-03`);
+  await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
+  if (settle) await page.waitForFunction(() => window.__paper.presence() >= 1, null, { timeout: 5000 });
+}
+
+/** Mean luminance of an RGB(A) raw buffer `w` wide, over a box of fractions. */
+function lum(buf, w, h, ch, box) {
+  const x0 = Math.floor(box.u0 * w);
+  const x1 = Math.ceil(box.u1 * w);
+  const y0 = Math.floor(box.v0 * h);
+  const y1 = Math.ceil(box.v1 * h);
+  let s = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * w + x) * ch;
+      s += 0.2126 * buf[i] + 0.7152 * buf[i + 1] + 0.0722 * buf[i + 2];
+    }
+  }
+  return s / ((x1 - x0) * (y1 - y0));
+}
+
+/** An image as 20 × 26 blocks (50 frame px each), the dither and grain
+ *  averaged out: what "looks like" compares. */
+const blocks = (input, raw) =>
+  sharp(input, raw ? { raw } : undefined)
+    .removeAlpha()
+    .resize(20, 26, { fit: 'fill', kernel: 'cubic' })
+    .raw()
+    .toBuffer();
+
+function blockDiff(a, b) {
+  let s = 0;
+  let m = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = Math.abs(a[i] - b[i]);
+    s += d;
+    m = Math.max(m, d);
+  }
+  return { mean: s / a.length, max: m };
+}
+
+/** One draw of card 03 at w × h by the stage, read back (straight RGBA). */
+async function drexFrame(page, w, h, t, dome) {
+  const r = await page.evaluate(([w, h, t, dome]) => window.__covers.renderFrame('drex', w, h, t, dome), [w, h, t, dome]);
+  return r ? { ...r, data: Buffer.from(r.b64, 'base64') } : null;
+}
+
+async function checkDrexCompile(browser) {
+  console.log('\ndrex compile: both passes link, no GL error, in the stage and in the paper');
+  const page = await newPage(browser, VIEWPORTS[0], 2);
+  await gridOn03(page);
+  const st = await page.evaluate(() => window.__covers.diagnose('drex'));
+  check(st && st.linked && st.glError === 0, 'stage', st ? `linked ${st.linked}, glError ${st.glError}${st.log ? `: ${st.log}` : ''}` : 'no cached renderer for drex');
+  await heroOn03(page);
+  const pp = await page.evaluate(() => window.__paper.coverDiagnose('drex'));
+  check(pp && pp.linked && pp.glError === 0, 'paper', pp ? `linked ${pp.linked}, glError ${pp.glError}${pp.log ? `: ${pp.log}` : ''}` : 'no cached renderer for drex');
+  await page.context().close();
+}
+
+async function checkDrexRef(browser) {
+  console.log('\ndrex ref: 1000×1300, the pointer at (-1, -1), against preview-figma-rest.png');
+  let ref;
+  try {
+    ref = await readFile(DREX_REF);
+  } catch {
+    skip('1000×1300 vs Figma', `no reference at ${DREX_REF} (--drex-ref <png>)`);
+    return;
+  }
+  const page = await newPage(browser, VIEWPORTS[0], 1);
+  await gridOn03(page);
+  const raw = { width: DFRAME.w, height: DFRAME.h, channels: 4 };
+  // Figma's pointer rests at (-1, -1): the dome all the way up, there.
+  const me = await drexFrame(page, DFRAME.w, DFRAME.h, 0, { x: -1, y: -1, amp: 1 });
+  // A control: the light parked on the logo, which Figma's render is not.
+  const ctl = await drexFrame(page, DFRAME.w, DFRAME.h, 0, { x: DLOGO.x, y: DLOGO.y, amp: 1 });
+  await writeFile('.context/verify-drex-rest.png', await sharp(me.data, { raw }).png().toBuffer()).catch(() => {});
+  const rb = await blocks(ref);
+  const d = blockDiff(rb, await blocks(me.data, raw));
+  const dc = blockDiff(rb, await blocks(ctl.data, raw));
+  const refMeta = await sharp(ref).metadata();
+  const refRaw = await sharp(ref).removeAlpha().raw().toBuffer();
+  const ch = refMeta.channels >= 4 ? 3 : refMeta.channels;
+  const L = (buf, c, box) => lum(buf, DFRAME.w, DFRAME.h, c, box);
+  const ALL = { u0: 0, u1: 1, v0: 0, v1: 1 };
+  const CORNER = { u0: 0, u1: 0.15, v0: 0, v1: 0.12 };
+  const LOGO = { u0: 0.3, u1: 0.45, v0: 0.4, v1: 0.55 }; // inside the left page
+  const GROUND = { u0: 0.05, u1: 0.2, v0: 0.6, v1: 0.75 }; // beside it
+  const mine = { all: L(me.data, 4, ALL), corner: L(me.data, 4, CORNER), logo: L(me.data, 4, LOGO), ground: L(me.data, 4, GROUND) };
+  const theirs = { all: L(refRaw, ch, ALL), corner: L(refRaw, ch, CORNER), logo: L(refRaw, ch, LOGO), ground: L(refRaw, ch, GROUND) };
+  const f1 = (x) => x.toFixed(1);
+  check(me.minA === 255, 'opaque', `smallest alpha ${me.minA} (255: no sky through it)`);
+  check(
+    Math.abs(mine.all - theirs.all) <= 4 && mine.all < 60,
+    'a dark frame',
+    `mean luminance ${f1(mine.all)} vs Figma's ${f1(theirs.all)} (±4, < 60)`,
+  );
+  check(mine.corner > 150 && theirs.corner > 150, 'lit top-left corner', `${f1(mine.corner)} vs Figma's ${f1(theirs.corner)} (> 150)`);
+  check(
+    Math.abs(mine.logo - mine.ground) < 25 && mine.ground < 60,
+    'the logo barely visible',
+    `inside the mark ${f1(mine.logo)}, beside it ${f1(mine.ground)}: ${f1(Math.abs(mine.logo - mine.ground))} apart < 25 (Figma's: ${f1(theirs.logo)} / ${f1(theirs.ground)})`,
+  );
+  check(
+    d.mean <= 3 && dc.mean > 3,
+    'looks like Figma',
+    `20×26 blocks: mean ${f1(d.mean)} levels ≤ 3, max ${d.max} (the logo is the exported one; drexCover.js's previews used a stand-in); control, the light on the logo: mean ${f1(dc.mean)}`,
+  );
+  await page.context().close();
+}
+
+async function checkDrexCache(browser) {
+  console.log('\ndrex cache: pass A rendered once per size, pass B every frame');
+  const page = await newPage(browser, VIEWPORTS[0], 2);
+  await gridOn03(page);
+  const tr = await focusedTile(page);
+  const prints = () => page.evaluate(() => window.__covers.prints('drex'));
+  const draws = () => page.evaluate(() => window.__covers.stage.cover('drex').drawCount());
+  const a0 = await prints();
+  const d0 = await draws();
+  // the pointer over the focused tile for 90 frames: the tile tilts and its
+  // focus scale settles, every frame a new bounding box — not a new print
+  for (let i = 0; i < 90; i++) {
+    const k = i / 90;
+    await page.mouse.move(tr.x + tr.w * (0.15 + 0.7 * k), tr.y + tr.h * (0.2 + 0.6 * Math.abs(Math.sin(k * 6))));
+    await frames(page, 1);
+  }
+  const a1 = await prints();
+  const d1 = await draws();
+  // …except the hero's, which a hovered tile has the stage render in an idle
+  // moment, so the morph does not pay for it on the click's first frame
+  const hs = await heroRect(page);
+  const heroPrint = `${Math.round(hs.w * 2)}x${Math.round(hs.h * 2)}`;
+  check(
+    a1.renders - a0.renders === 1 && a1.kept.includes(heroPrint) && d1 - d0 >= 90,
+    'grid, hovered',
+    `pass A ${a1.renders - a0.renders} render (1: the hero's ${heroPrint}, ahead of the click; the tile's none), pass B ${d1 - d0} draws in 90 frames; prints kept ${a1.kept.join(', ')}`,
+  );
+  // grid → detail through the morph, then 90 frames on the hero
+  await page.mouse.click(tr.x + tr.w / 2, tr.y + tr.h * 0.62);
+  await page.waitForFunction(() => window.__paper?.state() === 'on' && window.__paper.presence() >= 1, null, { timeout: 20000 });
+  const a2 = await prints();
+  const p0 = await page.evaluate(() => window.__paper.coverPrints('drex'));
+  const c0 = await page.evaluate(() => window.__paper.coversDrawn());
+  const hr = await heroRect(page);
+  for (let i = 0; i < 90; i++) {
+    const k = i / 90;
+    await page.mouse.move(hr.x + hr.w * (0.2 + 0.6 * k), hr.y + hr.h * (0.3 + 0.4 * Math.abs(Math.sin(k * 5))));
+    await frames(page, 1);
+  }
+  const p1 = await page.evaluate(() => window.__paper.coverPrints('drex'));
+  const c1 = await page.evaluate(() => window.__paper.coversDrawn());
+  check(
+    a2.renders === a1.renders,
+    'the morph and the DOM hero',
+    `${a2.renders - a1.renders} new prints in the stage over the whole travel (0: the hero's was ready), kept ${a2.kept.join(', ')}`,
+  );
+  check(
+    p0 && p1 && p1.renders === p0.renders && c1 - c0 >= 80,
+    'the paper hero, hovered',
+    p0 ? `pass A ${p1.renders - p0.renders} renders, pass B ${c1 - c0} draws in 90 frames; prints kept ${p1.kept.join(', ')}` : 'no paper renderer',
+  );
+  // a dial change re-renders it, once
+  await page.evaluate(() => window.__covers.patchDials('drex', { risograph: { grain: 0.2 } }));
+  await frames(page, 10);
+  const p2 = await page.evaluate(() => window.__paper.coverPrints('drex'));
+  await page.evaluate(() => window.__covers.patchDials('drex', null));
+  check(p2.renders - p1.renders === 1, 'a pass-A dial changed', `${p2.renders - p1.renders} render in 10 frames (1)`);
+  await page.context().close();
+}
+
+async function checkDrexPointer(browser) {
+  console.log('\ndrex pointer: the light follows it, on the tile and on the hero; drifts at rest');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    await gridOn03(page);
+    await quiet(page);
+    await flatGrid(page);
+    await page.evaluate(() => {
+      const st = document.createElement('style');
+      st.textContent = '.card-overlay, .grid-card__overlay { opacity: 0 !important; }';
+      document.head.append(st);
+      window.__covers.pin(2);
+    });
+    const tr = await focusedTile(page);
+    const TL = { u0: 0.1, u1: 0.35, v0: 0.1, v1: 0.3 };
+    const BR = { u0: 0.65, u1: 0.9, v0: 0.7, v1: 0.9 };
+    const shot = async (r) => {
+      const buf = await grab(page, r, dpr, 300, 400);
+      return { tl: lum(buf, 300, 400, 3, TL), br: lum(buf, 300, 400, 3, BR) };
+    };
+    const hover = async (r, u, v) => {
+      for (let i = 0; i < 12; i++) await page.mouse.move(r.x + r.w * u + i, r.y + r.h * v);
+      await page.waitForTimeout(900); // followEase 0.12: ~97% of the way in 0.45 s
+    };
+    // tilt and focus are off (flatGrid): the tile's box IS the cover
+    await hover(tr, 0.22, 0.2);
+    const a = await shot(tr);
+    await hover(tr, 0.78, 0.8);
+    const b = await shot(tr);
+    check(a.tl > a.br + 60 && b.br > b.tl + 60, `@${dpr}× grid tile`, `pointer top-left: TL ${a.tl.toFixed(0)} / BR ${a.br.toFixed(0)}; bottom-right: TL ${b.tl.toFixed(0)} / BR ${b.br.toFixed(0)}`);
+    // at rest the light drifts: two moments of the shared clock
+    await page.mouse.move(3, 3);
+    await page.waitForTimeout(1200);
+    const r0 = await grab(page, tr, dpr, 300, 400);
+    await page.evaluate(() => window.__covers.pin(5.5));
+    await frames(page, 3);
+    const r1 = await grab(page, tr, dpr, 300, 400);
+    const moved = diff(r0, r1);
+    check(moved > 0.05, `@${dpr}× grid at rest, drifting`, `t 2 s → 5.5 s: ${pct(moved)} of pixels past ${TOL} levels (> 5%)`);
+    // the hero, under the paper: its panel takes the pointer
+    await heroOn03(page);
+    await quiet(page);
+    await page.evaluate(() => window.__paper.override({ zero: true }));
+    const hr = await heroRect(page);
+    await hover(hr, 0.22, 0.2);
+    const c = await shot(hr);
+    await hover(hr, 0.78, 0.8);
+    const d = await shot(hr);
+    const under = await page.evaluate(() => window.__paper.state());
+    check(
+      under === 'on' && c.tl > c.br + 60 && d.br > d.tl + 60,
+      `@${dpr}× detail hero (paper ${under})`,
+      `pointer top-left: TL ${c.tl.toFixed(0)} / BR ${c.br.toFixed(0)}; bottom-right: TL ${d.tl.toFixed(0)} / BR ${d.br.toFixed(0)}`,
+    );
+    await page.context().close();
+  }
+}
+
+async function checkDrexMorph(browser) {
+  console.log('\ndrex morph: the last morph frame vs the DOM hero, the DOM hero vs the paper');
+  await checkMorph(browser, { gridOn: gridOn03, label: 'drex ' });
+}
+
+async function checkDrexReduced(browser) {
+  console.log('\ndrex reduced motion: the still, the light parked on the logo, nothing moves');
+  const page = await newPage(browser, VIEWPORTS[0], 2, { reducedMotion: 'reduce' });
+  await page.goto(B, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const grid = await page.evaluate(() => {
+    const tiles = [...document.querySelectorAll('.cover-tile[data-cover="drex"]')];
+    return {
+      tiles: tiles.length,
+      canvases: tiles.filter((t) => t.querySelector('.cover-tile__canvas')).length,
+      stills: tiles.filter((t) => {
+        const i = t.querySelector('.cover-tile__still');
+        return i.complete && i.naturalWidth > 0;
+      }).length,
+    };
+  });
+  check(grid.tiles > 0 && grid.canvases === 0 && grid.stills === grid.tiles, 'grid', `${grid.stills} of ${grid.tiles} tiles on the still, ${grid.canvases} canvases`);
+  await heroOn03(page, { settle: false });
+  await quiet(page);
+  await page.waitForTimeout(500);
+  const drawn = await page.evaluate(() => window.__paper.coversDrawn());
+  const a = await sharp(await page.screenshot()).raw().toBuffer();
+  await page.waitForTimeout(1000);
+  const b = await sharp(await page.screenshot()).raw().toBuffer();
+  let moved = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) moved++;
+  check(drawn === 0 && moved === 0, 'detail hero', `paper drew the live cover ${drawn} times (0 = the still), ${moved} bytes changed over 1s`);
+  // the still itself (npm run covers): its light is on the logo
+  const res = await page.request.get(`${B}projects/drex/cover-still.webp`);
+  const img = sharp(await res.body());
+  const { width, height } = await img.metadata();
+  const s = await img.removeAlpha().raw().toBuffer();
+  const at = (cx, cy) => lum(s, width, height, 3, { u0: cx - 0.06, u1: cx + 0.06, v0: cy - 0.05, v1: cy + 0.05 });
+  // the white paper between the pages and the wordmark, 111 frame px under
+  // the logo's centre (inside the light's 344), and the corner, outside it
+  const lit = lum(s, width, height, 3, { u0: 0.47, u1: 0.53, v0: 0.565, v1: 0.605 });
+  const dark = at(0.1, 0.08);
+  check(lit > 150 && dark < 60, 'the still, parked', `${width}×${height}: the paper under the logo's centre ${lit.toFixed(0)} (> 150), the top-left corner ${dark.toFixed(0)} (< 60)`);
+  await page.context().close();
+}
+
+async function checkDrexBudgets(browser) {
+  console.log('\ndrex budgets: GPU ms per frame (pass B), and pass A once');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    await gridOn03(page);
+    const pres = await page.evaluate(() => window.__covers.presenters().filter((p) => p.visible && p.cover === 'drex'));
+    const big = pres.reduce((a, p) => (p.pxW > a.pxW ? p : a), { pxW: 0, pxH: 0, drawW: 0, drawH: 0 });
+    const w = big.drawW || big.pxW;
+    const h = big.drawH || big.pxH;
+    const shared = await page.evaluate(([w, h]) => window.__covers.benchStage('drex', w, h), [w, h]);
+    const copy = await page.evaluate(([w, h]) => window.__covers.benchPresent(w, h), [w, h]);
+    const gridTotal = 2 * shared.ms + pres.length * copy;
+    const print = await page.evaluate(([w, h]) => window.__covers.benchPrint('drex', w, h), [w, h]);
+    await heroOn03(page);
+    await page.mouse.move(3, 3);
+    const hero = await page.evaluate(() => window.__paper.benchCover('drex'));
+    const heroPrint = hero ? await page.evaluate(([w, h]) => window.__covers.benchPrint('drex', w, h), [hero.pxW, hero.pxH]) : null;
+    const tag = `1728×996 @${dpr}×`;
+    check(
+      gridTotal <= BUDGET.total,
+      `${tag} grid`,
+      `the shared tile draw ${w}×${h} ${ms(shared.ms)} (+ floor ${ms(shared.floor)}) + the hovered tile's + ${pres.length} copies of ${ms(copy)} = ${ms(gridTotal)} ≤ ${BUDGET.total}; pass A at this size, once: ${print === null ? '–' : ms(print)}`,
+    );
+    check(
+      hero && hero.ms <= BUDGET.hero,
+      `${tag} hero`,
+      hero ? `${hero.pxW}×${hero.pxH} ${ms(hero.ms)} (+ floor ${ms(hero.floor)}) ≤ ${BUDGET.hero}; pass A at this size, once: ${heroPrint === null ? '–' : ms(heroPrint)}` : 'no hero draw',
+    );
+    await page.context().close();
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({ args: GPU });
   try {
@@ -1442,6 +1775,13 @@ async function run() {
     if (ONLY.includes('rsky')) await checkRiveSky(browser);
     if (ONLY.includes('rground')) await checkRiveGround(browser);
     if (ONLY.includes('rcontexts')) await checkRiveContexts(browser);
+    if (ONLY.includes('dcompile')) await checkDrexCompile(browser);
+    if (ONLY.includes('dref')) await checkDrexRef(browser);
+    if (ONLY.includes('dcache')) await checkDrexCache(browser);
+    if (ONLY.includes('dpointer')) await checkDrexPointer(browser);
+    if (ONLY.includes('dmorph')) await checkDrexMorph(browser);
+    if (ONLY.includes('dreduced')) await checkDrexReduced(browser);
+    if (ONLY.includes('dbudgets')) await checkDrexBudgets(browser);
   } finally {
     await browser.close();
   }

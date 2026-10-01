@@ -14,6 +14,8 @@
  *   public/projects/<slug>/<name>-poster.webp the FIRST FRAME, same pixels
  *   public/projects/<slug>/<name>.webp        for a png/jpg source
  *   public/projects/<slug>/<name>.riv         copied byte for byte
+ *   public/projects/<slug>/<name>.svg         copied byte for byte (a cover's
+ *                                             logo: card 03's cover-logo.svg)
  *
  * plus the card face, which is named by the CARD and not by the slug:
  *
@@ -113,10 +115,15 @@ const QUALITY = 82;
  * not signed: the web runtimes refuse its scripts, so Main's props and Main
  * Bounce's physics never run (docs/covers.md, "The .riv"). Kept only as the
  * record of that; `cover.riv` is the signed build.
+ *
+ * `drex/preview-*.png` are drexCover.js's handoff renders, the references
+ * `verify:cover` reads from here (docs/covers.md, "Card 03"); nothing loads
+ * them.
  */
 const NOT_SHIPPED = {
   'rive-site': ['loop.riv'],
   nosey: ['cover.unsigned.riv'],
+  drex: ['preview-figma-rest.png', 'preview-hover.png'],
 };
 
 /**
@@ -164,6 +171,7 @@ const CARD_H = 2600;
 const VIDEO_RE = /\.(mp4|mov)$/i;
 const IMAGE_RE = /\.(png|jpe?g)$/i;
 const RIVE_RE = /\.riv$/i;
+const SVG_RE = /\.svg$/i;
 
 const force = process.argv.includes('--force');
 const ONLY_ARG = process.argv.indexOf('--only');
@@ -331,9 +339,9 @@ async function convertImage(slug, name, table) {
 /**
  * A `.riv` is COPIED, not processed. It is already a compiled binary the
  * runtime reads whole; there is no lossy knob on it and no smaller form of it
- * that is still the same file.
+ * that is still the same file. So is an `.svg`: Figma's export, drawn as it is.
  */
-async function copyRive(slug, name) {
+async function copyAsIs(slug, name) {
   const src = join(SOURCE_DIR, slug, name);
   const out = join(OUTPUT_DIR, slug, name);
   const srcStat = await stat(src);
@@ -353,7 +361,7 @@ async function copyRive(slug, name) {
   // would otherwise ship and fail silently at the block, which renders its
   // stand-in and says nothing.
   const head = (await readFile(out)).subarray(0, 4).toString('ascii');
-  if (head !== 'RIVE') warnings.push(`${slug}/${name} does not start with the RIVE fingerprint`);
+  if (RIVE_RE.test(name) && head !== 'RIVE') warnings.push(`${slug}/${name} does not start with the RIVE fingerprint`);
   console.log(`  ${name.padEnd(20)} ${kb(srcStat.size)}  copied`);
 }
 
@@ -442,7 +450,7 @@ console.log('project media →', OUTPUT_DIR);
 for (const slug of slugs) {
   const skip = new Set(NOT_SHIPPED[slug] ?? []);
   const files = (await readdir(join(SOURCE_DIR, slug))).filter(
-    (f) => !skip.has(f) && (VIDEO_RE.test(f) || IMAGE_RE.test(f) || RIVE_RE.test(f)),
+    (f) => !skip.has(f) && (VIDEO_RE.test(f) || IMAGE_RE.test(f) || RIVE_RE.test(f) || SVG_RE.test(f)),
   );
   for (const name of skip) console.log(`  ${name.padEnd(20)} kept as a source, not shipped`);
   files.sort();
@@ -451,7 +459,7 @@ for (const slug of slugs) {
    *  half-finished run never leaves a table that disagrees with the files. */
   const table = {};
   for (const name of files) {
-    if (RIVE_RE.test(name)) await copyRive(slug, name);
+    if (RIVE_RE.test(name) || SVG_RE.test(name)) await copyAsIs(slug, name);
     else if (IMAGE_RE.test(name)) await convertImage(slug, name, table);
     else if (!ffmpeg) {
       console.log(`  SKIP   ${name} — no ffmpeg (set FFMPEG=/path/to/ffmpeg)`);

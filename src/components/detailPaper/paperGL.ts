@@ -13,7 +13,8 @@ import {
   WebGLRenderer,
 } from 'three';
 import type { WebGLRenderTarget } from 'three';
-import { CoverRenderer } from '../../covers/coverRenderer';
+import { makeCoverRenderer } from '../../covers/cachedCoverRenderer';
+import type { CoverDrawer } from '../../covers/coverRenderer';
 import { COVERS, shaderCover } from '../../covers/covers';
 import { coverDialsVersion, coverValues } from '../../covers/coverDials';
 import { CONTENT, itemHeroFace } from '../../content';
@@ -282,7 +283,7 @@ export function armPaperWarmup(): () => void {
 // ── the live covers' renderers ───────────────────────────────────────────
 
 export interface LiveCover {
-  r: CoverRenderer;
+  r: CoverDrawer;
   rt: WebGLRenderTarget | null;
   bound: number;
 }
@@ -296,7 +297,7 @@ export function liveCover(id: string): LiveCover | null {
   if (!c) {
     const def = shaderCover(id);
     if (!def) return null;
-    const r = span(`cover ${id}`, () => new CoverRenderer(gl!.renderer, def, coverValues(id)));
+    const r = span(`cover ${id}`, () => makeCoverRenderer(gl!.renderer, def, coverValues(id)));
     c = { r, rt: null, bound: coverDialsVersion() };
     liveCovers.set(id, c);
   }

@@ -16,7 +16,7 @@ import {
 import type { Texture, WebGLRenderer } from 'three';
 import { splitCoverGlsl } from './glsl';
 import type { DialValues } from './dialValues';
-import type { CoverDef, Crop, Dome, InstanceFrame, Uniforms } from './types';
+import type { CoverDef, Crop, Dome, InstanceFrame, LiveCoverDef, Uniforms } from './types';
 
 /**
  * ONE COVER ON ONE three.js RENDERER — the prototype's two passes as raw
@@ -56,8 +56,36 @@ export interface DrawInput {
   backdrop: [number, number, number] | null;
 }
 
-export class CoverRenderer {
+/**
+ * What the stage, the paper, the stills and the bench hold for a shader cover,
+ * whichever way its pass A runs: this class (pass A every draw) or
+ * CachedCoverRenderer (pass A once per size and dial state). Made by
+ * `makeCoverRenderer` (makeCoverRenderer.ts).
+ */
+export interface CoverDrawer {
   readonly def: CoverDef;
+  /** The assets are in and the programs can draw. */
+  ready(): boolean;
+  /** New dial values: rebind, and rebuild what depends on them. */
+  setValues(values: DialValues): void;
+  /** Compile the programs now rather than on the first visible frame. */
+  warm(): void;
+  /** Compile without blocking, then draw once into a throwaway target. */
+  warmAsync(): Promise<void>;
+  /** Allocate (and fill, if it can) what a draw of `crop` `pxW` wide will
+   *  use, now rather than on that draw. */
+  prepare(crop: Crop, pxW: number): void;
+  /** Draw one instance; false if it could not (not ready). */
+  draw(target: WebGLRenderTarget | null, d: DrawInput): boolean;
+  /** DEV: the benchmark's floor, the same passes drawing nothing. */
+  drawFloor(target: WebGLRenderTarget | null, d: DrawInput): void;
+  /** DEV: draws issued so far. */
+  drawCount(): number;
+  dispose(): void;
+}
+
+export class CoverRenderer implements CoverDrawer {
+  readonly def: LiveCoverDef;
   private readonly gl: WebGLRenderer;
   private readonly a: Uniforms;
   private readonly b: Uniforms;
@@ -93,7 +121,7 @@ export class CoverRenderer {
   private floorScene: Scene | null = null;
   private floorScene2: Scene | null = null;
 
-  constructor(renderer: WebGLRenderer, def: CoverDef, values: DialValues) {
+  constructor(renderer: WebGLRenderer, def: LiveCoverDef, values: DialValues) {
     this.gl = renderer;
     this.def = def;
     this.values = values;

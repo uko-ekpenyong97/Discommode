@@ -1,5 +1,5 @@
 import type { WebGLRenderTarget, WebGLRenderer } from 'three';
-import type { CoverRenderer, DrawInput } from './coverRenderer';
+import type { CoverDrawer, DrawInput } from './coverRenderer';
 
 export interface DrawCost {
   /** Shading: the draw minus the floor — the prototype's number, and the budget's. */
@@ -21,7 +21,7 @@ export interface DrawCost {
  */
 export function benchCoverDraw(
   gl: WebGLRenderer,
-  cover: CoverRenderer,
+  cover: CoverDrawer,
   target: WebGLRenderTarget | null,
   input: DrawInput,
   batches = 12,

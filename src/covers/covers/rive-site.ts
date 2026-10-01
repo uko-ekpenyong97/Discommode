@@ -17,7 +17,7 @@ import dials from './rive-site.json';
 import { STRIP_H, STRIP_W, TEXT_X, riveTextSdf, sliced } from './riveText';
 import { cssRgb } from '../color';
 import type { DialValues } from '../dialValues';
-import type { CoverDef, InstanceFrame, Uniforms } from '../types';
+import type { InstanceFrame, LiveCoverDef, Uniforms } from '../types';
 
 /**
  * CARD 02, rive-site — "Shader variation 3 — Soft contour field", as the tuning
@@ -403,7 +403,7 @@ function halfOf(data: Float32Array): Promise<Uint16Array> {
   return h;
 }
 
-export const riveSite: CoverDef = {
+export const riveSite: LiveCoverDef = {
   id: 'rive-site',
   frame: { w: FRAME_W, h: FRAME_H },
   glsl,
@@ -415,6 +415,6 @@ export const riveSite: CoverDef = {
   assetKey: (v) => `text@${(v as unknown as V).base.textTop}`,
   assets,
   bind,
-  domeSpring: (v) => (v as unknown as V).dots3.dome,
+  domeMotion: (v) => (v as unknown as V).dots3.dome,
   frameUniforms,
 };

@@ -28,6 +28,7 @@ import {
 } from './detailPaper/paperMath';
 import type { CardRect, Tween } from './detailPaper/paperMath';
 import { CoverRenderer, coverCropOf } from '../covers/coverRenderer';
+import { CachedCoverRenderer } from '../covers/cachedCoverRenderer';
 import {
   MAX_DPR,
   faceKey,
@@ -365,8 +366,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       c.rt?.dispose();
       c.rt = CoverRenderer.outputTarget(pxW, pxH);
     }
-    const spring = def.domeSpring(coverValues(id));
-    heroDome.step(performance.now(), spring.spring, spring.damping);
+    heroDome.advance(performance.now(), def.domeMotion(coverValues(id)));
     coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_);
     const under = backdropUnder(id);
     const drawn = c.r.draw(c.rt, {
@@ -939,10 +939,11 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
         }
         return null;
       },
-      /** GPU ms for one hero draw of the live cover, in THIS renderer. */
-      benchCover: () => {
+      /** GPU ms for one hero draw of the live cover (`only`: that one's), in
+       *  THIS renderer. */
+      benchCover: (only?: string) => {
         for (const [id, c] of liveCoverEntries()) {
-          if (!c.rt || !c.r.ready()) continue;
+          if (!c.rt || !c.r.ready() || (only && id !== only)) continue;
           const def = shaderCover(id)!;
           const crop: Crop = coverCropOf(def.frame.w, def.frame.h, c.rt.width, c.rt.height, { x0: 0, y0: 0, w: 1, h: 1 });
           return {
@@ -960,6 +961,17 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
           };
         }
         return null;
+      },
+      /** A cached-pass cover's prints in THIS renderer (card 03): pass A's
+       *  renders so far, the last one's ms, the sizes kept; and `diagnose`,
+       *  its programs linked and no GL error after a draw of each pass. */
+      coverPrints: (id: string) => {
+        const c = [...liveCoverEntries()].find(([k]) => k === id)?.[1].r;
+        return c instanceof CachedCoverRenderer ? c.printStats() : null;
+      },
+      coverDiagnose: (id: string) => {
+        const c = liveCover(id)?.r;
+        return c instanceof CachedCoverRenderer ? c.diagnose() : null;
       },
       set: setPaper,
       override: (o: PaperOverride) => {

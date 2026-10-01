@@ -53,7 +53,8 @@ export interface InstanceFrame {
   pxH: number;
   /** Drawing into a canvas's own framebuffer (row 0 = bottom): flip y. */
   flipY: boolean;
-  /** Pass A's target: its top-left in frame units, units per texel, texels. */
+  /** Pass A's target: its top-left in frame units, units per texel, texels.
+   *  (A cached pass A covers the whole frame: 0, 0, 1 / its scale, its size.) */
   rtX0: number;
   rtY0: number;
   rtUnits: number;
@@ -75,11 +76,14 @@ export interface InstanceFrame {
 export type CoverBackdrop = 'sky' | 'solid';
 
 /**
- * A cover: one GLSL file, one dial JSON, and the few lines that turn dial
- * values into its uniforms. Adding one is a new entry in covers.ts — the
- * renderer, the stage, the tiles, the paper and the stills do not change.
+ * How an instance's dome follows the pointer (dome.ts): a damped spring
+ * (stiffness-ish, damping %; card 02), or an ease — the share of the way it
+ * closes per 60 Hz frame (card 03's `followEase`).
  */
-export interface CoverDef {
+export type DomeMotion = { spring: number; damping: number } | { ease: number };
+
+/** What every shader cover has, whichever way its pass A runs. */
+interface ShaderCoverBase {
   kind?: 'shader';
   id: string;
   /** The Figma frame, frame units. Every instance is a cover-crop of it. */
@@ -88,24 +92,65 @@ export interface CoverDef {
   dials: DialConfig;
   /** What is behind it: 'sky' when omitted. */
   coverBackdrop?: CoverBackdrop;
-  /** Frame units around the crop that pass A also draws (for lens look-ups). */
-  rtMargin: number;
-  /** Pass A's resolution, as a fraction of the output's. */
-  rtScale: (v: DialValues) => number;
   /** The uniforms each pass declares, with their initial values. */
   uniformsA: () => Uniforms;
   uniformsB: () => Uniforms;
-  /** Textures the cover needs, built from the dials (async: fonts, SDFs). A new
-   *  key rebuilds them. */
+  /** What the cover needs beyond the dials, built from them (async: fonts,
+   *  SDFs, images). A new key rebuilds them. */
   assetKey: (v: DialValues) => string;
   assets: (v: DialValues) => Promise<Record<string, Texture>>;
   /** Dial values → the uniforms that only change when a dial does. */
   bind: (v: DialValues, a: Uniforms, b: Uniforms, assets: Record<string, Texture>) => void;
-  /** The mouse dome's spring, from the dials: stiffness-ish and damping %. */
-  domeSpring: (v: DialValues) => { spring: number; damping: number };
+  /** How the mouse dome follows the pointer, from the dials. */
+  domeMotion: (v: DialValues) => DomeMotion;
   /** Per draw: time, crop, target mapping, dome. No allocation. */
   frameUniforms: (v: DialValues, a: Uniforms, b: Uniforms, f: InstanceFrame, assets: Record<string, Texture>) => void;
+  /** The dials its STILL is drawn with (`npm run covers`), and that reduced
+   *  motion would draw with; the dials as they are when omitted. */
+  stillValues?: (v: DialValues) => DialValues;
 }
+
+/**
+ * A cover whose pass A runs on every draw (card 02): over the crop plus
+ * `rtMargin`, at `rtScale` of the output (coverRenderer.ts).
+ */
+export interface LiveCoverDef extends ShaderCoverBase {
+  passA?: 'live';
+  /** Frame units around the crop that pass A also draws (for lens look-ups). */
+  rtMargin: number;
+  /** Pass A's resolution, as a fraction of the output's. */
+  rtScale: (v: DialValues) => number;
+}
+
+/**
+ * A cover whose pass A is STATIC — it depends only on the dials and the size it
+ * is drawn at (card 03's print, drex) — so it is rendered once per size and
+ * dial state into a cached target and only pass B runs per frame
+ * (cachedCoverRenderer.ts). Pass A covers the WHOLE frame at the output's
+ * scale, one RGBA8 target; pass B draws the instance's crop of it.
+ *
+ * The renderer owns the geometry uniforms: pass A's `uInput` (the input
+ * picture) and `uDims` (its size, px); pass B's `uTex` (pass A's target),
+ * `uDims` (the same), `uOrigin` (the crop's top-left in it, whole px), `uOut`
+ * (the output's size, px) and `uFlip` (1 drawing into a canvas, 0 an RT).
+ */
+export interface CachedCoverDef extends ShaderCoverBase {
+  passA: 'cached';
+  /** The dials pass A depends on, as a string: a new one re-renders it. */
+  printKey: (v: DialValues) => string;
+  /** Pass A's input picture, the whole frame at `w × h` px, or null while its
+   *  assets are not in. Uploaded once per render of pass A. */
+  printInput: (v: DialValues, w: number, h: number, assets: Record<string, Texture>) => TexImageSource | null;
+  /** Pass A's own uniforms for a target `w × h` px at `s` px per frame unit. */
+  printUniforms: (v: DialValues, a: Uniforms, w: number, h: number, s: number) => void;
+}
+
+/**
+ * A shader cover: one GLSL file, one dial JSON, and the few lines that turn
+ * dial values into its uniforms. Adding one is a new entry in covers.ts — the
+ * renderers, the stage, the tiles, the paper and the stills do not change.
+ */
+export type CoverDef = LiveCoverDef | CachedCoverDef;
 
 /**
  * A Rive cover's registry entry (src/covers/rive/): its frame — the artboards'

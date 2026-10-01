@@ -1,13 +1,15 @@
 <!doctype html>
 <!-- Loaded by scripts/make-cover-stills.mjs, never by the site: renders a cover's
-     still with the app's own renderer (src/covers/coverRenderer.ts for a
-     shader, src/covers/rive/riveCover.ts for a Rive cover). -->
+     still with the app's own renderer (src/covers/coverRenderer.ts or
+     cachedCoverRenderer.ts for a shader, src/covers/rive/riveCover.ts for a
+     Rive cover). -->
 <html lang="en"><head><meta charset="utf-8" /><title>cover still</title></head>
 <body style="margin:0;background:transparent">
 <script type="module">
 import { WebGLRenderer } from 'three';
 import { COVERS } from '/src/covers/covers.ts';
-import { CoverRenderer, coverCropOf } from '/src/covers/coverRenderer.ts';
+import { coverCropOf } from '/src/covers/coverRenderer.ts';
+import { makeCoverRenderer } from '/src/covers/cachedCoverRenderer.ts';
 import { dialDefaults } from '/src/covers/dialValues.ts';
 import { ensureRive, rivePlayer, riveProbe } from '/src/covers/rive/riveCover.ts';
 
@@ -29,8 +31,9 @@ async function riveStill(id, width) {
   return p.canvas.getContext('2d').getImageData(0, 0, w, h).data;
 }
 
-/** The whole frame at `width` px, t = 0, dome at rest, nothing behind it:
- *  straight-alpha RGBA, top row first, base64. */
+/** The whole frame at `width` px, t = 0, dome at rest, nothing behind it,
+ *  with the cover's still dials (`stillValues`: card 03's light parked on its
+ *  logo): straight-alpha RGBA, top row first, base64. */
 window.renderStill = async (id, width) => {
   const def = COVERS[id];
   if (def.kind === 'rive') {
@@ -46,7 +49,8 @@ window.renderStill = async (id, width) => {
   const gl = new WebGLRenderer({ canvas, alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
   gl.setPixelRatio(1);
   gl.setSize(w, h, false);
-  const cover = new CoverRenderer(gl, def, dialDefaults(def.dials));
+  const values = dialDefaults(def.dials);
+  const cover = makeCoverRenderer(gl, def, def.stillValues ? def.stillValues(values) : values);
   for (let i = 0; i < 400 && !cover.ready(); i++) await new Promise((r) => setTimeout(r, 25));
   if (!cover.ready()) throw new Error('cover never became ready');
   const crop = coverCropOf(def.frame.w, def.frame.h, w, h, { x0: 0, y0: 0, w: 1, h: 1 });

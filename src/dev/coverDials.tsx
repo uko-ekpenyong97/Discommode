@@ -21,7 +21,8 @@ const S = SITE_COVER_DEFAULTS;
  * view is suspended there, which is why this host is mounted even then) and the
  * app's own everywhere else.
  *
- * A Rive cover's panel (card 04, at #item-04?intro) is its JSON only — riveSwapAt,
+ * Card 03's (COVER · DREX) is its JSON only, below. A Rive cover's panel
+ * (card 04, at #item-04?intro) is its JSON only too — riveSwapAt,
  * riveMaxDpr, and its own coverPaperShade — and no site folder: two persisted
  * panels writing the same site dials would each overwrite the other's.
  */
@@ -56,6 +57,20 @@ function useCoverPanel(id: string) {
 
 function RiveSitePanel() {
   useCoverPanel('rive-site');
+  return null;
+}
+
+/**
+ * Card 03's panel, COVER · DREX: its JSON only (drex.json — every DEFAULTS
+ * value of drexCover.js: Figma's risograph, dither and hover reveal, and the
+ * site's rest dials), and no site folder — card 02's panel writes the site's
+ * dials, and two persisted panels writing them would overwrite each other.
+ * The inks and the paper are RGBA sliders, not colour dials: a colour dial is
+ * 8 bits a channel, and Figma's values (0.91, 0.278, …) are not.
+ */
+function DrexPanel() {
+  const v = useDialKit('COVER · DREX', COVERS.drex.dials as KitConfig, { id: persistedPanelId('cover-drex'), persist: true });
+  useEffect(() => setCoverValues('drex', v as unknown as DialValues), [v]);
   return null;
 }
 
@@ -181,6 +196,7 @@ export default function CoverDials() {
     <>
       <DialsPanel />
       <RiveSitePanel />
+      <DrexPanel />
       <NoseyPanel />
     </>
   );

@@ -8,7 +8,10 @@ weather sky showing through its ground. Card 04 (Nosey) is the second, and is
 Rive: Nosey's four characters on an opaque grey ground of their own, looking at
 the pointer, on "Main" in the grid and bouncing off the walls on "Main Bounce"
 as the detail hero — see
-[Rive covers](#rive-covers-card-04). Each is live in the grid tile, the
+[Rive covers](#rive-covers-card-04). Card 03 (Drex) is the third, a shader
+again: the Drex logo under Figma's risograph, dither and hover reveal, dark but
+for a light that follows the pointer, on white paper of its own — see
+[Card 03](#card-03-drex-a-cached-pass-a). Each is live in the grid tile, the
 grid→detail morph and the detail hero, and everywhere else it is its still.
 
 The shader and its tuning are the prototype's
@@ -17,9 +20,10 @@ and that page stays the tuning bench: it now loads the app's GLSL and dial JSON,
 so what is tuned there is what ships.
 
 > **On the numbers in this file.** Every measurement is from
-> `npm run verify:cover` and `npm run verify:detail` on 2026-09-24 (card 02) and
-> 2026-09-27 (card 04), on an Apple M1 Max (ANGLE / Metal), headless Chromium
-> for the first and Chrome for the second.
+> `npm run verify:cover` and `npm run verify:detail` on 2026-09-24 (card 02),
+> 2026-09-27 (card 04) and 2026-10-01 (card 03), on an Apple M1 Max (ANGLE /
+> Metal), headless Chromium for the first and the third and Chrome for the
+> second.
 
 | | |
 | --- | --- |
@@ -31,8 +35,31 @@ so what is tuned there is what ships.
 | card 04: the grid row, live, at rest and hovered: no label on the tile, "04" as the overlay's headline (2026-09-30) | `docs/covers/nosey-grid-row.webp` |
 | card 04: the detail hero at rest and mid-bounce, the number alone at its foot (2026-09-30) | `docs/covers/nosey-hero.webp` |
 | card 04: the same tile over NOON and over NIGHT (the file before 2026-09-28) | `docs/covers/nosey-noon-night.webp` |
+| card 03: the grid tile at rest (drifting) and hovered, the detail hero hovered, under the paper (2026-10-01) | `docs/covers/drex.webp` |
+| card 03: the frame at 1000 × 1300, the pointer at (-1, -1), beside drexCover.js's `preview-figma-rest.png` (2026-10-01) | `docs/covers/drex-vs-figma.webp` |
 
 ## Handoff
+
+**Card 03, Drex (2026-10-01).** Branch `andorra` makes card 03's cover live:
+Figma's Frame 5 (Risograph → Dither → Hover reveal), ported from Uko's
+`drexCover.js` ([Card 03](#card-03-drex-a-cached-pass-a)). Card 03 gets the
+cover and nothing else; its project view is still the placeholder. What is new
+outside the cover: a second shader renderer, `CachedCoverRenderer`, for a
+cover whose pass A is static (it renders it once per size and dial state;
+`CoverDef` is now `LiveCoverDef | CachedCoverDef`); the dome can ease as
+well as spring (`domeMotion`, which replaces `domeSpring`); and a shader
+cover's dome now takes the pointer from the whole CARD (a grid tile) or PANEL
+(the hero), as card 04's does. Card 02's dome used to read it from the tile
+alone, so it went to rest over the overlay's CTA and never heard the pointer
+under the paper. `DIAL_STATE_VERSION` is 4. At the last runs:
+`verify:cover` all passed (3 skipped, card 04's sky checks, as before), card
+03's seven included; `npm test` (366), `tsc -b`, `lint`, `build`.
+`verify:detail`: card 03 as a NEIGHBOUR is now its still, a 1-px dither, so
+it measures 2.5–6.1% and is held to card 02's 7% for card 02's reason (the
+script's `budget`); identity and hand-off then pass. In the full run, every
+Prev slide had one 33–50 ms frame. Run alone against `main` on the same
+machine, back to back, this branch passed 12 of 12 and `main` 11 of 12 (one
+33.3 ms): the GPU's state after the other suites, as noted below.
 
 **The cards' labels (2026-09-30).** Every card is labelled the same way. In
 the GRID the tile is its art alone — the bold mono number that sat in its
@@ -151,7 +178,7 @@ npm run verify:detail -- --url http://localhost:5191
 
 | File | What it is |
 | --- | --- |
-| `src/covers/types.ts` | `CoverRef` (the manifest's: `shader` or `rive`), `CoverDef` (a shader cover), `RiveCoverDef`, the per-draw `InstanceFrame`, `CoverBackdrop` (a cover's own: `sky` or `solid`). |
+| `src/covers/types.ts` | `CoverRef` (the manifest's: `shader` or `rive`), `CoverDef` (a shader cover: `LiveCoverDef`, pass A every draw, or `CachedCoverDef`, pass A cached), `RiveCoverDef`, the per-draw `InstanceFrame`, `DomeMotion`, `CoverBackdrop` (a cover's own: `sky` or `solid`). |
 | `src/covers/covers.ts` | The registry: cover id → its definition (`shaderCover` / `riveCover` narrow it). The stills' URLs. |
 | `src/covers/covers/nosey.ts`, `nosey.json` | Card 04's `RiveCoverDef`: its frame (1000 × 1300), its dials and its `coverBackdrop` (`solid`). |
 | `src/covers/rive/riveCover.ts` | Rive covers: the runtime and the file (once each), the players (grid, hero), the pointer, the one-off work's scheduling, per-frame cost, `__covers.rive`. |
@@ -160,12 +187,16 @@ npm run verify:detail -- --url http://localhost:5191
 | `src/covers/covers/rive-site.json` | Card 02's dials, as a DialKit config; its defaults ARE the tuned values. Shared with the bench. |
 | `src/covers/covers/rive-site.ts` | Card 02's `CoverDef`: dial values → uniforms (the bench's code, for three.js). |
 | `src/covers/covers/riveText.ts` | The "Rive" strip as a signed distance field, built once on the CPU. Shared with the bench. |
+| `src/covers/covers/drex.glsl` | Card 03's two passes, `drexCover.js`'s FS_PRINT and FS_REVEAL ([Card 03](#card-03-drex-a-cached-pass-a)). |
+| `src/covers/covers/drex.json`, `drex.ts` | Card 03's dials (every DEFAULTS value of `drexCover.js`) and its `CachedCoverDef`: the input picture (`buildInputCanvas`), the uniforms, the light (`restLight`, `lightAt`). |
+| `public/projects/drex/cover-logo.svg` | Card 03's logo, Figma's export of node 490:110, byte for byte from `~/Discommode-pages/projects/drex/` (`npm run projects` copies it). |
 | `src/covers/glsl.ts` | Splits a cover's GLSL into its passes and prefixes the version, precision and defines. |
-| `src/covers/coverRenderer.ts` | One cover on one three.js renderer: the two passes, pass A's pooled targets. |
+| `src/covers/coverRenderer.ts` | One cover on one three.js renderer: the two passes, pass A's pooled targets. And `CoverDrawer`, what the stage, the paper and the stills hold for either renderer. |
+| `src/covers/cachedCoverRenderer.ts` | A cover whose pass A is static (card 03): the print, once per size and dial state, then pass B per draw. `printGeometry`, and `makeCoverRenderer`, which picks the renderer for a `CoverDef`. |
 | `src/covers/coverStage.ts` | The DOM instances' ONE renderer: one draw per aspect at rest, one per domed instance, `drawImage` to each. |
 | `src/covers/CoverTile.tsx` | One DOM instance: a 2D canvas over the still. |
 | `src/covers/coverClock.ts` | The shared clock. |
-| `src/covers/dome.ts` | The mouse dome's spring; `heroDome`, shared by the DOM hero and the paper plane. |
+| `src/covers/dome.ts` | The mouse dome: a spring (card 02) or an ease (card 03); `heroDome`, shared by the DOM hero and the paper plane. |
 | `src/covers/coverDials.ts` | The live dial values (a module store), the site's dials, and `coverBackdrop(id)` / `backdropUnder(id)`: what is drawn behind each cover. |
 | `src/dev/coverDials.tsx` | The COVER panel (dev). |
 | `src/covers/bench.ts`, `devHooks.ts` | Dev: `window.__covers`, the GPU benchmark. |
@@ -173,7 +204,7 @@ npm run verify:detail -- --url http://localhost:5191
 | `scripts/cover-verify.mjs` | `npm run verify:cover`. |
 | `public/fonts/inter-latin-400.woff2` | Inter 3.19 (fontsource 4.5.15, OFL — `Inter-OFL.txt` beside it). |
 
-Wired in: `content.ts` (`cover` on `PosterItem`, cards 02 and 04),
+Wired in: `content.ts` (`cover` on `PosterItem`, cards 02, 03 and 04),
 `GridPlane.tsx` (the tile), `DetailMorph.tsx` (the morph card, and which Rive
 player it shows), `DetailView.tsx` (the panels), `DetailPaperLayer.tsx` +
 `paperMaterial.ts` (the hero plane), `App.tsx` (the dev panel).
@@ -187,7 +218,7 @@ cover: { kind: 'shader', id: 'rive-site' },
 image: '/projects/rive-site/cover-still.webp',   // the still
 ```
 
-Cards without `cover` are unchanged (card 03). A Rive cover's ref is
+Cards without `cover` are unchanged (card 01, the magazine). A Rive cover's ref is
 `{ kind: 'rive', id, src, artboard: { grid, detail }, stateMachine }` — see
 [Rive covers](#rive-covers-card-04).
 
@@ -204,12 +235,16 @@ rive-site): the grid tile shows the 3:4 of it, the hero the 10:13.
    `uRT` / `uRT2` to pass A's targets; everything else is the cover's.
 2. `src/covers/covers/nosey.json` — its dials, as a DialKit config.
 3. `src/covers/covers/nosey.ts` — its `CoverDef` (frame, uniforms, `bind`,
-   `frameUniforms`, `assets` if it needs textures, `domeSpring`).
+   `frameUniforms`, `assets` if it needs textures, `domeMotion`: a spring or
+   an ease). If its pass A depends only on the dials and the size, make it a
+   `CachedCoverDef` (`passA: 'cached'`, `printKey`, `printInput`,
+   `printUniforms`) and it is rendered once per size, not every frame — see
+   [Card 03](#card-03-drex-a-cached-pass-a).
 4. One line in `covers.ts`, a `cover` on the card in `content.ts`, its id in
    `make-cover-stills.mjs`'s list, a panel in `src/dev/coverDials.tsx`, and
    `npm run covers`.
 
-The renderer, the stage, the tiles, the morph, the paper and the verify suite do
+The renderers, the stage, the tiles, the morph, the paper and the verify suite do
 not change.
 
 ## Transparency, and the backdrop
@@ -227,7 +262,7 @@ backdrop describes the file. It is a legitimate choice per cover:
 | | |
 | --- | --- |
 | `sky` (default; card 02) | the cover's ground is transparent and the sky shows through it. The site dial below applies. |
-| `solid` (card 04) | the cover brings its own opaque ground (card 04's artboards are filled #E0DDDD) and **nothing is drawn behind it**, including the site dial's colour. The sky does not show through, by design. |
+| `solid` (cards 03, 04) | the cover brings its own opaque ground (card 04's artboards are filled #E0DDDD; card 03's frame is white paper, under all of pass B) and **nothing is drawn behind it**, including the site dial's colour. The sky does not show through, by design. |
 
 **The site dial**, for a `sky` cover only (`backdropUnder(id)` in
 `coverDials.ts`, which the stage, the Rive players and the paper all ask):
@@ -243,7 +278,8 @@ nothing about the card changes. The paper's light (`coverPaperShade × alpha`)
 is then the full paper everywhere on it.
 
 `verify:cover` asks the page for each cover's backdrop (`__covers.backdrop(id)`)
-and **skips** `sky`, `ground`, `rsky` and `rground` for a `solid` one. They
+and **skips** `sky`, `ground`, `rsky` and `rground` for a `solid` one (card 03 has
+none of its own: it is `solid` from the start, and `dref` checks its alpha is 255). They
 are printed as skipped, not as failed, and the summary counts them.
 
 What that took, outside the covers:
@@ -366,12 +402,21 @@ at 1× the tile draws the dot field at 3 frame units a pixel and the hero at 1.4
 so their speckle aliases differently at the SAME moment, while the letters, the
 lenses and the marquee do not.
 
-**The mouse dome.** Each grid tile has its own spring: the pointer over a tile
-drives the dome in that tile's frame coordinates, and every other instance of
-the cover shows it at rest. The hero has one spring (`heroDome`), driven by the
-pointer over the hero's DOM panel. The DOM face and the paper plane both read
+**The mouse dome.** Each grid tile has its own spring: the pointer over a tile's
+CARD drives the dome in that tile's frame coordinates, and every other instance
+of the cover shows it at rest. The hero has one spring (`heroDome`), driven by
+the pointer over the hero's PANEL. The DOM face and the paper plane both read
 it, stepped by wall time so reading it twice in a frame integrates once. The
 paper's hover dent stays; both react at once. The morph card has no dome.
+(Until 2026-10-01 the listener was on the tile itself: the hover overlay's CTA
+sits over it and took the pointer, and under the paper the hero's DOM face is
+`visibility: hidden` and took none. Card 04's pointer was already read this
+way.)
+
+A cover's `domeMotion` says how its dome moves: card 02's is a spring
+(`dots3.dome`), card 03's an ease. The centre and the height close
+`followEase` of the way each 60 Hz frame, by wall time. Card 03's light is the
+rest light moved that height of the way to the centre (`lightAt`).
 
 ## The morph, and the stills
 
@@ -515,6 +560,160 @@ line art, less. `docs/covers/tile-crop-2x.webp` is the focused tile at 1728×996
 capped at 896 (left) and uncapped (right). The dial goes up to
 2048 for the sharpness back, at the cost above; it is on the COVER panel's
 site folder (card 02's, at `#item-02?intro`).
+
+## Card 03, Drex: a cached pass A
+
+Card 03's cover is Figma "Rive-ReDesign" Frame 5 (node 490:108, 1000 × 1300, the
+hero's 10:13): the Drex logo (node 490:110, at 134, 233, 731 × 833, #1CAB5B) on a
+white frame under three effects, in Figma's order. Uko's `drexCover.js` is the
+tested WebGL2 port of them (`~/Discommode-pages/projects/drex/`, with
+`HANDOFF.md` and its preview renders), and the cover is that port:
+
+| | Figma | here |
+| --- | --- | --- |
+| pass A | Risograph (v551) + Dither (v758, Bayer 2x2, pixelSize 1), fused: the dither is per pixel | `//#passA` in `drex.glsl`: `FS_PRINT` as it is. Static: **rendered once per size and dial state** into a cached RGBA8 target (the "print") |
+| pass B | Hover reveal (d622acc): dark (~10%) but for a light, inside it the print with a liquid wobble and an RGB fringe on the rim | `//#passB`: `FS_REVEAL` as it is, every frame |
+
+`npm run verify:cover` checks the shader is the port (`dref`): at 1000 × 1300,
+the pointer at (-1, -1) as Figma's rests, the frame against
+`preview-figma-rest.png` (`docs/covers/drex-vs-figma.webp`), averaged over
+50-px blocks so the dither and the grain cancel. The means are 39.2 vs 39.1, the
+lit corner 235.4 vs 234.7, the mark 17.8 against the paper beside it at 29.6
+(Figma's 17.8 / 29.5), and the blocks are a mean 0.7 levels apart (max 14). The
+max is the LOGO: `drexCover.js`'s previews used a stand-in mark, and the cover
+draws `cover-logo.svg`, Uko's export of the real one. The control, the light
+on the logo, is 45.9 apart.
+
+**What changed in the GLSL, and nothing else did:**
+
+- no `#version` line (three.js writes it; `splitCoverGlsl` adds the
+  precision, which the port had too);
+- pass B's `pp`: the output pixel's position in the PRINT, not in the output.
+  An instance is an `object-fit: cover` crop of the frame, so `uOrigin` is
+  the crop's top-left in the print (whole px), and `uFlip` is 1 into a canvas
+  (row 0 at the bottom; the stage) and 0 into an RT (row 0 at the top; the
+  paper). Over a whole-frame canvas it is the port's line exactly;
+- pass B's last line puts the result on the white paper (premultiplied over
+  white), so the cover is opaque even where the lens samples past the frame's
+  edge. `coverBackdrop` is `solid`.
+
+The stage's context is three.js's, which is WebGL2 only (`coverStageAvailable`
+throws without it), and so is the paper's. So the GLSL stays ES 3.00, and no
+conversion to 1.00 was needed. `drex.test.ts` pins the passes and the one
+changed line.
+
+### The print
+
+`CachedCoverRenderer` (`cachedCoverRenderer.ts`) is the second shader
+renderer. `makeCoverRenderer` picks it for a `CachedCoverDef`, so the stage,
+the paper, the stills and the bench take it as they take card 02's. It lives
+in the stage's context and the paper's, as card 02's renderers do, so it adds
+no context (`contexts`: grid 2, detail 3, with card 03's tiles live):
+
+- **Pass A covers the WHOLE frame at the output's scale.** `printGeometry`
+  makes it `w × h` px at `s = w / 1000`, and puts the instance's crop at
+  a whole-pixel offset. Every output pixel then reads one print texel at its
+  centre, and the 1-px Bayer dither is the print's, not a resampling of it.
+  The figure is `(fw · pxW / crop.w)`, rounded; a 3:4 tile at 672 × 896
+  reads a 689 × 896 print from x = 9, and the hero at 1256 × 1633 is its own
+  print.
+- **The input picture is `buildInputCanvas`, as the port has it**: the white
+  frame and the logo recoloured to `logoColor` on its own layer, at the
+  print's size. Drawing the SVG at that size keeps the mark sharp at any size.
+  It is uploaded as the port uploads it (no flip, premultiplied), drawn through,
+  and let go.
+- **Kept by size**, up to 4, each for 30 s after its last use. A new
+  `printKey` (the risograph and dither dials, `logoColor`) marks every print
+  stale, and each is re-rendered on its next draw.
+- **The stage sizes this kind by the LAYOUT box**: a ResizeObserver's content
+  box, which is fractional and untransformed. A grid tile's focus scale and
+  tilt, and the morph's travel, are transforms. Sized by its bounding box, each
+  frame of one was a new size and a new print. Sized by its layout box, the
+  whole travel is the hero's one print and CSS scales the canvas. Not
+  `offsetWidth`: it rounds, and 816.72 → 817 drew the DOM hero a print 1 px
+  taller than the paper's.
+- **The hero's print is made ahead.** In the paper, `primeHeroCover` renders
+  it a frame before the hand-in. In the stage, a hovered card-03 tile renders
+  it in an idle moment (`warmHeroPrint`, once per hero size), so the morph
+  does not pay for it on the click's first frame.
+
+`dcache` counts it: 90 frames of the pointer over the focused tile, then the
+morph, then 90 frames over the hero under the paper. That is 1 print render in
+the grid (the hero's, ahead of the click; the tile's is not re-rendered),
+0 through the morph, 0 on the hero, and pass B drew every frame. A pass-A dial
+changed is 1 render.
+
+### The light
+
+The light is where the reveal is, in frame px:
+
+| | |
+| --- | --- |
+| hovered | follows the pointer, eased by `followEase` (0.12) per 60 Hz frame — the instance's dome, as an ease ([the dome](#the-clock-and-the-dome)). The grid tile's own (its card), the hero's `heroDome` (its panel: under the paper too) |
+| at rest | `restMode`: `drift` (default; `drexCover.js`'s Lissajous around the mark, `driftRadius` 170, `driftPeriod` 14 s, on the shared clock), `parked` (on the mark's centre, 500, 649) or `off` (dark) |
+| reduced motion | `parked`, `motionSpeed` 0: `stillValues`. The cover is its still under reduced motion, like every cover, and the still is drawn with these. |
+
+Entering, the light glides from where the rest has it to the pointer, and
+leaving, back. The dome's height is the share of the way (`lightAt`). With
+`off` there is nothing at rest to glide from, so the light is the pointer and
+the height fades the reveal in.
+
+`dpointer`: the pointer at a tile's top-left and then bottom-right, the light's
+quarter at 225–229 luminance and the opposite one at 29, on the grid tile and on
+the hero under the paper, at 1× and 2×. At rest, two moments of the clock 3.5 s
+apart differ in 34–36% of the tile's pixels.
+
+### The still
+
+`npm run covers` draws card 03 with `stillValues`: the light parked on the
+mark, at t = 0. It draws at 900 px, NOT halved from 1800 as card 02's is: halving
+averages the 1-px dither into a flat tone the live cover never shows.
+`cover-still.webp` is 900 × 1170, 237 KB (dither is noise, and noise does not
+compress); `cover-still-sm.webp` is 360 × 468, 14 KB. `dreduced` checks it
+is parked: the paper under the mark's centre is 233, and the top-left corner
+is 29.
+
+### Dials
+
+**COVER · DREX** (`src/dev/coverDials.tsx`), its JSON only (`drex.json`), no
+site folder (card 02's panel has it). Every default is `drexCover.js`'s
+DEFAULTS, and `drex.test.ts` holds them equal:
+
+| folder | dials |
+| --- | --- |
+| `risograph` | Figma's: `numInks` 4, `halftoneStyle` dots, `halftoneSize` 8, `screenAngle` 15, `misregistration` 3, `grain` 0.35, `inkDensityBoost` 1.5, `colorQuantization` 0, the input grade (0, 0, 1, 1); `paperColor` and `ink1`–`ink4` (`inks5to8`, collapsed: unused at 4 inks) |
+| `dither` | Figma's: `ditherOn`, `ditherLevels` 2, `ditherBrightness` 100, `ditherContrast` 1 |
+| `reveal` | Figma's: `revealRadius` 344, `edgeSoftness` 68, `revealStrength` 1, `displacementAmount` 5, `motionSpeed` 1.7, `prismaticFringe` 10.5 |
+| `rest` | the site's: `logoColor` #1CAB5B, `restMode` drift, `driftRadius` 170, `driftPeriod` 14, `followEase` 0.12 |
+
+The inks and the paper are RGBA sliders, not colour dials. A colour dial is
+8 bits a channel, and Figma's 0.91 would come back as 232/255 = 0.9098. The
+pixel-unit dials are frame px, scaled by the print's `s`, so the cover looks
+the same at the tile's size and the hero's. The panel persists as
+`dialkit:cover-drex-v4`.
+
+### Frame time (card 03)
+
+`dbudgets`, measured as `budgets` measures card 02 (`bench.ts`: batches
+closed by a pixel read, minus the floor). A frame of card-03 work is pass B
+only. The floor here is one do-nothing pass into the output, because pass A
+is not per frame:
+
+| 1728×996 | @1× | @2× | budget |
+| --- | --- | --- | --- |
+| the shared tile draw (pass B) | 0.010 (+ floor 0.025), 480×640 | 0.015 (+ floor 0.025), 672×896 | — |
+| each tile: its copy | 0.037 | 0.053 | ≤ 0.15 |
+| worst frame of cover work, grid (shared + hovered + 3 copies) | 0.133 | 0.187 | ≤ 1.2 |
+| hero (the paper's pass B) | 0.055 (+ floor 0.070), 628×817 | 0.120 (+ floor 0.075), 1256×1633 | ≤ 1.0 |
+| pass A, once: the tile's print / the hero's | 3.2 / 4.1 | 3.4 / 8.0 | — |
+
+Pass B is a few texture reads and a little trig a pixel, so it costs less
+than its floor. Pass A is the cost, and it is paid once per size: the tile's
+print when the grid first shows card 03, and the hero's when a tile is hovered
+(in the stage, in an idle moment) and a frame before the paper's hand-in (in
+the paper). The ms are the main thread's (the input picture, a 2D canvas
+drawing the SVG at the print's size, and the upload) plus the GPU's, closed by
+a pixel read.
 
 ## Rive covers (card 04)
 
@@ -867,7 +1066,8 @@ canvas already is: no conversion).
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
 npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground,
-                              #   rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts
+                              #   rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,
+                              #   dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets
 npm run verify:detail         # its identity and hand-off cover cards 02 and 04
 ```
 
@@ -897,6 +1097,22 @@ fresh instances, and walk it a frame at a time: the same walk is the same run
 | `rcontexts` | WebGL contexts with card 04 live | grid 2, `#item-04` 3 (unchanged); 0 made by the runtime |
 
 `rpointer` was run against each way the real path broke or could break, and fails on each: the 10 s idle deadline put back ("never loaded"), events kept from the cover (`pointer-events: none` on the tile: `ptrX/ptrY` stay 0, no tracking change, tile and hero), and the tile-only listener put back (over the overlay's CTA the grid instance's last event is an `exit`).
+
+Card 03's seven (`d…`), with the numbers of the last run (2026-10-01):
+
+| check | what | measured |
+| --- | --- | --- |
+| `dcompile` | both passes linked, and `getError()` NO_ERROR after a draw of each, in the stage's context and the paper's | linked, 0, in both |
+| `dref` | 1000 × 1300, the pointer at (-1, -1), against `preview-figma-rest.png` (read from the masters, `--drex-ref` for another): opaque; a dark frame; a lit top-left corner; the logo barely visible; 50-px blocks ≤ 3 levels apart, and the light on the logo (the control) further | [Card 03](#card-03-drex-a-cached-pass-a) |
+| `dcache` | pass A's renders (`__covers.prints`, `__paper.coverPrints`) against pass B's draws: 90 hovered frames on the tile, the morph, 90 on the hero, and a dial | [The print](#the-print) |
+| `dpointer` | the light follows the pointer, tile and hero (under the paper), 1× and 2×; drifts at rest | [The light](#the-light) |
+| `dmorph` | card 02's `morph` on card 03: the last morph frame vs the DOM hero, the DOM hero vs the paper | 1.34% / 0.29% (1×), 1.41% / 0.56% (2×) ≤ 2% ([Not done](#not-done) 14) |
+| `dreduced` | reduced motion: tiles and hero on the still, nothing moves; the still's light is on the mark | 6 of 6 tiles, 0 draws, 0 bytes; 233 / 29 |
+| `dbudgets` | GPU ms per frame of pass B (the shared tile draw, the hovered tile's, the copies; the hero), and pass A's one-off ms at each size | [Frame time](#frame-time-card-03) |
+
+`window.__covers` for card 03: `renderFrame(id, w, h, t, dome)` (one draw read
+back), `prints(id)`, `diagnose(id)`, `benchPrint(id, w, h)`;
+`window.__paper.coverPrints(id)`, `coverDiagnose(id)`, `benchCover(id)`.
 
 `window.__covers.rive`: `ready(id)`, `status(id)`, `players()`, `viewModel(id, role)`,
 `reset(id)`, `costs()` / `clearCosts()`, `oneOff()` (the import's and each
@@ -995,3 +1211,22 @@ paper's effects on and the sky there.
    there or not (`verify:detail`'s `arrival` prints those rows, informational): the compositor and GPU with the page's first frames, and
    card 04's runtime and import, which load for the grid's tiles hidden under
    the detail view.
+10. **Card 03's still is 237 KB.** Its dither is per-pixel noise, which does
+   not compress, as card 02's particle field does not. It is only fetched where
+   it shows.
+11. **The paper renders card 03's hero print in the frame before its hand-in**
+   (`primeHeroCover`, 8.0–8.2 ms at 1256 × 1633 on the main thread and the GPU). The stage's
+   is made in an idle moment once a card-03 tile is hovered. The paper's could
+   be too, from the same hover, but it is not yet. `verify:detail`'s
+   `arrival` rows are where it would show.
+12. **`dref` compares structure, not the mark.** `drexCover.js`'s previews used
+   a stand-in logo, and the cover draws the exported one. So the comparison is
+   over 50-px blocks, and its max (14 levels) is where the two marks differ. A
+   render of Figma's frame with the real logo would make it a pixel check.
+13. **`restMode` `off` fades the light in rather than gliding it:** there
+   is no rest point to glide from (the port puts it 10,000 px off the frame).
+14. **Card 03's morph → DOM hero is 1.3–1.4%, card 02's 0.2%.** The morph
+   card is drawn at the hero's size and scaled by CSS over the travel. Held a
+   hair short of its end, the scale is not quite 1, and a 1-px dither resampled
+   that little still moves pixels past 32 levels. It lands on the same print,
+   pixel for pixel.
