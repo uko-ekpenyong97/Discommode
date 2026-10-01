@@ -101,17 +101,6 @@
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0);
 }
 
-/* …and no scrim under its name either (card 04 has one; card 02 has none): over
-   a transparent cover the scrim is a dark band across the sky, the veil the
-   rules above exist to keep off. The type carries its own soft shadow instead,
-   enough to hold white on a NOON sky. */
-.detail__panel--bare .detail__panel-meta {
-  background: none;
-}
-.detail__panel--bare :is(.detail__panel-name, .detail__panel-desc, .detail__panel-num) {
-  text-shadow: 0 1px 14px rgba(10, 12, 16, 0.4);
-}
-
 /* A readable issue's centre panel is the doorway into the reader. */
 .detail__panel--readable {
   cursor: pointer;
@@ -135,56 +124,6 @@
   font-size: 44px;
   line-height: 1;
   color: rgba(255, 255, 255, 0.85);
-}
-
-/* The project's name and its one line, stacked above the number and sharing its
-   left edge. At the panel's foot rather than over the middle of it: the face is
-   a picture of the project, and a caption across the middle covers the thing it
-   names.
-
-   IT CARRIES ITS OWN SCRIM, and that is not decoration. A card face is whatever
-   the project looks like — Nosey's is a white page with a face on it — and
-   white type with a shadow on white paper is not type anybody can read. The
-   gradient runs to the panel's own bottom edge so the NUMBER sits on it too,
-   and it fades out above the name rather than ending on a line. `padding` is
-   what reserves the number's row inside it, so the two never overlap however
-   long the sentence wraps to. */
-.detail__panel-meta {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 40px 14px 68px;
-  text-align: left;
-  background: linear-gradient(
-    to top,
-    rgba(10, 12, 16, 0.78) 0%,
-    rgba(10, 12, 16, 0.66) 42%,
-    rgba(10, 12, 16, 0) 100%
-  );
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.55);
-}
-
-.detail__panel-name {
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 30px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.03em;
-  color: #fff;
-}
-
-.detail__panel-desc {
-  max-width: 26em;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.35;
-  color: rgba(255, 255, 255, 0.84);
 }
 
 .detail__bar {

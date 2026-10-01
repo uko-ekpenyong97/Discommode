@@ -407,22 +407,6 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
               {animsUrl && phase === 'active' && !suspended && (
                 <CoverAnimLayer manifest={animsUrl} listen={centerEl} />
               )}
-              {/* The name and its one line, on the CENTRE panel only: the sides
-                  are a card and a half away and out of focus, and a sentence on
-                  one of them is type nobody is meant to be reading. After the
-                  anim layer for the reason the number is — anything drawn
-                  earlier disappears behind the layer's opaque plate — and
-                  BEFORE the number, because it carries the scrim both of them
-                  are read against and a scrim over the number is a scrim over
-                  the number. */}
-              {isCenter && item.name && (
-                <span className="detail__panel-meta">
-                  <span className="detail__panel-name">{item.name}</span>
-                  {item.description && (
-                    <span className="detail__panel-desc">{item.description}</span>
-                  )}
-                </span>
-              )}
               <span className="detail__panel-num">{item.title}</span>
             </button>
           );
