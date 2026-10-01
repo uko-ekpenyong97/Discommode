@@ -338,3 +338,39 @@
      for the ordinary reader, where the variable is unset. */
   opacity: var(--doorway-settle, 1);
 }
+
+/* ── the inside pages' animations ───────────────────────────────────────── */
+
+/* Over an animated page's baked <img>, in the same static slot: the page's
+   plate (its drawing hidden) and the canvas its sprites are drawn on
+   (pageAnimPlayer.ts). Hidden until the player shows it on a settled spread,
+   and hidden again — synchronously, from the engine's onTurnActive — the moment
+   a turn layer goes up, so a turn only ever shows the baked page under it.
+   `inherit` rather than `visible` when shown: the slot's own hiding (the
+   lifting page, a cut's fade) must still win. */
+.page-anim {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  opacity: 0;
+}
+.page-anim[data-state='shown'] {
+  visibility: inherit;
+  opacity: 1;
+}
+.page-anim__plate,
+.page-anim__sprites {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* The align tool (dev, READER NAV dock): the rest frame over the BAKED page,
+   difference-blended, so a misregistered sprite shows as bright edges. */
+.page-anim[data-align='difference'] .page-anim__plate {
+  visibility: hidden;
+}
+.page-anim[data-align='difference'] .page-anim__sprites {
+  mix-blend-mode: difference;
+}

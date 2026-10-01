@@ -1,7 +1,7 @@
 /**
  * The reader, in Chrome. `npm run verify:reader` with the dev server running
  * (`npm run dev`; `--url` for another origin, `--runs N` for the frame budget,
- * `--only frames,zorder,nav,exit,hover,life,sky` for a subset).
+ * `--only frames,zorder,nav,exit,hover,life,sky,pageanims` for a subset).
  *
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
@@ -50,6 +50,18 @@
  *                         flips plus the sky's own GPU frame with the fluid
  *                         awake, ≤ 8ms at p95, at 1× and 2× (a riffle's is
  *                         reported beside it), and 60fps through both.
+ *   inside-page animations (`pageanims`) spread 17 | 18 at 1× and 2×: both
+ *                         sprite canvases draw, backed at the DPR, and step;
+ *                         each loop's first drawn frame after a settle (on
+ *                         open, after a cancelled turn, after a real Prev) is
+ *                         its rest frame; held mid-turn and on every frame of a
+ *                         real Next and Prev, no plate or sprite is shown while
+ *                         a turn layer is up, and the strips and static slots
+ *                         carry the baked pages; reduced motion holds the rest
+ *                         frame. The frame budget is gated on the machine: the
+ *                         animated spread interleaved with a plain one (19 | 20),
+ *                         asserted only when the plain one is clean; the load
+ *                         average is printed.
  *
  * The z-order and exit checks photograph the book over the sky now, so they
  * hold the sky still first (`stillSky`: its clock pinned, its wake frozen) —
@@ -58,6 +70,7 @@
  * It drives the reader through `window.__flip`, the dev-only engine handle, and
  * its `probe` (hold a riffle at any ms, paint leaves flat hues, read their state).
  */
+import os from 'node:os';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
@@ -66,8 +79,8 @@ const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,folios,chrome,exit,hover,life,sky` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,folios,chrome,exit,hover,life,sky').split(',');
+/** `--only frames,zorder,nav,folios,chrome,exit,hover,life,sky,pageanims` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,folios,chrome,exit,hover,life,sky,pageanims').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORT = { width: 1728, height: 996 };
 const FRAME_BUDGET_MS = 20;
@@ -114,7 +127,7 @@ const readState = (page) =>
     caption: +document.querySelector('.reader__caption').dataset.spread - 1,
     hash: +location.hash.split('/')[1],
     pos: document.querySelector('.book').dataset.pos,
-    imgs: [...document.querySelectorAll('.book > .book__page img')]
+    imgs: [...document.querySelectorAll('.book > .book__page > img')]
       .map((i) => i.getAttribute('src').split('/').pop().replace('.webp', ''))
       .join('|'),
     layer: document.querySelector('.book__turn-host').childElementCount,
@@ -342,7 +355,7 @@ async function checkFolios(browser) {
     await page.waitForTimeout(80);
     rows.push(
       await page.evaluate(() => {
-        const files = [...document.querySelectorAll('.book > .book__page img')].map((i) => i.getAttribute('src').split('/').pop().replace('.webp', ''));
+        const files = [...document.querySelectorAll('.book > .book__page > img')].map((i) => i.getAttribute('src').split('/').pop().replace('.webp', ''));
         const inside = files.filter((f) => /^\d+$/.test(f));
         const expected = inside.length ? inside.join(' | ') : files.includes('cover-rest') ? 'Cover' : files.includes('back-rest') ? 'Back' : '?';
         const pill = document.querySelector('.reader__caption');
@@ -1092,6 +1105,239 @@ async function checkSky(browser) {
   }
 }
 
+// ── the inside pages' animations ─────────────────────────────────────────────
+
+/** Spread 9 is 17 | 18: cuqui and highlander, one sprite canvas each. */
+const ANIM_SPREAD = 9;
+const ANIM_PAGES = [17, 18];
+/** 19 | 20: nothing animated — the frame budget's baseline. */
+const PLAIN_SPREAD = 10;
+
+/** Both of 17 | 18's pages shown, i.e. settled and drawing. */
+const animsShown = (page) =>
+  page.waitForFunction(
+    (pages) => {
+      const st = window.__pageAnims?.state() ?? [];
+      return pages.every((n) => st.some((s) => s.page === n && s.shown && s.draws > 0));
+    },
+    ANIM_PAGES,
+    { timeout: 10000 },
+  );
+
+/** What the page shows of the inside pages' animations, right now. */
+const animSnapshot = (page) =>
+  page.evaluate(() => {
+    const book = document.querySelector('.book');
+    const visible = (el) => {
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && Number(cs.opacity) > 0;
+    };
+    const wraps = [...document.querySelectorAll('.page-anim')].map((w) => ({ page: +w.dataset.page, visible: visible(w) }));
+    // Any plate the eye could see: a visible <img> of one, or a curl face painted with one.
+    const plateImgs = [...book.querySelectorAll('img')].filter((i) => i.getAttribute('src')?.includes('/plates/') && visible(i) && visible(i.closest('.page-anim') ?? i)).length;
+    const faces = [...book.querySelectorAll('.flip-strip > *')].map((f) => f.style.backgroundImage).filter(Boolean);
+    return {
+      wraps,
+      plateImgs,
+      stripPlates: faces.filter((b) => b.includes('/plates/')).length,
+      stripFaces: [...new Set(faces.map((b) => b.split('/').pop().replace(/\.webp.*$/, '')))].sort(),
+      staticImgs: [...document.querySelectorAll('.book > .book__page > img')].map((i) => i.getAttribute('src').split('/').pop().replace('.webp', '')),
+      layer: document.querySelector('.book__turn-host').childElementCount,
+      state: window.__pageAnims.state(),
+    };
+  });
+
+/** Non-transparent pixels on each page's sprite canvas. */
+const canvasInk = (page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('.page-anim')].map((w) => {
+      const c = w.querySelector('canvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++;
+      return { page: +w.dataset.page, ink: n, w: c.width, cssW: w.clientWidth };
+    }),
+  );
+
+/** Every frame's view of the turn layer and the wrappers, until `act` resolves. */
+async function sampleFrames(page, act) {
+  await page.evaluate(() => {
+    window.__paSamples = [];
+    window.__paOn = true;
+    const f = () => {
+      const vis = [...document.querySelectorAll('.page-anim')].some((w) => getComputedStyle(w).visibility !== 'hidden');
+      window.__paSamples.push({ layer: document.querySelector('.book__turn-host').childElementCount > 0, vis });
+      if (window.__paOn) requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+  await act();
+  return page.evaluate(() => {
+    window.__paOn = false;
+    return window.__paSamples;
+  });
+}
+
+const firstIsRest = (state) => state.filter((s) => ANIM_PAGES.includes(s.page)).every((s) => s.first && s.first.every((f, i) => f === s.rest[i]));
+const fmtFirst = (state) => state.map((s) => `${s.page}: first ${JSON.stringify(s.first)} rest ${JSON.stringify(s.rest)}`).join(', ');
+
+async function checkPageAnims(browser) {
+  console.log(`\ninside-page animations (spread ${ANIM_SPREAD}: ${ANIM_PAGES.join(' | ')})`);
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, dpr);
+    await open(page, ANIM_SPREAD);
+    await animsShown(page);
+
+    // Settled: both canvases draw, from the rest frame, and keep stepping.
+    const rest = await animSnapshot(page);
+    check(firstIsRest(rest.state), `@${dpr}× opened on ${ANIM_PAGES.join(' | ')}: each loop's first drawn frame is its rest frame`, fmtFirst(rest.state));
+    const ink = await canvasInk(page);
+    check(
+      ANIM_PAGES.every((n) => ink.find((c) => c.page === n)?.ink > 1000),
+      `@${dpr}× both sprite canvases draw`,
+      ink.map((c) => `${c.page}: ${c.ink} px of ink, ${c.w}px backing for ${c.cssW} CSS px`).join('; '),
+    );
+    check(
+      ink.every((c) => Math.abs(c.w - Math.round(c.cssW * dpr)) <= 1),
+      `@${dpr}× each canvas is backed at ${dpr}× its page`,
+    );
+    check(rest.wraps.every((w) => w.visible) && rest.plateImgs === 2, `@${dpr}× settled: both plates and canvases shown`, JSON.stringify(rest.wraps));
+    const seen = new Map();
+    for (let i = 0; i < 12; i++) {
+      for (const s of await page.evaluate(() => window.__pageAnims.state())) {
+        if (!seen.has(s.page)) seen.set(s.page, new Set());
+        seen.get(s.page).add(s.last.join(','));
+      }
+      await page.waitForTimeout(110);
+    }
+    check(
+      ANIM_PAGES.every((n) => (seen.get(n)?.size ?? 0) > 1),
+      `@${dpr}× the loops step while open`,
+      ANIM_PAGES.map((n) => `${n}: frames ${[...(seen.get(n) ?? [])].join(' ')}`).join('; '),
+    );
+
+    // Held mid-turn: the baked pages on the strips and in the static slots, no plate anywhere.
+    await page.evaluate(() => {
+      window.__flip.startTurn('next');
+      window.__flip.applyTurn(0.5);
+    });
+    await page.waitForTimeout(150);
+    const mid = await animSnapshot(page);
+    check(mid.layer > 0 && mid.wraps.every((w) => !w.visible), `@${dpr}× mid-turn: both pages' plates and sprites are hidden`, JSON.stringify(mid.wraps));
+    check(
+      mid.plateImgs === 0 && mid.stripPlates === 0,
+      `@${dpr}× mid-turn: no plate is visible, on the strips or under them`,
+      `strip faces ${mid.stripFaces.join(', ')}; static ${mid.staticImgs.join('|')}`,
+    );
+    check(
+      mid.stripFaces.includes('18') && mid.staticImgs.join('|') === '17|18',
+      `@${dpr}× mid-turn: the strips and the static slots carry the baked pages`,
+    );
+    await page.evaluate(() => window.__flip.cancelTurn(0.05));
+    await settled(page, ANIM_SPREAD);
+    await animsShown(page);
+    const back = await animSnapshot(page);
+    check(firstIsRest(back.state), `@${dpr}× after a cancelled turn: the first drawn frame is the rest frame`, fmtFirst(back.state));
+
+    // A real turn out and back, every frame sampled: never a wrapper shown under a turn layer.
+    const out = await sampleFrames(page, async () => {
+      await page.evaluate(() => window.__flip.turn('next'));
+      await settled(page, ANIM_SPREAD + 1);
+      await page.waitForTimeout(200);
+      await page.evaluate(() => window.__flip.turn('prev'));
+      await settled(page, ANIM_SPREAD);
+      await animsShown(page);
+    });
+    const leaked = out.filter((s) => s.layer && s.vis).length;
+    check(
+      leaked === 0 && out.some((s) => s.layer),
+      `@${dpr}× through a real Next and Prev: no frame shows a plate or sprite while a turn layer is up`,
+      `${out.filter((s) => s.layer).length} turning frames, ${leaked} with a plate shown`,
+    );
+    const landed = await animSnapshot(page);
+    check(firstIsRest(landed.state), `@${dpr}× after a settle: the first drawn frame is the rest frame`, fmtFirst(landed.state));
+
+    // The neighbours' atlases: fetched with the settle, never decoded ahead —
+    // each spread decodes its own at its own settle. 9 → 10 → 11: at 11 the
+    // window newly takes in spread 12 (sofa-green); on to 12, it decodes there.
+    if (dpr === 1) {
+      await page.evaluate(() => window.__flip.turn('next'));
+      await settled(page, ANIM_SPREAD + 1);
+      await page.evaluate(() => window.__flip.turn('next'));
+      await settled(page, ANIM_SPREAD + 2);
+      const early = await page.evaluate(() => ({ fetched: window.__pageAnims.fetched(), decoded: window.__pageAnims.cached() }));
+      await page.waitForTimeout(1500);
+      const later = await page.evaluate(() => window.__pageAnims.cached());
+      await page.evaluate(() => window.__flip.turn('next'));
+      await settled(page, ANIM_SPREAD + 3);
+      await page.waitForFunction(() => window.__pageAnims.state().some((s) => s.page === 24 && s.shown), null, { timeout: 10000 });
+      const opened = await page.evaluate(() => window.__pageAnims.cached());
+      check(
+        early.fetched.includes('sofa-green') && !early.decoded.includes('sofa-green') && !later.includes('sofa-green') && opened.includes('sofa-green'),
+        '@1× a neighbour spread’s atlas is fetched on settle, not decoded ahead, and decoded at its own settle',
+        `settled on 21 | 22: fetched ${early.fetched.join(', ')}; decoded ${early.decoded.join(', ') || 'none'}, 1.5 s later ${later.join(', ') || 'none'} — settled on 23 | 24: decoded ${opened.join(', ')}`,
+      );
+    }
+    await page.context().close();
+  }
+
+  // Reduced motion: the rest frame, and no loop.
+  {
+    const context = await browser.newContext({ viewport: VIEWPORT, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await open(page, ANIM_SPREAD);
+    await animsShown(page);
+    await page.waitForTimeout(1200);
+    const st = await page.evaluate(() => window.__pageAnims.state());
+    check(
+      st.every((s) => s.last.every((f, i) => f === s.rest[i]) && s.draws <= 2),
+      'reduced motion: each page holds its rest frame',
+      st.map((s) => `${s.page}: frame ${s.last} (rest ${s.rest}), ${s.draws} draws`).join('; '),
+    );
+    await context.close();
+  }
+
+  // The frame budget, gated on the machine: the animated spread and a plain
+  // one, interleaved run by run, the same idle-then-turn-out-and-back on each.
+  // A plain spread that misses says the machine is busy; then the animated
+  // spread's misses are reported, not asserted.
+  const load = os.loadavg();
+  console.log(`    load average ${load.map((l) => l.toFixed(2)).join(' / ')} on ${os.cpus().length} cores`);
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, dpr);
+    const tally = { anim: [], plain: [] };
+    for (let i = 0; i < RUNS; i++) {
+      for (const [kind, s] of [
+        ['anim', ANIM_SPREAD],
+        ['plain', PLAIN_SPREAD],
+      ]) {
+        await open(page, s);
+        if (kind === 'anim') await animsShown(page);
+        const fr = await frameTimes(page, async () => {
+          await page.waitForTimeout(1500);
+          await page.evaluate(() => window.__flip.turn('next'));
+          await settled(page, s + 1);
+          await page.evaluate(() => window.__flip.turn('prev'));
+          await settled(page, s);
+          await page.waitForTimeout(500);
+        });
+        tally[kind].push(Math.max(...fr));
+      }
+    }
+    const over = (k) => tally[k].filter((w) => w > FRAME_BUDGET_MS).length;
+    const detail = `worst per run: animated ${tally.anim.map((w) => w.toFixed(1)).join(' / ')}ms; plain ${tally.plain.map((w) => w.toFixed(1)).join(' / ')}ms`;
+    if (over('plain') === 0) {
+      check(over('anim') === 0, `@${dpr}× spread ${ANIM_SPREAD} playing, and a turn out and back: no frame over ${FRAME_BUDGET_MS}ms`, detail);
+    } else {
+      console.log(
+        `    @${dpr}× the plain spread missed in ${over('plain')} of ${RUNS} runs — the machine is busy; the animated spread missed in ${over('anim')} (reported, not asserted)\n      ${detail}`,
+      );
+    }
+    await page.context().close();
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   const probe = await newPage(browser);
@@ -1113,6 +1359,7 @@ async function run() {
   if (ONLY.includes('hover')) await checkHover(browser);
   if (ONLY.includes('life')) await checkLife(browser);
   if (ONLY.includes('sky')) await checkSky(browser);
+  if (ONLY.includes('pageanims')) await checkPageAnims(browser);
 
   check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
   await browser.close();

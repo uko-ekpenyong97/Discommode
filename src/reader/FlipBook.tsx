@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { Ref } from 'react';
 import type { Page, Spread } from './issue-01';
 import { pageLabel } from './issue-01';
 import { createFlipEngine } from './flipEngine';
 import type { FlipEngine } from './flipEngine';
 import { attachFixedT } from './devFixedT';
 import { CoverAnimLayer } from '../components/CoverAnimLayer';
+import { createPageAnimPlayer } from './pageAnimPlayer';
+import type { PageAnimPlayer } from './pageAnimPlayer';
 import './flipbook.css';
 
 interface FlipBookProps {
@@ -21,10 +24,29 @@ interface FlipBookProps {
   onEngineReady?: (engine: FlipEngine) => void;
   /** Cover-animation manifest URL (`Issue.anims`), if the issue has one. */
   anims?: string;
+  /** Inside-page sprite-atlas manifest URL (`Issue.pageAnims`), if any. */
+  pageAnims?: string;
 }
 
 /** 'COVER' / 'BACK' for the plates, 'Page 07' for a numbered page. */
 const altFor = (page: Page): string => page.label ?? `Page ${pageLabel(page)}`;
+
+/**
+ * An animated page's layer over its baked `<img>`, in the same slot: the plate
+ * and the canvas its sprites are drawn on. Keyed by page, so each page's is a
+ * fresh element — hidden until the player shows it (flipbook.css). Decorative:
+ * the baked page under it carries the alt text.
+ */
+function PageAnimLayer({ page, ref }: { page: Page; ref: Ref<HTMLDivElement> }) {
+  return (
+    <div className="page-anim" ref={ref} data-page={page.n} aria-hidden="true">
+      {/* No src until the player shows the page: a riffle renders this for every
+          spread it passes, and must not fetch a full-size plate for each. */}
+      <img className="page-anim__plate" data-src={page.plate} alt="" draggable={false} />
+      <canvas className="page-anim__sprites" />
+    </div>
+  );
+}
 
 /**
  * Renders the STATIC spread and the empty host the engine builds its turn layer
@@ -42,6 +64,7 @@ export function FlipBook({
   debug = false,
   onEngineReady,
   anims,
+  pageAnims,
 }: FlipBookProps) {
   const bookRef = useRef<HTMLDivElement>(null);
   // The book element is also the pointer host for the cover's hover layer (the
@@ -55,7 +78,18 @@ export function FlipBook({
   }, []);
   // True from the frame a turn layer goes up to the frame it comes down.
   const [turning, setTurning] = useState(false);
-  const onTurnActive = useCallback((active: boolean) => setTurning(active), []);
+  // The inside pages' sprites (pageAnimPlayer.ts) hear of a turn HERE, in the
+  // engine's own call, not through the `turning` render: the engine reports a
+  // turn before the strips first move, and a render can land a frame later — a
+  // frame in which the static slot would still show the plate and a sprite
+  // where the curl's face shows the baked page.
+  const pageAnimRef = useRef<PageAnimPlayer | null>(null);
+  const onTurnActive = useCallback((active: boolean) => {
+    pageAnimRef.current?.setTurning(active);
+    setTurning(active);
+  }, []);
+  const leftAnimRef = useRef<HTMLDivElement>(null);
+  const rightAnimRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<FlipEngine | null>(null);
   const leftImgRef = useRef<HTMLImageElement>(null);
@@ -76,6 +110,18 @@ export function FlipBook({
     spreadRef.current = spread;
     spreadsRef.current = spreads;
   });
+
+  // Made before the engine (layout effects run in order), so the engine's first
+  // `onTurnActive` already has somewhere to go.
+  useLayoutEffect(() => {
+    if (!pageAnims) return;
+    const player = createPageAnimPlayer(pageAnims);
+    pageAnimRef.current = player;
+    return () => {
+      player.destroy();
+      pageAnimRef.current = null;
+    };
+  }, [pageAnims]);
 
   useLayoutEffect(() => {
     const book = bookRef.current;
@@ -112,6 +158,13 @@ export function FlipBook({
     );
     engineRef.current?.handoff(images);
   }, [spread]);
+
+  // The open spread's animated pages, to the player: it shows them once the
+  // book has settled (now, if nothing is turning), and keeps the atlases either
+  // side decoded.
+  useLayoutEffect(() => {
+    pageAnimRef.current?.setSlots(spread, spreads, [leftAnimRef.current, rightAnimRef.current]);
+  }, [spread, spreads, pageAnims]);
 
   // Frozen-t scrub for tuning BETA / STRIP_COUNT / the ease. `import.meta.env.DEV`
   // is replaced with `false` in a production build, so the branch and its import
@@ -152,11 +205,13 @@ export function FlipBook({
           {left && (
             <img ref={leftImgRef} src={left.src} alt={altFor(left)} draggable={false} />
           )}
+          {pageAnims && left?.plate && <PageAnimLayer key={left.n} page={left} ref={leftAnimRef} />}
         </div>
         <div className="book__page book__page--right" ref={rightSlotRef}>
           {right && (
             <img ref={rightImgRef} src={right.src} alt={altFor(right)} draggable={false} />
           )}
+          {pageAnims && right?.plate && <PageAnimLayer key={right.n} page={right} ref={rightAnimRef} />}
         </div>
         <div className="book__turn-host" ref={hostRef} />
       </div>

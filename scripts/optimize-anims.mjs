@@ -70,6 +70,15 @@
  *
  * Every manifest entry says which face it is on (`face: 'cover' | 'back'`), and
  * a face's plate and rest are rebuilt only when one of its objects was.
+ *
+ * THE INSIDE PAGES. After both faces, the same run builds the inside pages'
+ * sprite atlases from the rows in `src/reader/pageAnims.ts`
+ * (scripts/page-anims.mjs). Nothing above reads or writes anything of theirs,
+ * so the cover's outputs are byte-for-byte what they were without it.
+ *
+ *   npm run anims -- --pages-only   # the inside pages alone (no cover registration)
+ *   npm run anims -- --suggest      # print a registered row for every page
+ *                                   # animation, not only the ones rebuilt
  */
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -85,6 +94,8 @@ import {
   registerObject,
   unionOf,
 } from './cover-register.mjs';
+import { buildPageAnims } from './page-anims.mjs';
+import { PAGE_ANIMS } from '../src/reader/pageAnims.ts';
 
 const SOURCE_DIR = join(homedir(), 'Discommode-pages');
 const OUTPUT_DIR = fileURLToPath(new URL('../public/issues/', import.meta.url));
@@ -107,6 +118,12 @@ const flag = (name) => {
 };
 const onlyId = flag('--only');
 const fpsOverride = flag('--fps') ? Number(flag('--fps')) : null;
+const pagesOnly = argv.includes('--pages-only');
+const suggest = argv.includes('--suggest');
+
+/** The inside pages' phase (scripts/page-anims.mjs). */
+const pageAnims = () =>
+  buildPageAnims({ sourceDir: SOURCE_DIR, outputDir: OUTPUT_DIR, force, onlyId, fpsOverride, suggest });
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(0)} KB`;
 const pct = (n) => `${(n * 100).toFixed(1)}%`;
@@ -580,6 +597,19 @@ if ((await statOrNull(SOURCE_DIR)) === null) {
 }
 
 const placements = JSON.parse(await readFile(PLACEMENTS, 'utf8'));
+
+// The inside pages alone — asked for, or the only thing `--only` names — never
+// touch the cover's files, not even its manifest's timestamp.
+const isCoverObject = (id) => [...placements.objects, ...(placements.back?.objects ?? [])].some((o) => o.id === id);
+if (pagesOnly || (onlyId && !isCoverObject(onlyId))) {
+  if (onlyId && !PAGE_ANIMS.some((r) => r.id === onlyId)) {
+    console.log(`No ${pagesOnly ? 'page animation' : 'object'} matches --only ${onlyId}`);
+    process.exit(1);
+  }
+  await pageAnims();
+  process.exit(0);
+}
+
 const issue = placements.issue ?? '01';
 const { coverW, coverH } = placements;
 const coverPath = join(SOURCE_DIR, issue, 'cover-illustrated.png');
@@ -631,7 +661,7 @@ if ((await statOrNull(platePath)) === null) {
 }
 
 const allObjects = faces.flatMap((f) => f.objects);
-if (onlyId && !allObjects.some((o) => o.id === onlyId)) {
+if (onlyId && !allObjects.some((o) => o.id === onlyId) && !PAGE_ANIMS.some((r) => r.id === onlyId)) {
   console.log(`No object matches --only ${onlyId}`);
   process.exit(1);
 }
@@ -760,3 +790,6 @@ if (warnings.length > 0) {
   for (const w of warnings) console.log(`!!  ${w}`);
   console.log('');
 }
+
+// ── the inside pages ──────────────────────────────────────────────────────
+await pageAnims();

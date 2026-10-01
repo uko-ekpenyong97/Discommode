@@ -36,12 +36,24 @@
  * committed WebP newer than its PNG. Use --force there — the encoder is
  * deterministic, so unchanged pages come out byte for byte and only real
  * changes show in git.
+ *
+ * PLATES. `npm run plates` (this script with `--plates`) gives the inside
+ * pages that carry an animation the same treatment:
+ *
+ *   ~/Discommode-pages/<issue>/plates/NN.png  →  public/issues/<issue>/plates/NN.webp
+ *
+ * A plate is the page with its animated drawing HIDDEN: the reader shows it,
+ * with the sprites drawn over it, on the open spread (docs/reader.md,
+ * "Inside-page animations"). No riffle copies — a plate never rides a leaf.
+ * The plates must be exactly the pages `src/reader/pageAnims.ts` animates: an
+ * animated page with no plate, or a plate with no animation, stops the run.
  */
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { ANIMATED_PAGES, PAGE_ANIM_ISSUE, animsOnPage } from '../src/reader/pageAnims.ts';
 
 /** Where the PNG exports live — outside the repo. */
 const SOURCE_DIR = join(homedir(), 'Discommode-pages');
@@ -71,6 +83,7 @@ const PAGE_RE = /^(\d{2}|cover|cover-plate|back|overlay)\.png$/;
 const NON_PAGE = new Set(['overlay.png', 'cover-plate.png']);
 
 const force = process.argv.includes('--force');
+const platesMode = process.argv.includes('--plates');
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(0)} KB`;
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
@@ -136,10 +149,10 @@ async function riffleCopy(issue, name, pngPath, pngStat) {
   riffleWritten += 1;
 }
 
-async function convert(issue, name) {
-  const pngPath = join(SOURCE_DIR, issue, name);
+async function convert(issue, name, sub = '') {
+  const pngPath = join(SOURCE_DIR, issue, sub, name);
   const webpName = name.replace(/\.png$/, '.webp');
-  const webpPath = join(OUTPUT_DIR, issue, webpName);
+  const webpPath = join(OUTPUT_DIR, issue, sub, webpName);
 
   const pngStat = await stat(pngPath);
   const webpStat = await statOrNull(webpPath);
@@ -151,7 +164,7 @@ async function convert(issue, name) {
     warnings.push(`${issue}/${name} is ${width}x${height}, expected ${PAGE_W}x${PAGE_H}`);
   }
 
-  await riffleCopy(issue, name, pngPath, pngStat);
+  if (!sub) await riffleCopy(issue, name, pngPath, pngStat);
 
   if (!force && webpStat && webpStat.mtimeMs > pngStat.mtimeMs) {
     pngTotal += pngStat.size;
@@ -181,6 +194,40 @@ if ((await statOrNull(SOURCE_DIR)) === null) {
 !!  Create it and drop Figma exports in as ~/Discommode-pages/01/01.png etc,
 !!  then re-run \`npm run pages\`. Nothing to do until then.
 `);
+  process.exit(0);
+}
+
+if (platesMode) {
+  const issue = PAGE_ANIM_ISSUE;
+  const dir = join(SOURCE_DIR, issue, 'plates');
+  const files = ((await readdir(dir).catch(() => null)) ?? []).filter((f) => /\.png$/i.test(f)).sort();
+  const stray = files.filter((f) => !/^\d{2}\.png$/.test(f));
+  const plated = new Set(files.filter((f) => /^\d{2}\.png$/.test(f)).map((f) => Number(f.slice(0, 2))));
+  const missing = ANIMATED_PAGES.filter((p) => !plated.has(p));
+  const orphan = [...plated].filter((p) => !ANIMATED_PAGES.includes(p));
+  const pad = (p) => `${String(p).padStart(2, '0')}.png`;
+  const problems = [
+    ...missing.map((p) => `page ${pad(p)} is animated (${animsOnPage(p).map((r) => r.id).join(', ')}) but has no plate: export ${join(dir, pad(p))} — the page with that drawing HIDDEN`),
+    ...orphan.map((p) => `plate ${pad(p)} has no animation in src/reader/pageAnims.ts: remove it from ${dir}, or add the page's row`),
+    ...stray.map((f) => `${join(dir, f)} is not named NN.png`),
+  ];
+  if (problems.length) {
+    console.log(`\n!!  PLATES DO NOT MATCH THE PAGE ANIMATIONS  !!`);
+    for (const p of problems) console.log(`!!  ${p}`);
+    console.log('');
+    process.exit(1);
+  }
+  console.log(`\nissue ${issue}  (${plated.size} plate${plated.size === 1 ? '' : 's'}: ${[...plated].sort((a, b) => a - b).map((p) => String(p).padStart(2, '0')).join(' ')})`);
+  await mkdir(join(OUTPUT_DIR, issue, 'plates'), { recursive: true });
+  for (const p of ANIMATED_PAGES) await convert(issue, pad(p), 'plates');
+  console.log(`\n${converted} converted, ${skipped} up to date`);
+  console.log(`total  ${mb(pngTotal)} PNG → ${mb(webpTotal)} WebP   ${Math.round((1 - webpTotal / pngTotal) * 100)}% smaller`);
+  if (warnings.length > 0) {
+    console.log(`\n!!  ${warnings.length} PROBLEM${warnings.length === 1 ? '' : 'S'}  !!`);
+    for (const w of warnings) console.log(`!!  ${w}`);
+    console.log('!!  Re-export at 2000x2600 before committing.\n');
+    process.exit(1);
+  }
   process.exit(0);
 }
 
