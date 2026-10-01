@@ -27,7 +27,7 @@
  */
 import { config } from '../config';
 import type { LiveConfig } from '../config';
-import { createBandSweep } from './bandSweep';
+import { createBandSweep, createRectMeans } from './bandSweep';
 import { MAX_SPLATS, createFluid } from './fluid';
 import type { Splat } from './fluid';
 import { skyGradientAt } from './palette';
@@ -516,6 +516,11 @@ export interface SweepResult {
   ms: number;
 }
 
+/** A rect of the viewport, CSS px from its top-left. */
+export interface ViewRect { x: number; y: number; w: number; h: number }
+/** A colour as 0..255 sRGB. */
+export type RGB8 = [number, number, number];
+
 export interface SkyEngine {
   /** Set the EnvState targets. `immediate` snaps (used for the first paint). */
   setEnv(target: SkyTarget, immediate?: boolean): void;
@@ -538,6 +543,36 @@ export interface SkyEngine {
    * Draws nothing to the screen; the live sky is put back when it is done.
    */
   sweepBand(y0: number, y1: number, states: SkyTarget[], opts: SweepOptions): SweepResult | null;
+  /**
+   * THE CHROME'S SKY: the MEAN colour of the live sky inside each rect, as
+   * 0..255 sRGB — what the chrome's paper takes its hue from
+   * (src/chrome/chromeColor.ts). The sky WITHOUT its wake: the weather, not
+   * the air the page stirs. ASYNCHRONOUS, and never a stall: at the next
+   * frame the rects are drawn (scissored, wake off) and copied into a pixel
+   * buffer just before the frame is drawn over them, a fence is set, and
+   * the bytes are fetched once the GPU has passed the fence — a frame or two
+   * later. One request at a time; a newer one replaces a queued one (which
+   * resolves null). Null when there is nothing to read (a hidden tab, no
+   * backing store). The chrome asks about twice a second, never per frame.
+   */
+  readMeans(rects: ViewRect[]): Promise<RGB8[] | null>;
+  /** DEV: the same question, answered synchronously (a stall), of the live
+   *  sky or of the hypothetical sky `at` — for the contrast probe. */
+  sampleMeans(rects: ViewRect[], at?: SkyTarget): RGB8[] | null;
+  /**
+   * DEV: THE SWEEP, for the chrome. The mean of every rect for every sky in
+   * `states`, at rest and at every measured frame of the synthetic wake
+   * (see {@link SweepOptions}), reduced on the GPU (`createRectMeans`).
+   * Each measurement is handed to `onSample` (frame −1 = at rest) rather
+   * than returned: what is worst depends on what the caller makes of the
+   * colour. The live sky is put back afterwards.
+   */
+  sweepMeans(
+    rects: ViewRect[],
+    states: SkyTarget[],
+    opts: SweepOptions,
+    onSample: (state: number, rect: number, color: RGB8, frame: number) => void,
+  ): { samples: number; ms: number } | null;
   /**
    * Per-frame GPU cost, in ms — dev-only, for `scripts/sky-perf.mjs`. Returns
    * one mean per BATCH of `batch` frames.
@@ -910,6 +945,9 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     if (settled) for (const key of KEYS) cur[key] = tgt[key];
 
     stepFluid(dt);
+    // The chrome's read-back, if one is waiting: its rects drawn without the
+    // wake and copied out, just before the frame is drawn over them.
+    if (meansQueued) issueMeans(now);
     render(now);
 
     // The sky moves continuously while visible — keep going unless reduced
@@ -926,6 +964,119 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     running = true;
     last = performance.now();
     raf = requestAnimationFrame(frame);
+  }
+
+  // --- the chrome's read-back (readMeans) ---
+  /** A rect of the viewport as a rect of the backing store, GL's way up. */
+  function deviceRect(r: ViewRect): { x: number; y: number; w: number; h: number } {
+    const sx = width / Math.max(1, window.innerWidth);
+    const sy = height / Math.max(1, window.innerHeight);
+    const x0 = Math.max(0, Math.min(width - 1, Math.floor(r.x * sx)));
+    const x1 = Math.max(x0 + 1, Math.min(width, Math.ceil((r.x + r.w) * sx)));
+    const top = Math.floor(r.y * sy);
+    const bottom = Math.ceil((r.y + r.h) * sy);
+    const y0 = Math.max(0, Math.min(height - 1, height - bottom));
+    const y1 = Math.max(y0 + 1, Math.min(height, height - top));
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  }
+  function meanOf(px: Uint8Array, from: number, n: number): RGB8 {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    for (let i = from; i < from + n * 4; i += 4) {
+      r += px[i];
+      g += px[i + 1];
+      b += px[i + 2];
+    }
+    return [r / n, g / n, b / n];
+  }
+  let meansQueued: { rects: ViewRect[]; resolve: (c: RGB8[] | null) => void } | null = null;
+  let meansInFlight: {
+    sync: WebGLSync;
+    sizes: number[];
+    bytes: number;
+    resolve: (c: RGB8[] | null) => void;
+  } | null = null;
+  let pbo: WebGLBuffer | null = null;
+
+  /**
+   * Draw the queued rects of this moment's sky WITHOUT THE WAKE (and without a
+   * lightning flash) into the back buffer, scissored to the rects, copy them
+   * into the pixel buffer and fence it. The paper takes its colour from the
+   * weather, not from the air a page turn or the pointer stirs: read with the
+   * wake, the chrome re-coloured itself through every flip, cross-fading on
+   * nearly every frame for nothing anyone asked for (docs/reader.md, Chrome).
+   * The caller draws the full frame over the rects straight after.
+   */
+  function issueMeans(now: number): void {
+    const job = meansQueued;
+    meansQueued = null;
+    if (!job) return;
+    if (meansInFlight || width === 0 || height === 0) {
+      job.resolve(null);
+      return;
+    }
+    const rects = job.rects.map(deviceRect);
+    const sizes = rects.map((r) => r.w * r.h);
+    const bytes = sizes.reduce((a, n) => a + n * 4, 0);
+    if (!pbo) pbo = gl!.createBuffer();
+    gl!.bindBuffer(gl!.PIXEL_PACK_BUFFER, pbo);
+    // Fresh storage every time (a few KB), so no read-back ever writes into
+    // storage the browser is still shadowing for the last one.
+    gl!.bufferData(gl!.PIXEL_PACK_BUFFER, bytes, gl!.STREAM_READ);
+    gl!.bindFramebuffer(gl!.FRAMEBUFFER, null);
+    gl!.enable(gl!.SCISSOR_TEST);
+    rects.forEach((r, i) => {
+      gl!.scissor(r.x, r.y, r.w, r.h);
+      if (i === 0) render(now, cur, 0, false);
+      else gl!.drawArrays(gl!.TRIANGLES, 0, 3);
+    });
+    gl!.disable(gl!.SCISSOR_TEST);
+    let offset = 0;
+    rects.forEach((r, i) => {
+      gl!.readPixels(r.x, r.y, r.w, r.h, gl!.RGBA, gl!.UNSIGNED_BYTE, offset);
+      offset += sizes[i] * 4;
+    });
+    // Unbound at once: every other readPixels in here reads into client memory.
+    gl!.bindBuffer(gl!.PIXEL_PACK_BUFFER, null);
+    const sync = gl!.fenceSync(gl!.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (!sync) {
+      job.resolve(null);
+      return;
+    }
+    gl!.flush();
+    meansInFlight = { sync, sizes, bytes, resolve: job.resolve };
+    setTimeout(pollMeans, 0);
+  }
+
+  /** Fetch the bytes once the GPU has passed the fence; until then, look
+   *  again next tick. Never waits. */
+  function pollMeans(): void {
+    const job = meansInFlight;
+    if (!job) return;
+    const status = gl!.clientWaitSync(job.sync, 0, 0);
+    if (status === gl!.TIMEOUT_EXPIRED) {
+      setTimeout(pollMeans, 16);
+      return;
+    }
+    gl!.deleteSync(job.sync);
+    meansInFlight = null;
+    if (status === gl!.WAIT_FAILED) {
+      job.resolve(null);
+      return;
+    }
+    const px = new Uint8Array(job.bytes);
+    gl!.bindBuffer(gl!.PIXEL_PACK_BUFFER, pbo);
+    gl!.getBufferSubData(gl!.PIXEL_PACK_BUFFER, 0, px);
+    gl!.bindBuffer(gl!.PIXEL_PACK_BUFFER, null);
+    let from = 0;
+    job.resolve(
+      job.sizes.map((n) => {
+        const m = meanOf(px, from, n);
+        from += n * 4;
+        return m;
+      }),
+    );
   }
 
   function onVisibility(): void {
@@ -992,6 +1143,81 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
       }
       if (at) render(performance.now()); // put the live sky back on screen
       return best;
+    },
+    readMeans(rects) {
+      return new Promise<RGB8[] | null>((resolve) => {
+        if (document.hidden || width === 0 || height === 0 || rects.length === 0) {
+          resolve(null);
+          return;
+        }
+        meansQueued?.resolve(null);
+        meansQueued = { rects, resolve };
+        // The loop picks it up after its next draw. A loop that has stopped
+        // (reduced motion, settled) draws once for it, here.
+        if (!running) {
+          const now = performance.now();
+          issueMeans(now);
+          render(now);
+        }
+      });
+    },
+    sampleMeans(rects, at) {
+      if (!import.meta.env.DEV || width === 0 || height === 0) return null;
+      render(performance.now(), at ? toEased(at) : cur, 0);
+      gl!.bindFramebuffer(gl!.READ_FRAMEBUFFER, null);
+      const out = rects.map((r) => {
+        const d = deviceRect(r);
+        const px = new Uint8Array(d.w * d.h * 4);
+        gl!.readPixels(d.x, d.y, d.w, d.h, gl!.RGBA, gl!.UNSIGNED_BYTE, px);
+        return meanOf(px, 0, d.w * d.h);
+      });
+      if (at) render(performance.now());
+      return out;
+    },
+    sweepMeans(rects, states, opts, onSample) {
+      if (!import.meta.env.DEV || width === 0 || height === 0 || !fluid) return null;
+      const t0 = performance.now();
+      const saved = Object.fromEntries(Object.keys(opts.config ?? {}).map((k) => [k, config[k as keyof LiveConfig]]));
+      const savedPinned = pinned;
+      const savedHeld = held;
+      Object.assign(config, opts.config ?? {});
+      held = false;
+      const reducers = rects.map((r) => {
+        const d = deviceRect(r);
+        return createRectMeans(gl, width, height, d.x, d.w, d.y, d.h);
+      });
+      const eased = states.map(toEased);
+      const period = (2 * Math.PI) / TWINKLE_RATE;
+      let samples = 0;
+      const measure = (f: number) => {
+        pinned = opts.time + (samples % opts.phases) * (period / opts.phases);
+        reducers.forEach((red, r) => {
+          const px = red.run(eased.length, (i) => render(0, eased[i], 0, true));
+          for (let i = 0; i < eased.length; i++) onSample(i, r, [px[i * 3], px[i * 3 + 1], px[i * 3 + 2]], f);
+        });
+        samples++;
+      };
+      try {
+        fluid.clear();
+        for (let k = 0; k < opts.phases; k++) measure(-1);
+        opts.frames.forEach((splatsNow, f) => {
+          for (const sp of splatsNow) queueSplat(sp.x, sp.y, sp.dx, sp.dy, config.fluidStrength);
+          stepFluid(1 / 60);
+          if ((f + 1) % opts.sampleEvery === 0) measure(f);
+        });
+      } finally {
+        for (const red of reducers) red.dispose();
+        fluid.clear();
+        Object.assign(config, saved);
+        pinned = savedPinned;
+        held = savedHeld;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.useProgram(program);
+        gl.bindVertexArray(vao);
+        gl.viewport(0, 0, width, height);
+        render(performance.now());
+      }
+      return { samples, ms: performance.now() - t0 };
     },
     sweepBand(y0, y1, states, opts) {
       // Dev only, and constant-folded out of a production build with the
@@ -1106,6 +1332,12 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
       document.documentElement.removeEventListener('pointerleave', onPointerGone);
       window.removeEventListener('blur', onPointerGone);
       fluid?.dispose();
+      meansQueued?.resolve(null);
+      meansInFlight?.resolve(null);
+      if (meansInFlight) gl.deleteSync(meansInFlight.sync);
+      meansQueued = null;
+      meansInFlight = null;
+      if (pbo) gl.deleteBuffer(pbo);
       document.removeEventListener('visibilitychange', onVisibility);
       gl.deleteProgram(program);
       gl.deleteShader(vs);

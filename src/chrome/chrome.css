@@ -1,0 +1,244 @@
+/* THE CHROME — hand-cut paper shapes that take their colour from the sky
+   (src/chrome/Paper.tsx, useSkyChrome.ts; docs/reader.md, "Chrome").
+
+   The dials arrive as variables on :root (chromeDials.ts); the fallbacks here
+   are the shipped values. The colours arrive per shape, on the element that
+   carries `data-chrome`: --paper, --paper-press, --ink. */
+
+@font-face {
+  font-family: 'Bowlby One';
+  src: url('/fonts/bowlby-one-latin-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+/* One Figma px of the frame, at the chrome's scale — and at the line's FIT,
+   which useChromeFit writes on each line (.chrome-row, .chrome-top) when the
+   band between the book and the viewport's edge is too small for it
+   (chromeFit.ts). Declared on the lines themselves, not only on :root, so it
+   resolves with each line's own --chrome-fit. */
+:root,
+.chrome-row,
+.chrome-top {
+  --chrome-u: calc(var(--chrome-scale, 1) * var(--chrome-fit, 1) * 1px);
+}
+
+/* ── the element ──────────────────────────────────────────────────────────
+   A bare box around the face. It is the hit area: at least 44×44 whatever
+   the scale, the face centred in it. */
+.paper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink, #fff);
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+.paper:disabled,
+.paper--static {
+  cursor: default;
+}
+
+/* The face: the frame's BASE box (58, 46, 131×46 × scale), which the paper
+   overhangs. What hover moves. */
+.paper__shape {
+  position: relative;
+  display: block;
+  width: calc(var(--base-w) * var(--chrome-u));
+  height: calc(var(--base-h) * var(--chrome-u));
+  transition: transform var(--chrome-hover-ms, 120ms) ease-out;
+}
+
+.paper__fill,
+.paper__ink {
+  position: absolute;
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
+  pointer-events: none;
+}
+.paper__fill {
+  background: var(--paper, rgb(38, 44, 60));
+}
+.paper__ink {
+  background: var(--ink, #fff);
+}
+
+/* ── hover and press — nothing else ──────────────────────────────────────
+   Hover lifts: a scale and a small tilt, alternating along the row. Press is
+   the paper's lightness nudged away from the ink (`--paper-press`). */
+.paper:not(:disabled, .paper--static):hover .paper__shape {
+  transform: scale(var(--chrome-hover-lift, 1.04)) rotate(calc(var(--chrome-hover-tilt, 2deg) * var(--tilt, 1)));
+}
+.paper:not(:disabled, .paper--static):active .paper__fill,
+.paper:has(select:active) .paper__fill {
+  background: var(--paper-press, var(--paper));
+}
+@media (prefers-reduced-motion: reduce) {
+  .paper__shape {
+    transition: none;
+  }
+  .paper:not(:disabled, .paper--static):hover .paper__shape {
+    transform: scale(var(--chrome-hover-lift, 1.04));
+  }
+}
+
+/* A disabled control keeps its paper and loses its glyph to a trace: it is
+   still a piece of the row, and plainly not one to press. (WCAG exempts an
+   inactive control's text from the contrast bar.) */
+.paper:disabled .paper__ink,
+.paper:disabled .paper-pill__text {
+  opacity: 0.3;
+}
+
+/* ── the focus ring ───────────────────────────────────────────────────────
+   Round, hugging the base outside the paper's overhang, in two rings — white
+   and ink-black — so it reads on any sky and any paper. */
+.paper__shape::after {
+  content: '';
+  position: absolute;
+  inset: calc(-7 * var(--chrome-u));
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #14120f;
+  opacity: 0;
+  pointer-events: none;
+}
+.paper:focus-visible .paper__shape::after,
+.paper:has(:focus-visible) .paper__shape::after {
+  opacity: 1;
+}
+
+/* ── the pill ─────────────────────────────────────────────────────────────
+   Uko's outline in three slices of the one mask: the two round ends as drawn,
+   the straight run between them stretched (Paper.tsx has the numbers). */
+.paper-pill {
+  --base-h: var(--pill-bh);
+  width: auto;
+  min-width: calc(var(--pill-bw) * var(--chrome-u));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 calc(28 * var(--chrome-u));
+  box-sizing: border-box;
+}
+.paper-pill--fixed {
+  width: calc(var(--pill-bw) * var(--chrome-u));
+  padding: 0;
+}
+.paper-pill__paper {
+  position: absolute;
+  left: calc(var(--pill-bx) * -1 * var(--chrome-u));
+  right: calc(var(--pill-bleed-r) * -1 * var(--chrome-u));
+  top: calc(var(--pill-by) * -1 * var(--chrome-u));
+  height: calc(var(--pill-vh) * var(--chrome-u));
+  pointer-events: none;
+}
+.paper-pill__paper > .paper__fill {
+  top: 0;
+  height: 100%;
+  mask-image: url(/ui/chrome/pill-paper.svg);
+}
+.paper-pill__l {
+  left: 0;
+  width: calc(var(--pill-cut-l) * var(--chrome-u));
+  mask-size: calc(var(--pill-vw) * var(--chrome-u)) 100%;
+  mask-position: 0 0;
+}
+.paper-pill__r {
+  right: 0;
+  width: calc(var(--pill-cut-r) * var(--chrome-u));
+  mask-size: calc(var(--pill-vw) * var(--chrome-u)) 100%;
+  mask-position: 100% 0;
+}
+/* 1px into each cap, so no seam of half-covered pixels shows where the slices
+   meet; the overlap is paper on paper. */
+.paper-pill__m {
+  left: calc(var(--pill-cut-l) * var(--chrome-u) - 1px);
+  right: calc(var(--pill-cut-r) * var(--chrome-u) - 1px);
+  mask-size: calc(100% * var(--pill-mid-scale)) 100%;
+  mask-position: var(--pill-mid-pos) 0;
+}
+
+.paper-pill__text {
+  position: relative;
+  display: flex;
+  align-items: center;
+  font-family: 'Bowlby One', ui-sans-serif, system-ui, sans-serif;
+  font-size: calc(15 * var(--chrome-u));
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--ink, #fff);
+  /* Centred on the capitals, as the frame has them, not on the line box. */
+  text-box: trim-both cap alphabetic;
+  user-select: none;
+}
+.paper-pill--numbers .paper-pill__text {
+  gap: calc(18 * var(--chrome-u));
+}
+.paper-pill__num {
+  font-variant-numeric: tabular-nums;
+}
+/* The file's hairline: its own box of the pill's ink mask, not stretched. */
+.paper-pill__hair {
+  position: relative;
+  flex: none;
+  width: calc(var(--hair-w) * var(--chrome-u));
+  height: calc(var(--hair-h) * var(--chrome-u));
+  mask-image: url(/ui/chrome/pill-ink.svg);
+  mask-size: calc(var(--pill-vw) * var(--chrome-u)) calc(var(--pill-vh) * var(--chrome-u));
+  mask-position: calc(var(--hair-x) * -1 * var(--chrome-u)) calc(var(--hair-y) * -1 * var(--chrome-u));
+}
+
+/* ── placement ────────────────────────────────────────────────────────────
+   No band behind either: the shapes float on the sky and carry their own
+   contrast. The row's centre line is shared, so the 58s and the 46s sit on
+   one axis, and its tallest shape's bottom edge is `chromeMargin` up. After
+   `.paper`, whose `position: relative` the back shape would otherwise take. */
+.chrome-row {
+  position: absolute;
+  left: 50%;
+  bottom: var(--chrome-line-margin, var(--chrome-margin, 35px));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--chrome-gap, 26px) * var(--chrome-scale, 1) * var(--chrome-fit, 1));
+  z-index: 2;
+}
+.chrome-top {
+  position: absolute;
+  left: 50%;
+  top: var(--chrome-line-margin, var(--chrome-margin, 35px));
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+/* The card pill's native <select>: over the whole pill, invisible, so the
+   pill is what shows and the select is what is pressed and focused. */
+.paper__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+  appearance: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

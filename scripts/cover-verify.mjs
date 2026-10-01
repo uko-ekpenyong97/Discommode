@@ -309,10 +309,16 @@ async function checkBudgets(browser) {
       const page = await newPage(browser, vp, dpr);
       await gridOn02(page);
       const pres = await page.evaluate(() => window.__covers.presenters().filter((p) => p.visible && p.cover === 'rive-site'));
-      const big = pres.reduce((a, p) => (p.pxW > a.pxW ? p : a), { pxW: 0, pxH: 0 });
-      const sharedCost = await page.evaluate(([w, h]) => window.__covers.benchStage('rive-site', w, h), [big.pxW, big.pxH]);
+      const big = pres.reduce((a, p) => (p.pxW > a.pxW ? p : a), { pxW: 0, pxH: 0, drawW: 0, drawH: 0 });
+      // A grid tile's cover is RENDERED at its capped size (coverRenderMax,
+      // docs/covers.md), and its canvas's backing store is that size too — CSS
+      // stretches it over the tile — so the draw and the copy are both benched
+      // at the render size.
+      const drawW = big.drawW || big.pxW;
+      const drawH = big.drawH || big.pxH;
+      const sharedCost = await page.evaluate(([w, h]) => window.__covers.benchStage('rive-site', w, h), [drawW, drawH]);
       const shared = sharedCost.ms;
-      const copy = await page.evaluate(([w, h]) => window.__covers.benchPresent(w, h), [big.pxW, big.pxH]);
+      const copy = await page.evaluate(([w, h]) => window.__covers.benchPresent(w, h), [drawW, drawH]);
       // Hovered: the tile under the pointer is drawn again, for itself, at its size.
       const hovered = shared;
       const gridTotal = shared + hovered + pres.length * copy;
@@ -328,7 +334,7 @@ async function checkBudgets(browser) {
       const total = Math.max(gridTotal, detailTotal);
       const tag = `${vp.width}×${vp.height} @${dpr}×`;
       check(hero && hero.ms <= BUDGET.hero, `${tag} hero`, `${hero ? `${hero.pxW}×${hero.pxH} ${ms(hero.ms)} (+ floor ${ms(hero.floor)} = ${ms(hero.total)})` : 'no hero draw'} ≤ ${BUDGET.hero}`);
-      check(copy <= BUDGET.tile, `${tag} tile`, `${pres.length} visible, each ${ms(copy)} (copy) ≤ ${BUDGET.tile}; the shared draw ${big.pxW}×${big.pxH} ${ms(shared)} (+ floor ${ms(sharedCost.floor)})`);
+      check(copy <= BUDGET.tile, `${tag} tile`, `${pres.length} visible, each ${ms(copy)} (copy ${drawW}×${drawH}, shown at ${big.pxW}×${big.pxH}) ≤ ${BUDGET.tile}; the shared draw ${drawW}×${drawH} ${ms(shared)} (+ floor ${ms(sharedCost.floor)})`);
       check(total <= BUDGET.total, `${tag} total`, `grid ${ms(gridTotal)} (shared + hovered + ${pres.length} copies), detail ${ms(detailTotal)} ≤ ${BUDGET.total}`);
       check(sky + total <= BUDGET.all, `${tag} sky+fluid+covers`, `${ms(sky)} + ${ms(total)} = ${ms(sky + total)} ≤ ${BUDGET.all}`);
       await page.context().close();

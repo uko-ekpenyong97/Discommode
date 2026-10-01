@@ -19,7 +19,8 @@ import type { Crop } from './types';
  *
  *   1. each cover with an instance on screen is drawn ONCE for all the
  *      instances that show it at rest, at the largest of their sizes (capped
- *      by coverMaxDpr), per aspect (tiles are 3:4, the hero 10:13);
+ *      by coverMaxDpr — and a grid tile's by coverRenderMax, its canvas
+ *      upscaled by CSS), per aspect (tiles are 3:4, the hero 10:13);
  *   2. each instance with its own dome up (the hovered tile, the hero) is
  *      drawn once more, for itself;
  *   3. each draw is copied, in this same task, into the instances' own 2D
@@ -52,14 +53,22 @@ export interface Presenter {
   ctx: CanvasRenderingContext2D | null;
   visible: boolean;
   onScreen: boolean;
+  /** The instance's own canvas, device px. */
   pxW: number;
   pxH: number;
+  /** What its cover is RENDERED at: the same, or for a grid tile no more than
+   *  `coverRenderMax` on the long edge — the copy upscales the rest. */
+  drawW: number;
+  drawH: number;
+  /** A grid tile: its render is capped (set once, when it is added). */
+  capped: boolean;
   drawn: boolean;
 }
 
 interface Group {
   coverId: string;
   role: RivePlayerRole;
+  capped: boolean;
   aspect: number;
   pxW: number;
   pxH: number;
@@ -164,6 +173,9 @@ export function addPresenter(p: Presenter): () => void {
   const rive = !!riveCover(p.coverId);
   if (!coverLiveAvailable(p.coverId)) return () => {};
   p.ctx = p.canvas.getContext('2d');
+  // Only the grid's tiles are capped: the detail hero and the morph card that
+  // lands on it draw at their full size.
+  p.capped = !!p.host.closest('.grid-stage');
   presenters.add(p);
   io.observe(p.host);
   if (rive) ensureRive(p.coverId);
@@ -244,24 +256,38 @@ function tick(now: number) {
       const spring = shaderCover(p.coverId)!.domeSpring(coverValues(p.coverId));
       p.dome.step(now, spring.spring, spring.damping);
     }
+    // THE RENDER CAP (coverRenderMax): a grid tile's cover is rendered no
+    // bigger than the tile was at the old cardWidth, and its 2D copy upscales
+    // it into the tile's full-size canvas. The cost of a cover is its pixels;
+    // the 480-wide tile was 2.56× them for no more cover.
+    const cap = p.capped ? site.coverRenderMax / Math.max(p.pxW, p.pxH) : 1;
+    if (cap < 1) {
+      p.drawW = Math.max(1, Math.round(p.pxW * cap));
+      p.drawH = Math.max(1, Math.round(p.pxH * cap));
+    } else {
+      p.drawW = p.pxW;
+      p.drawH = p.pxH;
+    }
     if (!rive && p.dome && p.dome.state.amp !== 0) continue; // drawn for itself below
     const aspect = Math.round((p.pxW / p.pxH) * 100) / 100;
     const role: RivePlayerRole = rive ? p.role : 'grid';
     let g: Group | undefined;
     for (let i = 0; i < nGroups; i++) {
-      if (groups[i].coverId === p.coverId && groups[i].aspect === aspect && groups[i].role === role) g = groups[i];
+      const c = groups[i];
+      if (c.coverId === p.coverId && c.aspect === aspect && c.role === role && c.capped === p.capped) g = c;
     }
     if (!g) {
-      if (nGroups === groups.length) groups.push({ coverId: '', role: 'grid', aspect: 0, pxW: 0, pxH: 0, n: 0 });
+      if (nGroups === groups.length) groups.push({ coverId: '', role: 'grid', capped: false, aspect: 0, pxW: 0, pxH: 0, n: 0 });
       g = groups[nGroups++];
       g.coverId = p.coverId;
       g.role = role;
+      g.capped = p.capped;
       g.aspect = aspect;
       g.pxW = g.pxH = g.n = 0;
     }
-    if (p.pxW > g.pxW) {
-      g.pxW = p.pxW;
-      g.pxH = p.pxH;
+    if (p.drawW > g.pxW) {
+      g.pxW = p.drawW;
+      g.pxH = p.drawH;
     }
     g.n++;
   }
@@ -288,14 +314,14 @@ function tick(now: number) {
     if (!cover || !draw(cover, g.pxW, g.pxH, t, restDome, coverBackdrop(g.coverId) === 'solid' ? null : backdrop)) continue;
     for (const p of presenters) {
       if (!p.visible || p.coverId !== g.coverId || (p.dome && p.dome.state.amp !== 0)) continue;
-      if (Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
+      if (p.capped !== g.capped || Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
       present(p, g.pxW, g.pxH);
     }
   }
   for (const p of presenters) {
     if (!p.visible || !p.dome || p.dome.state.amp === 0 || riveCover(p.coverId)) continue;
     const cover = coverFor(p.coverId);
-    if (cover && draw(cover, p.pxW, p.pxH, t, p.dome.state, coverBackdrop(p.coverId) === 'solid' ? null : backdrop)) present(p, p.pxW, p.pxH);
+    if (cover && draw(cover, p.drawW, p.drawH, t, p.dome.state, coverBackdrop(p.coverId) === 'solid' ? null : backdrop)) present(p, p.drawW, p.drawH);
   }
 
   frames++;
@@ -329,16 +355,22 @@ function present(p: Presenter, pxW: number, pxH: number) {
   if (renderer) copy(p, renderer.domElement, stageH - pxH, pxW, pxH);
 }
 
-/** A copy of the draw at `(0, sy, pxW, pxH)` of `src` into one instance's canvas. */
+/**
+ * A copy of the draw at `(0, sy, pxW, pxH)` of `src` into one instance's
+ * canvas. The canvas's backing store is the instance's RENDER size (`drawW` ×
+ * `drawH`: its device size, or under `coverRenderMax` for a grid tile), and
+ * CSS stretches the element over the tile — so a capped tile's copy is 1:1 and
+ * the compositor does the upscaling, for nothing.
+ */
 function copy(p: Presenter, src: CanvasImageSource, sy: number, pxW: number, pxH: number) {
   const ctx = p.ctx;
   if (!ctx) return;
-  if (p.canvas.width !== p.pxW || p.canvas.height !== p.pxH) {
-    p.canvas.width = p.pxW;
-    p.canvas.height = p.pxH;
+  if (p.canvas.width !== p.drawW || p.canvas.height !== p.drawH) {
+    p.canvas.width = p.drawW;
+    p.canvas.height = p.drawH;
   }
-  ctx.clearRect(0, 0, p.pxW, p.pxH);
-  ctx.drawImage(src, 0, sy, pxW, pxH, 0, 0, p.pxW, p.pxH);
+  ctx.clearRect(0, 0, p.drawW, p.drawH);
+  ctx.drawImage(src, 0, sy, pxW, pxH, 0, 0, p.drawW, p.drawH);
   if (!p.drawn) {
     p.drawn = true;
     p.onDrawn();
@@ -382,7 +414,7 @@ function drawRive(g: Group, t: number) {
   riveCost('draw', ms);
   const t0 = performance.now();
   for (const p of presenters) {
-    if (!p.visible || p.coverId !== g.coverId || p.role !== g.role) continue;
+    if (!p.visible || p.coverId !== g.coverId || p.role !== g.role || p.capped !== g.capped) continue;
     if (Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
     copy(p, player.canvas, 0, g.pxW, g.pxH);
   }
@@ -402,6 +434,9 @@ export function coverStageProbe() {
         visible: p.visible,
         pxW: p.pxW,
         pxH: p.pxH,
+        drawW: p.drawW,
+        drawH: p.drawH,
+        capped: p.capped,
         domed: !!p.dome && p.dome.state.amp !== 0,
       })),
     cover: (id: string) => coverFor(id),

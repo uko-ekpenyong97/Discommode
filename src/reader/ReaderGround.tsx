@@ -27,11 +27,10 @@ function tableArrived(): boolean {
  * off the grid the way the project view's ground claims it (`skyStage.ts`), and
  * handed back on the way out. No second context, no second shader.
  *
- * Over it, two washes, for the same two reasons as the project view's
- * (`docs/portfolio-view.md`): `readerScrim` over everything, a look that sets
- * how far back the sky sits behind the book; and `readerChromeScrim` in the
- * two bands the back pill and the page bar sit in, which is what holds their
- * type to 4.5:1 over any sky (`ground.ts`, `chromeContrast.ts`).
+ * Over it, one wash: `readerScrim`, a look that sets how far back the sky sits
+ * behind the book. (There were two, as in the project view; the second held the
+ * chrome's type to 4.5:1 in two bands, and the chrome carries its own contrast
+ * now — src/chrome.)
  *
  * WHEN IT TAKES THE CANVAS is the part worth reading. The canvas can only be in
  * one place, and a crossfade between two layers that both show the sky needs
@@ -79,11 +78,9 @@ export default function ReaderGround({ doorwayDriven }: ReaderGroundProps) {
   }, []);
 
   // DEV: the dials, for the verify scripts (`reader-verify` and
-  // `sky-fluid-verify` turn the flip's splat off and on through this), and the
-  // chrome's contrast probe and sweep (`scripts/sky-contrast.mjs`).
+  // `sky-fluid-verify` turn the flip's splat off and on through this).
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    void import('./chromeContrast');
     const w = window as unknown as { __readerGround?: { dials: typeof READER_GROUND; set: typeof setReaderGround } };
     w.__readerGround = { dials: READER_GROUND, set: setReaderGround };
     return () => {
@@ -95,8 +92,6 @@ export default function ReaderGround({ doorwayDriven }: ReaderGroundProps) {
     <div className="reader-ground" data-held={held || undefined} aria-hidden="true">
       {held && <SkyLayer />}
       <div className="reader-ground__scrim" />
-      <div className="reader-ground__band reader-ground__band--top" />
-      <div className="reader-ground__band reader-ground__band--bottom" />
     </div>
   );
 }

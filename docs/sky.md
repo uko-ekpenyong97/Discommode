@@ -485,9 +485,9 @@ The wake has its own panel, **SKY · FLUID**, next to it. See [The wake](#the-wa
 | Dial | Default | What it does |
 | --- | --- | --- |
 | `fluidOn` | on | Master switch. Off, the sky is exactly the sky without a wake. |
-| `fluidRadius` | 0.08 | Splat radius, as a fraction of the viewport height (the gaussian's 1/e). |
-| `fluidStrength` | 1.0 | What the pointer puts in: its push and its density. |
-| `fluidCurl` | 20 | Vorticity confinement: how much the wake curls into eddies. |
+| `fluidRadius` | 0.02 | Splat radius, as a fraction of the viewport height (the gaussian's 1/e). Uko's tuning, 2026-09-30 (was 0.08). |
+| `fluidStrength` | 0.45 | What the pointer puts in: its push and its density. Uko's tuning, 2026-09-30 (was 1.0). |
+| `fluidCurl` | 7 | Vorticity confinement: how much the wake curls into eddies. Uko's tuning, 2026-09-30 (was 20; the measurements in this file that name a curl were taken at 20). |
 | `velocityDissipation` | 0.98 | Velocity kept per 60 Hz frame. |
 | `densityDissipation` | 0.94 | Density kept per 60 Hz frame. A parting closes in about a second. |
 | `fluidWarp` | 0.02 | How far every noise sample moves with the wake. |
@@ -893,7 +893,9 @@ The one thing that does not travel with it is the WASH. On the grid the sky is
 bare; in the project view it is under `groundScrim`, and the letterhead's band
 under `letterheadScrim` on top of that. Both live in the project view's look —
 the grid has nothing printed on the sky and needs neither. The reader has its
-own pair, `readerScrim` and `readerChromeScrim` (`src/reader/ground.ts`).
+own wash, `readerScrim` (`src/reader/ground.ts`). The reader's and the detail
+view's chrome carries no wash at all: it takes its colour FROM the sky
+([docs/reader.md, Chrome](reader.md#chrome)).
 
 Every host paints a CSS gradient of the current sky *behind* the canvas
 (`skyFallbackCss` — a zenith→horizon gradient plus a flat cloud-grey wash
@@ -1096,6 +1098,21 @@ grain or a flash. Run 2026-09-22, Apple M1 Max, 1440×900 @2x:
 | 5 | reduced motion, a sweep and a direct `splat` | **0.000%** differ; the field never wakes |
 | 6 | pointer strength 0: detail Next, grid drag, sheet roll-in, reader doorway, reader page flip, reader riffle | each wakes the field on its own (the last two added 2026-09-28) |
 | 7 | a diagonal sweep across a clear **dusk** | **31.9%** of the frame moved by ≥ 8 levels; **0.00%** still shifted at 3s |
+
+**Those three effects were measured at the first fluid** (`fluidRadius` 0.08,
+`fluidStrength` 1, `fluidCurl` 20), and their bars — 30%, 15%, 20% — were
+written for it. At Uko's dials (0.02, 0.45, 7; 2026-09-30) the wake is much
+quieter by design: the same sweeps move **1.17%** of the star pixels, open the
+night fog by **−4.51%** and push **0.524%** of the dusk gradient (medians of
+five runs; spreads 1.06–1.23, 4.51–4.52, 0.520–0.525). So the bars now TRACK
+THE DEFAULTS: each is half of what the effect measures at the shipped dials,
+recorded in the script beside the dials it was measured at
+(`WAKE_MEASURED`, `WAKE_MEASURED_AT`), and the run first checks that the page
+is on those dials — if the defaults move, it fails and says to re-measure
+(`--measure`, five runs, the median). They catch an effect that stops
+working, not a tuning. The returns (≤ 2% still moved at 3s) are unchanged,
+and section 5 now also checks `fluidOn` off on its own: a sweep and a splat
+change 0 pixels and the field never wakes.
 | 8 | the moon's disc, counted pixel by pixel | full **100.0%** lit, new **0.0%**, first quarter **49.9%** with **100%** of it on the right (and a last quarter 100% on the left) |
 | 8 | the letterhead's band moved onto a full moon | **7.50:1**, which is the pure-white floor, against 9.25:1 where the strip actually is (2026-09-23). The row is now asked of the sky being measured (`__skyMoonAt(target)`): the moon moves, and asked of the live one the band missed the disc and read 10.4 |
 | 8 | **below the horizon there is no moon** (FORCE UP's azimuth, 2026-09-23) | forced to **−1°**: the disc stands 0.9 levels off the sky, so it is not drawn. At **1.5°**, half way through its fade: 127 of the 210 levels it has at 45° (61%) |
@@ -1209,9 +1226,15 @@ Global worst **7.50:1** (clear); a pure-white band is 7.50:1. Bar 7:1.
 Global worst **7.50:1** (clear); a pure-white band is 7.50:1. Bar 7:1.
 
 `--shipped` runs the same sweep at the shipped dials instead. It is a
-reading, not the check. As shipped the wake still takes every condition but
-storm to the floor (storm: 7.55 and 7.61), because a parting at
-`starGlow` 1.5 is still enough to flare a star to white.
+reading, not the check. Until 2026-09-30 the wake as shipped still took every
+condition but storm to the floor (storm: 7.55 and 7.61), because a parting at
+`starGlow` 1.5 was enough to flare a star to white. **With Uko's fluid dials**
+(`fluidRadius` 0.02, `fluidStrength` 0.45, `fluidCurl` 7) it does not: the
+wake now leaves partly, cloudy, fog and rain at their still values (7.61,
+7.61, 7.63, 7.99) and storm at 9.78–9.80, at both viewports; only a clear
+night still meets 7.50 (midnight, a star the wake flares; still, it is 7.51). The sweep at the
+dials' maxima — the check — did not move: 7.50 in every condition, the share
+of skies at the white floor within three points of before.
 
 **Nothing fails, and nothing was changed to make it pass.** Every
 condition reaches the same **7.50:1**, and 7.50 is exactly what a **pure
@@ -1262,14 +1285,15 @@ same minutes.
 | `src/env/wmo.ts` | WMO code → condition, cloudiness, precipitation. |
 | `src/env/moon.ts` | The moon from the clock, as one geometry: Meeus's lunar series → its phase (elongation from the sun), altitude and azimuth over SF, rise and set, and the bright limb. Pure, tested against the almanac, and nothing to do with the network. |
 | `src/env/astro.ts` | Julian day, sidereal time, the frame conversions, refraction, the sun's real position. Shared, so the next thing that needs a real position does not copy them. |
-| `src/sky/bandSweep.ts` | Dev: the brightest pixel of the letterhead's band for thousands of skies at once, reduced on the GPU. What makes the sweep a minute. |
+| `src/sky/bandSweep.ts` | Dev: the brightest pixel of the letterhead's band for thousands of skies at once, reduced on the GPU. What makes the sweep a minute. And `createRectMeans`: the MEAN of one rect, the same way, for the chrome's sweep. |
+| `SkyEngine.readMeans` | The chrome's sky: the mean colour under each paper shape, read back through a pixel buffer and a fence twice a second — never a stall, never per frame ([docs/reader.md, Chrome](reader.md#chrome)). |
 | `src/portfolio/contrastProbe.ts` | `bandCenter`: the letterhead's band, read somewhere other than where the letterhead is. |
 | `src/dev/skyPreview.ts` | Dev: what each condition and each time of day means as numbers. |
 | `src/dev/EnvReadout.tsx` | Dev: the readout and the override buttons, FORCE UP and its altitude slider. |
 | `scripts/sky-sheet.mjs` | The 24-image contact sheet. |
 | `scripts/sky-perf.mjs` | The frame-time table above; `--fluid` for the wake awake. |
 | `scripts/sky-fluid-verify.mjs` | `npm run verify:sky`: the wake's checks, and the four captures in `docs/sky/fluid/`. |
-| `scripts/sky-contrast.mjs` | The letterhead against all 24 still skies, **the sweep** (a whole day, both moons, a hand in it), and the `letterheadScrim` sweep that set the dial. |
+| `scripts/sky-contrast.mjs` | The letterhead against all 24 still skies, **the sweep** (a whole day, both moons, a hand in it), and the `letterheadScrim` sweep that set the dial. And the chrome, per shape, in the reader and the detail view. |
 
 ## Not done
 

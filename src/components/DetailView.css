@@ -51,31 +51,10 @@
   opacity: 0;
 }
 
-/* Back pill: top-centre, sitting in the top band. Click = Escape. */
-.detail__back {
-  position: absolute;
-  top: var(--detail-margin);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2;
-  height: var(--detail-chrome);
-  padding: 0 16px;
-  border: 0;
-  border-radius: 100px;
-  background: rgba(0, 0, 0, 0.5);
-  color: rgba(255, 255, 255, 0.85);
-  font-family: var(--mono);
-  font-size: 14px;
-  cursor: pointer;
-  transition: background 160ms ease, opacity var(--detail-chrome-ms, 200ms) ease;
-}
-.detail__back:hover {
-  background: rgba(0, 0, 0, 0.65);
-}
-.detail__back:focus-visible {
-  outline: 1px solid #fff;
-  outline-offset: 2px;
-}
+/* The back shape (top-centre) and the bar (bottom-centre) are paper shapes
+   (src/chrome, docs/detail-paper.md "Chrome"), placed by `.chrome-top` and
+   `.chrome-row`; the rules above only fade them with the morph, and the
+   ticker drifts them out with the doorway's CLEAR. The back shape = Escape. */
 
 .detail__strip {
   position: absolute;
@@ -147,48 +126,10 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
-/* Bar: bottom-centre, in the bottom band. Chips are 40 tall, radius 2, on a
-   translucent charcoal fill 8px apart; hover a step lighter. */
 .detail__bar {
-  position: absolute;
-  left: 50%;
-  bottom: var(--detail-margin);
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 2;
   cursor: default; /* the bar is chrome, not dismissable backdrop */
 }
 
-.detail__btn,
-.detail__select {
-  height: var(--detail-chrome);
-  font-family: var(--mono);
-  font-size: 16px;
-  color: #fff;
-  background: rgba(53, 53, 53, 0.4);
-  border: 0;
-  border-radius: 2px;
-  padding: 0 14px;
-  cursor: pointer;
-}
-
-.detail__btn:hover,
-.detail__select:hover {
-  background: rgba(83, 83, 83, 0.5);
-}
-
-/* The primary "Read issue" action reads a touch brighter than Prev/Next. */
-.detail__btn--read {
-  background: rgba(83, 83, 83, 0.5);
-}
-.detail__btn--read:hover {
-  background: rgba(108, 108, 108, 0.6);
-}
-
-.detail__btn:focus-visible,
-.detail__select:focus-visible,
 .detail__panel:focus-visible {
   outline: 1px solid #fff;
   outline-offset: 2px;

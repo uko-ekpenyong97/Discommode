@@ -15,6 +15,7 @@ import {
 import { useDetailPaperDials } from '../dev/detailPaperDials';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
+import { useChromeDials } from '../dev/chromeDials';
 import { persistedPanelId } from '../dev/dialState';
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
@@ -132,6 +133,7 @@ export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKi
   useCoverLifeDials();
   // The ground its TABLE channel brings in: the washes, the shadow, the wake.
   useReaderGroundDials();
+  useChromeDials();
 
   // REST on mount; restore the normal reader / detail baseline on unmount.
   useLayoutEffect(() => {

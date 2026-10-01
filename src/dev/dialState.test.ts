@@ -29,19 +29,19 @@ beforeEach(() => vi.unstubAllGlobals());
 describe('saved dial state', () => {
   it('deletes every saved panel and app blob from another version, and keeps this one', async () => {
     const m = stubStorage({
-      'dialkit:cover-nosey-v1': '{"version":1,"values":{}}',
-      'dialkit:detail-paper-v2': '{"version":1,"values":{}}',
+      'dialkit:cover-nosey-v2': '{"version":1,"values":{}}',
+      'dialkit:detail-paper-v3': '{"version":1,"values":{}}',
       'discommode-dials': '{"snapMs":600}',
       'unrelated': 'kept',
     });
     const { DIAL_STATE_VERSION, persistedPanelId } = await dialState();
-    expect(DIAL_STATE_VERSION).toBe(2);
-    expect(persistedPanelId('cover-nosey')).toBe('cover-nosey-v2');
-    expect([...m.keys()].sort()).toEqual(['dialkit:detail-paper-v2', 'unrelated']);
+    expect(DIAL_STATE_VERSION).toBe(3);
+    expect(persistedPanelId('cover-nosey')).toBe('cover-nosey-v3');
+    expect([...m.keys()].sort()).toEqual(['dialkit:detail-paper-v3', 'unrelated']);
   });
 
   it('keeps the app blob of this version, and drops one that does not parse', async () => {
-    const ok = stubStorage({ 'discommode-dials': '{"version":2,"values":{"snapMs":700}}' });
+    const ok = stubStorage({ 'discommode-dials': '{"version":3,"values":{"snapMs":700}}' });
     await dialState();
     expect(ok.has('discommode-dials')).toBe(true);
     const bad = stubStorage({ 'discommode-dials': '{not json' });
@@ -52,7 +52,7 @@ describe('saved dial state', () => {
   it('loads only keys the defaults have, of their type, finite', async () => {
     stubStorage({
       'discommode-dials': JSON.stringify({
-        version: 2,
+        version: 3,
         values: { a: 5, b: null, c: 'x', d: true, gone: 1 },
       }),
     });
@@ -64,7 +64,7 @@ describe('saved dial state', () => {
     const m = stubStorage({});
     const { saveAppDials, loadAppDials } = await dialState();
     saveAppDials({ a: 3 });
-    expect(JSON.parse(m.get('discommode-dials')!)).toEqual({ version: 2, values: { a: 3 } });
+    expect(JSON.parse(m.get('discommode-dials')!)).toEqual({ version: 3, values: { a: 3 } });
     expect(loadAppDials({ a: 1 })).toEqual({ a: 3 });
   });
 

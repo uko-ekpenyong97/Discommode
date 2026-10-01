@@ -648,7 +648,7 @@ async function checkLeave(browser) {
   await page.waitForFunction(() => !document.querySelector('.reader') && window.__paper?.state() === 'on', null, { timeout: 10000 });
   ok('closing the reader, the canvas takes the cards back');
   await record();
-  await page.getByRole('button', { name: '← Back to the grid' }).click();
+  await page.getByRole('button', { name: 'Back to the grid' }).click();
   await page.waitForFunction(() => !document.querySelector('.detail'), null, { timeout: 10000 });
   const back = await sequence();
   check(

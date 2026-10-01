@@ -7,28 +7,23 @@ import { LOOK } from '../portfolio/portfolioMotion';
  * texture and `npm run backgrounds` are still in the repo, and nothing loads
  * them.
  *
- * Four dials, and like the project view's two washes they are two kinds of
- * thing. `readerScrim` and `readerBookShadow` are LOOKS, chosen by eye.
- * `readerChromeScrim` is MEASURED: it is what holds the back pill and the page
- * bar to 4.5:1 over any sky the shader can paint, and a test fails if it drops
- * under the floor (`ground.test.ts`). `readerFlipSplat` is how hard a turning
- * leaf pushes the air behind the book.
+ * Three dials. `readerScrim` and `readerBookShadow` are LOOKS, chosen by eye;
+ * `readerFlipSplat` is how hard a turning leaf pushes the air behind the book.
+ * There used to be a fourth, `readerChromeScrim`: black over two bands at the
+ * top and bottom, measured to hold the chips' type to 4.5:1 over any sky. The
+ * chrome is paper shapes now (src/chrome) that carry their own contrast — the
+ * glyph is measured against its own paper, not the sky — so the bands went.
  *
- * `READER_GROUND` is the live object — the dock writes it, the flip engine and
- * the contrast probe read it — and `applyReaderGround` publishes the three
- * that CSS needs as variables on `:root` (the book is not inside the ground,
- * so the shadow's variable has to be inherited from above both).
+ * `READER_GROUND` is the live object — the dock writes it, the flip engine
+ * reads it — and `applyReaderGround` publishes the two that CSS needs as
+ * variables on `:root` (the book is not inside the ground, so the shadow's
+ * variable has to be inherited from above both).
  */
 export interface ReaderGroundDials {
   /** Black over the whole ground: how far back the sky sits behind the book.
    *  A look. Defaults to the project view's `groundScrim`, so a page read in
    *  the reader and a page read in a project sit on the same sky. */
   readerScrim: number;
-  /** Black over the two bands the chrome sits in (the back pill at the top,
-   *  the page bar at the bottom), on top of `readerScrim`. MEASURED: the
-   *  lowest value at which every run of chrome type is ≥ 4.5:1 over a
-   *  pure-white band, plus margin. See `docs/reader.md`. */
-  readerChromeScrim: number;
   /** Strength of the contact shadow under the book (its alpha at full
    *  settle). The wood's was 0.35. */
   readerBookShadow: number;
@@ -39,28 +34,15 @@ export interface ReaderGroundDials {
 
 export const READER_GROUND_DEFAULTS: ReaderGroundDials = {
   readerScrim: LOOK.groundScrim,
-  readerChromeScrim: 0.75,
   readerBookShadow: 0.22,
   readerFlipSplat: 0.5,
 };
 
 export const READER_GROUND: ReaderGroundDials = { ...READER_GROUND_DEFAULTS };
 
-/**
- * The chrome's band, CSS px from its screen edge: the detail margin (24) +
- * the chip (40) + 8 of air. The wash is flat across it — so the type sits on
- * one value and the probe's number is exact — and fades out over the same
- * height again beyond it, where there is no type.
- */
-export const CHROME_BAND_PX = 72;
-
-/** The bar the chrome is held to: WCAG AA for normal-size text. */
-export const CHROME_REQUIRED = 4.5;
-
 export function applyReaderGround(): void {
   const s = document.documentElement.style;
   s.setProperty('--reader-scrim', String(READER_GROUND.readerScrim));
-  s.setProperty('--reader-chrome-scrim', String(READER_GROUND.readerChromeScrim));
   s.setProperty('--reader-book-shadow', String(READER_GROUND.readerBookShadow));
 }
 
@@ -75,6 +57,5 @@ export function resetReaderGround(): void {
   Object.assign(READER_GROUND, READER_GROUND_DEFAULTS);
   const s = document.documentElement.style;
   s.removeProperty('--reader-scrim');
-  s.removeProperty('--reader-chrome-scrim');
   s.removeProperty('--reader-book-shadow');
 }

@@ -69,6 +69,9 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       onScreen: false,
       pxW: 0,
       pxH: 0,
+      drawW: 0,
+      drawH: 0,
+      capped: false,
       drawn: false,
     };
     const remove = addPresenter(p);

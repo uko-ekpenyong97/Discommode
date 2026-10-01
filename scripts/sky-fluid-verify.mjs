@@ -24,12 +24,14 @@
  *      from the same side, so without its moonlight a night is the sky it was.
  *      What the moonlight itself changes, by design, is reported beside it.
  *   2  STARS SCATTER, AND COME BACK. A pointer swept across a clear night moves
- *      at least 30% of the star pixels; within 3s they are back.
+ *      at least half the star pixels it moved at the shipped dials
+ *      (WAKE_MEASURED); within 3s they are back.
  *   3  THE FOG OPENS, AND CLOSES. A sweep through the bank opens a window at
  *      the cursor: the mean luminance of a 200px disc there drops by at least
- *      15%, and within 3s it has filled back in. ASSERTED AT NIGHT, REPORTED BY
- *      DAY — a daylit bank is only about 13% brighter than the sky behind it,
- *      so no hole in it, however clean, can take 15% off a disc at noon; the
+ *      half what it did at the shipped dials (WAKE_MEASURED), and within 3s it
+ *      has filled back in. ASSERTED AT NIGHT, REPORTED BY DAY — a daylit bank
+ *      is only about 13% brighter than the sky behind it, so a window in it
+ *      takes little off a disc at noon however clean it is; the
  *      night is the state where "the bank opened" is a question light can
  *      answer. The window rides AT the cursor (the air it pushes carries it),
  *      so the disc is centred where the sweep stops, and the field is frozen
@@ -38,8 +40,9 @@
  *   4  THE FRAME BUDGET. The whole sky, with the fluid awake and splatting
  *      every frame, at p95 ≤ 6ms — at both signed-off viewports × both DPRs,
  *      and at 2560×1440 @2x (a 5K backing store).
- *   5  REDUCED MOTION IS UNTOUCHED. A sweep changes nothing, and the field
- *      never wakes.
+ *   5  REDUCED MOTION IS UNTOUCHED, AND SO IS THE FLUID SWITCHED OFF. A sweep
+ *      changes nothing, and the field never wakes — under reduced motion, and
+ *      with `fluidOn` false and motion allowed.
  *   6  THE PAGE DISTURBS THE SKY. With the POINTER's strength at 0, so that
  *      only the page can be what put anything in: the detail view's Next, a
  *      grid drag, the portfolio sheet's roll-in, the reader's doorway, and a
@@ -60,11 +63,15 @@
  *      it stands off the sky by about half what it does at 45°.
  *   7  THE GRADIENT IS PUSHED AROUND, AND SETTLES BACK. A sweep across a clear
  *      dusk — where the gradient is the whole picture, nothing painted over it
- *      — moves at least 20% of the frame by at least 8 levels on some channel,
- *      and within 3s it is back. A clear dusk is the state that asks the
+ *      — moves at least half the frame it moved at the shipped dials
+ *      (WAKE_MEASURED) by at least 8 levels on some channel, and within 3s it
+ *      is back. A clear dusk is the state that asks the
  *      question: its ramp runs from a deep purple zenith to an orange horizon,
  *      so a displacement of the gradient IS a change of colour, where at noon
  *      the same push over a blue-to-pale-blue ramp would barely print.
+ *
+ * THE WAKE'S BARS TRACK THE DEFAULTS (2, 3 and 7): see WAKE_MEASURED below.
+ * `--measure` prints what the three measure at the page's dials.
  *
  * `--shots` writes the PR captures: the stars at rest at both sizes, the star
  * scatter mid-sweep, the gradient mid-sweep, the fog window, the deck parting,
@@ -81,17 +88,59 @@ const URL = opt('--url', process.env.PV_URL ?? 'http://localhost:5173/');
 const BEFORE = opt('--before', null);
 const SHOTS = opt('--shots', null);
 /** `--only 23` runs sections 2 and 3 and nothing else. */
-const ONLY = opt('--only', '12345678');
+const ONLY = args.includes('--measure') ? '237' : opt('--only', '12345678');
+/** `--measure`: run the wake's three effects (2, 3, 7) and print what they
+ *  measure at the page's dials, paste-ready for `WAKE_MEASURED` below. */
+const MEASURE = args.includes('--measure');
 
 const CONDITIONS = ['clear', 'partly', 'cloudy', 'fog', 'rain', 'storm'];
 const TIMES = ['night', 'dawn', 'noon', 'dusk'];
 const VIEWPORT = { width: 1440, height: 900 };
 
+/**
+ * THE WAKE'S BARS TRACK THE SHIPPED DEFAULTS. How much a sweep moves the stars,
+ * opens the fog and pushes the gradient is a DESIGN choice — the SKY · FLUID
+ * dials (DEFAULTS in src/config.ts) — and these checks are not there to judge
+ * it. They are there to catch a REGRESSION: an effect that quietly stops
+ * working. So each bar is half of what the effect measured AT THE DEFAULTS
+ * (`WAKE_MEASURED`, the median of five `--measure` runs), and the dials it was
+ * measured at are recorded beside it (`WAKE_MEASURED_AT`). The run checks
+ * first that the page is on those dials; if the defaults have moved, that
+ * check fails and says so: re-measure with `--measure` (five runs, take the
+ * median) and paste the numbers and the dials here. Never lower a bar to make
+ * a run pass.
+ *
+ * (Until 2026-09-30 the bars were 30%, 15% and 20%, written for the first
+ * fluid: radius 0.08, strength 1, curl 20. Uko's tuning — 0.02, 0.45, 7 — is a
+ * much quieter wake, by design.)
+ */
+const WAKE_MEASURED_AT = {
+  fluidOn: true,
+  fluidRadius: 0.02,
+  fluidStrength: 0.45,
+  fluidCurl: 7,
+  velocityDissipation: 0.98,
+  densityDissipation: 0.94,
+  fluidWarp: 0.02,
+  starPush: 0.6,
+  starGlow: 1.5,
+  cloudPart: 0.5,
+  fogPart: 0.7,
+  rainBend: 0.15,
+  gradientPush: 0.35,
+  gradientSwirl: 0.15,
+  pageSplat: 1,
+  starSize: 2,
+};
+/** 2026-09-30, Apple M1 Max, 1440×900 @2x, median of five `--measure` runs
+ *  (spread: stars 1.06–1.23, fog 4.51–4.52, gradient 0.520–0.525). */
+const WAKE_MEASURED = { starMovedPct: 1.17, fogNightDropPct: 4.51, gradMovedPct: 0.524 };
+
 /** The thresholds, all in one place. */
 const IDLE_PCT = 0.5;
-const STAR_MOVED_PCT = 30;
+const STAR_MOVED_PCT = WAKE_MEASURED.starMovedPct / 2;
 const STAR_BACK_PCT = 2;
-const FOG_DROP_PCT = 15;
+const FOG_DROP_PCT = WAKE_MEASURED.fogNightDropPct / 2;
 const FOG_BACK_PCT = 2;
 const MOON_FULL_LIT_PCT = 98;
 const MOON_NEW_LIT_PCT = 3;
@@ -99,7 +148,7 @@ const MOON_QUARTER_LIT = [45, 55];
 /** How much of a quarter's lit half must be on the side it is lit from. */
 const MOON_SIDE_PCT = 95;
 const MOON_CONTRAST = 7;
-const GRAD_MOVED_PCT = 20;
+const GRAD_MOVED_PCT = WAKE_MEASURED.gradMovedPct / 2;
 const GRAD_BACK_PCT = 2;
 /** "Moved" for a gradient pixel: this many 8-bit levels on any channel. */
 const GRAD_LEVELS = 8;
@@ -116,6 +165,8 @@ const HIDE = '.grid-stage, .minimap-wrap, .env-readout, [class*="dialkit"] { dis
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu'];
 
 let failures = 0;
+/** What the wake's three effects measured this run (for --measure). */
+const measured = { starMovedPct: NaN, fogNightDropPct: NaN, gradMovedPct: NaN };
 const check = (pass, label, extra = '') => {
   if (!pass) failures++;
   console.log(`  ${pass ? '✓' : '✗'} ${label}${extra ? `  ${extra}` : ''}`);
@@ -318,6 +369,22 @@ async function main() {
   const W2 = W * 2;
   const H2 = H * 2;
 
+  // THE DIALS THE WAKE'S BARS WERE MEASURED AT (see WAKE_MEASURED_AT). A fresh
+  // profile has no saved dials, so the page is on DEFAULTS; if those are no
+  // longer the dials the bars came from, the bars are stale — say so.
+  if (!MEASURE && /[237]/.test(ONLY)) {
+    const page = await open(browser, URL);
+    await page.waitForFunction(() => typeof window.__config?.get === 'function', null, { timeout: 15000 });
+    const live = await page.evaluate(() => window.__config.get());
+    const moved = Object.entries(WAKE_MEASURED_AT).filter(([k, v]) => live[k] !== v).map(([k, v]) => `${k} ${v} → ${live[k]}`);
+    check(
+      moved.length === 0,
+      'the page is on the SKY · FLUID dials the wake\'s bars were measured at',
+      moved.length ? `the defaults moved (${moved.join(', ')}): re-measure with --measure and update WAKE_MEASURED` : 'they are',
+    );
+    await page.context().close();
+  }
+
   // ── 1  asleep is invisible ──────────────────────────────────────────────────
   if (ONLY.includes('1')) {
     console.log('\n── 1  the field decays to nothing: 24 states, sim on vs off');
@@ -420,7 +487,8 @@ async function main() {
     const mid = await shot(page);
     await page.evaluate(() => window.__skyHoldFluid(false));
     const moved = movedPct(stars, base, mid);
-    check(moved >= STAR_MOVED_PCT, `the sweep moves ≥ ${STAR_MOVED_PCT}% of the star pixels`, `${moved.toFixed(1)}% of ${stars.length}`);
+    measured.starMovedPct = moved;
+    check(moved >= STAR_MOVED_PCT, `the sweep moves ≥ ${STAR_MOVED_PCT.toFixed(2)}% of the star pixels (half of ${WAKE_MEASURED.starMovedPct}%, at the defaults)`, `${moved.toFixed(2)}% of ${stars.length}`);
     // A star is a device pixel or two, so the scatter is invisible in a
     // downscaled frame: the capture is a 1:1 crop of the sweep's far half,
     // still (left) and mid-sweep (right), brightened so the stars read.
@@ -452,9 +520,10 @@ async function main() {
     const img = await shot(page);
     const open_ = discLuma(img, cx, cy, r);
     const drop = (100 * (base - open_)) / base;
-    const numbers = `${base.toFixed(1)} → ${open_.toFixed(1)}, −${drop.toFixed(1)}%`;
+    const numbers = `${base.toFixed(1)} → ${open_.toFixed(1)}, −${drop.toFixed(2)}%`;
     if (time === 'night') {
-      check(drop >= FOG_DROP_PCT, `fog-${time}: the sweep opens a window (disc luminance drops ≥ ${FOG_DROP_PCT}%)`, numbers);
+      measured.fogNightDropPct = drop;
+      check(drop >= FOG_DROP_PCT, `fog-${time}: the sweep opens a window (disc luminance drops ≥ ${FOG_DROP_PCT.toFixed(2)}%, half of ${WAKE_MEASURED.fogNightDropPct}% at the defaults)`, numbers);
     } else {
       console.log(`    fog-${time}: the window, reported (a daylit bank is ~13% over the sky behind it)  ${numbers}`);
     }
@@ -548,6 +617,30 @@ async function main() {
     await page.context().close();
   }
 
+  // …and THE FLUID SWITCHED OFF is the same contract, with motion allowed:
+  // `fluidOn` false, a sweep and a direct splat change no pixel and the field
+  // never wakes. Checked on its own — it is what section 1 compares against,
+  // and a reference has to be held to its own bar.
+  if (ONLY.includes('5')) for (const [c, t] of [
+    ['clear', 'night'],
+    ['fog', 'noon'],
+  ]) {
+    const page = await open(browser, URL);
+    await state(page, c, t);
+    await page.evaluate(() => window.__setConfig({ fluidOn: false }));
+    await page.evaluate((s) => window.__skyPinTime(s), PIN_S);
+    await page.waitForTimeout(200);
+    const a = await shot(page);
+    await sweep(page, [W * 0.1, H * 0.6], [W * 0.9, H * 0.5], 600);
+    await page.evaluate(() => window.__skySplat(720, 450, 3000, 0, 1));
+    await page.waitForTimeout(100);
+    const b = await shot(page);
+    const awake = await page.evaluate(() => window.__skyFluidAwake());
+    const pct = diffPct(a, b);
+    check(pct === 0 && !awake, `fluidOn off, ${c}-${t}: a sweep changes nothing and the field never wakes`, `${pct.toFixed(3)}% differ, awake ${awake}`);
+    await page.context().close();
+  }
+
   // ── 6  the page ─────────────────────────────────────────────────────────────
   if (ONLY.includes('6')) {
     const toReader = async (p) => {
@@ -618,10 +711,11 @@ async function main() {
     const mid = await shot(page);
     await page.evaluate(() => window.__skyHoldFluid(false));
     const moved = shiftedPct(base, mid, GRAD_LEVELS);
+    measured.gradMovedPct = moved;
     check(
       moved >= GRAD_MOVED_PCT,
-      `the sweep moves ≥ ${GRAD_MOVED_PCT}% of the gradient by ≥ ${GRAD_LEVELS} levels`,
-      `${moved.toFixed(1)}%`,
+      `the sweep moves ≥ ${GRAD_MOVED_PCT.toFixed(3)}% of the gradient by ≥ ${GRAD_LEVELS} levels (half of ${WAKE_MEASURED.gradMovedPct}% at the defaults)`,
+      `${moved.toFixed(3)}%`,
     );
     await save(mid, 'gradient-mid-sweep');
     const back = shiftedPct(base, await after(page, RETURN_MS), GRAD_LEVELS);
@@ -790,6 +884,12 @@ async function main() {
   }
 
   await browser.close();
+  if (MEASURE) {
+    const r = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
+    console.log('\nmeasured at the page\'s dials — the median of five of these goes in WAKE_MEASURED:');
+    console.log(`  { starMovedPct: ${r(measured.starMovedPct, 2)}, fogNightDropPct: ${r(measured.fogNightDropPct, 2)}, gradMovedPct: ${r(measured.gradMovedPct, 3)} }\n`);
+    process.exit(0);
+  }
   console.log(failures === 0 ? '\nall green\n' : `\n${failures} failing\n`);
   process.exit(failures === 0 ? 0 : 1);
 }
