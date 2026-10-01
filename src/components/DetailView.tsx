@@ -22,6 +22,7 @@ import type { DetailController } from '../hooks/useDetail';
 import { PillFace, ShapeFace } from '../chrome/Paper';
 import { two } from '../chrome/two';
 import { useSkyChrome } from '../chrome/useSkyChrome';
+import { useChromeFit } from '../chrome/useChromeFit';
 import './DetailView.css';
 
 const SETTLE_DECAY = Math.log(100);
@@ -274,6 +275,8 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   // reader is up over this view, which has its own.
   const rootRef = useRef<HTMLDivElement>(null);
   useSkyChrome(rootRef, !suspended);
+  // …and gives way to the hero card where the band is too small for it.
+  useChromeFit(barRef, backRef);
   const tilt = (t: number) => ({ '--tilt': t }) as CSSProperties;
 
   return (

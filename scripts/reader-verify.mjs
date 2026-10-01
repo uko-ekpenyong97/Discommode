@@ -66,8 +66,8 @@ const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,exit,hover,life,sky` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,exit,hover,life,sky').split(',');
+/** `--only frames,zorder,nav,folios,chrome,exit,hover,life,sky` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,folios,chrome,exit,hover,life,sky').split(',');
 const B = `${ORIGIN}/`;
 const VIEWPORT = { width: 1728, height: 996 };
 const FRAME_BUDGET_MS = 20;
@@ -313,6 +313,111 @@ async function checkZOrder(browser) {
       );
     }
     await page.context().close();
+  }
+}
+
+// ── folios: the pill reads the magazine's page numbers ────────────────────────
+
+/**
+ * Walk the whole issue and hold the spread pill to the printed folios of the
+ * pages actually open. The expectation is read off the PAGES ON SCREEN, not off
+ * the pill's own code: each open page is the file `NN.webp`, which carries the
+ * printed folio NN (01 and 02 carry none, and still count); the closed book is
+ * the cover's or the back's rest plate. So a spread showing 07.webp and 08.webp
+ * must read "07 | 08", one showing a single inside page that page alone, the
+ * closed front "Cover" and the closed back "Back" — at the same pill width.
+ */
+async function checkFolios(browser) {
+  console.log('\nfolios: the spread pill against the pages that are open, every spread');
+  const page = await newPage(browser, 1);
+  await open(page, 0);
+  const rows = [];
+  for (let s = 0; s < 22; s++) {
+    await page.evaluate((s) => (location.hash = `#read-01/${s}`), s);
+    await page.waitForFunction(
+      (s) => document.querySelector('.reader__caption')?.dataset.spread === String(s + 1) && document.querySelector('.book__turn-host').childElementCount === 0,
+      s,
+      { timeout: 8000 },
+    );
+    await page.waitForTimeout(80);
+    rows.push(
+      await page.evaluate(() => {
+        const files = [...document.querySelectorAll('.book > .book__page img')].map((i) => i.getAttribute('src').split('/').pop().replace('.webp', ''));
+        const inside = files.filter((f) => /^\d+$/.test(f));
+        const expected = inside.length ? inside.join(' | ') : files.includes('cover-rest') ? 'Cover' : files.includes('back-rest') ? 'Back' : '?';
+        const pill = document.querySelector('.reader__caption');
+        const shown = [...pill.querySelectorAll('.paper-pill__text > *, .paper-pill__text')]
+          .filter((n) => n.matches('.paper-pill__num') || (n.matches('.paper-pill__text') && !n.querySelector('.paper-pill__num')))
+          .map((n) => n.textContent.trim())
+          .join(' | ');
+        return { files: files.join('|'), expected, folio: pill.dataset.folio, shown, width: Math.round(pill.querySelector('.paper__shape').getBoundingClientRect().width) };
+      }),
+    );
+  }
+  const wrong = rows.map((r, s) => ({ s, ...r })).filter((r) => r.folio !== r.expected || r.shown !== r.expected);
+  const widths = [...new Set(rows.map((r) => r.width))];
+  for (const [label, s] of [['the cover', 0], ['the first open spread', 1], ['the 07 spread', 4], ['the last open spread', 20], ['the back', 21]]) {
+    const r = rows[s];
+    check(r.folio === r.expected && r.shown === r.expected, `${label} (spread ${s}) reads "${r.shown}"`, `pages on screen ${r.files} → expected "${r.expected}"`);
+  }
+  check(wrong.length === 0, `all 22 spreads read the folios of the pages that are open`, wrong.length ? JSON.stringify(wrong.slice(0, 3)) : rows.map((r) => r.shown).join(', '));
+  check(widths.length === 1, 'the pill is one width throughout', `${widths.join(', ')}px`);
+  await page.context().close();
+}
+
+// ── chrome: the row and the back shape clear the book ────────────────────────
+
+/**
+ * The book is the hero rect and does not move for the chrome; the chrome gives
+ * way (src/chrome/chromeFit.ts). At both signed-off viewports, at the cover, a
+ * mid spread and the back: the row's PAPER (every face's mask box, which is
+ * the scallops' extent, not just the base) must not intersect the book's box,
+ * nor the back shape's paper the page; every face stays ≥ 44px and every hit
+ * area ≥ 44×44. Measured with the pointer off the chrome (a hover lifts it).
+ */
+async function checkChromeClear(browser) {
+  console.log('\nchrome: the row and the back shape clear the book');
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 1728, height: 996 }]) {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    const name = `${viewport.width}×${viewport.height}`;
+    for (const spread of [0, 6, 21]) {
+      await page.goto(`${B}#read-01/${spread}`);
+      await page.waitForSelector('.reader__bar');
+      await page.mouse.move(viewport.width / 2, viewport.height / 2);
+      await page.waitForTimeout(600);
+      const m = await page.evaluate(() => {
+        const box = (el) => {
+          const r = el.getBoundingClientRect();
+          return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+        };
+        const union = (bs) => bs.reduce((a, b) => ({ l: Math.min(a.l, b.l), t: Math.min(a.t, b.t), r: Math.max(a.r, b.r), b: Math.max(a.b, b.b) }));
+        const paperOf = (line) => union([box(line), ...[...line.querySelectorAll('.paper__fill:not(.paper-pill__paper .paper__fill), .paper-pill__paper')].map(box)]);
+        const meet = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+        const book = box(document.querySelector('.book'));
+        const row = paperOf(document.querySelector('.reader__bar'));
+        const back = paperOf(document.querySelector('.reader__back'));
+        const faces = [...document.querySelectorAll('.reader [data-chrome] .paper__shape')].map((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height));
+        const hits = [...document.querySelectorAll('.reader [data-chrome]')].filter((e) => e.matches('button')).map((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height));
+        const cs = getComputedStyle(document.querySelector('.reader__bar'));
+        return {
+          rowGap: book.t < row.b && meet(book, row) ? book.b - row.t : row.t - book.b,
+          rowMeets: meet(book, row),
+          backGap: back.b <= book.t ? book.t - back.b : -(back.b - book.t),
+          backMeets: meet(book, back),
+          face: Math.min(...faces),
+          hit: Math.min(...hits),
+          fit: cs.getPropertyValue('--chrome-fit').trim() || '1',
+          margin: cs.bottom,
+        };
+      });
+      const tag = `${name}, spread ${spread}`;
+      check(!m.rowMeets, `${tag}: the row's paper does not intersect the book`, `${m.rowGap.toFixed(1)}px clear (fit ${m.fit}, bottom ${m.margin})`);
+      check(!m.backMeets, `${tag}: the back shape's paper does not touch the page`, `${m.backGap.toFixed(1)}px clear`);
+      check(m.face >= 44 - 0.01 && m.hit >= 44 - 0.01, `${tag}: faces ≥ 44px, hit areas ≥ 44×44`, `smallest face ${m.face.toFixed(1)}px, smallest hit area ${m.hit.toFixed(1)}px`);
+    }
+    await context.close();
   }
 }
 
@@ -1002,6 +1107,8 @@ async function run() {
   if (ONLY.includes('frames')) await checkRiffleFrames(browser);
   if (ONLY.includes('zorder')) await checkZOrder(browser);
   if (ONLY.includes('nav')) await checkNavigation(browser);
+  if (ONLY.includes('folios')) await checkFolios(browser);
+  if (ONLY.includes('chrome')) await checkChromeClear(browser);
   if (ONLY.includes('exit')) await checkExit(browser);
   if (ONLY.includes('hover')) await checkHover(browser);
   if (ONLY.includes('life')) await checkLife(browser);

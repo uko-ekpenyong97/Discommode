@@ -15,9 +15,14 @@ import type { ChromeDials } from './chromeDials';
  *   3. The ink is whichever of white and the site's ink-black reads harder on
  *      that paper, mixed `chromeInkMix` of the way toward the paper's own hue
  *      at the ink's lightness, so a little of the sky gets into it too.
- *   4. THE CLAMP. If the glyph is under 4.5:1 on its paper, the paper's
+ *   4. THE SKY STEP. If the paper's lightness is within `chromeSkyStep` of the
+ *      sky's own, it is pushed away from the sky — darker under a dark sky
+ *      (lighter if there is no room under it), lighter under a light one — so
+ *      the cut edge never melts into the sky. Reported (`skyStep`).
+ *   5. THE CLAMP. If the glyph is under 4.5:1 on its paper, the paper's
  *      lightness is moved AWAY from the ink, 0.005 at a time, until it is not.
- *      The clamp is reported (`clamp`), and the sweep prints every one.
+ *      The clamp is reported (`clamp`), and the sweep prints every one. It
+ *      runs last and wins: legible glyphs before a crisp edge.
  *
  * The paper is opaque and the glyph sits wholly inside it, so the sky itself
  * is not in the contrast at all: fill against ink is the whole question. What
@@ -99,6 +104,11 @@ export interface ChromePaint {
   /** Set when the paper had to be moved off `chromeFillLightness` to reach
    *  the bar: the lightness it was asked for and the one it got. */
   clamp: { from: number; to: number } | null;
+  /** Set when the sky step moved the paper: from where, to where, and the
+   *  sky's lightness it was moved away from. */
+  skyStep: { from: number; to: number; sky: number } | null;
+  /** The paper's lightness against the sky's, as painted (HSL). */
+  skyGap: number;
 }
 
 /**
@@ -118,22 +128,43 @@ function hold(h: number, s: number, l: number, ink: RGB, light: boolean): { fill
 }
 
 /** The paper and ink for a sky colour. See the top of this file. */
+/**
+ * The paper's lightness pushed out of `step` of the sky's, or as it was.
+ * Under a dark sky (lightness < 0.5) the paper goes darker, to sky − step —
+ * or, where there is no room under the sky, lighter, to sky + step; under a
+ * light sky it goes lighter, or darker where there is no room above.
+ */
+export function skyStepped(l: number, skyL: number, step: number): number {
+  if (!(step > 0) || Math.abs(l - skyL) >= step) return l;
+  const down = skyL - step;
+  const up = skyL + step;
+  if (skyL < 0.5) return down >= 0 ? down : up;
+  return up <= 1 ? up : down;
+}
+
+/** The paper and ink for a sky colour. See the top of this file. */
 export function chromePaint(sky: RGB, d: ChromeDials = CHROME): ChromePaint {
-  const [h, s0] = rgbToHsl(sky);
+  const [h, s0, skyL] = rgbToHsl(sky);
   const s = clamp01(s0 * d.chromeFillSaturation);
   const l0 = clamp01(d.chromeFillLightness);
-  const asked = round(hslToRgb(h, s, l0));
+  // The sky step, before the ink is chosen: the ink is picked for the paper
+  // that will actually be painted.
+  const l1 = clamp01(skyStepped(l0, skyL, d.chromeSkyStep ?? 0));
+  const asked = round(hslToRgb(h, s, l1));
   const light = contrast(INK_LIGHT, asked) >= contrast(INK_DARK, asked);
   const ink = round(mix(light ? INK_LIGHT : INK_DARK, hslToRgb(h, s, light ? 0.85 : 0.15), clamp01(d.chromeInkMix)));
-  const held = hold(h, s, l0, ink, light);
+  const held = hold(h, s, l1, ink, light);
   const press = round(hslToRgb(h, s, clamp01(held.l + (light ? -1 : 1) * d.chromePressNudge)));
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
   return {
     fill: held.fill,
     press,
     ink,
     light,
     ratio: contrast(ink, held.fill),
-    clamp: Math.abs(held.l - l0) > 1e-9 ? { from: l0, to: Math.round(held.l * 1000) / 1000 } : null,
+    clamp: Math.abs(held.l - l1) > 1e-9 ? { from: r3(l1), to: r3(held.l) } : null,
+    skyStep: Math.abs(l1 - l0) > 1e-9 ? { from: r3(l0), to: r3(l1), sky: r3(skyL) } : null,
+    skyGap: Math.abs(rgbToHsl(held.fill)[2] - skyL),
   };
 }
 

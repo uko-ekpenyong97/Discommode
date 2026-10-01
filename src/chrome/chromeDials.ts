@@ -21,6 +21,11 @@ export interface ChromeDials {
   /** How much of the paper's hue gets into the ink: the ink is mixed this far
    *  toward the paper's hue at the ink's own lightness. 0 is pure white / ink-black. */
   chromeInkMix: number;
+  /** The least HSL lightness between the paper and the sky under it. Within
+   *  it, the paper is pushed away from the sky — darker under a dark sky,
+   *  lighter under a light one — so its cut edge never melts into the sky;
+   *  the ink clamp runs after, and wins. 0 turns it off. */
+  chromeSkyStep: number;
   /** The cross-fade when the sky under a shape changes, ms. */
   chromeColorEase: number;
   /** How often the sky under the chrome is read back, ms. Never per frame. */
@@ -47,6 +52,7 @@ export const CHROME_DEFAULTS: ChromeDials = {
   chromeFillLightness: 0.22,
   chromeFillSaturation: 1,
   chromeInkMix: 0.12,
+  chromeSkyStep: 0.08,
   chromeColorEase: 600,
   chromeSampleMs: 500,
   chromeHoverLift: 1.04,

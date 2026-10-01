@@ -59,6 +59,10 @@ export interface ChromeSample {
   ink: RGB;
   ratio: number;
   clamp: { from: number; to: number } | null;
+  /** The sky step, when it moved the paper (chromeSkyStep). */
+  skyStep: { from: number; to: number; sky: number } | null;
+  /** Paper against sky, HSL lightness, as painted. */
+  skyGap: number;
   pass: boolean;
   /** Live only: what the stylesheet is painting on the element right now, and
    *  its ratio — so a drift between the model and the page shows. */
@@ -80,7 +84,7 @@ export function probeChrome(opts: { sky?: SkyTarget } = {}): { samples: ChromeSa
     if (!skies) return null;
     samples = fs.map((f, i) => {
       const p = chromePaint(skies[i]);
-      return { kind: f.kind, disabled: f.disabled, sky: r1(skies[i]), fill: p.fill, ink: p.ink, ratio: p.ratio, clamp: p.clamp, pass: p.ratio >= CHROME_REQUIRED };
+      return { kind: f.kind, disabled: f.disabled, sky: r1(skies[i]), fill: p.fill, ink: p.ink, ratio: p.ratio, clamp: p.clamp, skyStep: p.skyStep, skyGap: p.skyGap, pass: p.ratio >= CHROME_REQUIRED };
     });
   } else {
     const live = new Map(chromeShapes().map((s) => [s.el, s]));
@@ -98,6 +102,8 @@ export function probeChrome(opts: { sky?: SkyTarget } = {}): { samples: ChromeSa
         ink: s.paint.ink,
         ratio: s.paint.ratio,
         clamp: s.paint.clamp,
+        skyStep: s.paint.skyStep,
+        skyGap: s.paint.skyGap,
         pass: s.paint.ratio >= CHROME_REQUIRED,
         painted: { fill, ink, ratio: contrast(fill, ink) },
       }];
@@ -154,6 +160,11 @@ export interface ChromeSweep {
   frame: number[];
   /** Per sky: how many (shape, sample) pairs had to clamp the paper. */
   clamps: number[];
+  /** Per sky: how many (shape, sample) pairs the sky step moved. */
+  steps: number[];
+  /** Per sky: the smallest paper–sky lightness gap as painted, the shape, the
+   *  sky colour, and what the step did there (null = nothing). */
+  gap: { gap: number; kind: string; color: RGB; step: { from: number; to: number; sky: number } | null }[];
   /** The deepest clamps seen, for the report: shape, sky, asked → got. */
   clampList: { sky: number; kind: string; color: RGB; from: number; to: number }[];
   shapes: string[];
@@ -174,7 +185,8 @@ export function sweepChrome(skies: SkyTarget[], wake: Partial<LiveConfig> = SWEE
   const fs = faces().filter((f) => !f.disabled);
   if (!engine || fs.length === 0) return null;
   const frames = chromeSwipe();
-  const worst = skies.map(() => ({ ratio: Infinity, rest: Infinity, kind: '', frame: -1, clamps: 0 }));
+  const worst = skies.map(() => ({ ratio: Infinity, rest: Infinity, kind: '', frame: -1, clamps: 0, steps: 0 }));
+  const gap = skies.map(() => ({ gap: Infinity, kind: '', color: [0, 0, 0] as RGB, step: null as ChromeSweep['gap'][number]['step'] }));
   const clampList: ChromeSweep['clampList'] = [];
   const memo = new Map<number, ReturnType<typeof chromePaint>>();
   const res = engine.sweepMeans(fs.map((f) => f.rect), skies, { frames, sampleEvery: 3, time: 0, phases: 8, config: wake }, (i, r, c, frame) => {
@@ -187,6 +199,8 @@ export function sweepChrome(skies: SkyTarget[], wake: Partial<LiveConfig> = SWEE
     const w = worst[i];
     if (p.ratio < w.ratio) Object.assign(w, { ratio: p.ratio, kind: fs[r].kind, frame });
     if (frame < 0) w.rest = Math.min(w.rest, p.ratio);
+    if (p.skyStep) w.steps++;
+    if (p.skyGap < gap[i].gap) Object.assign(gap[i], { gap: p.skyGap, kind: fs[r].kind, color: c, step: p.skyStep });
     if (p.clamp) {
       w.clamps++;
       const last = clampList.at(-1);
@@ -203,6 +217,8 @@ export function sweepChrome(skies: SkyTarget[], wake: Partial<LiveConfig> = SWEE
     kind: worst.map((w) => w.kind),
     frame: worst.map((w) => w.frame),
     clamps: worst.map((w) => w.clamps),
+    steps: worst.map((w) => w.steps),
+    gap,
     clampList: clampList.slice(0, 20),
     shapes: fs.map((f) => f.kind),
     samples: res.samples,

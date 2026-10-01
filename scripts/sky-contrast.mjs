@@ -20,6 +20,7 @@
  *                       (a reading, not the check: the check is the maxima)
  *   --fill L            measure the chrome at chromeFillLightness L (a tuning
  *                       session's value) rather than the shipped one
+ *   --step S            measure the chrome at chromeSkyStep S (0 = off)
  *   --chrome-only       skip the letterhead
  *
  * The contrast probe measures the ground against one forced worst-case sky,
@@ -69,6 +70,8 @@ const shipped = process.argv.includes('--shipped');
 /** `--fill L`: measure the chrome at `chromeFillLightness` L instead of the
  *  shipped value — how to check a tuned value before it is pasted. */
 const FILL = process.argv.includes('--fill') ? Number(process.argv[process.argv.indexOf('--fill') + 1]) : null;
+/** `--step S`: measure the chrome at `chromeSkyStep` S (0 turns it off). */
+const STEP = process.argv.includes('--step') ? Number(process.argv[process.argv.indexOf('--step') + 1]) : null;
 const DATE = process.argv.includes('--date') ? process.argv[process.argv.indexOf('--date') + 1] : '2026-09-26';
 
 /** The bar. Same one `contrastProbe.ts` and `pv-verify` use. */
@@ -137,10 +140,11 @@ async function chromeContrast(browser, viewport, view) {
   );
   await page.waitForTimeout(2500);
   if (FILL !== null) await page.evaluate((l) => window.__chromeDials.set({ chromeFillLightness: l }), FILL);
+  if (STEP !== null) await page.evaluate((v) => window.__chromeDials.set({ chromeSkyStep: v }), STEP);
   const dials = await page.evaluate(() => ({ ...window.__chromeDials.dials }));
   console.log(
     `\n── the ${view.name}'s chrome, ${viewport.name} @2x — every paper shape, glyph against its own paper (bar ${CHROME_REQUIRED}:1);` +
-      ` chromeFillLightness ${dials.chromeFillLightness}, chromeInkMix ${dials.chromeInkMix}\n`,
+      ` chromeFillLightness ${dials.chromeFillLightness}, chromeInkMix ${dials.chromeInkMix}, chromeSkyStep ${dials.chromeSkyStep}\n`,
   );
   const rows = await page.evaluate(() =>
     window.__skyStates().map(({ condition, time, target }) => {
@@ -149,16 +153,18 @@ async function chromeContrast(browser, viewport, view) {
     }),
   );
   const shapes = rows[0].samples.map((s) => s.kind);
-  console.log(`  ${''.padEnd(16)}${shapes.map((k) => k.padStart(11)).join('')}    (* = paper clamped)`);
+  console.log(`  ${''.padEnd(16)}${shapes.map((k) => k.padStart(11)).join('')}    (* = paper clamped, + = sky step)`);
   const clamps = [];
+  const steps = [];
   let failures = 0;
   let worst = Infinity;
   for (const r of rows) {
     const cells = r.samples.map((s) => {
       if (s.clamp) clamps.push({ state: `${r.condition} ${r.time}`, ...s });
+      if (s.skyStep) steps.push({ state: `${r.condition} ${r.time}`, ...s });
       if (!s.pass) failures++;
       worst = Math.min(worst, s.ratio);
-      return `${s.ratio.toFixed(2)}${s.clamp ? '*' : ' '}${s.pass ? '' : '←'}`.padStart(11);
+      return `${s.ratio.toFixed(2)}${s.clamp ? '*' : s.skyStep ? '+' : ' '}${s.pass ? '' : '←'}`.padStart(11);
     });
     console.log(`  ${`${r.condition} ${r.time}`.padEnd(16)}${cells.join('')}`);
   }
@@ -171,6 +177,12 @@ async function chromeContrast(browser, viewport, view) {
     for (const c of clamps) console.log(`    ${c.state.padEnd(16)} ${c.kind.padEnd(11)} L ${c.clamp.from} → ${c.clamp.to}  paper ${rgb(c.fill)} ink ${rgb(c.ink)}  ${c.ratio.toFixed(2)}:1`);
   } else {
     console.log(`\n  no clamps: every shape holds ${CHROME_REQUIRED}:1 at chromeFillLightness in all 24 states`);
+  }
+  if (steps.length) {
+    console.log(`\n  SKY STEPS (${steps.length}) — the paper moved off the sky's lightness by chromeSkyStep`);
+    for (const c of steps) console.log(`    ${c.state.padEnd(16)} ${c.kind.padEnd(11)} sky L ${c.skyStep.sky}: paper ${c.skyStep.from} → ${c.skyStep.to}  gap ${c.skyGap.toFixed(3)}  ${c.ratio.toFixed(2)}:1`);
+  } else {
+    console.log(`  no sky steps: every shape's paper is at least chromeSkyStep from its sky in all 24 states`);
   }
 
   // ── the sweep ────────────────────────────────────────────────────────────
@@ -189,7 +201,7 @@ async function chromeContrast(browser, viewport, view) {
     `\n  THE SWEEP — ${DATE}, every 5 min, ${day.states.length} skies × ${day.samples} samples × ${day.shapes.length} shapes` +
       ` (${day.frames}-frame wake), ${(day.ms / 1000).toFixed(1)}s on the GPU, wake dials ${shipped ? 'AS SHIPPED' : 'at their maxima'}\n`,
   );
-  console.log(`  ${''.padEnd(10)}${'still'.padStart(8)}${'wake'.padStart(8)}${'clamps'.padStart(9)}    worst at`);
+  console.log(`  ${''.padEnd(10)}${'still'.padStart(8)}${'wake'.padStart(8)}${'clamps'.padStart(9)}${'steps'.padStart(9)}    worst at`);
   const out = [];
   const conditions = [...new Set(day.states.map((st) => st.condition))];
   for (const condition of conditions) {
@@ -201,13 +213,14 @@ async function chromeContrast(browser, viewport, view) {
       still: Math.min(...idx.map((i) => day.restRatio[i])),
       wake: day.ratio[at],
       clamps: idx.reduce((n, i) => n + day.clamps[i], 0),
+      steps: idx.reduce((n, i) => n + day.steps[i], 0),
       when: `${hhmm(st.minute)} ${st.dayPhase}, sun ${st.sun.toFixed(2)}, moon ${st.moon} (${st.moonAlt.toFixed(0)}°)`,
       frame: day.frame[at],
       kind: day.kind[at],
     };
     out.push(row);
     console.log(
-      `  ${condition.padEnd(10)}${row.still.toFixed(2).padStart(8)}${row.wake.toFixed(2).padStart(8)}${String(row.clamps).padStart(9)}    ${row.when}` +
+      `  ${condition.padEnd(10)}${row.still.toFixed(2).padStart(8)}${row.wake.toFixed(2).padStart(8)}${String(row.clamps).padStart(9)}${String(row.steps).padStart(9)}    ${row.when}` +
         `${row.frame < 0 ? ', still' : `, wake frame ${row.frame}`}, ${row.kind}${row.wake < CHROME_REQUIRED ? '   ← FAILS' : ''}`,
     );
   }
@@ -216,6 +229,25 @@ async function chromeContrast(browser, viewport, view) {
   const dw = out.reduce((a, r) => (r.wake < a.wake ? r : a));
   worst = Math.min(worst, dw.wake);
   console.log(`\n  sweep worst: ${dw.condition} ${dw.wake.toFixed(2)}:1 on ${dw.kind} — ${dayFails === 0 ? 'every sky passes' : `${dayFails} SKIES BELOW ${CHROME_REQUIRED}:1`}`);
+  // The sky step at dusk and at night: how often it moved the paper, and the
+  // closest the paper came to its sky there (after the step and the clamp).
+  const totalSteps = day.steps.reduce((a, b) => a + b, 0);
+  console.log(`\n  sky step: moved the paper in ${totalSteps} (sky, shape, sample)s of ${day.states.length * day.samples * day.shapes.length}`);
+  for (const [band, test] of [
+    ['dusk', (st) => st.dayPhase === 'setting' && st.sun > 0 && st.sun < 0.15],
+    ['night', (st) => st.sun <= 0],
+  ]) {
+    const idx = day.states.map((st, i) => (test(st) ? i : -1)).filter((i) => i >= 0);
+    const n = idx.reduce((a, i) => a + day.steps[i], 0);
+    const at = idx.reduce((a, i) => (day.gap[i].gap < day.gap[a].gap ? i : a), idx[0]);
+    const g = day.gap[at];
+    const st = day.states[at];
+    console.log(
+      `    ${band.padEnd(6)} ${String(n).padStart(6)} steps over ${idx.length} skies; closest paper–sky gap ${g.gap.toFixed(3)}` +
+        ` (${st.condition} ${hhmm(st.minute)}, ${g.kind}, sky ${rgb(g.color)}` +
+        `${g.step ? `, stepped ${g.step.from} → ${g.step.to} off sky L ${g.step.sky}` : ', no step'})`,
+    );
+  }
   if (day.clampList.length) {
     console.log(`  deepest clamps in the sweep:`);
     for (const c of day.clampList.slice(0, 8)) {
@@ -383,10 +415,10 @@ async function main() {
   if (doMd) {
     for (const t of chromeTables) {
       console.log(`\n**Chrome, ${t.view}, ${t.viewport} @2x** — ${DATE}, ${t.day.states.length} skies × ${t.day.samples} samples × ${t.day.shapes.length} shapes\n`);
-      console.log('| condition | still | with the wake | clamps | worst at |');
-      console.log('| --- | --- | --- | --- | --- |');
+      console.log('| condition | still | with the wake | clamps | sky steps | worst at |');
+      console.log('| --- | --- | --- | --- | --- | --- |');
       for (const r of t.rows) {
-        console.log(`| ${r.condition} | ${r.still.toFixed(2)} | **${r.wake.toFixed(2)}** | ${r.clamps} | ${r.when}${r.frame < 0 ? ', still' : `, wake frame ${r.frame}`}, ${r.kind} |`);
+        console.log(`| ${r.condition} | ${r.still.toFixed(2)} | **${r.wake.toFixed(2)}** | ${r.clamps} | ${r.steps} | ${r.when}${r.frame < 0 ? ', still' : `, wake frame ${r.frame}`}, ${r.kind} |`);
       }
       console.log(`\nWorst **${t.worst.wake.toFixed(2)}:1** (${t.worst.condition}). Bar ${CHROME_REQUIRED}:1.`);
     }

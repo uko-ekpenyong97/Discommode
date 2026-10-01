@@ -185,3 +185,37 @@ export function buildSpreads(issue: Issue): Spread[] {
   if (back) spreads.push([back, null]);
   return spreads;
 }
+
+/**
+ * What the reader's spread pill shows for one spread: the PRINTED page numbers
+ * of the pages that are open, as the magazine paginates itself — not the
+ * spread's index.
+ *
+ * The folios come from the page list, by position: the front cover is not a
+ * page of the magazine and neither is the back, so the first page AFTER the
+ * cover is 01, and every inside page counts whether or not a number is printed
+ * on it (Issue 01's 01 and 02 carry none; 07 does, at its inner edge). A spread
+ * shows both of its inside pages, "07 | 08", or the one if only one is open,
+ * "03"; a closed book shows "Cover" or "Back".
+ */
+export type SpreadFolio = { kind: 'cover' } | { kind: 'back' } | { kind: 'pages'; folios: string[] };
+
+export function spreadFolios(issue: Issue): SpreadFolio[] {
+  const first = issue.hasCover ? 1 : 0;
+  const end = issue.hasBack ? issue.pages.length - 1 : issue.pages.length;
+  // By identity: `buildSpreads` passes the inside pages through untouched (it
+  // only substitutes copies for the cover and the back).
+  const folio = new Map<Page, number>();
+  issue.pages.slice(first, Math.max(first, end)).forEach((p, i) => folio.set(p, i + 1));
+  const spreads = buildSpreads(issue);
+  return spreads.map(([l, r], i) => {
+    const inside = [l, r].filter((p): p is Page => p !== null && folio.has(p));
+    if (inside.length) return { kind: 'pages', folios: inside.map((p) => String(folio.get(p)).padStart(2, '0')) };
+    return issue.hasCover && i === 0 ? { kind: 'cover' } : { kind: 'back' };
+  });
+}
+
+/** A spread's folios as the pill reads them: "07 | 08", "03", "Cover", "Back". */
+export function folioText(f: SpreadFolio): string {
+  return f.kind === 'cover' ? 'Cover' : f.kind === 'back' ? 'Back' : f.folios.join(' | ');
+}

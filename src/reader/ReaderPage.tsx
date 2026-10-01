@@ -2,15 +2,15 @@ import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { CSSProperties } from 'react';
 import { FlipBook } from './FlipBook';
 import type { FlipEngine } from './flipEngine';
-import { ISSUES, buildSpreads, issue01, issueAnims, pageLabel } from './issue-01';
+import { ISSUES, buildSpreads, folioText, issue01, issueAnims, spreadFolios } from './issue-01';
 import { closeReader } from './readerNav';
 import { applyDoorwayRest } from './doorway';
 import { useDoorwayMotion } from './useDoorwayMotion';
 // The chrome is the detail view's too — the same paper shapes, the same sky
 // colour, the same rules (src/chrome) — so the two cannot drift.
 import { PillFace, ShapeFace } from '../chrome/Paper';
-import { two } from '../chrome/two';
 import { useSkyChrome } from '../chrome/useSkyChrome';
+import { useChromeFit } from '../chrome/useChromeFit';
 import './ReaderPage.css';
 
 interface ReaderPageProps {
@@ -72,6 +72,7 @@ export default function ReaderPage({
 }: ReaderPageProps) {
   const data = ISSUES[issue] ?? issue01;
   const spreads = useMemo(() => buildSpreads(data), [data]);
+  const folios = useMemo(() => spreadFolios(data), [data]);
   const lastSpread = spreads.length - 1;
   const [spread, setSpread] = useState(() => clamp(parseHash().spread, lastSpread));
 
@@ -144,14 +145,17 @@ export default function ReaderPage({
 
   const goto = useCallback((index: number) => setSpread(index), []);
 
-  const [left, right] = spreads[spread] ?? [null, null];
-  const labels = [left, right].filter((p) => p !== null).map(pageLabel);
+  const folio = folios[spread] ?? { kind: 'cover' as const };
   const atCover = spread === 0;
   const atBack = spread === lastSpread;
 
   // The chrome's paper takes its colour from the sky under it.
   const rootRef = useRef<HTMLDivElement>(null);
   useSkyChrome(rootRef, !authoring);
+  // …and gives way to the book where the band under or over it is too small.
+  const backRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLElement>(null);
+  useChromeFit(barRef, backRef, !authoring);
   const tilt = (t: number) => ({ '--tilt': t }) as CSSProperties;
 
   return (
@@ -162,6 +166,7 @@ export default function ReaderPage({
       {!authoring && (
         <button
           type="button"
+          ref={backRef}
           className="paper chrome-top reader__back"
           data-chrome="back"
           style={tilt(-1)}
@@ -180,7 +185,7 @@ export default function ReaderPage({
         anims={issueAnims(issue)}
       />
       {!authoring && (
-        <nav className="chrome-row reader__bar" aria-label="Pages">
+        <nav ref={barRef} className="chrome-row reader__bar" aria-label="Pages">
           <button
             type="button"
             className="paper"
@@ -205,11 +210,27 @@ export default function ReaderPage({
           >
             <ShapeFace shape="prev" />
           </button>
-          {/* current | total spreads. Not a control: no hover, no focus. */}
-          <p className="paper paper--static reader__caption" data-chrome="spread" data-spread={spread + 1} data-spreads={spreads.length}>
-            <PillFace numbers={[two(spread + 1), two(spreads.length)]} />
+          {/* The printed page numbers of the open pages, "07 | 08" — or "Cover"
+              and "Back" with the book closed (issue-01.ts, spreadFolios). Not a
+              control: no hover, no focus. */}
+          <p
+            className="paper paper--static reader__caption"
+            data-chrome="spread"
+            data-spread={spread + 1}
+            data-spreads={spreads.length}
+            data-folio={folioText(folio)}
+          >
+            {folio.kind === 'pages' ? (
+              <PillFace numbers={folio.folios} />
+            ) : (
+              <PillFace fixed>{folio.kind === 'cover' ? 'Cover' : 'Back'}</PillFace>
+            )}
             <span className="visually-hidden">
-              Spread {spread + 1} of {spreads.length}, {labels.length > 1 ? 'pages' : 'page'} {labels.join(' – ')}
+              {folio.kind === 'pages'
+                ? `${folio.folios.length > 1 ? 'Pages' : 'Page'} ${folio.folios.map(Number).join(' and ')}`
+                : folio.kind === 'cover'
+                  ? 'The cover'
+                  : 'The back cover'}
             </span>
           </p>
           <button

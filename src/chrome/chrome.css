@@ -13,9 +13,15 @@
   font-display: block;
 }
 
-:root {
-  /* One Figma px of the frame, at the chrome's scale. */
-  --chrome-u: calc(var(--chrome-scale, 1) * 1px);
+/* One Figma px of the frame, at the chrome's scale — and at the line's FIT,
+   which useChromeFit writes on each line (.chrome-row, .chrome-top) when the
+   band between the book and the viewport's edge is too small for it
+   (chromeFit.ts). Declared on the lines themselves, not only on :root, so it
+   resolves with each line's own --chrome-fit. */
+:root,
+.chrome-row,
+.chrome-top {
+  --chrome-u: calc(var(--chrome-scale, 1) * var(--chrome-fit, 1) * 1px);
 }
 
 /* ── the element ──────────────────────────────────────────────────────────
@@ -124,7 +130,7 @@
   padding: 0 calc(28 * var(--chrome-u));
   box-sizing: border-box;
 }
-.paper-pill--numbers {
+.paper-pill--fixed {
   width: calc(var(--pill-bw) * var(--chrome-u));
   padding: 0;
 }
@@ -200,17 +206,17 @@
 .chrome-row {
   position: absolute;
   left: 50%;
-  bottom: var(--chrome-margin, 35px);
+  bottom: var(--chrome-line-margin, var(--chrome-margin, 35px));
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: calc(var(--chrome-gap, 26px) * var(--chrome-scale, 1));
+  gap: calc(var(--chrome-gap, 26px) * var(--chrome-scale, 1) * var(--chrome-fit, 1));
   z-index: 2;
 }
 .chrome-top {
   position: absolute;
   left: 50%;
-  top: var(--chrome-margin, 35px);
+  top: var(--chrome-line-margin, var(--chrome-margin, 35px));
   transform: translateX(-50%);
   z-index: 2;
 }

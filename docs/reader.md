@@ -239,13 +239,15 @@ behind any of them:
 | top | back ‹ | 46×46 | the way out (Escape) |
 | row | cover-jump (book) | 58×58 | the riffle to spread 0 (Home) |
 | | ‹ prev | 46×46 | Prev (←) |
-| | spread pill "07 \| 22" | 131×46 | — (this spread \| all of them) |
+| | page pill "07 \| 08" | 131×46 | — (the printed page numbers of the open pages; "Cover", "Back" closed) |
 | | next › | 46×46 | Next (→) |
 | | back-cover-jump (book) | 58×58 | the riffle to the last spread (End) |
 
 The row's shapes are 26 apart (`chromeGap`), on one centre line; its bottom
 edge, and the top shape's top edge, are 35 from the viewport's
-(`chromeMargin`). All of it scales with `chromeScale`.
+(`chromeMargin`). All of it scales with `chromeScale` — and gives way to the
+book where the band is too small for it ([the chrome yields to the
+book](#the-chrome-yields-to-the-book)).
 
 **Each shape is its outline, not a redraw.** An export is a BASE (a circle, or
 the pill's rounded rect) plus a scalloped EDGE around it (an outlined stroke),
@@ -264,6 +266,19 @@ side of the file's own hairline (the thin wobbly vertical, kept from the
 export as the pill's ink), 18 units off it, centred on the capitals
 (`text-box: trim-both cap alphabetic`) as the frame has them.
 
+**The reader's pill reads the magazine's own page numbers** — not the
+spread's index (`spreadFolios` in `issue-01.ts`). The front cover is not a
+page of the magazine and neither is the back, so the first page after the
+cover is 01, and every inside page counts whether or not a folio is printed
+on it (Issue 01's 01 and 02 carry none; 07 carries "07" at its inner edge).
+The numbers come from the page list, by position among the inside pages —
+no offset is written down anywhere. A spread with two inside pages open
+reads "07 | 08"; with one, that one alone ("03"), at either end; the closed
+book reads "Cover" or "Back" in the same type at the same 131. Issue 01
+opens from its cover onto 01 | 02, so on it the lone-page case never
+arises; `issue-01.test.ts` holds it on an issue where it does. A screen
+reader hears "Pages 7 and 8", "The cover", "The back cover".
+
 ### The assets pipeline
 
 ```
@@ -280,6 +295,15 @@ at the viewBox's own ratio it is the same picture); and the pill's two
 numbers are dropped (they are live text). The manifest records each shape's
 viewBox and base box. Byte-stable: a re-run on unchanged sources writes
 identical files. 296 KB of exports ship as 228 KB, 57 KB gzipped.
+
+**Re-exported 2026-09-30.** Uko's second cut of the shapes changed three
+glyphs and no outline: `cover-ink`, `back-cover-ink` and `prev-ink` (a bolder
+arrow, a narrower book). Every paper file, `next` and `pill` came out
+byte-identical, and the manifest did not move; every export still splits
+cleanly into paper and ink by fill. **The new `back-cover.svg` is
+byte-identical to `cover.svg`**, so the two ends of the row now carry the same
+book (the first cut's back-cover book had its spine on the other side). The
+pipeline ships what it is given.
 
 ### The pills: the middle stretched, not generated
 
@@ -323,10 +347,16 @@ procedural edge would make any width, and would not be his.
 3. **Ink.** Whichever of white and the site's ink-black (`#14120f`) reads harder
    on that paper, mixed `chromeInkMix` (0.12) of the way toward the paper's hue
    at the ink's own lightness, so a little of the sky gets into the glyphs.
-4. **The clamp.** If a glyph would be under 4.5:1 on its paper, the paper's
+4. **The sky step.** If the paper's lightness is within `chromeSkyStep`
+   (0.08) of the sky's own under the shape, the paper is pushed out of it —
+   darker under a dark sky (lighter where there is no room under it), lighter
+   under a light one — so its cut edge never melts into the sky. Then the ink
+   is chosen for the paper that will actually be painted.
+5. **The clamp.** If a glyph would be under 4.5:1 on its paper, the paper's
    lightness is moved away from the ink, 0.005 at a time, until it is not. It
-   is reported: the probe and the sweep print every one.
-5. **The cross-fade.** A shape whose paint changes by 3 levels or more on any
+   is reported: the probe and the sweep print every one. It runs last and
+   wins: a legible glyph comes before a crisp edge.
+6. **The cross-fade.** A shape whose paint changes by 3 levels or more on any
    channel (the wake and the twinkle move the mean by a level or two all the
    time) eases to the new one over `chromeColorEase` (600ms), writing a
    variable only on the frames its rounded value changes, held to the bar on the way (an ink flipping from
@@ -438,36 +468,65 @@ CHROME panel — in the READER NAV dock (`#read-NN?intro`), the doorway dock
 | `chromeFillLightness` | 0.22 | the paper's HSL lightness; ~0.92 is paper-white (the ink follows) |
 | `chromeFillSaturation` | 1 | × the sky's saturation |
 | `chromeInkMix` | 0.12 | how much of the paper's hue gets into the ink |
+| `chromeSkyStep` | 0.08 | least HSL lightness between the paper and the sky under it (0–0.3; 0 is off) |
 | `chromeColorEase` | 600 | the cross-fade, ms |
 | `chromeSampleMs` | 500 | how often the sky under the chrome is read back |
 | `chromeHoverLift` | 1.04 | hover scale |
 | `chromeHoverTilt` | 2 | hover tilt, degrees |
 | `chromeHoverMs` | 120 | hover in and out |
 | `chromePressNudge` | 0.05 | press: lightness away from the ink |
-| `chromeScale` | 1 | the whole chrome × the frame's sizes |
-| `chromeMargin` | 35 | the row's bottom / the top shape's top, px from the edge |
+| `chromeScale` | 1 | the whole chrome × the frame's sizes (× the fit, where the band is short) |
+| `chromeMargin` | 35 | the row's bottom / the top shape's top, px from the edge (less, where the fit floors) |
 | `chromeGap` | 26 | between shapes in a row, px |
 
 There is no `chromeEdgeWobble`: the edge is Uko's, not generated (above).
 
+### The chrome yields to the book
+
+The book is the hero rect, `detailCardScale` (0.82) of the viewport's height,
+and it is not the chrome's to move. At 900 tall that leaves an 81px band under
+it and over it; the row wants 35 of margin and its 58 book icons, whose paper
+reaches 33 units above their centre — 98px. The first cut sat ~12px over the
+pages there (~3px at 1728×996) and the back shape's scallops touched the top
+of the page.
+
+So each line of chrome — the row, and the back shape — gets a FIT for its band
+(`chromeFit.ts`, `useChromeFit.ts`; pure, tested):
+
+1. it scales down (`chromeScale` × the fit) until its paper clears the book
+   by 3px (the hover lift is ~1.3px of that);
+2. never so far that its smallest face is under 44px — the 46 arrows stop at
+   ×0.957 (the hit boxes are ≥ 44 in CSS anyway; this keeps the FACE a
+   button);
+3. and where that floor is reached and the line still does not clear, the
+   MARGIN gives way, down to 8px.
+
+The book's rect is computed (the hero's), the faces' sizes are on the faces
+as data, and it is recomputed on resize and on any dial that moves either. The
+detail view's row and back shape take the same fit against the hero card.
+
+| | band | the row | the back shape |
+| --- | --- | --- | --- |
+| 1440×900, reader | 81 | ×0.957 (floor), margin 35 → 18.8 | ×0.957 (floor), margin 35 → 30.2 |
+| 1728×996, reader | 89.6 | ×0.957 (floor), margin 35 → 27.5 | ×1, margin 35 |
+| 1440×900, detail | 81 | ×0.957 (floor), margin 35 → 30.0 | ×0.957 (floor), margin 35 → 30.2 |
+| 1728×996, detail | 89.6 | ×1, margin 35 | ×1, margin 35 |
+
+At the shipped dials the floor binds wherever the book's band is short: the
+faces could only clear at their margin by shrinking to ×0.67 (31px arrows),
+so they stop at 44 and the line moves toward the edge instead. A taller
+viewport needs none of it. `verify:reader`'s `chrome` section checks, at
+both viewports and at the cover, a mid spread and the back, that the row's
+paper does not intersect the book's box nor the back shape's the page, and
+that every face is ≥ 44px and every hit area ≥ 44×44.
+
 ### Not done
 
-- **The row overlaps the book at 1440×900.** The hero (and so the book) is
-  `detailCardScale` 0.82 of the viewport's height, which leaves 81px bands at
-  900 tall; the row needs 93 (35 + the 58 book icons), so it sits ~12px over
-  the pages' bottom edge, plus the scallops' overhang, and the back shape's
-  edge touches the top. At 1728×996 the bands are 90: the row overlaps by ~3px
-  and the top is clear. The detail view's row is 46 tall and just fits at 900.
-  Nothing was changed about the hero: it is the doorway's shared rect and the
-  detail view's size. Levers, all dials: `detailCardScale` ≤ 0.78 clears it at
-  900; or `chromeMargin` / `chromeScale`; or raising `MIN_BAND` in
-  `layout/hero.ts` to the new chrome (it still describes the old 40px chip).
-- **Paper against the sky is not measured.** Only glyph against paper is. Where
-  the sky under a shape is itself near L 0.22 — a clear dusk's violet zenith
-  behind the back shape, a clear night's warm horizon behind the row — the
-  paper's cut edge is faint against the sky (the glyph still reads 12–14:1).
-  If that should read louder, it wants a dial of its own (a minimum lightness
-  step between paper and sky), which the brief did not ask for.
+- **The sky step measures lightness, not contrast.** `chromeSkyStep` keeps the
+  paper's HSL lightness a step from the sky's mean under the shape, which is
+  what a cut edge reads by; it is not a WCAG figure, and a busy sky (a deck's
+  lit tops behind one corner of a shape) can still meet the paper locally.
+
 
 ## Cover and back animations
 
@@ -615,12 +674,12 @@ device. Same trade the cover makes, for the same reason.
 
 ## Navigation
 
-The row: cover-jump, ‹ prev, the spread pill ("07 | 22": this spread | all of
-them), next ›, back-cover-jump ([Chrome](#chrome)). Keys: ←/→ turn, Home/End
+The row: cover-jump, ‹ prev, the page pill (the printed page numbers of the
+open pages, "07 | 08"; "Cover" and "Back" closed), next ›, back-cover-jump
+([Chrome](#chrome)). Keys: ←/→ turn, Home/End
 jump, Escape leaves. Drag turns (release past t 0.42 commits). Cover and Prev
 disable at spread 0, Next and Back cover at the last. The pill is a fixed 131
-wide so the buttons never move under the cursor; the pages it used to name
-("pages 11 – 12") are read out to a screen reader with the spread.
+wide so the buttons never move under the cursor.
 
 **Jumps** — Cover, Back cover, Home, End — are `flipEngine.turnTo(index)`, in one
 of two modes (`JUMP.mode`): the riffle, or a cut (the target spread's plates fade
@@ -748,7 +807,7 @@ magenta.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                  # in another shell
-npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,exit,hover,life,sky
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,chrome,exit,hover,life,sky
 ```
 
 `scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
@@ -774,6 +833,17 @@ exits non-zero on any ✗.
 - **Navigation.** Prev / Next / arrows / drag / Home / End / Cover / Back cover
   land on one spread index; drag, arrows and Next during a riffle are ignored;
   Escape mid-riffle lands the riffle (the caption reaches 22/22) and then exits.
+- **Folios** (`folios`). Every one of the 22 spreads, walked by hash: the
+  pill must read the printed folios of the pages actually on screen — read
+  off the page files shown (`07.webp` is printed 07), not off the pill's own
+  code — "Cover" and "Back" closed, at one width throughout. Named rows for the
+  cover, the first open spread, the 07 spread, the last open spread and the
+  back.
+- **Chrome clears the book** (`chrome`). At 1440×900 and 1728×996, at the
+  cover, a mid spread and the back: the row's paper (every face's mask box,
+  the scallops included) does not intersect the book, the back shape's does
+  not touch the page, every face ≥ 44px and every hit area ≥ 44×44
+  ([the chrome yields to the book](#the-chrome-yields-to-the-book)).
 - **Back shape vs Escape.** The doorway exit from each, opened from `#item-01`,
   screencast three times over. Every exit must end on `#item-01` with the reader
   unmounted, and the Escape exit must pass through a frame the pill exit also

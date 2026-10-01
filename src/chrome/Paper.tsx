@@ -43,7 +43,17 @@ export function ShapeFace({ shape, flip = false }: { shape: ShapeName; flip?: bo
   };
   const style = { '--base-w': base.w, '--base-h': base.h } as CSSProperties;
   return (
-    <span className="paper__shape" style={style} aria-hidden="true">
+    <span
+      className="paper__shape"
+      style={style}
+      aria-hidden="true"
+      // For the fit (chromeFit.ts): the base, its narrowest side, and how far
+      // the paper reaches from the base's centre toward the book — up for a
+      // row shape, down for the flipped back shape, the same number either way.
+      data-base={base.h}
+      data-min={Math.min(base.w, base.h)}
+      data-reach={base.y + base.h / 2}
+    >
       <span
         className="paper__fill"
         style={{
@@ -97,12 +107,22 @@ const PILL_VARS = {
  * frame's 131 it is the export, unstretched.
  *
  * `numbers` draws the frame's "01 | 02": two numbers in Bowlby One either side
- * of the file's own hairline, at a fixed 131 wide so nothing moves as they
- * count. Otherwise `children` is the label and the pill is as wide as it needs.
+ * of the file's own hairline — or one number alone — at a fixed 131 wide so
+ * nothing moves as they count. Otherwise `children` is the label, and the pill
+ * is as wide as it needs, or the same fixed 131 with `fixed` (the reader's
+ * "Cover" and "Back", which take the numbers' place).
  */
-export function PillFace({ numbers, children }: { numbers?: [string, string]; children?: ReactNode }) {
+export function PillFace({ numbers, fixed = false, children }: { numbers?: string[]; fixed?: boolean; children?: ReactNode }) {
+  const cls = `paper__shape paper-pill${numbers || fixed ? ' paper-pill--fixed' : ''}${numbers ? ' paper-pill--numbers' : ''}`;
   return (
-    <span className={`paper__shape paper-pill${numbers ? ' paper-pill--numbers' : ''}`} style={PILL_VARS} aria-hidden={numbers ? true : undefined}>
+    <span
+      className={cls}
+      style={PILL_VARS}
+      aria-hidden={numbers || fixed ? true : undefined}
+      data-base={PB.h}
+      data-min={PB.h}
+      data-reach={PB.y + PB.h / 2}
+    >
       <span className="paper-pill__paper">
         <span className="paper__fill paper-pill__l" />
         <span className="paper__fill paper-pill__m" />
@@ -111,8 +131,8 @@ export function PillFace({ numbers, children }: { numbers?: [string, string]; ch
       {numbers ? (
         <span className="paper-pill__text">
           <span className="paper-pill__num">{numbers[0]}</span>
-          <span className="paper__ink paper-pill__hair" />
-          <span className="paper-pill__num">{numbers[1]}</span>
+          {numbers.length > 1 && <span className="paper__ink paper-pill__hair" />}
+          {numbers.length > 1 && <span className="paper-pill__num">{numbers[1]}</span>}
         </span>
       ) : (
         <span className="paper-pill__text">{children}</span>

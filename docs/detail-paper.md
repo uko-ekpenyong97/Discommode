@@ -271,6 +271,13 @@ is pressed, focused and read out. Its focus ring is the pill's.
 **The back shape**, top-centre, is the reader's: the prev shape cut again (its
 paper turned over), labelled "Back to the grid".
 
+**It gives way to the hero card** the way the reader's gives way to the book
+([the chrome yields to the book](reader.md#the-chrome-yields-to-the-book)):
+the card is `detailCardScale` of the viewport and is not the chrome's to move,
+so at 1440×900 the row and the back shape stop at the 44px face floor (×0.957)
+and come in toward the edge (margins 30.0 and 30.2) to clear it by 3px; at
+1728×996 the row fits at its natural size.
+
 **Nothing about how the chrome behaves changed.** It is still `.detail__back`
 and `.detail__bar`: the morph fades them in after the cards land and out before
 they leave, the ticker drifts and fades them out on the doorway's CLEAR (the
@@ -444,8 +451,8 @@ value the other opens with. `paperDials.ts` is the source of truth.
 | dial | shipped | |
 | --- | --- | --- |
 | `paper` | on | `off` is the A/B: DOM cards, no canvas |
-| `creaseBlend` | 0.2 | screen-blend of the crease texture |
-| `creaseDisplacement` | 0.008 | UV push per unit crease height |
+| `creaseBlend` | 0 | screen-blend of the crease texture. Uko's tuning, 2026-09-30 (was 0.2): the creases are off by default |
+| `creaseDisplacement` | 0 | UV push per unit crease height. Uko's tuning, 2026-09-30 (was 0.008) |
 | `hoverRadius` | 0.35 | dent radius, UV |
 | `hoverDepth` | 0.05 | dent depth, card heights |
 | `hoverMs` | 300 | dent in and out, cubic out |
