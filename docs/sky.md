@@ -1211,9 +1211,15 @@ Global worst **7.50:1** (clear); a pure-white band is 7.50:1. Bar 7:1.
 Global worst **7.50:1** (clear); a pure-white band is 7.50:1. Bar 7:1.
 
 `--shipped` runs the same sweep at the shipped dials instead. It is a
-reading, not the check. As shipped the wake still takes every condition but
-storm to the floor (storm: 7.55 and 7.61), because a parting at
-`starGlow` 1.5 is still enough to flare a star to white.
+reading, not the check. Until 2026-09-30 the wake as shipped still took every
+condition but storm to the floor (storm: 7.55 and 7.61), because a parting at
+`starGlow` 1.5 was enough to flare a star to white. **With Uko's fluid dials**
+(`fluidRadius` 0.02, `fluidStrength` 0.45, `fluidCurl` 7) it does not: the
+wake now leaves partly, cloudy, fog and rain at their still values (7.61,
+7.61, 7.63, 7.99) and storm at 9.78–9.80, at both viewports; only a clear
+night still meets 7.50 (midnight, a star the wake flares; still, it is 7.51). The sweep at the
+dials' maxima — the check — did not move: 7.50 in every condition, the share
+of skies at the white floor within three points of before.
 
 **Nothing fails, and nothing was changed to make it pass.** Every
 condition reaches the same **7.50:1**, and 7.50 is exactly what a **pure

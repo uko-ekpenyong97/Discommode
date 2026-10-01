@@ -223,11 +223,12 @@ row).
 > the repo). Measurements are `scripts/sky-contrast.mjs` and captures of the
 > dev build, headless Chrome on an Apple M1 Max, 2026-09-30.
 
-Captures in `docs/chrome/`, 1440×900 @2x, a clear sky: `reader-noon`,
-`reader-dusk`, `reader-night` and the detail view's three; `reader-hover` and
-`detail-hover` (the row at rest over the row with one shape hovered, at
-dusk); `pills` (the three pill widths: 131, "Read issue" 158, "Open project"
-174).
+Captures in `docs/chrome/`, 1440×900 @2x, a clear sky, re-shot 2026-09-30
+after the second cut: `reader-noon`, `reader-dusk`, `reader-night` (the "07 |
+08" spread) and the detail view's three; `reader-hover` and `detail-hover` (the
+row at rest over the row with one shape hovered, at dusk); `pills` (the three
+pill widths — 131, "Read issue" 158, "Open project" 174 at their natural size;
+125, 151 and 166 in the capture, where the fit has the chrome at ×0.957).
 
 ### The shapes
 
@@ -408,6 +409,27 @@ never more than 0.03 at 0.5 (0.47–0.52). `chromeColor.test.ts` holds every hue
 saturation × lightness a sky could give, at lightness 0.05–0.98, ink mix 0–0.5
 and saturation 0–1.5, to ≥ 4.5 after the clamp, and the cross-fade through an
 ink flip.
+
+**The sky step** (`chromeSkyStep` 0.08), measured the same way, 2026-09-30,
+with Uko's fluid dials and the fit: the 24-state tables mark a `+` where it
+moved the paper, and the sweep counts it. `--step S` runs at another value
+(0 is off).
+
+| | 24 states: steps | sweep: steps / all (sky, shape, sample)s | dusk: steps, closest paper–sky gap | night: steps, closest gap |
+| --- | --- | --- | --- | --- |
+| reader, 1728×996 | 43 | 324,893 / 1,181,952 | 14,935, 0.078 (clear 19:40, next) | 205,402, 0.078 (clear 02:25, back) |
+| reader, 1440×900 | 41 | 337,557 / 1,161,216 | 14,373, 0.078 (partly 19:20, back-cover) | 220,870, 0.078 (clear 00:20, back) |
+| detail, 1728×996 | 38 | 255,419 / 984,960 | 12,531, 0.078 (clear 19:40, next) | 155,530, 0.078 (clear 02:25, back) |
+| detail, 1440×900 | 37 | 273,253 / 967,680 | 12,328, 0.078 (clear 19:40, action) | 175,100, 0.078 (clear 00:20, back) |
+
+It is a night-and-dusk thing, as it should be: by day the paper at 0.22 is
+far under any sky. Every step it takes is DOWN — the skies it meets are dark,
+and the paper goes to sky − 0.08 (0.06–0.21) — so each one leaves the glyph
+reading harder, not softer (a stepped clear night reads 17.6:1 where it read
+13.5). The closest a painted paper comes to its sky is 0.078, the step less
+the rounding of the paper to whole levels. The ink clamp never had to undo a
+step, and the worst glyph anywhere is still **5.21:1** with **0 clamps**: the
+step never fires on the golden sunrise that sets that number.
 
 Disabled buttons keep their paper and dim their glyph to 0.3; WCAG exempts an
 inactive control's text, and they are not measured.

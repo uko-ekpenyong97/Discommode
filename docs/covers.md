@@ -474,6 +474,23 @@ The design never draws one that way. It costs that much because the grid's tile
 is 300 × 400 CSS px, scaled 1.12 when focused: 672 × 896 at 2×, 2.4× the
 pixels of the 220 × 286 tile the prototype measured.
 
+**At `cardWidth` 480 the grid is over its budget at 2×.** Uko's LAYOUT tuning
+(2026-09-30) made the tile 480 wide: the shared draw is 1075 × 1434 at 2×, 2.56×
+the pixels, and it costs what that says. Measured interleaved with the build
+before the change, two rounds each, same session:
+
+| @2× | `cardWidth` 300 | `cardWidth` 480 | budget |
+| --- | --- | --- | --- |
+| the shared tile draw | 0.26–0.57 (672×896) | **0.64–0.70** (1075×1434) | — |
+| each tile: its copy | 0.053–0.063 | 0.097–0.118 | ≤ 0.15 |
+| worst frame of cover work, grid | 0.71–1.30 | **1.56–1.71** | ≤ 1.2 |
+| sky + fluid (p95) + covers | 1.86–2.96 | 2.52–2.99 | ≤ 8 |
+
+So `verify:cover`'s grid total fails at 2× at both viewports, and the frame
+as a whole (sky, fluid and covers, under 3ms) is nowhere near its 8. The
+levers, if the 1.2 matters more than the tile's size: `coverMaxDpr` on the
+grid's shared draw, or drawing the shared tile at the unfocused size.
+
 ## Rive covers (card 04)
 
 Card 04's cover is Uko's Rive file: four Nosey characters — the headset one,
