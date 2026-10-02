@@ -7,6 +7,11 @@
  *
  *   ~/Discommode-pages/projects/<slug>/
  *
+ * — or into a `media/` folder inside it, which is read as if it were the
+ * slug's own (card 03's clips sit in `drex/media/`, beside the cover's
+ * handoff files rather than among them). The folder is not part of any output
+ * name: `drex/media/01-club.mp4` ships as `drex/01-club.mp4`.
+ *
  * and this writes what the app loads into
  *
  *   public/projects/<slug>/<name>.webm        VP9, muted, <= MAX_W wide
@@ -110,6 +115,9 @@ const QUALITY = 82;
  *
  * `rive-site/loop.riv` is the Loop character, which section 01 opened with
  * until the two clips replaced it. It is 3.6 MB of artboard nothing fetches.
+ * `rive-site/cover-ref.png` is card 02's cover reference, the picture the
+ * shader was tuned against (`rive-site.glsl`); without this it shipped as a
+ * 1.2 MB WebP that nothing loads.
  *
  * `nosey/cover.unsigned.riv` is a build of card 04's cover whose scripts are
  * not signed: the web runtimes refuse its scripts, so Main's props and Main
@@ -121,7 +129,7 @@ const QUALITY = 82;
  * them.
  */
 const NOT_SHIPPED = {
-  'rive-site': ['loop.riv'],
+  'rive-site': ['loop.riv', 'cover-ref.png'],
   nosey: ['cover.unsigned.riv'],
   drex: ['preview-figma-rest.png', 'preview-hover.png'],
 };
@@ -343,12 +351,12 @@ async function convertImage(slug, name, table) {
  */
 async function copyAsIs(slug, name) {
   const src = join(SOURCE_DIR, slug, name);
-  const out = join(OUTPUT_DIR, slug, name);
+  const out = join(OUTPUT_DIR, slug, basename(name));
   const srcStat = await stat(src);
   const outStat = await statOrNull(out);
   if (!force && outStat && outStat.mtimeMs > srcStat.mtimeMs) {
     skipped += 1;
-    console.log(`  ${name.padEnd(20)} ${kb(srcStat.size)}  (up to date)`);
+    console.log(`  ${basename(name).padEnd(20)} ${kb(srcStat.size)}  (up to date)`);
     return;
   }
   await mkdir(join(OUTPUT_DIR, slug), { recursive: true });
@@ -362,7 +370,7 @@ async function copyAsIs(slug, name) {
   // stand-in and says nothing.
   const head = (await readFile(out)).subarray(0, 4).toString('ascii');
   if (RIVE_RE.test(name) && head !== 'RIVE') warnings.push(`${slug}/${name} does not start with the RIVE fingerprint`);
-  console.log(`  ${name.padEnd(20)} ${kb(srcStat.size)}  copied`);
+  console.log(`  ${basename(name).padEnd(20)} ${kb(srcStat.size)}  copied`);
 }
 
 /**
@@ -446,12 +454,29 @@ if (slugs.length === 0) {
   process.exit(0);
 }
 
+/** Where a slug's media can be: the folder itself, and a `media/` inside it.
+ *  Each name comes back relative to the slug's folder (`media/01-club.mp4`),
+ *  which is what every converter joins onto it. */
+const MEDIA_SUBDIR = 'media';
+async function listMedia(slug) {
+  const names = [...(await readdir(join(SOURCE_DIR, slug)))];
+  if (await exists(join(SOURCE_DIR, slug, MEDIA_SUBDIR))) {
+    for (const f of await readdir(join(SOURCE_DIR, slug, MEDIA_SUBDIR))) names.push(join(MEDIA_SUBDIR, f));
+  }
+  return names;
+}
+
 console.log('project media →', OUTPUT_DIR);
 for (const slug of slugs) {
   const skip = new Set(NOT_SHIPPED[slug] ?? []);
-  const files = (await readdir(join(SOURCE_DIR, slug))).filter(
+  const files = (await listMedia(slug)).filter(
     (f) => !skip.has(f) && (VIDEO_RE.test(f) || IMAGE_RE.test(f) || RIVE_RE.test(f) || SVG_RE.test(f)),
   );
+  // Two files that would ship under one name is a collision the output folder
+  // cannot hold: the second would quietly overwrite the first.
+  const shipped = files.map((f) => basename(f, extname(f)) + (RIVE_RE.test(f) || SVG_RE.test(f) ? extname(f) : ''));
+  const twice = shipped.filter((n, i) => shipped.indexOf(n) !== i);
+  if (twice.length > 0) throw new Error(`${slug}: ${twice.join(', ')} would ship twice — once from media/ and once beside it`);
   for (const name of skip) console.log(`  ${name.padEnd(20)} kept as a source, not shipped`);
   files.sort();
   console.log(`\n${slug}  (${files.length} file${files.length === 1 ? '' : 's'})`);

@@ -37,10 +37,15 @@
  */
 
 import { readdir, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import PAGE from '../src/portfolio/pageBuckets.json' with { type: 'json' };
+import DREX_ASSETS from '../src/portfolio/projects/drex-assets.json' with { type: 'json' };
 
 /**
  * A RASTER BUDGET BIG ENOUGH FOR A 2x PAGE 1400px TALL. Headless Chrome's
@@ -57,8 +62,9 @@ const ORIGIN = process.argv.includes('--url')
   ? process.argv[process.argv.indexOf('--url') + 1]
   : 'http://localhost:5173';
 
-/** Cards 02 and 04 are five sections of uneven length; 03 is ONE, the case with
- *  no tear, no dwell and nothing to settle. */
+/** All three cards are five sections of uneven length. Card 03 was ONE — the
+ *  case with no tear, no dwell and nothing to settle — for as long as it was a
+ *  placeholder; Drex replaced it, and that case is `pageTrack.test.ts`'s now. */
 const PROJECT = '02';
 const PROJECTS = ['02', '03', '04'];
 
@@ -1010,7 +1016,7 @@ const AIM_SIGMA_PX = 5;
  * margin where an earlier press began) must not.
  */
 async function letterheadSoak(context, viewport) {
-  for (const id of ['02', '04']) {
+  for (const id of PROJECTS) {
     const rnd = seeded(Number(id) * 7919);
     const page = await context.newPage();
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -1230,7 +1236,7 @@ function frameGap(live, rest) {
  */
 async function wheelHandoffs(context, viewport) {
   const results = [];
-  for (const id of ['02', '04']) {
+  for (const id of PROJECTS) {
     const page = await context.newPage();
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(`${ORIGIN}/#view-${id}`, { waitUntil: 'load' });
@@ -1340,6 +1346,444 @@ async function wheelHandoffs(context, viewport) {
   }
 }
 
+/* ── card 03: Drex ────────────────────────────────────────────────────────── */
+
+/**
+ * CARD 03 IS A REAL PROJECT NOW, and these are the checks that are about it
+ * rather than about the view. Everything above already runs on it — both
+ * hand-offs of every section at every size and both ratios, the resident set,
+ * the reach, the clips in view, a real hand — because it is in
+ * {@link PROJECTS}. What this adds is the four claims its own page makes:
+ *
+ *   its CAPTURES LOAD    every sheet and tail, at every bucket, fetched and
+ *                        decoded at the size of the page it is a picture of
+ *   EVERY CLIP PLAYS     not "every clip that happens to be in view": each of
+ *                        the six, brought to the middle of the page at every
+ *                        bucket, decoded, running and advancing — and the
+ *                        zine-reader clip, played to its end screen
+ *   THE PAIR FITS        the editor/generator two-up, side by side on the
+ *                        gutter, inside the insets and wholly on screen at
+ *                        once, at every bucket from 1280 to 2560
+ *   NOTHING SHIFTS       across every hand-off of the card, at every bucket,
+ *                        with the media landing as it goes
+ *
+ * At every BUCKET rather than at the six windows above, because the pair's
+ * question is a width question and the buckets are every width the page is
+ * laid out at. Each window is the bucket's width at 16:9 — the shortest
+ * ordinary window that width comes in, so "on screen at once" is asked where
+ * it is hardest.
+ *
+ * `--only drex` runs just this.
+ */
+const DREX = '03';
+/** The section the editor/generator pair is on, and the zine reader's. */
+const PAIR_SECTION = 3;
+const STACK_CLIP = '03-stack';
+/** How much a clip's `currentTime` has to move to count as running. */
+const ADVANCE_S = 0.1;
+
+/** A window for a bucket: its width, at 16:9. */
+const bucketWindow = (bucket) => ({
+  name: `${bucket}×${Math.round((bucket * 9) / 16)}`,
+  width: bucket,
+  height: Math.round((bucket * 9) / 16),
+});
+
+/** The master's length, when the master is on this machine — the shipped clip
+ *  is checked against it rather than against a number typed here. Its VIDEO
+ *  stream's length, not the file's: the master carries an audio track 0.1s
+ *  longer than its picture, and the pipeline ships no audio. */
+async function masterSeconds(stem) {
+  const src = join(homedir(), 'Discommode-pages', 'projects', 'drex', 'media', `${stem}.mp4`);
+  try {
+    const { stdout } = await promisify(execFile)('ffprobe', [
+      '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', src,
+    ]);
+    return Number(stdout.trim()) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Park the track so element `sel` (the n-th match) on page `k` sits in the
+ *  middle of the page's visible box — a real scroll, like a reader's. */
+const centre = async (page, k, sel, n = 0) => {
+  await page.evaluate(
+    ([k, sel, n]) => {
+      const t = window.__pv.track();
+      const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+      const box = pg.querySelector('.pv-page__scroll');
+      const el = pg.querySelectorAll(sel)[n];
+      const r = el.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      // Offset in the page's own content, whatever it is scrolled to now.
+      const y = r.top - b.top + box.scrollTop;
+      const top = Math.max(0, Math.min(t.pageScroll[k], y - (b.height - r.height) / 2));
+      window.__pv.park(t.start[k] + top);
+    },
+    [k, sel, n],
+  );
+  // `park` lets go and Lenis glides; wait for it to stop.
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(100);
+    if (!(await page.evaluate(() => window.__pv.scrolling()))) break;
+  }
+};
+
+/** Every clip on page `k`: where it is against the page's visible box, and
+ *  whether it is decoded, running, visible and ADVANCING over `ms`. */
+const clipStates = (page, k, ms = 400) =>
+  page.evaluate(
+    async ([k, ms]) => {
+      const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+      const vids = [...pg.querySelectorAll('video')];
+      const t0 = vids.map((v) => v.currentTime);
+      await new Promise((r) => setTimeout(r, ms));
+      const b = pg.querySelector('.pv-page__scroll').getBoundingClientRect();
+      return vids.map((v, i) => {
+        const r = v.getBoundingClientRect();
+        return {
+          stem: (v.currentSrc || v.querySelector('source')?.src || '').split('/').pop().replace(/\.\w+$/, ''),
+          whole: r.top >= b.top - 1 && r.bottom <= b.bottom + 1,
+          ready: v.readyState,
+          playing: !v.paused,
+          shown: v.classList.contains('is-loaded'),
+          // Across a loop the time goes backwards, which is also running.
+          advanced: v.currentTime !== t0[i] && Math.abs(v.currentTime - t0[i]) >= 0.1,
+        };
+      });
+    },
+    [k, ms],
+  );
+
+async function cardThree(browser, handoffMs) {
+  console.log('\n── card 03: Drex ────────────────────────────────────────────');
+  const stems = Object.keys(DREX_ASSETS.media).sort();
+  const context = await browser.newContext({ deviceScaleFactor: 1 });
+  // EVERY LAYOUT SHIFT, from before the app's first byte: the observer has to
+  // be in place before anything can move, or the shifts of the first layout
+  // are the ones it never sees.
+  await context.addInitScript(() => {
+    window.__shifts = [];
+    try {
+      new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+          if (e.hadRecentInput) continue;
+          window.__shifts.push({
+            value: e.value,
+            inPage: (e.sources ?? []).some((s) => s.node?.closest?.('.pv-page')),
+            nodes: (e.sources ?? []).map((s) =>
+              s.node?.nodeType === 1 ? s.node.className || s.node.tagName : String(s.node?.nodeName),
+            ),
+          });
+        }
+      }).observe({ type: 'layout-shift', buffered: true });
+    } catch {
+      /* no layout-shift entries in this browser — reported below as "unobserved" */
+    }
+  });
+  // drex.style is somewhere else's site: the link check below asks only that a
+  // new tab OPENS on it, so answer for it rather than go out to the network.
+  await context.route('https://drex.style/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<title>drex.style</title>' }),
+  );
+
+  const loadFaults = [];
+  const playFaults = [];
+  const fitRows = [];
+  const shiftRows = [];
+  let loaded = 0;
+  let plays = 0;
+
+  for (const bucket of PAGE.buckets) {
+    const viewport = bucketWindow(bucket);
+    const page = await openView(context, viewport, `#view-${DREX}`);
+    const laid = await page.evaluate(() => ({ bucket: window.__pv.bucket(), rect: window.__pv.pageRect() }));
+    const track = await readTrack(page);
+    const n = track.start.length;
+    const heightsAtArm = track.heights.map(Math.round);
+    const offsetsOf = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('.pv-page')].map((pg) => {
+          const top = pg.querySelector('.pv-page__scroll > *').getBoundingClientRect().top;
+          return [...pg.querySelectorAll('.pv-block')].map((b) => Math.round(b.getBoundingClientRect().top - top));
+        }),
+      );
+    const offsetsAtArm = await offsetsOf();
+
+    // 1 — THE CAPTURES LOAD. Fetched from the server the app is served by and
+    //     decoded, at this bucket, every section, both kinds; each must be a
+    //     picture of THIS page — its width at the capture's scale — and the
+    //     capture's own height.
+    const caps = await page.evaluate(
+      async ([n, bucket, scale, height]) => {
+        const out = [];
+        for (let k = 0; k < n; k++) {
+          for (const kind of ['sheet', 'tail']) {
+            const src = `/projects/03/${kind}-${String(k + 1).padStart(2, '0')}-${bucket}@${scale}x.webp`;
+            try {
+              const res = await fetch(src, { cache: 'no-store' });
+              const type = res.headers.get('content-type') ?? '';
+              const bmp = await createImageBitmap(await res.blob());
+              out.push({ src, ok: res.ok && /webp/.test(type), w: bmp.width, h: bmp.height });
+              bmp.close();
+            } catch (e) {
+              out.push({ src, ok: false, error: String(e) });
+            }
+          }
+        }
+        return out;
+      },
+      [n, bucket, PAGE.captureScale, PAGE.captureHeight],
+    );
+    const wantW = Math.round(laid.rect.width * PAGE.captureScale);
+    const wantH = PAGE.captureHeight * PAGE.captureScale;
+    for (const c of caps) {
+      if (!c.ok || c.w !== wantW || c.h !== wantH) {
+        loadFaults.push(`${c.src.split('/').pop()}: ${c.ok ? `${c.w}x${c.h}, want ${wantW}x${wantH}` : c.error ?? 'not a webp'}`);
+      } else loaded++;
+    }
+    if (laid.bucket !== bucket) loadFaults.push(`${viewport.name} laid out at bucket ${laid.bucket}`);
+
+    // 2 — THE PAIR FITS. Two cells on one line, meeting at the gutter, the
+    //     same width, inside both insets, each clip at its own ratio — and the
+    //     whole pair, captions included, no taller than the page a reader sees
+    //     it through, so both halves can be on screen at once.
+    const fit = await page.evaluate((k) => {
+      const pg = document.querySelector(`.pv-page[data-k="${k}"]`);
+      const box = pg.getBoundingClientRect();
+      const view = pg.querySelector('.pv-page__scroll').getBoundingClientRect();
+      const cs = getComputedStyle(document.documentElement);
+      const inset = parseFloat(cs.getPropertyValue('--pv-inset'));
+      const gap = parseFloat(cs.getPropertyValue('--pv-grid-gap'));
+      const pair = pg.querySelector('.pv-twoup');
+      const cells = [...pair.children].map((c) => {
+        const r = c.getBoundingClientRect();
+        const v = c.querySelector('video');
+        const vr = v.getBoundingClientRect();
+        const cap = c.querySelector('.pv-twoup__text');
+        return {
+          left: r.left - box.left,
+          right: r.right - box.left,
+          top: r.top,
+          width: r.width,
+          ratio: vr.width / vr.height,
+          intrinsic: v.width / v.height,
+          caption: cap.textContent,
+          capFits: cap.scrollWidth <= cap.clientWidth + 1,
+        };
+      });
+      const pr = pair.getBoundingClientRect();
+      return { inset, gap, width: box.width, viewH: view.height, pairH: pr.height, cells };
+    }, PAIR_SECTION);
+    const [a, b] = fit.cells;
+    const fits =
+      fit.cells.length === 2 &&
+      Math.abs(a.top - b.top) <= 1 &&
+      Math.abs(b.left - a.right - fit.gap) <= 1 &&
+      Math.abs(a.width - b.width) <= 1 &&
+      a.left >= fit.inset - 1 &&
+      b.right <= fit.width - fit.inset + 1 &&
+      fit.cells.every((c) => Math.abs(c.ratio - c.intrinsic) < 0.01 && c.capFits) &&
+      fit.pairH <= fit.viewH;
+    fitRows.push({ viewport: viewport.name, fits, fit });
+
+    // …and ON SCREEN AT ONCE, asked of the live page rather than of the
+    // arithmetic: centred, both clips whole inside the page's box and both
+    // running. A pair is only a pair if it plays as one.
+    await centre(page, PAIR_SECTION, '.pv-twoup');
+    let pairState = [];
+    for (let i = 0; i < 10; i++) {
+      pairState = await clipStates(page, PAIR_SECTION);
+      if (pairState.every((v) => v.whole && v.ready >= 2 && v.playing && v.shown && v.advanced)) break;
+    }
+    fitRows[fitRows.length - 1].together = pairState.length === 2 && pairState.every((v) => v.whole && v.playing && v.advanced);
+    fitRows[fitRows.length - 1].pairState = pairState;
+
+    // 3 — EVERY CLIP PLAYS. Each one brought to the middle of its page, which
+    //     is where a reader stops to watch it, and given 2s to be decoded,
+    //     running, visible and moving.
+    const seen = new Set();
+    for (let k = 0; k < n; k++) {
+      const count = await page.evaluate((k) => document.querySelectorAll(`.pv-page[data-k="${k}"] video`).length, k);
+      for (let j = 0; j < count; j++) {
+        await centre(page, k, 'video', j);
+        let state = null;
+        for (let i = 0; i < 6; i++) {
+          state = (await clipStates(page, k))[j];
+          if (state.ready >= 2 && state.playing && state.shown && state.advanced) break;
+        }
+        seen.add(state.stem);
+        if (state.ready >= 2 && state.playing && state.shown && state.advanced) plays++;
+        else {
+          playFaults.push(
+            `${viewport.name} ${k}/${state.stem}: readyState ${state.ready}, ` +
+              `${state.playing ? 'playing' : 'PAUSED'}, ${state.shown ? 'shown' : 'INVISIBLE'}, ` +
+              `${state.advanced ? 'moving' : 'STILL'}`,
+          );
+        }
+      }
+    }
+    const missing = stems.filter((s) => !seen.has(s));
+    if (missing.length) playFaults.push(`${viewport.name}: never found ${missing.join(', ')}`);
+
+    // 4 — NOTHING SHIFTS AT A HAND-OFF. Every hand-off of the card, both ways
+    //     round — into each page off its entrance, out of each into its tear,
+    //     and back — with the media arriving as it likes. Asked three ways: the
+    //     browser's own layout-shift record inside the pages, the page heights
+    //     the track was built from, and every block's offset in its page.
+    for (let k = 0; k < n; k++) {
+      await seekSettled(page, atEnter(track, k, 0.5), handoffMs);
+      await seekSettled(page, track.start[k], handoffMs);
+      await seekSettled(page, track.start[k] + track.pageScroll[k], handoffMs);
+      if (k < n - 1) {
+        await seekSettled(page, atTear(track, k, 0.3), handoffMs);
+        await seekSettled(page, track.start[k] + track.pageScroll[k], handoffMs);
+      }
+    }
+    await page.waitForTimeout(400);
+    const after = await readTrack(page);
+    const shifts = await page.evaluate(() => window.__shifts ?? null);
+    const offsetsAfter = await offsetsOf();
+    const movedBlocks = offsetsAtArm.flatMap((pg, k) =>
+      pg.flatMap((y, i) => (Math.abs(y - offsetsAfter[k][i]) > 0.5 ? [`${k}/${i} ${y}→${offsetsAfter[k][i]}`] : [])),
+    );
+    shiftRows.push({
+      viewport: viewport.name,
+      observed: shifts !== null,
+      inPage: (shifts ?? []).filter((s) => s.inPage),
+      elsewhere: (shifts ?? []).filter((s) => !s.inPage),
+      heights: String(heightsAtArm) === String(after.heights.map(Math.round)),
+      heightsWere: heightsAtArm,
+      heightsAre: after.heights.map(Math.round),
+      movedBlocks,
+    });
+    await page.close();
+  }
+
+  check(
+    loadFaults.length === 0,
+    'card 03: every capture loads, at every bucket, at the size of its page',
+    loadFaults.length === 0 ? `${loaded} decoded` : loadFaults.slice(0, 4).join(' | '),
+  );
+  check(
+    playFaults.length === 0,
+    'card 03: every clip plays — each one, centred, at every bucket',
+    playFaults.length === 0 ? `${plays} clips × buckets, all ${stems.length} found` : playFaults.slice(0, 4).join(' | '),
+  );
+  for (const row of fitRows) {
+    const [a, b] = row.fit.cells;
+    check(
+      row.fits && row.together,
+      `card 03: the pair fits at ${row.viewport}`,
+      `${Math.round(a.width)} + ${Math.round(row.fit.gap)} + ${Math.round(b.width)}, ` +
+        `${Math.round(row.fit.pairH)}px tall in a ${Math.round(row.fit.viewH)}px page` +
+        (row.together ? ', both whole and playing' : ` — ${JSON.stringify(row.pairState)}`),
+    );
+  }
+  for (const row of shiftRows) {
+    const total = row.inPage.reduce((s, e) => s + e.value, 0);
+    check(
+      row.observed && row.inPage.length === 0 && row.heights && row.movedBlocks.length === 0,
+      `card 03: nothing shifts at a hand-off, ${row.viewport}`,
+      !row.observed
+        ? 'layout-shift unobserved'
+        : `${row.inPage.length} shifts in the pages (${round(total * 1000) / 1000})` +
+            (row.inPage.length ? ` ${row.inPage[0].nodes.join(',')}` : '') +
+            `, ${row.elsewhere.length} outside them` +
+            (row.elsewhere.length ? ` (${[...new Set(row.elsewhere.flatMap((e) => e.nodes))].join(', ')})` : '') +
+            (row.heights ? '' : `, heights ${row.heightsWere} → ${row.heightsAre}`) +
+            (row.movedBlocks.length ? `, moved ${row.movedBlocks.slice(0, 3).join(' ')}` : ''),
+    );
+  }
+
+  // 5 — THE ZINE READER PLAYS TO ITS END SCREEN. "You've read all of the Fresh
+  //     book" is the last ~2.5s of the clip, and it is the point of it: the
+  //     shipped clip has to be the whole master, and the page has to let it
+  //     run into that screen and loop, rather than pause or restart early.
+  {
+    const page = await openView(context, VIEWPORTS[0], `#view-${DREX}`);
+    const k = await page.evaluate(
+      (stem) => [...document.querySelectorAll('.pv-page')].findIndex((pg) => pg.querySelector(`video source[src*="${stem}."]`)),
+      STACK_CLIP,
+    );
+    const j = await page.evaluate(
+      ([k, stem]) =>
+        [...document.querySelectorAll(`.pv-page[data-k="${k}"] video`)].findIndex((v) => v.querySelector(`source[src*="${stem}."]`)),
+      [k, STACK_CLIP],
+    );
+    await centre(page, k, 'video', j);
+    const run = await page.evaluate(
+      async ([k, j]) => {
+        const v = document.querySelectorAll(`.pv-page[data-k="${k}"] video`)[j];
+        for (let i = 0; i < 40 && !(v.readyState >= 2 && !v.paused); i++) await new Promise((r) => setTimeout(r, 100));
+        // Most of the way in rather than from the top, so the check costs 3.5s
+        // and not seventeen; the clip runs from here on its own.
+        v.currentTime = Math.max(0, v.duration - 3.5);
+        let furthest = 0;
+        let wrapped = false;
+        let last = v.currentTime;
+        const t0 = performance.now();
+        while (performance.now() - t0 < 6000) {
+          await new Promise((r) => setTimeout(r, 50));
+          if (v.currentTime < last - 1) {
+            wrapped = true;
+            break;
+          }
+          last = v.currentTime;
+          furthest = Math.max(furthest, last);
+        }
+        return { duration: v.duration, furthest, wrapped, loop: v.loop, playing: !v.paused };
+      },
+      [k, j],
+    );
+    const master = await masterSeconds(STACK_CLIP);
+    check(
+      run.wrapped && run.loop && run.furthest >= run.duration - 0.25 &&
+        (master === null || Math.abs(run.duration - master) < 0.1),
+      'card 03: the zine-reader clip plays through its end screen, whole',
+      `${round(run.duration)}s` +
+        (master === null ? ' (no master here to compare)' : ` of a ${round(master)}s master`) +
+        `, ran to ${round(run.furthest)}s, then ${run.wrapped ? 'looped' : 'NEVER LOOPED'}`,
+    );
+
+    // 6 — THE LIVE LINK OPENS A NEW TAB, and the view stays where it was. A
+    //     real press, on the link's own box, on the first page.
+    await seekSettled(page, 0, handoffMs);
+    await page.evaluate(() => window.__pv.park(window.__pv.track().start[0]));
+    await page.waitForTimeout(600);
+    const links = await page.evaluate(() =>
+      [...document.querySelectorAll('.pv-page .pv-link')].map((a) => ({
+        k: Number(a.closest('.pv-page').dataset.k),
+        text: a.closest('p').textContent,
+        href: a.href,
+        target: a.target,
+        rel: a.rel,
+      })),
+    );
+    const live = links.find((l) => l.k === 0 && /^Live: /.test(l.text));
+    const box = await page.evaluate(() => {
+      const r = document.querySelector('.pv-page[data-k="0"] .pv-link').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    const opened = context.waitForEvent('page', { timeout: 4000 }).catch(() => null);
+    await page.mouse.click(box.x, box.y);
+    const tab = await opened;
+    if (tab) await tab.waitForLoadState('domcontentloaded').catch(() => {});
+    const still = await page.evaluate(() => location.hash);
+    check(
+      live && live.href === 'https://drex.style/' && live.target === '_blank' && /noopener/.test(live.rel) &&
+        tab !== null && /^https:\/\/drex\.style\//.test(tab.url()) && still.startsWith(`#view-${DREX}`),
+      'card 03: the Live link opens drex.style in a new tab, and the view stays open',
+      `${links.length} links (${links.map((l) => `${l.k}:${l.text}`).join(' · ')}), ` +
+        `new tab ${tab ? tab.url() : 'NONE'}, view ${still}`,
+    );
+    if (tab) await tab.close();
+    await page.close();
+  }
+  await context.close();
+}
+
 /* ── the run ──────────────────────────────────────────────────────────────── */
 
 /** The hand-offs at the four windows that are not buckets, at both scales.
@@ -1376,6 +1820,12 @@ async function run() {
     const context = await browser.newContext({ deviceScaleFactor: 1 });
     await resizeAcrossBuckets(context, 120);
     await context.close();
+    await browser.close();
+    console.log(failures === 0 ? '\nall green\n' : `\n${failures} failing\n`);
+    process.exit(failures === 0 ? 0 : 1);
+  }
+  if (ONLY === 'drex') {
+    await cardThree(browser, 120);
     await browser.close();
     console.log(failures === 0 ? '\nall green\n' : `\n${failures} failing\n`);
     process.exit(failures === 0 ? 0 : 1);
@@ -1659,8 +2109,8 @@ async function run() {
           `card ${id}: …and every frame of it is curl mode 0, the cone wrap`,
           `modes ${[...new Set(shape.map((c) => c.curlMode))].join(',')}`,
         );
-        // Card 03 is one section and has no tear at all, which is the point of
-        // it being in the list and not a reason to weaken this elsewhere.
+        // A one-section card has no tear at all. None is left in the list, but
+        // the guard costs nothing and the track still allows one.
         if (last > 0) {
           const tear = await page.evaluate(() => {
             const t = window.__pv.track();
@@ -2628,6 +3078,8 @@ async function run() {
     }
     await ctx3.close();
   }
+
+  await cardThree(browser, handoffMs);
 
   await realHand(browser);
 

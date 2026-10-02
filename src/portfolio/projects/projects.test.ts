@@ -61,12 +61,16 @@ describe('project registry', () => {
     }
   });
 
-  it('covers the one-section case (03) and the five-section spread (02, 04)', () => {
-    // One section: no exit, no second entrance, no turn anywhere.
-    expect(projectById('03')!.sections).toHaveLength(1);
+  it('gives every card its copy’s own sections — five each, of uneven length', () => {
     // Five, of uneven length: the short ones go straight from an entrance into
     // an exit, and the long one is long enough to forget there is a sheet.
     expect(projectById('02')!.sections).toHaveLength(5);
+    // Card 03 was ONE section for as long as it was a placeholder: the case
+    // with no exit, no second entrance and no turn anywhere. Drex is five,
+    // split at its copy's own section breaks. The one-section case is a
+    // `pageTrack` case and stays covered in `pageTrack.test.ts`; what is gone
+    // is a browser walking one.
+    expect(projectById('03')!.sections).toHaveLength(5);
     // Card 04 was three — the smallest count with a MIDDLE section — for as
     // long as it was a placeholder whose length was a number somebody typed.
     // Nosey is five, because that is where its copy's own headings fall, and a
@@ -77,7 +81,7 @@ describe('project registry', () => {
     expect(projectById('04')!.sections).toHaveLength(5);
   });
 
-  it('puts a video in every project, and the Rive artboard somewhere', () => {
+  it('puts a video in every project', () => {
     // A CLIP IS IN ALL OF THEM, because a video is the block with a lifecycle
     // every project actually has: it mounts, plays and pauses as it crosses the
     // viewport, and `pv-verify` walks each section's vertical run asking every
@@ -86,13 +90,11 @@ describe('project registry', () => {
       const types = project.sections.flatMap((s) => s.blocks.map((b) => b.type));
       expect(types).toContain('video');
     }
-    // THE ARTBOARD IS ASKED OF THE SET, not of each project. It used to be
-    // required of every one, which was a fact about there being nothing but
-    // placeholders: a real project ships the blocks its content needs, and card
-    // 02 opens with two clips where it once opened with the Loop artboard. What
-    // has to stay true is that the LAZY-MOUNT PATH is still exercised
-    // somewhere, and the placeholders are what exercise it.
-    const everything = PROJECTS.flatMap((p) => p.sections.flatMap((s) => s.blocks.map((b) => b.type)));
-    expect(everything).toContain('rive');
+    // THE ARTBOARD IS NO LONGER ASKED OF ANYTHING. It was asked of the set,
+    // and the placeholders at card 03 were the only thing on it — no real
+    // project ships one. Drex replaced the last of them, so the Rive block's
+    // lazy-mount path has no page left to run on; see "Not done" in
+    // docs/portfolio-view.md. The check comes back with the first real page
+    // that has an artboard on it.
   });
 });

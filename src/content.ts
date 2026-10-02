@@ -68,8 +68,7 @@ export interface PosterItem {
 /**
  * The sequence. One magazine (Discommode issue 01) followed by the three
  * portfolio projects. 02 is the Rive homepage redesign, 03 is Drex and 04 is
- * Nosey. 03 has its cover and nothing else yet: its project view is still the
- * shared placeholder block list until its project lands.
+ * Nosey — all three real projects, each with its own project view.
  *
  * Card 02's art is a LIVE cover — the rive-site shader, with the sky through
  * its ground; its `image` is that shader's still. Card 03's is the drex
@@ -110,11 +109,11 @@ export const CONTENT: PosterItem[] = [
     kind: 'portfolio',
     project: '03',
     // The Drex cover (docs/covers.md, "Card 03"); its still, from
-    // `npm run covers`. The project itself is still the placeholder.
+    // `npm run covers`. The project is `src/portfolio/projects/drex.ts`.
     cover: { kind: 'shader', id: 'drex' },
     image: '/projects/drex/cover-still.webp',
     hue: 276,
-    captions: ['NO 03', 'PLACEHOLDER', 'PROJECT'],
+    captions: ['NO 03', 'DREX', 'ZINES'],
     cta: 'OPEN',
   },
   {

@@ -47,7 +47,7 @@ is why they transfer), `docs/prototypes/folder-prototype.html` and
 | `PortfolioDialKit.tsx` | Dev dock (`#view-NN?intro`). |
 | `contrastProbe.ts` | Dev-only WCAG probe. Tree-shaken from production — verified. |
 | `blocks/` | The content model: one block type per kind of thing a project says. |
-| `projects/` | The content. `rive-site.ts` (card 02) and `nosey.ts` (card 04) are real; `placeholder.ts` still fills card 03. Replacing a placeholder is a data change and nothing else — twice over now, at two different section counts. Media comes from `npm run projects`, which writes `<slug>-assets.json` beside each module. |
+| `projects/` | The content. `rive-site.ts` (card 02), `drex.ts` (card 03) and `nosey.ts` (card 04) are all real; `placeholder.ts` is no longer registered (see Not done). Replacing a placeholder is a data change and nothing else — three times over now. Media comes from `npm run projects`, which writes `<slug>-assets.json` beside each module. |
 
 ## Anatomy
 
@@ -848,6 +848,13 @@ and gives every block a grid area without a wrapper.
 | `statGrid` | 4 × 3 | |
 | `linkPill` | 12 | Inline inside it. |
 
+**A paragraph can end in a link.** A `text` block's paragraph is a string, or
+`{ text, link: { label, href } }` — the prose, then a link in the paragraph's
+own ink, underlined, opening in a new tab like the pill does. It exists for
+card 03's "Live: drex.style" and "Visit: drex.style", where the link is the
+last words of a line of facts rather than a call to action under them; a pill
+there would set one entry of a list as a button.
+
 A block can override with `span`; `spanOf` in `Blocks.tsx` holds the defaults.
 
 **A media caption is set like the prose beside it, wherever the media is.** A
@@ -1137,7 +1144,7 @@ locked after arming. And the one frame of lerp overshoot past
 than a cause on its own.
 
 **Measured** per frame through CDP wheel events, bursts and trackpad-fine, down
-and up cards 02 and 04: each frame near a hand-off, against the picture the view
+and up cards 02 and 04 (and card 03, since it became real): each frame near a hand-off, against the picture the view
 draws at rest at the same position. Before: **70–78px** worst going down,
 **1174–1476px** going up, and 10–11px even on a trackpad. After: **≤1px** on all
 eight walks. Every screenshot check passed throughout, because `seek` holds the
@@ -1173,8 +1180,8 @@ the same number; `maxPosition` lost the extra term.
 
 `pageScroll[k]` is `max(0, contentHeight[k] - pageHeight)` — a section shorter
 than the frame has a zero-length run and goes straight from its entrance into
-its tear, which is a legitimate state and is what card 03 (one section) and the
-short sections of 02 and 04 exercise. The last section has neither a tear nor a
+its tear, which is a legitimate state and is what the short sections of the
+cards exercise, and what `pageTrack.test.ts`'s one-section project does. The last section has neither a tear nor a
 dwell: there is nothing behind it to bring on.
 
 `layout(track, y, dials)` returns `{ page, sheet, activeIndex, pendingIndex,
@@ -1717,10 +1724,11 @@ active section — that is THE bug this path exists to prevent.
 `hue` is gone with the folders: sections were told apart by the colour of their
 glass, and there is no glass.
 
-Placeholders: card 03 is the only one left, and it is one section. Cards 02 and
-04 are real projects and their section counts are their copy's — five each,
-split at the headings their source documents already had. What follows is how a
-PLACEHOLDER section gets its length, and it applies to card 03 alone. A
+Placeholders: there are none left. Cards 02, 03 and 04 are real projects and
+their section counts are their copy's — five each, split at the section breaks
+their source documents already had. What follows is how a PLACEHOLDER section
+got its length, kept because `placeholder.ts` is still in the repo and a
+placeholder is still the fastest way to put a new card on the grid. A
 section's length is authored in **page heights** and filled to it — take beats
 from a fixed nine-block cycle while the next one gets you nearer the target than
 it overshoots it, then top up with paragraphs, which are a sixth of a page each
@@ -1976,6 +1984,18 @@ are worth keeping.
 > it could be dropped in at a different LENGTH, which is the half that was still
 > an assertion.
 
+> **And card 03 made it three, with the last placeholder gone.** Drex
+> replaced a one-section placeholder with five real sections, and nothing in
+> `Scroller`, `SheetCanvas` or `pageTrack` was touched; cards 02 and 04's
+> captures are byte for byte what shipped. Outside `projects/` the diff is the
+> registry, `projects.test.ts`, card 03's grid captions, and one addition to
+> the block model — a `text` paragraph that ends in a link (see
+> [the page](#the-page)) — because the copy's "Live:" and "Visit:" lines are
+> links inside a line of facts and no existing block set one. `verify:pv` on
+> 2026-10-02, all green at 462 checks: card 03's worst hand-off is 1.534% in
+> and 0.151% out of 2% across all six windows and both ratios, and under a real
+> wheel every frame near a hand-off is within 1.1px of the picture at rest.
+
 > **A note on what has just gone off this list, for the same reason.** Eviction
 > is in: the GPU holds the section being read and its two neighbours and lets go
 > of the rest, and `pv-verify` asserts the count rather than reporting the
@@ -2031,14 +2051,19 @@ are worth keeping.
    that, and `curlDepth` flattens what is left. A flap that DROOPED — a second,
    much larger radius past the first — would take the constraint off, and is the
    obvious next thing to try if the tear ever wants to run further.
-9. **Card 03 is the last placeholder**, and it is now the only thing holding
-   `placeholder.ts` in the repo — the nine-block cycle, `BLOCK_VP`, the
-   viewports-per-section arithmetic, all of it. It is also the only card with a
-   Rive block on it, which is why `projects.test.ts` asks for the artboard of
-   the SET rather than of each project: the lazy-mount path has exactly one
-   exerciser left. A real project at 03 takes the placeholder out and takes that
-   coverage with it, and the artboard would have to come back on a real page or
-   the check has nothing to stand on.
+9. **The placeholder is unregistered, and the Rive block has no page.** Drex
+   replaced card 03's placeholder, so `placeholder.ts` — the nine-block cycle,
+   `BLOCK_VP`, the viewports-per-section arithmetic — is in the repo with
+   nothing importing it, and `make-placeholders` still writes its block media
+   into `public/projects/placeholder/` for no page. It was also the only page
+   with a Rive block on it, so the block's lazy mount (and `__pvRive`'s park in
+   the capture pipeline) now has no exerciser at all, and `projects.test.ts`
+   stopped asking for one rather than assert something nothing ships. Either
+   delete the lot, or keep one placeholder card behind a dev flag as the
+   mechanics' test bed; and the artboard check comes back with the first real
+   page that carries one. Card 03 also took the ONE-SECTION case out of the
+   browser suite: it is still a `pageTrack` unit test, but no browser walks a
+   card with no tear any more.
 10. **Two cards, two kinds of face.** Card 04's is real — a frame of its own
    pitch site, cut by `CARD_FACES` in `optimize-projects.mjs` — and cards 02 and
    03 are still the flat plates `make-placeholders` draws. Card 02 is the odd
@@ -2089,6 +2114,13 @@ at all — it was not on `PATH`, so nothing was silently wrong, but a build old
 enough to answer `ffmpeg -version` and young enough to look fine is exactly the
 thing to check the encoder list of rather than the version of.
 
+`npm run projects` reads each slug's folder AND a `media/` folder inside it
+(card 03's clips are in `drex/media/`, beside its cover's handoff files); the
+subfolder is not part of the output name. Note that `npm run projects -- --force`
+forwards `--force` only to the LAST command in the script, `make-cover-stills`:
+to re-encode media, run `node scripts/optimize-projects.mjs --force` itself.
+A clip that has no output yet is encoded either way.
+
 Then:
 
 ```
@@ -2105,8 +2137,8 @@ node scripts/sky-contrast.mjs  # the letterhead: 24 still skies, then the sweep 
 tests cover `pageTrack`, `fitPlaneToRect` and both shapes' geometry thoroughly and
 nothing else, while every bug this view has had was one only a browser could
 see. It runs both signed-off viewports (1728×996, 1440×900) **at both device
-pixel ratios** on card 02 (five sections), card 03 (one — the section with no
-tear and no dwell) and card 04 (five), and checks:
+pixel ratios** on all three cards — 02, 03 and 04, five sections each — and
+checks:
 
 - **the rect match, both ways** — the sheet's flat screen rect, as three.js
   projects it, against the page's rect, ≤ 1px on both axes, at both hand-offs of
@@ -2207,19 +2239,44 @@ tear and no dwell) and card 04 (five), and checks:
   of `seek` or `element.click()`, seeded so a failure reproduces.
   `--only hand` runs just these. The wheel check at six sizes makes it the
   longest section of the suite.
-  - **the letterhead soak**: 60 real presses per card on cards 02 and 04, aimed
+  - **the letterhead soak**: 60 real presses per card on every card, aimed
     at a number with ±5px of scatter. Each follows a settled wheel burst, a
     burst still gliding, or the previous press's own scroll. None may close the
     view, and the last must land on its section. Then two controls: a press
     that began on a number and ended on the margin must not close the view, and
     a press on the margin must;
   - **the hand-offs under a real wheel**, at all six window sizes: bursts
-    (6–12 notches of 40–120px at 16ms) down and back up the whole of cards 02
-    and 04, then trackpad deltas (2–8px) across every hand-off both ways. Every frame within 80px of a
+    (6–12 notches of 40–120px at 16ms) down and back up the whole of every
+    card, then trackpad deltas (2–8px) across every hand-off both ways. Every frame within 80px of a
     hand-off must be within **2px** of the picture the view draws at rest at
     the same position, and every walk must actually cross every hand-off.
     Measured at ≤1px. Against the build before the fix it reports 70–1476px.
     See [the crossfade](#the-crossfade-ends-when-the-track-leaves-it);
+- **card 03's own claims**, at every BUCKET rather than at the six windows,
+  each bucket's width at 16:9 (1280×720 … 2560×1440, the shortest ordinary
+  window at that width). `--only drex` runs just these:
+  - **its captures load**: all 70 — five sections, sheet and tail, seven
+    buckets — fetched from the dev server and decoded, each the live page's
+    width at 2x by 2800;
+  - **every clip plays**: each of the six brought to the middle of its page by
+    a real `park`, then decoded, running, visible and ADVANCING, at every
+    bucket (42 of 42), and all six found;
+  - **the pair fits**: the editor/generator two-up is on one line, meeting at
+    the gutter, equal widths, inside both insets, each clip at its 16:9, both
+    captions on one line — and the whole pair no taller than the page a reader
+    sees it through, then centred and asked of the live page: both whole on
+    screen and both playing. Measured from 526 + 52 + 526 (342px tall in a
+    568px page) at 1280 to 1166 + 52 + 1166 (702px in 1288px) at 2560;
+  - **nothing shifts at a hand-off**: every entrance, tear and rewind of the
+    card, with the media arriving as it likes, watched three ways — the
+    browser's own `layout-shift` entries inside the pages (0 at every bucket;
+    the one outside is the dev env readout's text), the page heights the track
+    was built from, and every block's offset in its page;
+  - **the zine-reader clip plays to its end screen**: the shipped clip is the
+    master's video stream to within 0.1s (17.1s, all 1028 frames), and the page
+    lets it run into "You've read all of the Fresh book" and loop;
+  - **the Live link opens a new tab**: a real press on "drex.style" in the
+    intro opens drex.style (stubbed) in a new page, and the view stays open;
 - deep link (`#view-02/4` lands flat on section 3 with no entrance replay and no
   canvas frame), resize (the reader keeps their section AND the plane re-fits),
   `inert`, Escape, and the reader still opening.
