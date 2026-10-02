@@ -97,6 +97,14 @@ export interface FlipEngineOptions {
    * hover-animation layer is the one that does today.
    */
   onTurnActive?: (active: boolean) => void;
+  /**
+   * Something on the page that takes a tap (the chapter-break quote,
+   * quotePlayer.ts): asked at every press that would start a turn, it returns
+   * the thing's tap, or null. A press it claims starts no turn; it becomes the
+   * ordinary drag once it has moved TAP_PX, and released before that it is the
+   * thing's tap instead of a turn.
+   */
+  tapTarget?: (e: PointerEvent) => (() => void) | null;
 }
 
 export interface FlipEngine {
@@ -218,6 +226,11 @@ interface Curl {
 
 interface DragState {
   id: number;
+  /** Which way a held press would turn (`onTap`, before its turn exists). */
+  dir: TurnDir;
+  /** Set while a press on a tap target has not moved like a drag yet: no turn
+   *  has started, and releasing now is its tap. */
+  onTap: (() => void) | null;
   x0: number;
   w: number;
   /** t at grab time — a drag that takes over a running tween resumes from it. */
@@ -1203,18 +1216,36 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       // nothing left to drag — the turn is a frame from completing. Let it.
       if (state.plated) return;
       killTween();
-    } else if (!startTurn(dir)) {
-      return; // out of range: no capture, so the rest of the gesture is inert
+    } else {
+      // A press on something that takes a tap: no turn yet (see `tapTarget`).
+      const onTap = opts.tapTarget?.(e) ?? null;
+      if (onTap) {
+        drag = { id: e.pointerId, dir, onTap, x0: e.clientX, w: rect.width, t0: 0, moved: 0 };
+        book.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (!startTurn(dir)) return; // out of range: no capture, so the rest of the gesture is inert
     }
 
-    drag = { id: e.pointerId, x0: e.clientX, w: rect.width, t0: state?.t ?? 0, moved: 0 };
+    drag = { id: e.pointerId, dir, onTap: null, x0: e.clientX, w: rect.width, t0: state?.t ?? 0, moved: 0 };
     book.setPointerCapture(e.pointerId);
   }
 
   function onPointerMove(e: PointerEvent): void {
-    if (!drag || e.pointerId !== drag.id || !state) return;
+    if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x0;
     drag.moved = Math.max(drag.moved, Math.abs(dx));
+    if (drag.onTap) {
+      // A held press on a tap target: a drag once it has moved like one.
+      if (drag.moved < TAP_PX) return;
+      drag.onTap = null;
+      if (!startTurn(drag.dir)) {
+        if (book.hasPointerCapture(drag.id)) book.releasePointerCapture(drag.id);
+        drag = null;
+        return;
+      }
+    }
+    if (!state) return;
     const raw = (state.dir === 'next' ? -dx : dx) / (drag.w * DRAG_SPAN);
     applyTurn(Math.min(1, Math.max(0, drag.t0 + raw)));
   }
@@ -1222,8 +1253,14 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   function onPointerEnd(e: PointerEvent): void {
     if (!drag || e.pointerId !== drag.id) return;
     const tap = drag.moved < TAP_PX;
+    const onTap = drag.onTap;
     if (book.hasPointerCapture(drag.id)) book.releasePointerCapture(drag.id);
     drag = null;
+    if (onTap) {
+      // Never became a drag: the target's tap (a cancelled press is nothing).
+      if (e.type === 'pointerup') onTap();
+      return;
+    }
     if (!state) return;
     if (tap || state.t > COMMIT_T) commitTurn();
     else cancelTurn();

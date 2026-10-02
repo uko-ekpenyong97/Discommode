@@ -36,6 +36,11 @@ numbers that decided how they work.
 | `pageAnimPlayer.ts` | The inside pages' sprites on the open spread: the plate and one canvas per page, the settle, the preload. |
 | `pageAnimGeometry.ts` | The atlas manifest's types and the pure geometry and timing the player draws by. |
 | `../dev/pageAnimAlign.ts` | The PAGE ANIM ALIGN panel (dev): registering a sprite on its page. |
+| `quotes.json` | The chapter-break quotes: settings, styles, each page's positions and lines in ES and EN. See [chapter-break quotes](#chapter-break-quotes). |
+| `quotes.ts` | `quotes.json` typed, and the TRANSLATE dials' store. |
+| `quoteMorph.ts` | The translate morph as pure functions: the layout, the letters the languages share, where each is at any moment. |
+| `quotePlayer.ts` | The quotes on the open spread: the letter canvas over the plate, the bakes a turn shows, the button, the cursor. |
+| `../dev/translateDials.ts` | The TRANSLATE panel (dev). |
 
 ## Layers
 
@@ -805,8 +810,11 @@ npm run anims -- --suggest       print a registered row for every animation
 
 **Plates.** `npm run plates` is `optimize-pages.mjs --plates`: the same
 encoder, quality, size check, up-to-date rule and `--force`, no riffle copies.
-The plates must be exactly the pages `pageAnims.ts` animates; an animated page
-with no plate, or a plate with no animation, stops the run and says which.
+The plates must be exactly the pages `pageAnims.ts` animates and `quotes.json`
+quotes ([chapter-break quotes](#chapter-break-quotes)); such a page with no
+plate, or a plate with neither, stops the run and says which. `--only 05`
+converts just the pages named and holds only them to that rule — for a
+source folder that already has another branch's plates in it.
 
 **Atlases.** The second phase of `npm run anims` (`scripts/page-anims.mjs`),
 after the cover's, which it does not touch: the cover's sprites, stills, rests,
@@ -1005,13 +1013,203 @@ it goes dark. `view: plate` shows it over the plate, as it ships. `x`, `y`, `w`
 Arrow keys nudge 1px, Shift+arrow 10px, while an animation is picked — ahead of
 the engine's own listener, so they do not turn the page. **Copy row** puts the
 `pageAnims.ts` row on the clipboard (and the console); **Reset to file** drops
-the panel's row. What persists (`DIAL_STATE_VERSION` 6): the pick and the view
+the panel's row. What persists (`DIAL_STATE_VERSION` 7): the pick and the view
 (the panel), and each animation's EDITED ROW, kept per id in localStorage
-(`dialkit:page-anim-align-rows-v6`, so "Reset dials" and a version bump clear
+(`dialkit:page-anim-align-rows-v7`, so "Reset dials" and a version bump clear
 it too): a reload draws it again, and a pick loads it into the sliders, until
 **Copy row** (it belongs in the file then) or **Reset to file** clears it. Copy
 keeps the row's `rest`. A row whose width changed rebuilds its atlas on the
 next `npm run anims`; the reader draws any width meanwhile.
+
+## Chapter-break quotes
+
+Page 05 is a chapter break: a quote in Spanish, its attribution, and — new on
+the page, not in the print — a green "ES ⇄ EN" line under it. A click or tap
+on the quote translates it, letter by letter: the letters both languages share
+slide to their new places on an arc, the rest scramble out and in. Again, and
+it goes back. The design is Uko's prototype
+(`~/Discommode-pages/01/translate/prototype.html`), ported behaviour for
+behaviour; the data is his `quotes.json`. A later chapter break is a new entry
+in `quotes.json`'s `pages` and a plate, and nothing else.
+
+### The pieces
+
+| | |
+| --- | --- |
+| `quotes.json` | The brief's file: `settings` (the morph's dials), `styles` (Space Mono Bold 45.833/68 for the quote, Lora Regular 33/42 for the attribution, the hint), and per page the quote's centre and top, the attribution's right edge and top, the hint's centre and top, the hit area, and every line in ES and EN broken as printed. Page px, 2000×2600. |
+| `quoteMorph.ts` | Pure: the layout, the match, the plan, the frame at any ms. `quoteMorph.test.ts`. |
+| `quotePlayer.ts` | The layer on the open spread, on the page animations' lifecycle; the bakes; the cursor; the button. |
+| `plates/05.webp` | The page with the quote removed (`npm run plates -- --only 05`). |
+| `public/fonts/space-mono-latin-700.woff2`, `lora-latin-400.woff2` | fontsource 5.3.0, OFL (`SpaceMono-OFL.txt`, `Lora-OFL.txt` beside them). Loaded as `FontFace`s before anything is measured. |
+
+### The layer
+
+FlipBook renders, in the quote page's static slot, a `.quote-layer`: the
+plate, ONE canvas, and a `<button>` over the hit area. Everything is drawn on
+the canvas — the letters at the slot's size × DPR (≤ 2), the hint with them —
+so nothing is laid out in the DOM and nothing can reflow: the fonts are loaded
+before the first measurement, and every letter's place is measured once
+(`measureText` of the line up to it, so kerning is kept; the baseline at CSS's
+half-leading in the line box) and never again.
+
+It shows and hides on exactly the [page animations' rule](#the-runtime): hidden
+synchronously from the engine's `onTurnActive` before the strips move, faded in
+over 80ms when the book settles. A morph in flight when a turn starts jumps to
+its end first.
+
+### The morph
+
+`quoteMorph.ts`, as the prototype has it:
+
+- **Match**, block by block (the quote with the quote, the attribution with the
+  attribution): the longest common subsequence of the two languages' letters,
+  accent- and case-insensitive ("á" is "a"), so shared letters keep their
+  order; then, with `reuseOutOfOrder`, each letter still new takes the nearest
+  unused same letter within 650px. Spanish → English: 44 of the 67 English
+  letters travel.
+- **Move**: on the easing, lifted on an arc of `arcPx` scaled by the distance
+  (full at 400px), swapping its accent halfway.
+- **Enter / exit**: rise 8px while fading in / out, scrambling through random
+  letters (every 55ms; a hash of the letter and the step, so a frame is a pure
+  function of time) for the first 70% / after the first 15%.
+- **Stagger** by reading order of where a letter ends up (a leaving one, where
+  it was): 0.65 its line, 0.35 its x, × `staggerMs`. Exits start at half the
+  stagger and take half the duration; entries start 35% in and take 65%.
+- **The hint**: "ES" and "EN" in Space Mono Bold, as the prototype's `<b>`;
+  the active language at full opacity, the other at 0.45, eased over 300ms
+  (the prototype's CSS transition). The **⇄ is drawn**, not set — Space Mono
+  has no U+21C4, and a fallback face would differ from machine to machine:
+  `swapArrow` (`quoteMorph.ts`) draws a right arrow over a left one in one
+  letter's cell, centred on half the cap height, the way Space Mono draws its
+  own ↑ and ↓ (straight shafts, flat ends, flat-tipped 45° heads), in #519B66
+  at Space Mono Bold's stem (0.126em; Regular's is 0.078em — measured from
+  the faces, `arrowStrokeWeight` picks).
+- **A click mid-morph** lands it, then starts the next.
+- **Reduced motion**: a 300ms crossfade — nothing matched, nothing moves or
+  scrambles; the old letters out over the first 180ms, the new in over the last.
+
+### Clicks, drags and the cursor
+
+A press on the book starts a turn at once, so the quote cannot take its clicks
+the ordinary way (`.book *` has no pointer events). The engine asks
+`tapTarget` at every press that would start a turn; over the quote the player
+answers with its toggle, and the engine **holds the turn back**: the press
+becomes the ordinary drag once it has moved 6px (`TAP_PX`, the engine's own
+tap threshold), and released before that it is the quote's tap — no turn layer
+on any frame. Everywhere else, and for the arrow keys, the row and the riffle,
+nothing changed.
+
+Over the hit area the cursor is the hint as a tag: "ES ⇄ EN" at 11px, laid
+out and drawn by the hint's own code (the same drawn ⇄), in #519B66 on the
+page's paper inside a #519B66 edge — on a green fill the green arrow would
+not show. Drawn once the fonts are in and set as a CSS `image-set` cursor at
+1× and 2×, its hotspot at its centre. Off the quote, the book's own
+`grab`. A touch pointer never sets it.
+
+### The button
+
+The hit area is a real `<button>`, reached by Tab after the close X: Enter and
+Space toggle (its own click), with the same turn-nothing rule. Its
+`aria-label` is the action ("Translate the quote to English" / "Show the quote
+in Spanish"); it is described by the quote itself, in a visually hidden span
+whose `lang` is the language on the page; and a polite live region, its `lang`
+the new language, reads the quote after each toggle.
+
+### What a turn shows: the bakes
+
+A turn must show the page in the language it is in, never the bare plate. The
+page animations get that for free — the print IS the rest state. The quote's
+English has no print, so the player BAKES the page: the plate with the letters
+and the hint drawn on at 2000×2600 by the same code that draws the live layer,
+encoded to WebP (q 0.92), once per language, at the page's first settle (the
+layer waits for both). `mapSpreads` hands the engine and the static slot the
+bake for the page's current language — so the curl's faces, the landing plate,
+a riffle's slots and the static `<img>` under the layer all carry it — and the
+printed page until there is one. A riffle's fast leaves keep the printed
+half-size page in Spanish (it lacks only the hint, for under 150ms); in
+English the bake.
+
+On a first arrival the static slot swaps to the bake only once the layer has
+faded in over it, so the hint fades in rather than popping.
+
+**The language goes back to Spanish once page 05 is no longer on the open
+spread** — at the commit that leaves it, or a riffle's inner landing. Not
+under a morph: a slot leaving lands its morph first, and a turn has already
+landed it.
+
+### Matching the print
+
+`quotes.json`'s positions came from Figma, and they do not reproduce the
+printed page: drawn there, the quote sat **14.85px low and 0.85px right**, the
+attribution **24.10px low and 4.10px right** (line pitch, size and widths
+exact — a pure offset per block). Each block was registered against
+`05.png` (subpixel, least squares on darkness) and the repo's `quotes.json`
+carries the registered values: the quote's centre 1000.5 → **999.6** and top
+1128 → **1113.05**; the attribution's right 1284 → **1279.95** and top 1387 →
+**1362.65**. The hint has no print to register against; it moved up with the
+attribution, 1540 → **1515.65**, so the space under the attribution is the
+prototype's.
+
+The second difference was weight: Chrome on macOS draws canvas text emboldened
+by a device-pixel constant — +8% ink on the quote, +14% on the attribution
+against the print at 2000px. `textRendering = 'geometricPrecision'` turns it
+off (supersampling only got to +2.6% / +4.9% at 4×).
+
+Measured (`verify:reader`, `quote`, 2026-10-02): page 05 in Spanish without
+the hint, drawn by the layer's own code at 2000×2600 over the plate, against
+the printed `05.png`:
+
+| line | offset (px) | ink |
+| --- | --- | --- |
+| quote 1 | 0.00, 0.00 | 99.6% |
+| quote 2 | 0.00, −0.10 | 99.5% |
+| quote 3 | 0.00, −0.25 | 99.6% |
+| attribution 1 | −0.05, −0.35 | 99.4% |
+| attribution 2 | 0.10, −0.05 | 99.9% |
+
+Of 5.2M pixels, 7,128 differ by more than 8 levels, 3,251 by 32, 1,016 by 64
+and 86 by 128 (the print has 21,415 ink pixels); every one on a glyph's edge
+(`.context/quote/print-diff.png`). The residual offsets are the baseline
+snapping to whole pixels. On screen, the Spanish layer against the printed
+page in the same slot: ink 99.5% at 1×, 99.0% at 2×.
+
+### What it costs
+
+The first settle on page 05 draws and encodes two 2000×2600 pages; no Long
+Animation Frame (over 50ms) in it at 2× (two runs). A riffle passing page 05
+fetches nothing (the plate and the fonts are fetched only at a settle within a
+spread of it). The full `verify:reader` run on this change, 2026-10-02 (load
+average 3.7–5.1, the plain-spread baseline missing in 5 of 5), missed three
+frame checks: two riffles and the sky section's 2× "60fps", single 33–67ms
+frames. Run against the change's base (e6bb66b) INTERLEAVED, `--only
+frames,sky --runs 3` three times each, alternating:
+
+| | riffle runs with a frame over 20ms | "60fps over the sky" misses | flip main p95 |
+| --- | --- | --- | --- |
+| this change | 2 of 36 | 0 of 6 | 4.0–4.2ms |
+| base | 6 of 36 | 1 of 6 | 4.1–4.3ms |
+
+The misses are the machine's, as [before](#running-the-checks).
+
+### Dials
+
+TRANSLATE panel, in the READER NAV dock (`#read-NN?intro`), persisted
+(`DIAL_STATE_VERSION` 7). `quotes.json`'s `settings` are the source of truth;
+**Copy** writes a paste-ready `"settings"` block, **Translate** toggles the
+open quote (turning to page 05 if none is open).
+
+| dial | shipped | range |
+| --- | --- | --- |
+| `durationMs` | 2400 | 400–4000 |
+| `staggerMs` | 800 | 0–1500 |
+| `arcPx` | 60 | 0–120 |
+| `easing` | inOutCubic | also inOutQuint, outBack |
+| `reuseOutOfOrder` | on | the nearest same-letter pass |
+| `scramble` | on | |
+| `showHint` | on | the ES ⇄ EN line (re-bakes) |
+| `resetWhenPageLeaves` | on | |
+
+`defaultLang` (es) is read from the file, not dialled.
 
 ## Navigation
 
@@ -1123,6 +1321,7 @@ npm run pages -- --force
 npm run anims              # frame stacks → animations, stills, plates, rests, manifest
 npm run anims -- --only libros
 npm run plates             # ~/Discommode-pages/<issue>/plates/NN.png → public/issues/<issue>/plates/NN.webp
+npm run plates -- --only 05
 ```
 
 `npm run anims` also builds the inside pages' atlases, after the cover's
@@ -1152,7 +1351,7 @@ magenta.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                  # in another shell
-npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip,quote
 ```
 
 `scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
@@ -1309,6 +1508,22 @@ exits non-zero on any ✗.
   rough outlines, which antialias differently at this size. The floor was
   checked against a moved sprite: xolo 4 page px off scores 84.1%, 8 px off
   75.8%, and 1% too big 75.4%.
+- **The chapter-break quote** (`quote`, `scripts/quote-checks.mjs`), page 05:
+  the Spanish layer against the printed page at 2000×2600 — every line
+  registered to ≤ 0.5px with its ink within 2%, the differing pixels reported
+  and the difference written to `.context/quote/` — and on screen at 1× and
+  2× within 4% of the print's ink. A click on the quote translates and turns
+  nothing (no turn layer on any frame); the morph ends with every English
+  letter where `quotes.json` puts it, measured in the check from the file,
+  not read back from the player; the static slot carries the English bake,
+  and the layer and the bake agree on screen as closely as the Spanish layer
+  and the print do. A click mid-morph lands it and starts the next. A turn
+  started mid-morph shows the English bake on the static slot and on the curl
+  and never a plate; away and back, Spanish (the arriving leaf too). A click
+  off the quote and a drag from it turn the page. The cursor tag over the
+  quote and `grab` off it; Enter and Space on the button; a touch tap
+  translates with no tag, a tap elsewhere turns; reduced motion draws no
+  letter off the two layouts and settles in about 300ms.
 
 The z-order and exit checks photograph the book over the sky now, so both hold
 it still first (`__skyPinTime`, `__skyHoldFluid`): two captures must differ by

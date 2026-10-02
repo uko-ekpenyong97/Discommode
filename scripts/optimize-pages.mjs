@@ -38,15 +38,20 @@
  * changes show in git.
  *
  * PLATES. `npm run plates` (this script with `--plates`) gives the inside
- * pages that carry an animation the same treatment:
+ * pages that carry an animation or a chapter-break quote the same treatment:
  *
  *   ~/Discommode-pages/<issue>/plates/NN.png  →  public/issues/<issue>/plates/NN.webp
  *
- * A plate is the page with its animated drawing HIDDEN: the reader shows it,
- * with the sprites drawn over it, on the open spread (docs/reader.md,
- * "Inside-page animations"). No riffle copies — a plate never rides a leaf.
- * The plates must be exactly the pages `src/reader/pageAnims.ts` animates: an
- * animated page with no plate, or a plate with no animation, stops the run.
+ * A plate is the page with its live content HIDDEN — the animated drawing, or
+ * the quote: the reader shows it, with the sprites or the letters drawn over
+ * it, on the open spread (docs/reader.md, "Inside-page animations" and
+ * "Chapter-break quotes"). No riffle copies — a plate never rides a leaf.
+ * The plates must be exactly the pages `src/reader/pageAnims.ts` animates and
+ * `src/reader/quotes.json` quotes: such a page with no plate, or a plate with
+ * neither, stops the run.
+ *
+ *   npm run plates -- --only 05      just those pages (comma-separated), and
+ *                                    only they are held to that rule
  */
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -54,6 +59,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { ANIMATED_PAGES, PAGE_ANIM_ISSUE, animsOnPage } from '../src/reader/pageAnims.ts';
+import quotes from '../src/reader/quotes.json' with { type: 'json' };
 
 /** Where the PNG exports live — outside the repo. */
 const SOURCE_DIR = join(homedir(), 'Discommode-pages');
@@ -84,6 +90,8 @@ const NON_PAGE = new Set(['overlay.png', 'cover-plate.png']);
 
 const force = process.argv.includes('--force');
 const platesMode = process.argv.includes('--plates');
+const onlyArg = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : null;
+const only = onlyArg ? new Set(onlyArg.split(',').map((p) => Number(p))) : null;
 
 const kb = (bytes) => `${(bytes / 1024).toFixed(0)} KB`;
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(2)} MB`;
@@ -202,14 +210,20 @@ if (platesMode) {
   const dir = join(SOURCE_DIR, issue, 'plates');
   const files = ((await readdir(dir).catch(() => null)) ?? []).filter((f) => /\.png$/i.test(f)).sort();
   const stray = files.filter((f) => !/^\d{2}\.png$/.test(f));
-  const plated = new Set(files.filter((f) => /^\d{2}\.png$/.test(f)).map((f) => Number(f.slice(0, 2))));
-  const missing = ANIMATED_PAGES.filter((p) => !plated.has(p));
-  const orphan = [...plated].filter((p) => !ANIMATED_PAGES.includes(p));
+  const quoted = quotes.pages.map((q) => q.page);
+  const wanted = [...new Set([...ANIMATED_PAGES, ...quoted])].sort((a, b) => a - b);
+  const inScope = (p) => !only || only.has(p);
+  const plated = new Set(files.filter((f) => /^\d{2}\.png$/.test(f)).map((f) => Number(f.slice(0, 2))).filter(inScope));
+  const missing = wanted.filter((p) => inScope(p) && !plated.has(p));
+  const orphan = [...plated].filter((p) => !wanted.includes(p));
+  const unknown = only ? [...only].filter((p) => !wanted.includes(p)) : [];
   const pad = (p) => `${String(p).padStart(2, '0')}.png`;
+  const what = (p) => (quoted.includes(p) ? 'quote' : `animated (${animsOnPage(p).map((r) => r.id).join(', ')})`);
   const problems = [
-    ...missing.map((p) => `page ${pad(p)} is animated (${animsOnPage(p).map((r) => r.id).join(', ')}) but has no plate: export ${join(dir, pad(p))} — the page with that drawing HIDDEN`),
-    ...orphan.map((p) => `plate ${pad(p)} has no animation in src/reader/pageAnims.ts: remove it from ${dir}, or add the page's row`),
-    ...stray.map((f) => `${join(dir, f)} is not named NN.png`),
+    ...missing.map((p) => `page ${pad(p)} has a ${what(p)} but no plate: export ${join(dir, pad(p))} — the page with that ${quoted.includes(p) ? 'quote' : 'drawing'} HIDDEN`),
+    ...orphan.map((p) => `plate ${pad(p)} has no animation in src/reader/pageAnims.ts and no quote in src/reader/quotes.json: remove it from ${dir}, or add the page's row`),
+    ...unknown.map((p) => `--only ${p}: page ${pad(p)} has no animation and no quote`),
+    ...(only ? [] : stray.map((f) => `${join(dir, f)} is not named NN.png`)),
   ];
   if (problems.length) {
     console.log(`\n!!  PLATES DO NOT MATCH THE PAGE ANIMATIONS  !!`);
@@ -219,7 +233,7 @@ if (platesMode) {
   }
   console.log(`\nissue ${issue}  (${plated.size} plate${plated.size === 1 ? '' : 's'}: ${[...plated].sort((a, b) => a - b).map((p) => String(p).padStart(2, '0')).join(' ')})`);
   await mkdir(join(OUTPUT_DIR, issue, 'plates'), { recursive: true });
-  for (const p of ANIMATED_PAGES) await convert(issue, pad(p), 'plates');
+  for (const p of wanted.filter(inScope)) await convert(issue, pad(p), 'plates');
   console.log(`\n${converted} converted, ${skipped} up to date`);
   console.log(`total  ${mb(pngTotal)} PNG → ${mb(webpTotal)} WebP   ${Math.round((1 - webpTotal / pngTotal) * 100)}% smaller`);
   if (warnings.length > 0) {

@@ -374,3 +374,49 @@
 .page-anim[data-align='difference'] .page-anim__sprites {
   mix-blend-mode: difference;
 }
+
+/* ── the chapter-break quotes ───────────────────────────────────────────── */
+
+/* Over a quote page's baked <img>, in the same static slot (quotePlayer.ts):
+   the plate (the quote removed), the canvas the letters and the ES ⇄ EN hint
+   are drawn on, and the button over the quote. Shown and hidden on exactly the
+   page animations' rule above. */
+.quote-layer {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  opacity: 0;
+}
+.quote-layer[data-state='shown'] {
+  visibility: inherit;
+  opacity: 1;
+}
+.quote-layer__plate,
+.quote-layer__letters {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+/* The quote's hit area. It takes no pointer events (`.book *`): a press on it
+   reaches the player through the engine's `tapTarget`. Keyboard focus is its
+   own, so the ring is drawn here. */
+.quote-layer__hit {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  outline: none;
+}
+.quote-layer__hit:focus-visible {
+  outline: 2px solid #519b66;
+  outline-offset: 2px;
+}
+
+/* Over the quote the cursor is the hint as a small tag (drawn once the fonts
+   are in, quotePlayer.ts); never on touch, which has no cursor. */
+.book[data-cursor='quote'] {
+  cursor: var(--quote-cursor, pointer);
+}

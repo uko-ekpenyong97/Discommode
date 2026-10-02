@@ -1,0 +1,731 @@
+/**
+ * The chapter-break quotes on the open spread (docs/reader.md, "Chapter-break
+ * quotes"). Plain TS, no React, like the flip engine and the page animations'
+ * player, and on the same lifecycle as the latter (pageAnimPlayer.ts).
+ *
+ * A quote page's static slot carries, over its baked `<img>`, a wrapper
+ * FlipBook renders: the page's PLATE (the quote removed), ONE canvas the
+ * letters and the ES ⇄ EN hint are drawn on, and the button over the quote.
+ * Hidden whenever a turn layer is up — `setTurning(true)` comes synchronously
+ * from the engine's `onTurnActive` — and faded in over SETTLE_FADE_MS when the
+ * book settles. A morph in flight when a turn starts jumps to its end first.
+ *
+ * What a turn shows instead is the page BAKED in its current language: the
+ * plate with the letters and the hint drawn on at 2000×2600, by the same code
+ * that draws the live layer, encoded once per language (WebP) when the page
+ * first settles. `mapSpreads` hands the engine and the static slot the bake for
+ * the page's language — so the curl's faces, the landing plate and the static
+ * `<img>` under the layer all carry it — and the printed page until there is
+ * one (the first arrival). Never the bare plate.
+ *
+ * A click or tap on the quote reaches the player through the engine
+ * (`tapTarget`): the engine holds the turn back on a press over the quote and
+ * starts it only once the press moves like a drag. Keyboard: the button.
+ *
+ * Fonts (Space Mono Bold, Lora Regular) are loaded before anything is measured,
+ * and nothing is measured again: the letters are drawn, not laid out, so
+ * nothing on the page can reflow.
+ */
+import { registerBusy } from '../activity';
+import type { Page, Spread } from './issue-01';
+import { pagesNear } from './pageAnimGeometry';
+import { PAGE_H, PAGE_W } from './pageAnims';
+import { SETTLE_FADE_MS } from './pageAnimPlayer';
+import { HINT_MS, hintAlpha, hintAlphaAt, layoutBlock, layoutHint, planMorph, sampleMorph, swapArrow } from './quoteMorph';
+import type { DrawnGlyph, Glyph, HintGlyph, Lang, Measure, MorphPlan } from './quoteMorph';
+import { QUOTE_FACES, quoteOnPage, quoteSettings, subscribeQuoteSettings } from './quotes';
+import type { QuotePage } from './quotes';
+
+/** The language every quote is printed in: its page's own `src` shows it. */
+const PRINTED: Lang = 'es';
+/** Backing-store DPR cap for the letter canvas, as the sprites'. */
+const MAX_DPR = 2;
+/** The bakes' encoding: as close to the printed pages' own WebPs as costs nothing. */
+const BAKE_TYPE = 'image/webp';
+const BAKE_QUALITY = 0.92;
+/** The cursor over the quote: the hint as a tag — the page's paper, edged and
+ *  lettered in the hint's green, its ⇄ drawn as the hint's is. */
+const CURSOR = { sizePx: 11, padX: 8, h: 20, edge: 1.5, paper: '#FFF5EC' };
+
+const other = (l: Lang): Lang => (l === 'es' ? 'en' : 'es');
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ── fonts and measuring ─────────────────────────────────────────────────
+
+let fontsReady: Promise<boolean> | null = null;
+
+/** Both faces loaded and added to the document, once. False if either failed:
+ *  the printed page then stays, with no translation. */
+export function loadQuoteFonts(): Promise<boolean> {
+  fontsReady ??= Promise.all(
+    QUOTE_FACES.map((f) =>
+      new FontFace(f.family, `url(${f.url})`, { weight: f.weight, style: 'normal' }).load().then((face) => {
+        document.fonts.add(face);
+      }),
+    ),
+  )
+    .then(() => true)
+    .catch(() => {
+      fontsReady = null;
+      return false;
+    });
+  return fontsReady;
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+const measure: Measure = (font, text) => {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  const ctx = measureCtx!;
+  ctx.font = font;
+  const m = ctx.measureText(text);
+  return { width: m.width, ascent: m.fontBoundingBoxAscent, descent: m.fontBoundingBoxDescent };
+};
+
+interface Layout {
+  es: Glyph[];
+  en: Glyph[];
+  hint: HintGlyph[];
+}
+
+const layouts = new Map<number, Layout>();
+
+/** A page's letters in both languages and its hint, measured once (after the
+ *  fonts have loaded — every caller awaits them). */
+function layoutOf(q: QuotePage): Layout {
+  let l = layouts.get(q.page);
+  if (!l) {
+    l = {
+      es: q.blocks.flatMap((b) => layoutBlock(b, 'es', measure)),
+      en: q.blocks.flatMap((b) => layoutBlock(b, 'en', measure)),
+      hint: layoutHint(q.hint, measure),
+    };
+    layouts.set(q.page, l);
+  }
+  return l;
+}
+
+// ── drawing ─────────────────────────────────────────────────────────────
+
+/** Letters and hint, page px × k, onto whatever is already in `ctx`. */
+function paint(
+  ctx: CanvasRenderingContext2D,
+  k: number,
+  q: QuotePage,
+  glyphs: DrawnGlyph[],
+  hint: HintGlyph[] | null,
+  alphaOf: (g: HintGlyph) => number,
+): void {
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  // The outlines as drawn: Chrome's default on macOS emboldens canvas text by a
+  // device-pixel constant (+8% ink on the quote, +14% on the attribution
+  // against the print at 2000px; more at reading size). Measured in
+  // docs/reader.md, "Chapter-break quotes".
+  ctx.textRendering = 'geometricPrecision';
+  for (const b of q.blocks) {
+    ctx.font = b.font;
+    ctx.fillStyle = q.colors[b.key] ?? '#000';
+    for (const g of glyphs) {
+      if (g.block !== b.key) continue;
+      ctx.globalAlpha = g.alpha;
+      ctx.fillText(g.ch, g.x, g.y);
+    }
+  }
+  if (hint) paintHint(ctx, q, hint, alphaOf, q.hint.sizePx);
+  ctx.globalAlpha = 1;
+}
+
+/** The ES ⇄ EN line: the labels set in the hint's font, the ⇄ drawn. */
+function paintHint(
+  ctx: CanvasRenderingContext2D,
+  q: QuotePage,
+  hint: HintGlyph[],
+  alphaOf: (g: HintGlyph) => number,
+  sizePx: number,
+): void {
+  ctx.font = q.hint.font.replace(`${q.hint.sizePx}px`, `${sizePx}px`);
+  ctx.fillStyle = q.hint.color;
+  ctx.strokeStyle = q.hint.color;
+  for (const g of hint) {
+    ctx.globalAlpha = alphaOf(g);
+    if (!g.arrow) {
+      ctx.fillText(g.ch, g.x, g.y);
+      continue;
+    }
+    const a = swapArrow(g.x, g.y, sizePx, q.hint.arrowStrokeWeight);
+    ctx.lineWidth = a.width;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'bevel';
+    ctx.beginPath();
+    for (const path of a.paths) {
+      ctx.moveTo(path[0][0], path[0][1]);
+      for (const [x, y] of path.slice(1)) ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
+const restGlyphs = (l: Layout, lang: Lang): DrawnGlyph[] => l[lang].map((g) => ({ ...g, alpha: 1 }));
+
+/** The page at rest in `lang` on a 2000×2600 canvas: the plate, then the
+ *  letters and (`hint`) the hint — what the live layer draws, at 1:1. */
+function renderPage(q: QuotePage, plate: CanvasImageSource, lang: Lang, hint: boolean): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = PAGE_W;
+  c.height = PAGE_H;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(plate, 0, 0, PAGE_W, PAGE_H);
+  const l = layoutOf(q);
+  paint(ctx, 1, q, restGlyphs(l, lang), hint ? l.hint : null, (g) => hintAlpha(g.lang, lang, q.hint.inactiveOpacity));
+  return c;
+}
+
+// ── the bakes ───────────────────────────────────────────────────────────
+
+interface Bake {
+  url: string;
+  /** Holds the decoded bitmap while the page is about: the static slot and the
+   *  curl's faces load the same URL. */
+  img: HTMLImageElement;
+}
+
+const bakes = new Map<string, Bake>();
+const baking = new Map<string, Promise<Bake | null>>();
+const bakeKey = (page: number, lang: Lang, hint: boolean) => `${page}:${lang}:${hint ? 1 : 0}`;
+
+function bakeOne(q: QuotePage, plate: HTMLImageElement, lang: Lang, hint: boolean): Promise<Bake | null> {
+  const key = bakeKey(q.page, lang, hint);
+  const done = bakes.get(key);
+  if (done) return Promise.resolve(done);
+  let p = baking.get(key);
+  if (!p) {
+    p = new Promise<Blob | null>((resolve) => renderPage(q, plate, lang, hint).toBlob(resolve, BAKE_TYPE, BAKE_QUALITY))
+      .then(async (blob) => {
+        if (!blob) return null;
+        const img = new Image();
+        img.src = URL.createObjectURL(blob);
+        await img.decode().catch(() => {});
+        const b = { url: img.src, img };
+        bakes.set(key, b);
+        return b;
+      })
+      .catch(() => null)
+      .finally(() => baking.delete(key));
+    baking.set(key, p);
+  }
+  return p;
+}
+
+// ── the cursor ──────────────────────────────────────────────────────────
+
+let cursorValue: string | null = null;
+
+/** The tag, drawn once the fonts are in: a CSS cursor at 1× and 2×, its
+ *  hotspot at its centre. Laid out and drawn by the hint's own code, at 11px. */
+function quoteCursor(q: QuotePage): string {
+  if (cursorValue) return cursorValue;
+  const spec = { ...q.hint, font: q.hint.font.replace(`${q.hint.sizePx}px`, `${CURSOR.sizePx}px`), letterSpacingPx: (q.hint.letterSpacingPx / q.hint.sizePx) * CURSOR.sizePx };
+  const probe = layoutHint({ ...spec, centerX: 0, top: 0, lineHeight: CURSOR.h }, measure);
+  const textW = -2 * probe[0].x; // centred on 0: its left edge is −width/2
+  const w = Math.ceil(textW + 2 * CURSOR.padX);
+  const glyphs = layoutHint({ ...spec, centerX: w / 2, top: 0, lineHeight: CURSOR.h }, measure);
+  const draw = (scale: number) => {
+    const c = document.createElement('canvas');
+    c.width = w * scale;
+    c.height = CURSOR.h * scale;
+    const ctx = c.getContext('2d')!;
+    ctx.scale(scale, scale);
+    ctx.textRendering = 'geometricPrecision';
+    ctx.fillStyle = CURSOR.paper;
+    ctx.strokeStyle = q.hint.color;
+    ctx.lineWidth = CURSOR.edge;
+    ctx.beginPath();
+    ctx.roundRect(CURSOR.edge / 2, CURSOR.edge / 2, w - CURSOR.edge, CURSOR.h - CURSOR.edge, (CURSOR.h - CURSOR.edge) / 2);
+    ctx.fill();
+    ctx.stroke();
+    paintHint(ctx, q, glyphs, () => 1, CURSOR.sizePx);
+    return c.toDataURL('image/png');
+  };
+  const hx = Math.round(w / 2);
+  const hy = CURSOR.h / 2;
+  const set = `image-set(url("${draw(1)}") 1x, url("${draw(2)}") 2x) ${hx} ${hy}, pointer`;
+  cursorValue = CSS.supports('cursor', set) ? set : `url("${draw(1)}") ${hx} ${hy}, pointer`;
+  return cursorValue;
+}
+
+// ── the player ──────────────────────────────────────────────────────────
+
+interface Slot {
+  page: Page;
+  q: QuotePage;
+  wrap: HTMLDivElement;
+  plate: HTMLImageElement;
+  canvas: HTMLCanvasElement;
+  hit: HTMLButtonElement;
+  desc: HTMLElement;
+  live: HTMLElement;
+  shown: boolean;
+  fade: Animation | null;
+  morph: { plan: MorphPlan; t0: number; from: Lang; to: Lang } | null;
+  /** The last frame's letters, for the verify suite. */
+  drawn: DrawnGlyph[];
+  onClick: () => void;
+}
+
+export interface QuotePlayer {
+  /** The open spread's quote pages: each page's wrapper (`.quote-layer`) as
+   *  FlipBook rendered it, or null. Called after every committed spread. */
+  setSlots: (spread: number, spreads: Spread[], wraps: (HTMLDivElement | null)[]) => void;
+  /** From the engine's `onTurnActive`, synchronously. */
+  setTurning: (active: boolean) => void;
+  /** The engine's `tapTarget`: the quote's toggle if the press is on one. */
+  tapAt: (e: PointerEvent) => (() => void) | null;
+  /** `spreads` with each quote page's `src` its bake in its current language. */
+  mapSpreads: (spreads: Spread[]) => Spread[];
+  /** Called whenever `mapSpreads` would change (useSyncExternalStore's). */
+  subscribe: (fn: () => void) => () => void;
+  /** Bumped whenever `mapSpreads` would change. */
+  version: () => number;
+  /**
+   * Live on `book` (the engine's pointer host, whose cursor is the tag over a
+   * quote): listeners, the busy probe, the dials. Returns the teardown, which
+   * leaves the player as it was made — a StrictMode remount attaches again.
+   */
+  attach: (book: HTMLElement) => () => void;
+}
+
+/** Inert until `attach`: FlipBook makes one in render (as state). */
+export function createQuotePlayer(): QuotePlayer {
+  const langs = new Map<number, Lang>();
+  const listeners = new Set<() => void>();
+  const platePrefetch = new Map<number, HTMLImageElement>();
+  let slots: Slot[] = [];
+  let spreadIndex = 0;
+  let spreadList: Spread[] = [];
+  let turning = false;
+  let destroyed = true;
+  let book: HTMLElement | null = null;
+  let raf = 0;
+  let epoch = 0;
+  let version = 0;
+  let hovering = false;
+  /** When a tap last toggled: the button's own click right after it (an
+   *  assistive tech that sends both) is the same press. */
+  let lastTap = -Infinity;
+  let memo: { spreads: Spread[]; version: number; out: Spread[] } | null = null;
+
+  const langOf = (n: number): Lang => langs.get(n) ?? quoteSettings.defaultLang;
+
+  function bump(): void {
+    version++;
+    for (const fn of listeners) fn();
+  }
+
+  /** `page` as the engine and the static slot should show it. */
+  function asShown(page: Page | null): Page | null {
+    if (!page) return page;
+    const q = quoteOnPage(page.n);
+    if (!q) return page;
+    const lang = langOf(page.n);
+    const b = bakes.get(bakeKey(page.n, lang, quoteSettings.showHint));
+    if (!b) return page;
+    // A riffle's fast leaves keep the printed half-size page in the printed
+    // language (it lacks only the hint, for under 150ms); in the other, the bake.
+    return { ...page, src: b.url, riffle: lang === PRINTED ? page.riffle : b.url };
+  }
+
+  const ro = new ResizeObserver((entries) => {
+    for (const en of entries) {
+      const s = slots.find((x) => x.wrap === en.target);
+      if (s?.shown && sizeCanvas(s) && !s.morph) drawRest(s);
+    }
+  });
+
+  function sizeCanvas(s: Slot): boolean {
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    const w = Math.max(1, Math.round(s.wrap.clientWidth * dpr));
+    const h = Math.max(1, Math.round(s.wrap.clientHeight * dpr));
+    if (s.canvas.width === w && s.canvas.height === h) return false;
+    s.canvas.width = w;
+    s.canvas.height = h;
+    return true;
+  }
+
+  function draw(s: Slot, glyphs: DrawnGlyph[], alphaOf: (g: HintGlyph) => number): void {
+    const ctx = s.canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
+    paint(ctx, s.canvas.width / PAGE_W, s.q, glyphs, quoteSettings.showHint ? layoutOf(s.q).hint : null, alphaOf);
+    s.drawn = glyphs;
+  }
+
+  function drawRest(s: Slot): void {
+    const lang = langOf(s.page.n);
+    draw(s, restGlyphs(layoutOf(s.q), lang), (g) => hintAlpha(g.lang, lang, s.q.hint.inactiveOpacity));
+  }
+
+  /** The button's name, the quote it describes and its language. `announce`:
+   *  the live region reads the quote now on the page. */
+  function label(s: Slot, announce: boolean): void {
+    const lang = langOf(s.page.n);
+    s.hit.setAttribute('aria-label', lang === 'es' ? 'Translate the quote to English' : 'Show the quote in Spanish');
+    s.hit.dataset.lang = lang;
+    s.desc.lang = lang;
+    s.desc.textContent = s.q.text[lang];
+    if (announce) {
+      s.live.lang = lang;
+      s.live.textContent = s.q.text[lang];
+    }
+  }
+
+  function hide(s: Slot): void {
+    s.fade?.cancel();
+    s.fade = null;
+    s.shown = false;
+    delete s.wrap.dataset.state;
+  }
+
+  /** A morph in flight lands where it was going. */
+  function finish(s: Slot): void {
+    if (!s.morph) return;
+    s.morph = null;
+    drawRest(s);
+  }
+
+  async function reveal(s: Slot): Promise<void> {
+    const at = epoch;
+    if (!(await loadQuoteFonts())) return;
+    if (!s.plate.getAttribute('src') && s.plate.dataset.src) s.plate.src = s.plate.dataset.src;
+    await s.plate.decode().catch(() => {});
+    if (at !== epoch || destroyed || turning || !slots.includes(s)) return;
+    if (!s.plate.naturalWidth) return; // no plate: the printed page stays
+    const hint = quoteSettings.showHint;
+    const made = await Promise.all((['es', 'en'] as Lang[]).map((l) => bakeOne(s.q, s.plate, l, hint)));
+    if (at !== epoch || destroyed || turning || !slots.includes(s)) return;
+    if (made.some((b) => !b)) return; // a turn would have nothing to show in the other language
+    book?.style.setProperty('--quote-cursor', quoteCursor(s.q));
+    sizeCanvas(s);
+    s.morph = null;
+    drawRest(s);
+    label(s, false);
+    s.shown = true;
+    s.wrap.dataset.state = 'shown';
+    const fade = s.wrap.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SETTLE_FADE_MS, easing: 'linear' });
+    s.fade = fade;
+    // The static slot under the layer takes the bake once the layer covers it:
+    // on a first arrival the hint fades in with the layer rather than popping.
+    const swap = () => {
+      if (s.fade === fade) s.fade = null;
+      if (!destroyed) bump();
+    };
+    void fade.finished.then(swap, swap);
+  }
+
+  function toggle(s: Slot): void {
+    if (!s.shown || turning || destroyed) return;
+    finish(s); // a click mid-morph lands it, then starts the new one
+    const from = langOf(s.page.n);
+    const to = other(from);
+    const l = layoutOf(s.q);
+    langs.set(s.page.n, to);
+    s.morph = { plan: planMorph(l[from], l[to], quoteSettings, reducedMotion()), t0: performance.now(), from, to };
+    label(s, true);
+    bump(); // the static slot and the next turn: the new language's bake
+    loop();
+  }
+
+  function tick(now: number): void {
+    raf = 0;
+    if (destroyed || turning) return;
+    let any = false;
+    for (const s of slots) {
+      if (!s.shown || !s.morph) continue;
+      const { plan, t0, from, to } = s.morph;
+      const ms = Math.max(0, now - t0);
+      if (ms >= Math.max(plan.totalMs, HINT_MS)) {
+        finish(s);
+        continue;
+      }
+      any = true;
+      const inactive = s.q.hint.inactiveOpacity;
+      draw(s, sampleMorph(plan, ms), (g) => hintAlphaAt(g.lang, from, to, ms, inactive));
+    }
+    if (any) raf = requestAnimationFrame(tick);
+  }
+
+  function loop(): void {
+    if (!raf && !turning && !destroyed) raf = requestAnimationFrame(tick);
+  }
+
+  function stop(): void {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+  }
+
+  // ── the cursor ────────────────────────────────────────────────────────
+
+  const inside = (el: Element, x: number, y: number): boolean => {
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  };
+  function setHover(on: boolean): void {
+    if (on === hovering || !book) return;
+    hovering = on;
+    if (on) book.dataset.cursor = 'quote';
+    else delete book.dataset.cursor;
+  }
+  const onPointer = (e: PointerEvent) =>
+    setHover(e.pointerType !== 'touch' && !turning && slots.some((s) => s.shown && inside(s.hit, e.clientX, e.clientY)));
+  const onLeave = () => setHover(false);
+
+  // ── neighbours: fonts and plates ahead of the settle ──────────────────
+
+  function prefetch(): void {
+    const near = pagesNear(spreadList, spreadIndex, 1);
+    let any = false;
+    for (const n of near) {
+      const q = quoteOnPage(n);
+      if (!q) continue;
+      any = true;
+      const page = spreadList.flat().find((p) => p?.n === n);
+      if (page?.plate && !platePrefetch.has(n) && !slots.some((s) => s.page.n === n)) {
+        const img = new Image();
+        img.src = page.plate;
+        platePrefetch.set(n, img);
+      }
+    }
+    if (any) void loadQuoteFonts();
+    for (const n of platePrefetch.keys()) if (!near.has(n)) platePrefetch.delete(n);
+  }
+
+  // ── the dials ─────────────────────────────────────────────────────────
+
+  let lastHint = quoteSettings.showHint;
+  const onSettings = (v: typeof quoteSettings) => {
+    if (v.showHint === lastHint) return;
+    lastHint = v.showHint;
+    // Redrawn now; the bakes for the new hint follow, and the slot takes them.
+    for (const s of slots) {
+      if (!s.shown) continue;
+      if (!s.morph) drawRest(s);
+      void Promise.all((['es', 'en'] as Lang[]).map((l) => bakeOne(s.q, s.plate, l, v.showHint))).then(() => {
+        if (!destroyed) bump();
+      });
+    }
+    bump();
+  };
+
+  const player: QuotePlayer = {
+    setSlots(spread, spreads, wraps) {
+      spreadIndex = spread;
+      spreadList = spreads;
+      const next: Slot[] = [];
+      for (const wrap of wraps) {
+        if (!wrap) continue;
+        const kept = slots.find((s) => s.wrap === wrap);
+        if (kept) {
+          next.push(kept);
+          continue;
+        }
+        const n = Number(wrap.dataset.page);
+        const page = spreads[spread]?.find((p) => p?.n === n);
+        const q = quoteOnPage(n);
+        const plate = wrap.querySelector<HTMLImageElement>('.quote-layer__plate');
+        const canvas = wrap.querySelector('canvas');
+        const hit = wrap.querySelector('button');
+        const desc = wrap.querySelector<HTMLElement>('.quote-layer__text-alt');
+        const live = wrap.querySelector<HTMLElement>('[aria-live]');
+        if (!page || !q || !plate || !canvas || !hit || !desc || !live) continue;
+        const s: Slot = {
+          page,
+          q,
+          wrap,
+          plate,
+          canvas,
+          hit,
+          desc,
+          live,
+          shown: false,
+          fade: null,
+          morph: null,
+          drawn: [],
+          onClick: () => {
+            if (performance.now() - lastTap < 400) return;
+            toggle(s);
+          },
+        };
+        hit.addEventListener('click', s.onClick);
+        hide(s);
+        ro.observe(wrap);
+        next.push(s);
+      }
+      for (const s of slots) {
+        if (next.includes(s)) continue;
+        finish(s); // never reset under a morph: it lands first
+        s.hit.removeEventListener('click', s.onClick);
+        ro.unobserve(s.wrap);
+      }
+      slots = next;
+
+      // Back to the printed language once the page is off the open spread.
+      const open = new Set((spreads[spread] ?? []).filter((p): p is Page => !!p).map((p) => p.n));
+      let reset = false;
+      if (quoteSettings.resetWhenPageLeaves) {
+        for (const [n, lang] of langs) {
+          if (open.has(n) || lang === quoteSettings.defaultLang) continue;
+          langs.delete(n);
+          reset = true;
+        }
+      }
+      if (reset) bump();
+      if (turning) return; // a riffle's inner landing: wait for the book to settle (and fetch nothing)
+      prefetch();
+      epoch++;
+      for (const s of slots) if (!s.shown) void reveal(s);
+    },
+
+    setTurning(active) {
+      if (active === turning) return;
+      turning = active;
+      epoch++;
+      if (active) {
+        // Synchronously, before the strips' first frame: a morph lands, and the
+        // page under the layer (its bake) is what shows.
+        stop();
+        for (const s of slots) {
+          finish(s);
+          hide(s);
+        }
+        setHover(false);
+        return;
+      }
+      prefetch();
+      for (const s of slots) if (!s.shown) void reveal(s);
+    },
+
+    tapAt(e) {
+      if (turning || destroyed) return null;
+      const s = slots.find((x) => x.shown && inside(x.hit, e.clientX, e.clientY));
+      if (!s) return null;
+      return () => {
+        lastTap = performance.now();
+        toggle(s);
+      };
+    },
+
+    mapSpreads(spreads) {
+      if (memo && memo.spreads === spreads && memo.version === version) return memo.out;
+      const out = spreads.map(([l, r]) => [asShown(l), asShown(r)] as Spread);
+      memo = { spreads, version, out };
+      return out;
+    },
+
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+
+    version: () => version,
+
+    attach(el) {
+      book = el;
+      destroyed = false;
+      lastHint = quoteSettings.showHint;
+      el.addEventListener('pointermove', onPointer);
+      el.addEventListener('pointerdown', onPointer);
+      el.addEventListener('pointerleave', onLeave);
+      const offSettings = subscribeQuoteSettings(onSettings);
+      const unbusy = registerBusy(() => slots.some((s) => s.morph !== null));
+      // The dev handle reads THIS player: StrictMode makes (and drops) a second.
+      if (import.meta.env.DEV) {
+        devHandle.player = player;
+        devHandle.state = () =>
+          slots.map((s) => ({
+            page: s.page.n,
+            lang: langOf(s.page.n),
+            shown: s.shown,
+            morphing: s.morph !== null,
+            morph: s.morph && { totalMs: s.morph.plan.totalMs, moved: s.morph.plan.moved, total: s.morph.plan.total, reduced: s.morph.plan.reduced },
+            drawn: s.drawn.map((g) => ({ ...g })),
+            label: s.hit.getAttribute('aria-label'),
+            live: { lang: s.live.lang, text: s.live.textContent },
+            desc: { lang: s.desc.lang, text: s.desc.textContent },
+          }));
+        devHandle.langs = () => Object.fromEntries(langs);
+        devHandle.toggle = (n) => {
+          const s = slots.find((x) => x.page.n === n);
+          if (s) toggle(s);
+          return !!s;
+        };
+      }
+      return () => {
+        destroyed = true;
+        epoch++;
+        stop();
+        offSettings();
+        unbusy();
+        for (const s of slots) {
+          s.hit.removeEventListener('click', s.onClick);
+          ro.unobserve(s.wrap);
+        }
+        slots = [];
+        turning = false;
+        hovering = false;
+        el.removeEventListener('pointermove', onPointer);
+        el.removeEventListener('pointerdown', onPointer);
+        el.removeEventListener('pointerleave', onLeave);
+        delete el.dataset.cursor;
+        el.style.removeProperty('--quote-cursor');
+        platePrefetch.clear();
+        book = null;
+        if (import.meta.env.DEV && devHandle.player === player) devHandle.player = null;
+      };
+    },
+  };
+
+  return player;
+}
+
+/** DEV: `window.__quote` — the verify suite's and the TRANSLATE panel's way in. */
+const devHandle: {
+  player: QuotePlayer | null;
+  state: () => unknown[];
+  langs: () => Record<number, Lang>;
+  toggle: (page: number) => boolean;
+  /** Where `page`'s letters sit at rest in `lang`, measured afresh. */
+  layout: (page: number, lang: Lang) => Promise<Glyph[] | null>;
+  /** `page` at rest in `lang` (plate + letters, the hint if asked), 2000×2600, as a PNG data URL. */
+  render: (page: number, lang: Lang, hint: boolean) => Promise<string | null>;
+  /** The bake a turn shows for `page` in `lang`, if it has been made. */
+  bakeUrl: (page: number, lang: Lang) => string | null;
+  /** The cursor tag's CSS value, once drawn. */
+  cursor: () => string | null;
+} = {
+  player: null,
+  state: () => [],
+  langs: () => ({}),
+  toggle: () => false,
+  async layout(page, lang) {
+    const q = quoteOnPage(page);
+    if (!q || !(await loadQuoteFonts())) return null;
+    return q.blocks.flatMap((b) => layoutBlock(b, lang, measure));
+  },
+  async render(page, lang, hint) {
+    const q = quoteOnPage(page);
+    if (!q || !(await loadQuoteFonts())) return null;
+    const img = new Image();
+    img.src = `/issues/01/plates/${String(page).padStart(2, '0')}.webp`;
+    await img.decode();
+    return renderPage(q, img, lang, hint).toDataURL('image/png');
+  },
+  bakeUrl: (page, lang) => bakes.get(bakeKey(page, lang, quoteSettings.showHint))?.url ?? null,
+  cursor: () => cursorValue,
+};
+
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  (window as unknown as { __quote?: typeof devHandle }).__quote = devHandle;
+}

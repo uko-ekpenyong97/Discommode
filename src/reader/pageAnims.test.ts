@@ -4,6 +4,7 @@ import type { PageAnimManifest } from './pageAnimGeometry';
 import { cellRect, frameAt, lockedH, pagesNear, restOf } from './pageAnimGeometry';
 import type { AtlasEntry } from './pageAnimGeometry';
 import { buildSpreads, issue01 } from './issue-01';
+import { QUOTED_PAGES } from './quotes';
 // The build's own geometry (plain JS, no browser): what seeded the rows.
 import { fitInside, turnedBounds } from '../../scripts/page-anim-register.mjs';
 // What `npm run anims` wrote.
@@ -40,9 +41,9 @@ describe('pageAnims.ts', () => {
     }
   });
 
-  it('every animated page carries its plate in the issue, and no other page does', () => {
+  it('every animated page carries its plate in the issue, and no other page does but a quoted one', () => {
     for (const p of issue01.pages) {
-      expect(!!p.plate).toBe(ANIMATED_PAGES.includes(p.n) && !p.label);
+      expect(!!p.plate).toBe((ANIMATED_PAGES.includes(p.n) || QUOTED_PAGES.includes(p.n)) && !p.label);
       if (p.plate) expect(p.plate).toBe(`/issues/01/plates/${String(p.n).padStart(2, '0')}.webp`);
     }
   });

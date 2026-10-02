@@ -1,7 +1,7 @@
 /**
  * The reader, in Chrome. `npm run verify:reader` with the dev server running
  * (`npm run dev`; `--url` for another origin, `--runs N` for the frame budget,
- * `--only frames,zorder,nav,exit,hover,life,sky,pageanims,pageclip` for a subset).
+ * `--only frames,zorder,nav,exit,hover,life,sky,pageanims,pageclip,quote` for a subset).
  *
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
@@ -79,6 +79,15 @@
  *                         Next/Prev both ways, a drag and a riffle the layer
  *                         never shows with a leaf up, and held mid-turn it adds
  *                         no pixel anywhere.
+ *   chapter-break quote   (`quote`, scripts/quote-checks.mjs) page 05: the
+ *                         Spanish layer against the printed page, at 2000×2600
+ *                         (each line registered, the ink, the differing pixels)
+ *                         and on screen at 1× and 2×; a click on the quote
+ *                         translates and turns nothing, a click elsewhere and a
+ *                         drag from the quote turn; the morph ends on the
+ *                         English layout; a turn mid-morph shows the English
+ *                         bake, never the plate; away and back is Spanish; the
+ *                         cursor tag, the keyboard, touch, reduced motion.
  *
  * The z-order and exit checks photograph the book over the sky now, so they
  * hold the sky still first (`stillSky`: its clock pinned, its wake frozen) —
@@ -92,13 +101,14 @@ import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
 import { checkLayout } from './layout-checks.mjs';
+import { checkQuote } from './quote-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip').split(',');
+/** `--only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip,quote` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip,quote').split(',');
 /** Where `layout` writes its screenshots. */
 const SHOTS = arg('--shots', '.context/layout');
 const B = `${ORIGIN}/`;
@@ -148,7 +158,7 @@ const readState = (page) =>
     hash: +location.hash.split('/')[1],
     pos: document.querySelector('.book').dataset.pos,
     imgs: [...document.querySelectorAll('.book > .book__page > img')]
-      .map((i) => i.getAttribute('src').split('/').pop().replace('.webp', ''))
+      .map((i) => i.dataset.file ?? i.getAttribute('src').split('/').pop().replace('.webp', ''))
       .join('|'),
     layer: document.querySelector('.book__turn-host').childElementCount,
   }));
@@ -375,7 +385,7 @@ async function checkFolios(browser) {
     await page.waitForTimeout(80);
     rows.push(
       await page.evaluate(() => {
-        const files = [...document.querySelectorAll('.book > .book__page > img')].map((i) => i.getAttribute('src').split('/').pop().replace('.webp', ''));
+        const files = [...document.querySelectorAll('.book > .book__page > img')].map((i) => i.dataset.file ?? i.getAttribute('src').split('/').pop().replace('.webp', ''));
         const inside = files.filter((f) => /^\d+$/.test(f));
         const expected = inside.length ? inside.join(' | ') : files.includes('cover-rest') ? 'Cover' : files.includes('back-rest') ? 'Back' : '?';
         const pill = document.querySelector('.reader__caption');
@@ -1623,6 +1633,7 @@ async function run() {
   if (ONLY.includes('sky')) await checkSky(browser);
   if (ONLY.includes('pageanims')) await checkPageAnims(browser);
   if (ONLY.includes('pageclip')) await checkPageAnimClip(browser);
+  if (ONLY.includes('quote')) await checkQuote(browser, { newPage, open, check, viewport: VIEWPORT });
 
   check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
   await browser.close();

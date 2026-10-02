@@ -7,6 +7,10 @@
  */
 
 import { ANIMATED_PAGES } from './pageAnims';
+import { QUOTED_PAGES } from './quotes';
+
+/** The pages with a plate: an animation drawn over it, or a quote. */
+const PLATED_PAGES = new Set([...ANIMATED_PAGES, ...QUOTED_PAGES]);
 
 export interface Page {
   /** Reading position. The cover is 0 and the back cover is PAGE_COUNT + 1, so
@@ -23,10 +27,11 @@ export interface Page {
    */
   riffle?: string;
   /**
-   * The page with its animated drawing HIDDEN, for a page that carries one
-   * (`pageAnims.ts`): what the open spread shows under the sprites once the book
-   * has settled. A turn always carries the baked `src`. Written by
-   * `npm run plates`.
+   * The page with its live content HIDDEN — the animated drawing for a page
+   * that carries one (`pageAnims.ts`), the chapter-break quote for a page with
+   * one (`quotes.json`): what the open spread shows under the sprites or the
+   * letters once the book has settled. A turn always carries a baked page.
+   * Written by `npm run plates`.
    */
   plate?: string;
 }
@@ -107,7 +112,7 @@ export const issue01: Issue = {
       n: i + 1,
       src: `/issues/01/${String(i + 1).padStart(2, '0')}.webp`,
       riffle: `/issues/01/riffle/${String(i + 1).padStart(2, '0')}.webp`,
-      ...(ANIMATED_PAGES.includes(i + 1) ? { plate: `/issues/01/plates/${String(i + 1).padStart(2, '0')}.webp` } : {}),
+      ...(PLATED_PAGES.has(i + 1) ? { plate: `/issues/01/plates/${String(i + 1).padStart(2, '0')}.webp` } : {}),
     })),
     { n: PAGE_COUNT + 1, src: '/issues/01/back.webp', label: 'BACK' },
   ],

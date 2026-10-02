@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { Ref } from 'react';
 import type { Page, Spread } from './issue-01';
 import { pageLabel } from './issue-01';
@@ -8,6 +8,10 @@ import { attachFixedT } from './devFixedT';
 import { CoverAnimLayer } from '../components/CoverAnimLayer';
 import { createPageAnimPlayer } from './pageAnimPlayer';
 import type { PageAnimPlayer } from './pageAnimPlayer';
+import { animsOnPage } from './pageAnims';
+import { createQuotePlayer } from './quotePlayer';
+import { quoteOnPage } from './quotes';
+import type { QuotePage } from './quotes';
 import './flipbook.css';
 
 interface FlipBookProps {
@@ -48,6 +52,40 @@ function PageAnimLayer({ page, ref }: { page: Page; ref: Ref<HTMLDivElement> }) 
   );
 }
 
+/** The page's own file, "05" — what the checks read a slot by, whatever its
+ *  `src` (a quote page's is its bake). */
+const fileOf = (page: Page): string => page.src.split('/').pop()!.replace(/\.webp$/, '');
+
+const pct = (v: number) => `${v * 100}%`;
+
+/**
+ * A quote page's layer over its baked `<img>` (quotePlayer.ts): the plate (the
+ * quote removed), the canvas the letters and the hint are drawn on, and the
+ * button over the quote. Keyed by page, hidden until the player shows it. The
+ * player writes the button's name, the quote it describes (in its language)
+ * and the live region's text; its pointer events are the engine's (`.book *`
+ * takes none), so the button is reached by keyboard and by tap through
+ * `tapTarget`.
+ */
+function QuoteLayer({ page, quote, ref }: { page: Page; quote: QuotePage; ref: Ref<HTMLDivElement> }) {
+  const { x, y, w, h } = quote.hitArea;
+  return (
+    <div className="quote-layer" ref={ref} data-page={page.n}>
+      <img className="quote-layer__plate" data-src={page.plate} alt="" aria-hidden="true" draggable={false} />
+      <canvas className="quote-layer__letters" aria-hidden="true" />
+      <button
+        type="button"
+        className="quote-layer__hit"
+        style={{ left: pct(x / 2000), top: pct(y / 2600), width: pct(w / 2000), height: pct(h / 2600) }}
+        aria-describedby={`quote-${page.n}-text`}
+      >
+        <span className="quote-layer__text-alt visually-hidden" id={`quote-${page.n}-text`} />
+      </button>
+      <p className="visually-hidden" aria-live="polite" />
+    </div>
+  );
+}
+
 /**
  * Renders the STATIC spread and the empty host the engine builds its turn layer
  * into — and nothing else. React never re-renders per frame; it only hears back
@@ -84,10 +122,22 @@ export function FlipBook({
   // frame in which the static slot would still show the plate and a sprite
   // where the curl's face shows the baked page.
   const pageAnimRef = useRef<PageAnimPlayer | null>(null);
-  const onTurnActive = useCallback((active: boolean) => {
-    pageAnimRef.current?.setTurning(active);
-    setTurning(active);
-  }, []);
+  // The chapter-break quotes (quotePlayer.ts) hear of it the same way: a morph
+  // lands and the layer goes before the leaf lifts. A quote page is shown — by
+  // the static slot and by every turn — as its bake in its current language;
+  // the store re-renders the slot when that changes.
+  const [quote] = useState(createQuotePlayer);
+  useSyncExternalStore(quote.subscribe, quote.version);
+  const onTurnActive = useCallback(
+    (active: boolean) => {
+      pageAnimRef.current?.setTurning(active);
+      quote.setTurning(active);
+      setTurning(active);
+    },
+    [quote],
+  );
+  const leftQuoteRef = useRef<HTMLDivElement>(null);
+  const rightQuoteRef = useRef<HTMLDivElement>(null);
   const leftAnimRef = useRef<HTMLDivElement>(null);
   const rightAnimRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -123,6 +173,9 @@ export function FlipBook({
     };
   }, [pageAnims]);
 
+  // The quotes' player goes live before the engine, like the sprites'.
+  useLayoutEffect(() => (bookRef.current ? quote.attach(bookRef.current) : undefined), [quote]);
+
   useLayoutEffect(() => {
     const book = bookRef.current;
     const turnHost = hostRef.current;
@@ -131,10 +184,13 @@ export function FlipBook({
     const engine = createFlipEngine({
       book,
       turnHost,
-      getSpreads: () => spreadsRef.current,
+      // Read at the moment a turn needs them, so a quote's language is always
+      // the one it is in NOW.
+      getSpreads: () => quote.mapSpreads(spreadsRef.current),
       getSpread: () => spreadRef.current,
       onSpreadChange,
       onTurnActive,
+      tapTarget: quote.tapAt,
     });
     engineRef.current = engine;
     onEngineReady?.(engine);
@@ -145,7 +201,7 @@ export function FlipBook({
       engine.destroy();
       engineRef.current = null;
     };
-  }, [onSpreadChange, onEngineReady, onTurnActive]);
+  }, [onSpreadChange, onEngineReady, onTurnActive, quote]);
 
   // DEVIATION 2: the turn layer is dropped HERE, after React has committed the
   // new static spread — not inside the engine's completion callback, where the
@@ -166,6 +222,11 @@ export function FlipBook({
     pageAnimRef.current?.setSlots(spread, spreads, [leftAnimRef.current, rightAnimRef.current]);
   }, [spread, spreads, pageAnims]);
 
+  // …and its quote pages, to theirs.
+  useLayoutEffect(() => {
+    quote.setSlots(spread, spreads, [leftQuoteRef.current, rightQuoteRef.current]);
+  }, [quote, spread, spreads]);
+
   // Frozen-t scrub for tuning BETA / STRIP_COUNT / the ease. `import.meta.env.DEV`
   // is replaced with `false` in a production build, so the branch and its import
   // are both dropped by tree-shaking.
@@ -179,8 +240,9 @@ export function FlipBook({
   // page would otherwise stall the first flip.
   useEffect(() => {
     const srcs = new Set<string>();
+    const shown = quote.mapSpreads(spreads);
     for (const i of [spread - 1, spread + 1]) {
-      const adjacent = spreads[i];
+      const adjacent = shown[i];
       if (!adjacent) continue;
       for (const page of adjacent) if (page) srcs.add(page.src);
     }
@@ -189,10 +251,15 @@ export function FlipBook({
       img.src = src;
       img.decode().catch(() => {}); // decode() rejects if the image is swapped out
     }
-  }, [spread, spreads]);
+  }, [quote, spread, spreads]);
 
-  // Guard the index: a caller that hasn't clamped shouldn't throw here.
+  // Guard the index: a caller that hasn't clamped shouldn't throw here. The
+  // pages as printed (what the layers are keyed on), and as shown.
   const [left, right] = spreads[spread] ?? [null, null];
+  const shownSpread = quote.mapSpreads(spreads)[spread] ?? [null, null];
+  const [leftSrc, rightSrc] = [shownSpread[0]?.src, shownSpread[1]?.src];
+  const leftQuote = left && quoteOnPage(left.n);
+  const rightQuote = right && quoteOnPage(right.n);
 
   // Which closed/open position the book rests at (drives the settled slide via
   // CSS; the engine takes over inline during a cover/back turn).
@@ -203,15 +270,23 @@ export function FlipBook({
       <div className="book" ref={setBook} data-pos={pos}>
         <div className="book__page book__page--left" ref={leftSlotRef}>
           {left && (
-            <img ref={leftImgRef} src={left.src} alt={altFor(left)} draggable={false} />
+            <img ref={leftImgRef} src={leftSrc} data-file={fileOf(left)} alt={altFor(left)} draggable={false} />
           )}
-          {pageAnims && left?.plate && <PageAnimLayer key={left.n} page={left} ref={leftAnimRef} />}
+          {pageAnims && left?.plate && animsOnPage(left.n).length > 0 && (
+            <PageAnimLayer key={left.n} page={left} ref={leftAnimRef} />
+          )}
+          {left?.plate && leftQuote && <QuoteLayer key={left.n} page={left} quote={leftQuote} ref={leftQuoteRef} />}
         </div>
         <div className="book__page book__page--right" ref={rightSlotRef}>
           {right && (
-            <img ref={rightImgRef} src={right.src} alt={altFor(right)} draggable={false} />
+            <img ref={rightImgRef} src={rightSrc} data-file={fileOf(right)} alt={altFor(right)} draggable={false} />
           )}
-          {pageAnims && right?.plate && <PageAnimLayer key={right.n} page={right} ref={rightAnimRef} />}
+          {pageAnims && right?.plate && animsOnPage(right.n).length > 0 && (
+            <PageAnimLayer key={right.n} page={right} ref={rightAnimRef} />
+          )}
+          {right?.plate && rightQuote && (
+            <QuoteLayer key={right.n} page={right} quote={rightQuote} ref={rightQuoteRef} />
+          )}
         </div>
         <div className="book__turn-host" ref={hostRef} />
       </div>

@@ -10,6 +10,7 @@ import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
 import { usePageAnimAlign } from '../dev/pageAnimAlign';
+import { useTranslateDials } from '../dev/translateDials';
 import { installDockPanels } from '../dev/dockPanels';
 
 // Before this dock's panels register: which open, which stay folded.
@@ -72,6 +73,9 @@ export default function ReaderNavDialKit() {
 
   // Registering the inside pages' sprites on their pages (pageAnims.ts).
   usePageAnimAlign();
+
+  // The chapter-break quotes' translate morph (quotes.ts).
+  useTranslateDials();
 
   useEffect(
     () => () => {
