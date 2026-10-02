@@ -276,9 +276,7 @@ const GridCard = memo(function GridCard({
               filter: `brightness(${brightness})`,
             }}
           >
-            {s.item.cover ? (
-              <CoverTile coverId={s.item.cover.id} dome="own" />
-            ) : face && (
+            {!s.item.cover && face && (
               <img
                 className="grid-card__img"
                 src={face}
@@ -287,6 +285,11 @@ const GridCard = memo(function GridCard({
                 loading={s.eager ? 'eager' : 'lazy'}
               />
             )}
+            {/* Every slot keeps its tile, a card with no live cover too (an
+                empty, sized canvas): the window recycles content through the
+                slots mid-drag, and a cover arriving must find its canvas made
+                and sized, not mount one (CoverTile). */}
+            <CoverTile coverId={s.item.cover?.id ?? null} dome="own" />
           </div>
           {overlayFace && (
             <img

@@ -22,3 +22,18 @@
 .cover-tile__still {
   object-fit: cover;
 }
+
+/* Which shows is the stage's call, made in the same task as its copy
+   (CoverTile.tsx): the canvas once it holds a frame of the tile's cover, the
+   still until then. */
+.cover-tile__canvas {
+  visibility: hidden;
+}
+
+.cover-tile[data-drawn] .cover-tile__canvas {
+  visibility: visible;
+}
+
+.cover-tile[data-drawn] .cover-tile__still {
+  visibility: hidden;
+}

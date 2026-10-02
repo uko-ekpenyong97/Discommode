@@ -2,7 +2,7 @@
  * OPEN THE VIEW, READ IT, CLOSE IT. TWENTY TIMES, AND WATCH THE GPU PROCESS.
  *
  *   npm run dev            # in another shell
- *   node scripts/pv-gpu-loop.mjs [--cycles 20] [--project 02] [--headless]
+ *   node scripts/pv-gpu-loop.mjs [--cycles 20] [--project 02] [--viewport 1728x996] [--headless]
  *
  * IT RUNS HEADED BY DEFAULT, and that is the whole point of it. Headless Chrome
  * falls back to SwiftShader here — WebGL on the CPU — and a GPU process that is
@@ -40,6 +40,7 @@ const arg = (name, fallback) => {
 const ORIGIN = arg('url', 'http://localhost:5173');
 const PROJECT = arg('project', '02');
 const CYCLES = Number(arg('cycles', 20));
+const [VW, VH] = arg('viewport', '1728x996').split('x').map(Number);
 
 /** Long enough for the layer's fade-out (200ms) and for the browser to have
  *  done something about the context that went with it. */
@@ -114,11 +115,11 @@ const browser = await chromium.launch({
 });
 const context = await browser.newContext({ deviceScaleFactor: 2 });
 const page = await context.newPage();
-await page.setViewportSize({ width: 1728, height: 996 });
+await page.setViewportSize({ width: VW, height: VH });
 await page.goto(`${ORIGIN}/`, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 
-console.log(`\n── ${CYCLES} open/close cycles of card ${PROJECT}, at 2x ──────────────`);
+console.log(`\n── ${CYCLES} open/close cycles of card ${PROJECT}, ${VW}×${VH} at 2x ──────────────`);
 const before = gpuRssMb(existing);
 console.log(`      before          GPU process ${before === null ? '?' : before.toFixed(1)} MB`);
 

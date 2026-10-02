@@ -5,10 +5,12 @@ import { makeCoverRenderer } from './cachedCoverRenderer';
 import { riveCover, shaderCover } from './covers';
 import { coverTime } from './coverClock';
 import { coverBackdrop, coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
-import { ensureRive, onRiveReady, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
+import { ensureRive, onRiveReady, peekRivePlayer, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
 import type { RivePlayerRole } from './rive/riveCover';
 import { cssRgb } from './color';
 import { computeHeroRect } from '../layout/hero';
+import { config } from '../config';
+import { isBusy } from '../activity';
 import { DomeSpring, advanceDome, domeUp } from './dome';
 import type { Crop, Dome } from './types';
 
@@ -57,16 +59,23 @@ export interface Presenter {
   ctx: CanvasRenderingContext2D | null;
   visible: boolean;
   onScreen: boolean;
-  /** The instance's own canvas, device px. */
+  /** The instance's size, device px, from its LAYOUT box (`size`, below). */
   pxW: number;
   pxH: number;
-  /** What its cover is RENDERED at: the same, or for a grid tile no more than
-   *  `coverRenderMax` on the long edge — the copy upscales the rest. */
+  /** What its cover is RENDERED at, and its canvas's backing store: the same,
+   *  or for a grid tile no more than `coverRenderMax` on the long edge — CSS
+   *  upscales the rest. */
   drawW: number;
   drawH: number;
   /** A grid tile: its render is capped (set once, when it is added). */
   capped: boolean;
   drawn: boolean;
+  /** Its box on screen last frame (CSS px): a change is the page moving. */
+  rx: number;
+  ry: number;
+  rw: number;
+  /** The stage frame its canvas was last copied in. */
+  copied: number;
 }
 
 interface Group {
@@ -95,6 +104,10 @@ let stageW = 0;
 let stageH = 0;
 let frames = 0;
 let lastMs = 0;
+/** Grid tiles never drawn, off screen, given the shared draw this frame. */
+const UNDRAWN_PER_FRAME = 4;
+const undrawn: Presenter[] = [];
+let nUndrawn = 0;
 /** The last frame's draws of an instance for itself (its dome up), per cover. */
 const ownDraws = new Map<string, number>();
 
@@ -137,17 +150,21 @@ function capEasingTiles() {
   for (let i = MAX_OWN_TILES; i < easing.length; i++) easing[i].dome!.reset();
 }
 
-const io = new IntersectionObserver(
-  (entries) => {
-    for (const e of entries) {
-      for (const p of presenters) if (p.host === e.target) p.onScreen = e.isIntersecting;
-    }
-    kick();
-  },
-  { rootMargin: '64px' },
-);
+/**
+ * How far past the viewport an instance counts as on screen, a fraction of the
+ * viewport: in the band it is copied every frame, so a grid tile arrives in
+ * view current. Measured by the tick from the box it reads anyway, not by an
+ * IntersectionObserver: the observer clips the target by the grid's
+ * viewport-sized `overflow: hidden` BEFORE it applies its root margin, so no
+ * margin can see past the viewport, and it reports a frame late — tiles came
+ * into view a frame or two after their last copy, holding whatever they had.
+ */
+const ON_SCREEN_MARGIN = 0.25;
 
-/** The untransformed size of each cached-pass cover's host, CSS px (below). */
+/** Only to wake the loop when something comes on screen while it sleeps. */
+const io = new IntersectionObserver(() => kick(), { rootMargin: '64px' });
+
+/** The untransformed size of each instance's host, CSS px (`size`, below). */
 const layoutBox = new WeakMap<Element, { w: number; h: number }>();
 const ro = new ResizeObserver((entries) => {
   for (const e of entries) {
@@ -210,6 +227,12 @@ export function coverLiveAvailable(id: string): boolean {
   return riveCover(id) ? riveAvailable(id) : coverStageAvailable();
 }
 
+/**
+ * Add an instance, and PRIME it: its canvas gets the cover's current frame
+ * before the browser paints it (flushPrimes, below) — so a tile the grid
+ * recycles to another cover mid-drag never shows a blank canvas, the cover it
+ * had, or its still and then a jump to the live frame.
+ */
 export function addPresenter(p: Presenter): () => void {
   const rive = !!riveCover(p.coverId);
   if (!coverLiveAvailable(p.coverId)) return () => {};
@@ -219,16 +242,214 @@ export function addPresenter(p: Presenter): () => void {
   p.capped = !!p.host.closest('.grid-stage');
   presenters.add(p);
   io.observe(p.host);
-  const cached = shaderCover(p.coverId)?.passA === 'cached';
-  if (cached) ro.observe(p.host);
+  ro.observe(p.host);
+  // Until the ResizeObserver reports (a frame or more later), the layout as
+  // it is now: fractional CSS px (offsetWidth rounds).
+  layoutBox.set(p.host, layoutNow(p.host));
   if (rive) ensureRive(p.coverId);
   else coverFor(p.coverId);
+  pending.push(p);
+  if (!flushQueued) {
+    flushQueued = true;
+    queueMicrotask(flushPrimes);
+  }
   kick();
   return () => {
+    // Its canvas holds the cover's latest frame: an instance the same commit
+    // gives this cover can take it from here (flushPrimes).
+    if (p.drawn && p.copied >= frames - 1 && !(p.dome && domeUp(p.dome.state))) {
+      retired.push({ canvas: p.canvas, coverId: p.coverId, role: p.role, w: p.canvas.width, h: p.canvas.height });
+    }
     presenters.delete(p);
+    const i = pending.indexOf(p);
+    if (i >= 0) pending.splice(i, 1);
     io.unobserve(p.host);
-    if (cached) ro.unobserve(p.host);
+    ro.unobserve(p.host);
   };
+}
+
+/**
+ * When the page last moved under the stage: any visible instance's box
+ * changed (a drag, its settle, the morph, a slide, a hover's tilt).
+ */
+let lastMotion = 0;
+const QUIET_MS = 200;
+const moving = () => performance.now() - lastMotion < QUIET_MS;
+
+/** Instances added in this commit, to prime when it is done. */
+const pending: Presenter[] = [];
+let flushQueued = false;
+/** The canvases of instances removed in this commit, and what they hold. */
+const retired: { canvas: HTMLCanvasElement; coverId: string; role: RivePlayerRole; w: number; h: number }[] = [];
+/** Per cover (and Rive role): where a retired canvas's frame is kept while
+ *  its own tile is primed with another cover. Made, at the tile's size, when
+ *  the cover's first grid tile is primed — at load, not mid-drag. */
+const scratch = new Map<string, HTMLCanvasElement>();
+
+function scratchFor(p: Presenter): HTMLCanvasElement {
+  const key = `${p.coverId}|${p.role}`;
+  let c = scratch.get(key);
+  if (!c) scratch.set(key, (c = document.createElement('canvas')));
+  if (c.width !== p.drawW || c.height !== p.drawH) {
+    c.width = p.drawW;
+    c.height = p.drawH;
+  }
+  return c;
+}
+
+/**
+ * THE PRIME, once a commit has added its instances (a microtask: after
+ * React's layout effects, before the browser paints). A wrap of the grid
+ * recycles EVERY slot in one commit, so the instance that showed a cover a
+ * moment ago is gone and its canvas is about to take another cover: each
+ * cover's frame is gathered first, then copied in.
+ *
+ *   1. each instance is sized from its layout box (`size`); only a new
+ *      canvas gets a backing store — a recycled grid tile's is the size
+ *      already;
+ *   2. one source per cover and shape, before any canvas is written: a
+ *      sibling still on the page (copied last frame, at rest — not its own
+ *      dome's draw), or else a canvas this commit retired, kept in the
+ *      cover's scratch canvas;
+ *   3. each instance copied from it; a Rive cover's from its player's last
+ *      draw if there was no sibling. With neither: a draw of its own, but only
+ *      while nothing on the page moves — a drag, its settle, a morph or a
+ *      slide never pays for one, nor for a compile (only a cover the stage
+ *      already has). Without even that the canvas is cleared, no size write,
+ *      and CoverTile shows the still until the next regular copy lands.
+ */
+function flushPrimes() {
+  flushQueued = false;
+  if (!pending.length) {
+    retired.length = 0;
+    return;
+  }
+  const site = siteCoverDials();
+  const dpr = Math.min(window.devicePixelRatio || 1, Math.max(0.5, site.coverMaxDpr));
+  for (const p of pending) {
+    size(p, layoutBox.get(p.host) ?? layoutNow(p.host), dpr, site.coverRenderMax);
+    p.drawn = false;
+    if (p.capped) scratchFor(p);
+  }
+  const sources = new Map<string, { canvas: HTMLCanvasElement; w: number; h: number }>();
+  const keyOf = (p: Presenter) => `${p.coverId}|${p.role}|${p.drawW}x${p.drawH}`;
+  for (const p of pending) {
+    const key = keyOf(p);
+    if (sources.has(key)) continue;
+    let q: Presenter | null = null;
+    for (const o of presenters) {
+      if (o.coverId !== p.coverId || o.role !== p.role || !o.drawn || o.copied < frames - 1 || pending.includes(o)) continue;
+      if (o.canvas.width !== p.drawW || o.canvas.height !== p.drawH || (o.dome && domeUp(o.dome.state))) continue;
+      if (!q || o.copied > q.copied) q = o;
+    }
+    if (q) {
+      sources.set(key, { canvas: q.canvas, w: q.drawW, h: q.drawH });
+      continue;
+    }
+    const r = retired.find((x) => x.coverId === p.coverId && x.role === p.role && x.w === p.drawW && x.h === p.drawH);
+    const keep = r && p.capped ? scratchFor(p) : null;
+    const ctx = keep?.getContext('2d');
+    if (r && keep && ctx) {
+      ctx.clearRect(0, 0, keep.width, keep.height);
+      ctx.drawImage(r.canvas, 0, 0);
+      sources.set(key, { canvas: keep, w: r.w, h: r.h });
+    }
+  }
+  for (const p of pending) {
+    const src = sources.get(keyOf(p));
+    if (src) {
+      copy(p, src.canvas, 0, src.w, src.h);
+      continue;
+    }
+    const rive = !!riveCover(p.coverId);
+    const player = rive ? peekRivePlayer(p.coverId, p.role) : null;
+    if (player && player.version > 0 && Math.abs(player.pxW / player.pxH - p.drawW / p.drawH) < 0.01) {
+      copy(p, player.canvas, 0, player.pxW, player.pxH);
+      continue;
+    }
+    if (!moving()) {
+      const t = coverTime(performance.now());
+      if (player) {
+        player.draw(t, p.drawW, p.drawH);
+        if (player.version > 0) {
+          copy(p, player.canvas, 0, p.drawW, p.drawH);
+          continue;
+        }
+      } else if (!rive) {
+        const cover = covers.get(p.coverId);
+        if (cover && draw(cover, p.drawW, p.drawH, t, restDome, backdropFor(p.coverId, site))) {
+          present(p, p.drawW, p.drawH);
+          continue;
+        }
+      }
+    }
+    const c = p.canvas;
+    if (c.width !== p.drawW || c.height !== p.drawH) {
+      c.width = p.drawW;
+      c.height = p.drawH;
+    } else p.ctx?.clearRect(0, 0, c.width, c.height);
+  }
+  pending.length = 0;
+  retired.length = 0;
+}
+
+/**
+ * An instance's size, device px, from its LAYOUT box × its DPR — never its
+ * bounding box. The grid's tilt and focus scale, the morph's travel and a
+ * slide's scale are transforms: sized from the bounding box, every frame of
+ * one was a new backing store (each write clears the canvas: the tiles
+ * flickered while the grid was dragged), a new pass-A target, and — the
+ * groups keyed on its aspect — tiles of one cover split into draws of their
+ * own. CSS scales the canvas through the transform for nothing.
+ *
+ * A grid tile is sized at the focus scale, the largest it is shown at rest,
+ * then capped by `coverRenderMax` (at 2× it always is: 672 × 896). A Rive
+ * cover has its own cap on the DPR (`riveMaxDpr`: a CPU draw).
+ */
+function size(p: Presenter, box: { w: number; h: number }, dpr: number, renderMax: number) {
+  const d = riveCover(p.coverId) ? Math.min(window.devicePixelRatio || 1, riveMaxDpr(p.coverId)) : dpr;
+  const k = d * (p.capped ? Math.max(1, config.focusScale) : 1);
+  p.pxW = Math.max(1, Math.round(box.w * k));
+  p.pxH = Math.max(1, Math.round(box.h * k));
+  // THE RENDER CAP (coverRenderMax): a grid tile's cover is rendered no
+  // bigger than the tile was at the old cardWidth, and CSS upscales its
+  // canvas over the tile. The cost of a cover is its pixels; the 480-wide
+  // tile was 2.56× them for no more cover.
+  const cap = p.capped ? renderMax / Math.max(p.pxW, p.pxH) : 1;
+  if (cap < 1) {
+    p.drawW = Math.max(1, Math.round(p.pxW * cap));
+    p.drawH = Math.max(1, Math.round(p.pxH * cap));
+  } else {
+    p.drawW = p.pxW;
+    p.drawH = p.pxH;
+  }
+}
+
+/** A host's layout box as it is now, CSS px, fractional. */
+function layoutNow(host: HTMLElement): { w: number; h: number } {
+  const cs = getComputedStyle(host);
+  return { w: parseFloat(cs.width) || 0, h: parseFloat(cs.height) || 0 };
+}
+
+/** The site's backdrop under a cover, or null (none, or the cover's own). */
+function backdropFor(id: string, site: ReturnType<typeof siteCoverDials>): [number, number, number] | null {
+  return site.coverBackdrop === 'solid' && coverBackdrop(id) !== 'solid' ? cssRgb(site.coverBackdropColor) : null;
+}
+
+/**
+ * A grid tile's canvas with no cover in it yet (CoverTile, a slot showing
+ * card 01): sized now as a tile's would be, so that when the grid recycles a
+ * cover into it — mid-drag — there is no backing store to make.
+ */
+export function sizeIdleTile(canvas: HTMLCanvasElement, host: HTMLElement) {
+  const site = siteCoverDials();
+  const dpr = Math.min(window.devicePixelRatio || 1, Math.max(0.5, site.coverMaxDpr));
+  const probe = { host, coverId: '', capped: true, pxW: 0, pxH: 0, drawW: 0, drawH: 0 } as unknown as Presenter;
+  size(probe, layoutNow(host), dpr, site.coverRenderMax);
+  if (canvas.width !== probe.drawW || canvas.height !== probe.drawH) {
+    canvas.width = probe.drawW;
+    canvas.height = probe.drawH;
+  }
 }
 
 /**
@@ -251,7 +472,11 @@ function warmHeroPrint(id: string, dpr: number) {
   const pxH = Math.max(1, Math.round(hero.h * dpr));
   const run = () => {
     const c = coverFor(id);
-    if (!c?.ready()) {
+    // Not while the page moves (a drag over the tile, its settle): the print
+    // is a new backing store or two, and it is the idle moment it is waiting
+    // for. isBusy: the drag is known from its pointerdown, a frame before any
+    // instance has moved.
+    if (!c?.ready() || moving() || isBusy()) {
       heroWarm.delete(id); // try again on a later hover frame
       return;
     }
@@ -292,14 +517,35 @@ function tick(now: number) {
   const backdrop = site.coverBackdrop === 'solid' ? cssRgb(site.coverBackdropColor) : null;
   const t = coverTime(now);
   capEasingTiles();
+  retired.length = 0; // a commit's, primed by now (flushPrimes)
 
   // 1. what is on screen, and at what size
   nGroups = 0;
   let any = false;
   let onScreen = false;
+  nUndrawn = 0;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const mx = vw * ON_SCREEN_MARGIN;
+  const my = vh * ON_SCREEN_MARGIN;
   for (const p of presenters) {
     p.visible = false;
-    if (!p.onScreen || !p.host.isConnected) continue;
+    if (!p.host.isConnected) {
+      p.onScreen = false;
+      continue;
+    }
+    const r = p.host.getBoundingClientRect();
+    p.onScreen = r.width >= 2 && r.height >= 2 && r.right > -mx && r.left < vw + mx && r.bottom > -my && r.top < vh + my;
+    if (!p.onScreen) {
+      if (!p.drawn && p.capped && nUndrawn < UNDRAWN_PER_FRAME) {
+        // A grid tile that has never had a frame (outside the band since it
+        // was added): it gets the shared draw's copy below, off screen, so it
+        // never comes into view on its still.
+        size(p, layoutBox.get(p.host) ?? layoutNow(p.host), dpr, site.coverRenderMax);
+        undrawn[nUndrawn++] = p;
+      }
+      continue;
+    }
     const rive = !!riveCover(p.coverId);
     // A shader instance with no stage (its context lost) keeps its last frame.
     if (!rive && (failed || !renderer)) continue;
@@ -310,51 +556,19 @@ function tick(now: number) {
     // frame, behind the hero — while only visibility was checked.
     if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
     if (p.drawn && p.host.closest(HOLD)) continue;
-    const r = p.host.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) continue;
     p.visible = true;
     any = true;
-    p.pxW = Math.max(1, Math.round(r.width * dpr));
-    p.pxH = Math.max(1, Math.round(r.height * dpr));
-    if (rive) {
-      // Its own cap on the backing store (a CPU draw; riveMaxDpr, nosey.json),
-      // and its LAYOUT box's aspect, not its bounding box's: the hovered tile
-      // tilts, and a tilted tile's bounding box is a different shape — which
-      // for a shader is a draw of its own anyway (its dome), and for Rive would
-      // be a second draw of the one instance, for nothing.
-      const rdpr = Math.min(window.devicePixelRatio || 1, riveMaxDpr(p.coverId));
-      const lw = p.host.offsetWidth || r.width;
-      const lh = p.host.offsetHeight || r.height;
-      p.pxW = Math.max(1, Math.round(r.width * rdpr));
-      p.pxH = Math.max(1, Math.round((p.pxW * lh) / lw));
-    } else {
+    // Its box on screen only says whether the page is moving (prime, above);
+    // its size is its layout box's, as the ResizeObserver last saw it.
+    if (Math.abs(r.left - p.rx) > 0.5 || Math.abs(r.top - p.ry) > 0.5 || Math.abs(r.width - p.rw) > 0.5) lastMotion = now;
+    p.rx = r.left;
+    p.ry = r.top;
+    p.rw = r.width;
+    size(p, layoutBox.get(p.host) ?? layoutNow(p.host), dpr, site.coverRenderMax);
+    if (!rive) {
       const def = shaderCover(p.coverId)!;
-      // A cover with a CACHED pass A (card 03's print) is drawn at its LAYOUT
-      // box's size, not its bounding box's: the grid's focus scale and tilt
-      // and the morph's travel are transforms, and each frame of one would be
-      // a new size — a new print — where CSS scaling the canvas costs nothing.
-      // The layout box as the ResizeObserver last saw it: fractional CSS px
-      // (offsetWidth rounds — 816.72 → 817 drew the DOM hero a print 1 px
-      // taller than the paper's), and only updated when it changes.
-      if (def.passA === 'cached') {
-        const box = layoutBox.get(p.host);
-        p.pxW = Math.max(1, Math.round((box ? box.w : p.host.offsetWidth || r.width) * dpr));
-        p.pxH = Math.max(1, Math.round((box ? box.h : p.host.offsetHeight || r.height) * dpr));
-      }
       if (p.dome) advanceDome(p.dome, now, def, coverValues(p.coverId), t);
       if (def.passA === 'cached' && p.capped && p.dome && p.dome.state.amp > 0) warmHeroPrint(p.coverId, dpr);
-    }
-    // THE RENDER CAP (coverRenderMax): a grid tile's cover is rendered no
-    // bigger than the tile was at the old cardWidth, and its 2D copy upscales
-    // it into the tile's full-size canvas. The cost of a cover is its pixels;
-    // the 480-wide tile was 2.56× them for no more cover.
-    const cap = p.capped ? site.coverRenderMax / Math.max(p.pxW, p.pxH) : 1;
-    if (cap < 1) {
-      p.drawW = Math.max(1, Math.round(p.pxW * cap));
-      p.drawH = Math.max(1, Math.round(p.pxH * cap));
-    } else {
-      p.drawW = p.pxW;
-      p.drawH = p.pxH;
     }
     if (!rive && p.dome && domeUp(p.dome.state)) continue; // drawn for itself below
     const aspect = Math.round((p.pxW / p.pxH) * 100) / 100;
@@ -405,6 +619,10 @@ function tick(now: number) {
       if (p.capped !== g.capped || Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
       present(p, g.pxW, g.pxH);
     }
+    for (let i = 0; i < nUndrawn; i++) {
+      const p = undrawn[i];
+      if (p.coverId === g.coverId && g.capped && p.drawW === g.pxW && p.drawH === g.pxH) present(p, g.pxW, g.pxH);
+    }
   }
   for (const k of ownDraws.keys()) ownDraws.set(k, 0); // reused: no allocation once each cover has a key
   for (const p of presenters) {
@@ -453,6 +671,11 @@ function present(p: Presenter, pxW: number, pxH: number) {
  * `drawH`: its device size, or under `coverRenderMax` for a grid tile), and
  * CSS stretches the element over the tile — so a capped tile's copy is 1:1 and
  * the compositor does the upscaling, for nothing.
+ *
+ * The backing store follows the layout box (`size`), so it is written only
+ * when that really changes — a resize, a DPR change, a layout dial — and then
+ * here, right before the copy, in the same task: a cleared canvas is never
+ * presented.
  */
 function copy(p: Presenter, src: CanvasImageSource, sy: number, pxW: number, pxH: number) {
   const ctx = p.ctx;
@@ -463,6 +686,7 @@ function copy(p: Presenter, src: CanvasImageSource, sy: number, pxW: number, pxH
   }
   ctx.clearRect(0, 0, p.drawW, p.drawH);
   ctx.drawImage(src, 0, sy, pxW, pxH, 0, 0, p.drawW, p.drawH);
+  p.copied = frames;
   if (!p.drawn) {
     p.drawn = true;
     p.onDrawn();
@@ -510,6 +734,10 @@ function drawRive(g: Group, t: number) {
     if (Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
     copy(p, player.canvas, 0, g.pxW, g.pxH);
   }
+  for (let i = 0; i < nUndrawn; i++) {
+    const p = undrawn[i];
+    if (p.coverId === g.coverId && p.role === g.role && g.capped && p.drawW === g.pxW && p.drawH === g.pxH) copy(p, player.canvas, 0, g.pxW, g.pxH);
+  }
   riveCost('copy', performance.now() - t0);
 }
 
@@ -526,6 +754,7 @@ export function coverStageProbe() {
         cover: p.coverId,
         role: p.role,
         visible: p.visible,
+        onScreen: p.onScreen,
         pxW: p.pxW,
         pxH: p.pxH,
         drawW: p.drawW,

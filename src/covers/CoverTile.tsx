@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { addPresenter, coverLiveAvailable } from './coverStage';
+import { addPresenter, coverLiveAvailable, coverStageAvailable, sizeIdleTile } from './coverStage';
 import { coverStill as clockStill, subscribeReducedMotion } from './coverClock';
 import { coverStillUrl, riveCover, shaderCover } from './covers';
 import { DomeSpring, heroDome } from './dome';
@@ -11,7 +11,13 @@ import type { Presenter } from './coverStage';
 import './CoverTile.css';
 
 interface CoverTileProps {
-  coverId: string;
+  /**
+   * The cover, or null: a grid slot showing a card with no live cover (card
+   * 01). Its tile stays mounted, canvas and all — sized, hidden — so that when
+   * the grid recycles a cover into the slot mid-drag there is no canvas to
+   * make or size (GridPlane).
+   */
+  coverId: string | null;
   /** Draw live. False: the still only (the detail neighbours, "not live"). */
   live?: boolean;
   /**
@@ -41,20 +47,38 @@ interface CoverTileProps {
  *
  * Transparent all the way down: whatever is behind the tile (the SkyLayer)
  * shows through the cover's ground.
+ *
+ * The canvas shows only once it holds a frame of THIS cover: `data-drawn` on
+ * the host, set by the stage in the same task as the copy (CoverTile.css) —
+ * not React state, which would show it a frame later. The stage primes a new
+ * instance before the browser paints (coverStage `flushPrimes`), so a
+ * recycled tile goes straight from one cover's frame to the other's; if there
+ * was nothing to prime from, the still shows until its next copy lands.
  */
 export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', className, style }: CoverTileProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [drawn, setDrawn] = useState(false);
   const [still, setStill] = useState(() => clockStill());
   useEffect(() => subscribeReducedMotion(() => setStill(clockStill())), []);
 
-  const on = live && !still && coverLiveAvailable(coverId);
+  // A canvas whenever a cover COULD be live here, so it outlives the cover in
+  // it; a presenter only while this one is.
+  const canvasOn = live && !still && (coverId ? coverLiveAvailable(coverId) : coverStageAvailable());
+  const on = canvasOn && !!coverId && coverLiveAvailable(coverId);
 
-  useEffect(() => {
+  // No cover: keep the canvas a tile's size, for the next one.
+  useLayoutEffect(() => {
     const host = hostRef.current;
     const canvas = canvasRef.current;
-    if (!on || !host || !canvas) return;
+    if (coverId || !canvasOn || !host || !canvas) return;
+    sizeIdleTile(canvas, host);
+  }, [coverId, canvasOn]);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    const canvas = canvasRef.current;
+    if (!on || !coverId || !host || !canvas) return;
+    delete host.dataset.drawn;
     const rive = !!riveCover(coverId);
     const spring = rive ? null : dome === 'own' ? new DomeSpring() : dome;
     const p: Presenter = {
@@ -63,7 +87,9 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       host,
       canvas,
       dome: spring,
-      onDrawn: () => setDrawn(true),
+      onDrawn: () => {
+        host.dataset.drawn = '';
+      },
       ctx: null,
       visible: false,
       onScreen: false,
@@ -73,6 +99,10 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       drawH: 0,
       capped: false,
       drawn: false,
+      rx: 0,
+      ry: 0,
+      rw: 0,
+      copied: -1,
     };
     const remove = addPresenter(p);
     if (rive) {
@@ -80,6 +110,7 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       return () => {
         off?.();
         remove();
+        delete host.dataset.drawn;
       };
     }
     // The pointer, in frame units: the host is an object-fit: cover crop of the
@@ -112,19 +143,29 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
       target.removeEventListener('pointerdown', onDown);
       onLeave();
       remove();
+      delete host.dataset.drawn;
     };
   }, [on, coverId, dome, role]);
 
   return (
-    <div ref={hostRef} className={className ? `cover-tile ${className}` : 'cover-tile'} style={style} data-cover={coverId} data-role={riveCover(coverId) ? role : undefined}>
-      <img
-        className="cover-tile__still"
-        src={coverStillUrl(coverId, on ? 'sm' : 'full')}
-        alt=""
-        draggable={false}
-        style={on && drawn ? { visibility: 'hidden' } : undefined}
-      />
-      {on && <canvas ref={canvasRef} className="cover-tile__canvas" aria-hidden="true" />}
+    <div
+      ref={hostRef}
+      className={className ? `cover-tile ${className}` : 'cover-tile'}
+      style={style}
+      data-cover={coverId ?? undefined}
+      data-role={coverId && riveCover(coverId) ? role : undefined}
+    >
+      {coverId && (
+        <img
+          className="cover-tile__still"
+          src={coverStillUrl(coverId, on ? 'sm' : 'full')}
+          alt=""
+          draggable={false}
+        />
+      )}
+      {canvasOn && (
+        <canvas ref={canvasRef} className="cover-tile__canvas" aria-hidden="true" />
+      )}
     </div>
   );
 }
