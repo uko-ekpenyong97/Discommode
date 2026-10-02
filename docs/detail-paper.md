@@ -266,8 +266,9 @@ warm-up (above) behind the same gate:
   hidden.
 
 The long frames in that first second — 100–150 ms at ~0.6 s and ~0.75 s after
-navigation — are the page's load: `main` has the same ones with no warm-up
-running.
+navigation — were the faces' ImageBitmaps resolving on the main thread (their
+crop and resize run where the bitmap resolves); since 2026-10-02 they are made
+in a worker ([Textures](#textures); docs/perf/first-second.md).
 
 GPU process (`verify:gpu`, headed, `#view-02` ×20): 212.9 MB at 1.5 s after
 load against `main`'s 190.0 (the paper's GL, which `main` makes at the first
@@ -401,7 +402,12 @@ the card's own device pixels: at the hero's size and at the neighbours'. From
 the file's BLOB, not the decoded `<img>`: from an image element Chrome crops
 and resizes on the main thread, and the faces built as the view mounts —
 during the grid→detail morph — were ~1 s of it, on every card (a real-Chrome
-profile, 2026-09-27). From a blob it happens off the main thread. The
+profile, 2026-09-27). From a blob the decode is off the main thread — but
+the crop and the resize run in the task that resolves the bitmap, on the
+thread that asked: 18–50 ms a face, several in one frame, a 100–167 ms frame
+after every load. Since 2026-10-02 the call is made in a worker
+(`faceWorker.ts`), where it resolves, and the bitmap is transferred back —
+byte-identical to the main thread's (docs/perf/first-second.md). The
 plane then samples it one texel to one pixel. Faces are `itemHeroFace` (Issue
 01's `cover-rest.webp`, the portfolio cards' `card.webp`). Issue 01 also gets
 its `cover-plate.webp` at the hero's size. The plate is used exactly while a
