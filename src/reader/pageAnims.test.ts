@@ -20,7 +20,7 @@ const kindOf = (id: string) => (FITTED.has(id) ? 'fitted' : 'matched');
 
 describe('pageAnims.ts', () => {
   it('animates exactly the pages that have plates', () => {
-    expect(ANIMATED_PAGES).toEqual([8, 10, 11, 15, 17, 18, 24, 25, 27, 34, 35, 36, 37]);
+    expect(ANIMATED_PAGES).toEqual([3, 4, 8, 10, 11, 15, 17, 18, 24, 25, 27, 34, 35, 36, 37]);
     for (const p of ANIMATED_PAGES) expect(animsOnPage(p).length).toBeGreaterThan(0);
   });
 
@@ -30,7 +30,8 @@ describe('pageAnims.ts', () => {
     for (const r of PAGE_ANIMS) {
       expect(r.page).toBeGreaterThanOrEqual(1);
       expect(r.page).toBeLessThanOrEqual(40);
-      // On the page, or hanging off one edge of it (cuffs, the bottom).
+      // On the page, or hanging off its edges (cuffs, the bottom; xolo, the left
+      // and the bottom; hippo, the right).
       const c = turnedBounds(r, r.rotation);
       expect(c.x + c.w).toBeGreaterThan(0);
       expect(c.y + c.h).toBeGreaterThan(0);
@@ -74,6 +75,7 @@ describe('pageAnims.ts', () => {
     expect(rest('badges')).toBe(2); // both badges; Badges-1 is blank, Badges-2 one badge
     expect(rest('ipad')).toBe(9);
     expect(rest('carrito')).toBe(9);
+    expect(rest('hippo')).toBe(1); // Hippo-2 agrees 98.4% with 04; frames 1 and 3, 86.8% and 83.6%
   });
 
   it('seeds: sfmoma’s Figma box is its 518×699 turned 16.36°', () => {

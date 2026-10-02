@@ -641,6 +641,16 @@ placed at fractional offsets antialias differently from the flattened image —
 | rest | `cover-rest.webp` | `back-rest.webp` |
 | rects | Figma | **NCC registration** |
 
+**The header line (2026-10-02).** `cover.png`, `cover-plate.png` and `overlay.png`
+were re-exported with an "ISSUE 01 / AUG 2026" line at the top (y 104–138);
+`cover-plate.png` differs from the old plate nowhere else. `cover-illustrated.png`
+(2026-09-09) was **not** re-exported and does not have the line. It is still the
+cover's registration input (`optimize-anims.mjs`), but registration only reads
+around each object's rect, and the highest of those starts at y 614. A forced
+`npm run anims` against it rebuilt all twenty sprites and stills byte for byte,
+and the same manifest. Only `cover-rest.webp` moved, and only in the header
+band. It would matter if the file were ever shown or used to build a rest face.
+
 **The hover layer** (`CoverAnimLayer`, `face` prop) draws the plate and each
 object's still, resolves hover from one `pointermove` on the book against the
 hit rects (highest z wins), plays the animated WebP while active, and on leave
@@ -763,11 +773,14 @@ device. Same trade the cover makes, for the same reason.
 
 ## Inside-page animations
 
-Thirteen inside pages carry a hand-drawn Procreate loop, registered over the
-illustration the page prints: badges (08), sfmoma (10), cuffs (11), cubiculo
-(15), cuqui (17), highlander (18), the three sofas (24 green, 25 yellow, 27
-pink), op1-animation (34), ipad (35), halfframe (36) and carrito (37). The last
-four reuse the cover's frame folders; nothing is copied.
+Fifteen inside pages carry a hand-drawn Procreate loop, registered over the
+illustration the page prints: xolo (03), hippo (04), badges (08), sfmoma (10),
+cuffs (11), cubiculo (15), cuqui (17), highlander (18), the three sofas (24
+green, 25 yellow, 27 pink), op1-animation (34), ipad (35), halfframe (36) and
+carrito (37). xolo, hippo and the last four reuse the cover's frame folders;
+nothing is copied. xolo and hippo are drawn larger than their pages: xolo runs
+off 03's left and bottom edges, hippo off 04's right edge. They are cut at the
+paper ([clipping](#the-runtime)).
 
 **A turn never sees them.** While a page is in the air the strips, the landing
 plate and the static slots all carry the full baked page, exactly as before —
@@ -816,10 +829,11 @@ changing it rewrites the manifest, not the atlas. **badges' first frame is
 empty**; it rests on Badges-3 (both badges, as printed) and keeps the blank
 frame in its loop.
 
-The run reports what each spread costs (2026-10-01, ×1):
+The run reports what each spread costs (2026-10-01, ×1; spread 2 2026-10-02):
 
 | spread | pages | atlases | plates | decoded atlases | ±1 window |
 | --- | --- | --- | --- | --- | --- |
+| 2 | 03 \| 04 | 1183 KB | 461 KB | **31.1 MB** | **31.1 MB** |
 | 4 | 08 | 569 KB | 372 KB | 14.3 MB | 19.4 MB |
 | 5 | 10 | 528 KB | 348 KB | 5.1 MB | 23.3 MB |
 | 6 | 11 | 217 KB | 254 KB | 4.0 MB | 9.1 MB |
@@ -832,11 +846,27 @@ The run reports what each spread costs (2026-10-01, ×1):
 | 18 | 35 \| 36 | 1107 KB | 488 KB | 15.3 MB | **27.8 MB** |
 | 19 | 37 | 621 KB | 667 KB | 7.9 MB | 23.2 MB |
 
-5.7 MB of atlases and 4.0 MB of plates in all. Only the open spread and one
+6.8 MB of atlases and 4.5 MB of plates in all. Only the open spread and one
 either side are kept, and a neighbour is only fetched until the book settles
 on it ([the runtime](#the-runtime)), so the "±1 window" column is the most
-there can be decoded at once — at worst 27.8 MB, around 35 | 36, after paging
-through all three — not what one settle decodes.
+there can be decoded at once — at worst 31.1 MB, at 03 | 04 (35 | 36 was the
+worst before it, at 27.8 MB, after paging through all three) — not what one
+settle decodes.
+
+03 | 04 is the heaviest spread because xolo and hippo are big: each atlas is
+four cells of a drawing about 1000 px across (2×2 for three frames, one cell
+empty), and the cells include the parts of the drawing that hang off the page.
+About 40% of xolo's cell and 20% of hippo's is never on the paper. Cropping
+atlases to the page would save that, but an atlas would then depend on the
+row's x and y as well as its w, so the align tool could no longer move a sprite
+without a rebuild. 03 | 04 is also the spread after 01 | 02, where the
+doorway's first open lands. So that settle now FETCHES 1.2 MB of atlases and
+461 KB of plates. They are not decoded until the book settles on 03 | 04.
+
+What the heaviest spread costs a turn, measured against `main` (where 03 | 04
+is a plain spread), interleaved run by run, 2026-10-02, load average about 5:
+open on 03 | 04, idle 1.5 s, Next, Prev, 10 runs per DPR. No frame went over 20
+ms in any phase, at 1× or 2×, on either side.
 
 ### The manifest
 
@@ -868,6 +898,8 @@ boxes; then registered on every frame seeded from those rows.
 
 | | rest | agree | margin | |
 | --- | --- | --- | --- | --- |
+| xolo | 0 | 98.2% | 13.4% | 2026-10-02; frames 2 and 3 agree 84.3% and 82.4% |
+| hippo | 1 (Hippo-2) | 98.4% | 10.8% | 2026-10-02; frames 1 and 3 agree 86.8% and 83.6% |
 | badges | 2 (Badges-3) | 92.6% | 5.5% | both badges, as printed |
 | sfmoma | 1 | 96.7% | 11.5% | at its 16.36° |
 | cuffs | 1 | **71.9%** | 26.1% | at −58.95°, found by a rotation search (below) |
@@ -881,6 +913,18 @@ boxes; then registered on every frame seeded from those rows.
 | ipad | 9 (frame 10) | 88.6% | 22.8% | the drawing on its screen |
 | halfframe | 0 | 98.0% | 17.6% | |
 | carrito | 9 (frame 10) | 91.0% | 31.6% | the full shelves |
+
+**xolo and hippo (2026-10-02)** were seeded from Uko's numbers: xolo from Figma's
+"Xolo 2" (2293:1387), x −120, y 1784, 1010×1301 in page-03 px, which is the
+layer and not the drawing. Taken as the frame canvas it puts the drawing about
+110 px low and 16% small. Two more seeds were tried: that box taken as the
+drawing's own, and the bounds the drawing shows on the page (x 0–833, y
+1824–2600). All three converge within 0.5 px, at x −77.8, y 1819.18, w 926.19.
+That is a scale of 0.459 against 0.385 for the canvas reading, the same kind
+of inset the cover's Figma rects have. hippo was seeded from its visible
+bounds on 04 (x 1160–2000, y 419–1253). Composited at print resolution from
+the shipped atlas (plate PNG + rest cell at the row), the drawing agrees with
+the page PNG on 96.0% (xolo) and 96.4% (hippo) of its pixels.
 
 **sofa-yellow is printed mirrored**: its Figma layer is flipped, and Figma
 reports a flipped layer's x at its right edge (1722; the drawing runs
@@ -940,8 +984,14 @@ canvas) keyed by page, hidden until the player shows it.
   wrapper's plate `<img>` has no `src` until the player shows its page — a
   riffle renders the wrapper of every animated spread it passes, and must not
   fetch a full-size plate for each.
-- **Clipping.** One canvas per page, the size of its slot × DPR (≤ 2): a
-  sprite that runs off its page is cut at the page's edge.
+- **Clipping.** One canvas per page, the size of its slot × DPR (≤ 2). The
+  slot is the paper: the baked `<img>`, the plate and the canvas all fill the
+  same 10:13 box, which has `overflow: hidden`. So a sprite that runs off its
+  page (xolo, hippo) is cut at the page's edge. During a turn there is no
+  sprite to clip: every turn path (a turn, a drag, a cut, a riffle) calls
+  `setTurnActive(true)` before the strips move, and that hides the layer. A
+  turning leaf only ever shows the baked page. `verify:reader`'s `pageclip`
+  holds both, in pixels ([running the checks](#running-the-checks)).
 - The cover's and the back's hover layers, and the closed book, are untouched.
 
 ### The align tool
@@ -1102,7 +1152,7 @@ magenta.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                  # in another shell
-npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip
 ```
 
 `scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
@@ -1239,6 +1289,27 @@ exits non-zero on any ✗.
   `verify:reader`'s `sky` ≤ 8 ms budget holds at the same levels as `main`
   (flip main thread p95 3.8–4.2 ms on both).
 
+- **Sprites cut at the paper** (`pageclip`), spread 2 (03 | 04) at 1× and 2×,
+  on a flat ground. Even pinned, the sky redraws its weather when the DOM
+  changes, so it cannot be the control for a pixel diff here. The checks: each
+  sprite canvas is exactly its page's paper, in a slot that clips. Both
+  drawings reach the edges they run off, so the cut is doing work. At rest,
+  hiding the sprites changes no pixel off the paper, and nor does hiding the
+  whole layer: pixels the paper only partly covers are counted apart as its
+  antialiased edge. Each sprite agrees with the print over the drawing (pixels
+  where either differs from the plate) at ≥ 85%. Through Next and Prev both
+  ways, a drag and a riffle across the spread, the layer is never shown with a
+  leaf up. Held mid-turn (04 and 03 lifting, t 0.3 and 0.7), removing the layer
+  changes no pixel at all.
+
+  Measured 2026-10-02: 0 px off the paper at either DPR, 0 px mid-turn, about
+  480 turning frames with the layer shown in none. Agreement at 1× / 2× is xolo
+  89.7% / 89.1% and hippo 98.4% / 98.0%. The baked page itself agrees 95.2% with
+  `03.png` over xolo's drawing at 2×. The difference is all on xolo's thick,
+  rough outlines, which antialias differently at this size. The floor was
+  checked against a moved sprite: xolo 4 page px off scores 84.1%, 8 px off
+  75.8%, and 1% too big 75.4%.
+
 The z-order and exit checks photograph the book over the sky now, so both hold
 it still first (`__skyPinTime`, `__skyHoldFluid`): two captures must differ by
 what the reader did, not by the weather.
@@ -1261,3 +1332,8 @@ against 2 and 2 on `main`. So the two were run INTERLEAVED, riffle by riffle,
 `main` and 7 of 30 on the branch**. With `readerFlipSplat` 0 against 0.5, on
 the branch: 4 of 24 against 3 of 24. The fluid a riffle wakes costs no frames
 that can be told from the machine; the misses are the riffle's own.
+
+**Nor is 03 | 04 (2026-10-02).** The full run on this change missed 3 of the 4
+riffle frame checks (single 33 ms frames in 1–3 of 5 runs each). Riffles
+interleaved with `main`, 15 per DPR, alternating 20→0 and 0→20: a frame over
+20 ms in **2 of 30 on the branch and 5 of 30 on `main`**.
