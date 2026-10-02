@@ -4,6 +4,15 @@
  * :5173 is usually another checkout's). `--only budgets,clock,morph,reduced,
  * nogl,contexts,sky,ground` for a subset. See docs/covers.md.
  *
+ *   drag      the grid dragged, flung and dropped at 1728×1117 and 2560×1440
+ *             @2×: no canvas resized while dragging or settling, no blank or
+ *             flickering tile, every tile at rest agreeing with its siblings,
+ *             card 02 warmed and dragged staying sharp and rejoining them, no
+ *             frame over 33 ms (judged on a production build, `vite
+ *             preview`), and a morph and a slide resizing no canvas twice
+ *             (scripts/cover-drag-checks.mjs). `--drag-json <file>` writes
+ *             its rows, for a main-vs-branch table.
+ *
  *   budgets   GPU ms per frame at 1728×996 and 1440×900, 1× and 2×, measured
  *             exactly as the tuning bench measured when these budgets were set
  *             (src/covers/bench.ts): batches closed by a pixel read, minus the
@@ -145,6 +154,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { checkDrag } from './cover-drag-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
@@ -152,7 +162,7 @@ const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg(
   '--only',
   'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,' +
-    'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets',
+    'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets,drag',
 ).split(',');
 const B = `${ORIGIN}/`;
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
@@ -242,7 +252,7 @@ const focusedTile = (page) =>
     const cx = innerWidth / 2;
     const cy = innerHeight / 2;
     let best = null;
-    for (const el of document.querySelectorAll('.grid-card .cover-tile')) {
+    for (const el of document.querySelectorAll('.grid-card .cover-tile[data-cover]')) {
       const r = el.getBoundingClientRect();
       const d = Math.hypot(r.x + r.width / 2 - cx, r.y + r.height / 2 - cy);
       if (!best || d < best.d) best = { d, x: r.x, y: r.y, w: r.width, h: r.height };
@@ -331,10 +341,15 @@ async function skipSolid(browser, id, labels) {
 
 // ── budgets ─────────────────────────────────────────────────────────────
 
+/** `--budget-viewports 1728x1117,2560x1440` and `--budget-dpr 2`: budgets
+ *  somewhere else than the suite's own viewports (an A/B, say). */
+const BUDGET_VIEWPORTS = arg('--budget-viewports', null)?.split(',').map((s) => ({ width: Number(s.split('x')[0]), height: Number(s.split('x')[1]) })) ?? VIEWPORTS;
+const BUDGET_DPRS = arg('--budget-dpr', null)?.split(',').map(Number) ?? [1, 2];
+
 async function checkBudgets(browser) {
   console.log('\nbudgets: GPU ms per frame (M1 Max numbers in docs/covers.md)');
-  for (const vp of VIEWPORTS) {
-    for (const dpr of [1, 2]) {
+  for (const vp of BUDGET_VIEWPORTS) {
+    for (const dpr of BUDGET_DPRS) {
       const page = await newPage(browser, vp, dpr);
       await gridOn02(page);
       const pres = await page.evaluate(() => window.__covers.presenters().filter((p) => p.visible && p.cover === 'rive-site'));
@@ -1934,10 +1949,19 @@ async function checkDrexCache(browser) {
   const d1 = await draws();
   // …except the hero's, which a hovered tile has the stage render in an idle
   // moment, so the morph does not pay for it on the click's first frame
+  // The print is the whole frame at the scale that makes the hero's crop its
+  // width, its own rounding: the hero's size, or a pixel over (at
+  // detailCardScale 0.81, 1112×1446 for a 1111×1445 hero at 1728×996 @2×).
   const hs = await heroRect(page);
-  const heroPrint = `${Math.round(hs.w * 2)}x${Math.round(hs.h * 2)}`;
+  const hw = Math.round(hs.w * 2);
+  const hh = Math.round(hs.h * 2);
+  const heroPrint = `${hw}x${hh}`;
+  const isHeros = (k) => {
+    const [w, h] = k.split('x').map(Number);
+    return w >= hw && w <= hw + 1 && h >= hh && h <= hh + 1;
+  };
   check(
-    a1.renders - a0.renders === 1 && a1.kept.includes(heroPrint) && d1 - d0 >= 90,
+    a1.renders - a0.renders === 1 && a1.kept.some(isHeros) && d1 - d0 >= 90,
     'grid, hovered',
     `pass A ${a1.renders - a0.renders} render (1: the hero's ${heroPrint}, ahead of the click; the tile's none), pass B ${d1 - d0} draws in 90 frames; prints kept ${a1.kept.join(', ')}`,
   );
@@ -2139,6 +2163,11 @@ async function run() {
     if (ONLY.includes('dmorph')) await checkDrexMorph(browser);
     if (ONLY.includes('dreduced')) await checkDrexReduced(browser);
     if (ONLY.includes('dbudgets')) await checkDrexBudgets(browser);
+    if (ONLY.includes('drag')) {
+      const rows = await checkDrag({ browser, origin: ORIGIN, newPage, check, dump: arg('--drag-dump', null) });
+      const out = arg('--drag-json', null);
+      if (out) await writeFile(out, JSON.stringify({ origin: ORIGIN, rows }, null, 2));
+    }
   } finally {
     await browser.close();
   }

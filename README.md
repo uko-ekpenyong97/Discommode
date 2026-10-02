@@ -242,8 +242,8 @@ down-swipe also dismiss.
 **Layout — a true 3-card view** ([`src/detailLayout.ts`](src/detailLayout.ts),
 pure + unit-tested): the active card sits large in the middle —
 `detailCardScale` of the viewport height (3:4 preserved, capped) — flanked by the
-previous/next cards at `detailSideScale` of the centre (default 0.85, clearly
-readable, not edge slivers), separated by `detailGap`, all centred as a group.
+previous/next cards at `detailSideScale` of the centre (default 1: the
+neighbours at the hero's size), separated by `detailGap`, all centred as a group.
 Every panel renders at the centre size and is scaled down to `detailSideScale`
 for the sides **imperatively per frame** from the continuous slide position, so
 the slide interpolates the scale/opacity smoothly with no pop at the crossover;

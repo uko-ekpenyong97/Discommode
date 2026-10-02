@@ -538,7 +538,7 @@ this change (the base of each shape; the scallops in brackets):
 | row | 46 (arrows, pills) | 58 (book icons) |
 | hero → each neighbour | 40.0 = 4.40% of the hero's 908.3 | — |
 
-Each band, margin + line + gap, is **129.6** = 1440 × (1 − 0.82) / 2. The old
+Each band, margin + line + gap, was **129.6** = 1440 × (1 − 0.82) / 2. The old
 rule made the hero 0.82 of ANY viewport's height, so on a shorter screen the
 band shrank with it while the chrome did not: at 1728×1117 the band was 100.5,
 the gaps 19.5, and the reader's row sat **7.5px** under the book (3.7 to its
@@ -553,7 +553,7 @@ tested in `hero.test.ts`):
    still the dial; it now means the hero's share of the height at 1440 tall.
 2. **The hero (10:13) takes the height that is left**, and the open book (two
    pages) must fit the width inside a side gap each side: the band's gap to
-   the tallest line, 36.6. No listed screen is narrow enough for that to bind.
+   the tallest line, 43.8. No listed screen is narrow enough for that to bind.
 3. **Only a short screen shrinks the chrome**: where the hero would get less
    than `HERO_MIN_SHARE` (0.7) of the height, the WHOLE band — margin, chrome,
    gaps, the row's spacing — scales by one `k`, so the proportions stay the
@@ -562,24 +562,34 @@ tested in `hero.test.ts`):
    `useChromeFit` writes `k` on both lines (`--chrome-fit`,
    `--chrome-line-margin`).
 4. **The neighbours keep the ratio**: their gap is `detailGap` × the hero's
-   height over the reference hero's, so 4.40% of the hero's width everywhere.
+   height over the reference hero's, so 4.46% of the hero's width everywhere
+   (4.40% at 0.82).
 
 The detail panel, the grid → detail morph, the doorway and the reader's cover
 slot all read the one layout, so none of them can drift from the others.
 
+**The signed-off dials** (baked 2026-10-01, after the change above landed at
+0.82): `detailCardScale` **0.81** and `detailSideScale` **1** (the
+neighbours at the hero's size); `detailTransitionMs` 450, `detailSideOpacity`
+0.85, `detailGap` 40, `detailHoverDim` 0.45, `detailScrimOpacity` 0.2,
+`detailChromeFadeMs` 200 and `detailSlideMs` 420 as they were. At 0.81 the
+band is **136.8** = 1440 × (1 − 0.81) / 2, and the hero at 2560×1440 is
+897.2 × 1166.4.
+
 With the close X at its drawn 58, the top gap is the band less 35 and 58:
-**36.6**, the reader row's gap, and the hero at 2560×1440 did not move. The
-detail row is 46, so its gap reads 48.6 as it did. Measured 2026-10-01
+**43.8**, the reader row's gap too. The detail row is 46, so its gap reads
+55.8. 1440×900 now falls just under the share at k = 1, so its chrome shrinks
+a little (×0.987, above the floor). Measured 2026-10-01 at 0.81
 (`verify:detail` and `verify:reader`, `layout`):
 
 | | hero (h, share) | k | top gap | row gap, reader / detail | neighbour gap |
 | --- | --- | --- | --- | --- | --- |
-| 2560×1440 | 1180.8, 0.82 | 1 | 36.6 | 36.6 / 48.6 | 40.0 |
-| 1920×1080 | 820.8, 0.76 (was 885.6) | 1 | 36.6 | 36.6 / 48.6 | 27.8 |
-| 1728×1117 | 857.8, 0.77 (was 915.9) | 1 | 36.6 | 36.6 / 48.6 | 29.1 |
-| 1512×982 | 722.8, 0.74 (was 805.2) | 1 | 36.6 | 36.6 / 48.6 | 24.5 |
-| 1440×900 | 640.8, 0.71 (was 738.0) | 1 | 36.6 | 36.6 / 48.6 | 21.7 |
-| 1280×720 | 472.1, 0.66 | 0.957 (floor) | 35.0 | 35.0 / 46.5 | 16.0 |
+| 2560×1440 | 1166.4, 0.81 | 1 | 43.8 | 43.8 / 55.8 | 40.0 |
+| 1920×1080 | 806.4, 0.75 | 1 | 43.8 | 43.8 / 55.8 | 27.7 |
+| 1728×1117 | 843.4, 0.76 | 1 | 43.8 | 43.8 / 55.8 | 28.9 |
+| 1512×982 | 708.4, 0.72 | 1 | 43.8 | 43.8 / 55.8 | 24.3 |
+| 1440×900 | 630.0, 0.70 | 0.987 | 43.2 | 43.2 / 55.1 | 21.6 |
+| 1280×720 | 458.3, 0.64 | 0.957 (floor) | 41.9 | 41.9 / 53.4 | 15.7 |
 
 Captures: `docs/chrome/layout-2560x1440.webp` and `layout-1728x1117.webp`, the
 detail view beside the reader at 11 | 12, 1×, the dev overlays hidden.
@@ -594,7 +604,7 @@ viewports — the reader at the cover, 07 | 08 and the back — that the margins
 the chrome's sizes and the gaps are the 2560×1440 numbers to ±2px (× k where
 the chrome shrank), that both lines carry that k, that no paper (the scallops
 included) is over the hero or book, the open book inside the side gaps, every
-face ≥ 44px and every hit area ≥ 44×44, and the neighbours at 4.40%. The
+face ≥ 44px and every hit area ≥ 44×44, and the neighbours at 4.46%. The
 numbers are written into the check, not read back from the code it checks. It
 saves a screenshot per viewport to `.context/layout/` (`--shots` for another
 place).

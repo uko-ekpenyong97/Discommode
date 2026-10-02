@@ -18,6 +18,7 @@ import type { PointerSample } from '../motion';
 import type { FlipOrigin } from './useDetail';
 import { useTicker } from './useTicker';
 import { rectEdges, skyWake } from '../sky/skyStage';
+import { registerBusy } from '../activity';
 
 /** Once both axes are within this many cells of target, finish the snap. */
 const SNAP_EPSILON = 0.0008;
@@ -189,6 +190,9 @@ export function usePanController(options: PanOptions = {}): PanController {
   // glide-to-open is pending, input is locked and the ticker fires the open the
   // instant the glide settles.
   const pendingOpenRef = useRef<GridPos | null>(null);
+  // A drag and its settle are motion a person is watching: the idle warm-up
+  // (src/warmup.ts) waits them out rather than land a paper step in them.
+  useEffect(() => registerBusy(() => draggingRef.current || settlingRef.current), []);
   const pointerRef = useRef({ x: 0, y: 0 });
   const originRef = useRef({ pointer: { x: 0, y: 0 }, pos: { col: START.col, row: START.row } });
   const samplesRef = useRef<PointerSample[]>([]);

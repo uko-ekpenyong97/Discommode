@@ -345,10 +345,10 @@ over, "Back to the grid"). It does what that did: Escape, and the same exit.
 
 **The hero card yields to the chrome**, as the reader's book does
 ([the book yields to the chrome](reader.md#the-book-yields-to-the-chrome)): the
-band over and under the card is the Studio Display's 129.6px on every screen,
-reserved before the card is sized, so the gaps are 36.6 (the X to the card)
-and 48.6 (the card to this 46-tall row) everywhere, and the card is what
-shrinks. The neighbours sit 4.40% of the hero's width from it (`detailGap` is
+band over and under the card is the Studio Display's 136.8px on every screen
+(`detailCardScale` 0.81), reserved before the card is sized, so the gaps are
+43.8 (the X to the card) and 55.8 (the card to this 46-tall row) everywhere,
+and the card is what shrinks. The neighbours sit 4.46% of the hero's width from it (`detailGap` is
 the gap at the reference). Only under 70% of the height for the hero does the
 chrome shrink, everything × one k, to the 44px face floor (×0.957).
 

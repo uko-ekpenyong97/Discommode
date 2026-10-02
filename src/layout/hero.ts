@@ -8,7 +8,7 @@
  * THE BOOK YIELDS TO THE CHROME. The spacing is the Studio Display's (2560×1440),
  * where it was signed off: there the hero is `detailCardScale` of the height
  * and the band over it and under it — margin, chrome, gap — is
- * `REF_VH · (1 − detailCardScale) / 2` (129.6 at 0.82). That band is reserved
+ * `REF_VH · (1 − detailCardScale) / 2` (136.8 at 0.81). That band is reserved
  * FIRST, in px, on every screen; the hero (10:13) takes the height that is left,
  * and the open book (two pages) the width. So the chrome and the gaps between
  * it and the book are the same everywhere and the book is what shrinks.

@@ -400,8 +400,10 @@ The stage also draws the morph card and the hero's DOM face (until the paper
 takes it over): 10:13 instead of 3:4, so a group of its own.
 
 **What renders when.** Instances on screen render every frame, at full rate: the
-hero, the hovered tile, all of them. Nothing renders when none is visible: the
-stage's loop sleeps until the IntersectionObserver wakes it. Instances that are
+hero, the hovered tile, all of them — "on screen" being the viewport and a
+band of 25% of it around it (`ON_SCREEN_MARGIN`, below). Nothing renders when
+none is visible: the stage's loop sleeps until the IntersectionObserver wakes
+it. Instances that are
 on screen but hidden by CSS are checked, not drawn — the grid under the detail
 view (`opacity: 0`: until 2026-09-27 only `visibility` was checked, and the
 grid was drawn every frame behind the hero, card 02's and card 04's alike), the
@@ -414,9 +416,83 @@ and live, and drawing both would pay twice for one moment:
 - the paper while it hands OUT.
 
 **No per-frame allocation** in the stage's loop, the renderer's draw or the dome,
-except one `DOMRect` per visible instance (`getBoundingClientRect`, which the
-DOM allocates). Instances move and scale every frame in the grid (the focus
-scale, the tilt), and nothing else says how big they are now.
+except one `DOMRect` per instance (`getBoundingClientRect`, which the DOM
+allocates): it says whether the instance is in the band, and whether the page
+is moving. It does NOT say how big the instance is (below).
+
+### Sizing from the layout box
+
+(2026-10-01.) Dragging the grid made every cover flicker. An instance's draw
+size and its canvas's backing store came from its BOUNDING box, every frame —
+and in the grid that box is projected through the tilt and the focus scale,
+so it changed by a pixel or two on most frames of a drag (672 → 671 → 673…).
+Every change was a `canvas.width` write, which clears the canvas; a new
+pass-A target (the pool is keyed by size); a new crop; and, the groups being
+keyed on the box's aspect, tiles of one cover split into draws of their own.
+A tile recycled by a wrap came back as a fresh 300 × 150 canvas on its still,
+or as the same canvas still holding the cover it had, until the stage got to
+it. The morph card's canvas was resized on every frame of the morph.
+
+Now (`coverStage.ts`):
+
+- **An instance is sized from its LAYOUT box** (a ResizeObserver; fractional
+  CSS px) × its DPR — a grid tile × `focusScale` too, the largest it is shown
+  at rest, then capped by `coverRenderMax`: 672 × 896 for every tile at 2×,
+  as a tile at rest always was. Transforms (the tilt, the focus scale, the
+  morph's travel, a slide's scale) are CSS's to scale. A backing store is
+  written only when that size really changes — a resize, a DPR change, a
+  layout dial — and then right before a copy, in the same task.
+- **Every grid slot keeps its tile** (`GridPlane`): a card with no live cover
+  (card 01) has one too, with an empty canvas sized as a tile's. A wrap swaps
+  the cover in a slot; it never makes or sizes a canvas.
+- **A new instance is PRIMED before the browser paints it** (`flushPrimes`, a
+  microtask after the commit that added it). A wrap re-assigns every slot in
+  one commit, so the instances that showed a cover a frame ago are gone and
+  their canvases are about to take other covers: each cover's frame is
+  gathered first — from a sibling still on the page, or from a canvas the
+  commit retired, kept in that cover's scratch canvas — and then copied in. A
+  Rive cover can also take its player's last draw. Only while nothing moves
+  may an instance get a draw of its own; never during a drag, a morph or a
+  slide, and never a compile. With no source at all, the still shows until
+  the next copy lands.
+- **Which shows is decided in the copy's task**: `data-drawn` on the tile
+  (CoverTile.css), not React state, which showed the canvas a frame late.
+- **The band is measured by the stage**, from the box it reads anyway: a tile
+  within 25% of the viewport is copied every frame, so it arrives in view
+  current. The IntersectionObserver could not do it: it clips the target by
+  the grid's viewport-sized `overflow: hidden` before applying its root
+  margin, so no margin reached past the viewport, and it reported a frame
+  late. A grid tile never drawn (outside the band since load) gets the shared
+  draw's copy off screen, four a frame.
+- **Idle work waits for the grid**: a drag and its settle count as busy for
+  the idle warm-up (src/activity.ts), and card 03's hero print for a hovered
+  tile waits until nothing moves.
+
+`verify:cover`'s `drag` (`scripts/cover-drag-checks.mjs`), on a production
+build (`vite preview`), `main` against this change:
+
+| @2× | 1728×1117 main | branch | 2560×1440 main | branch |
+| --- | --- | --- | --- | --- |
+| canvas writes while dragging/settling | 5146 | **0** | 10247 | **0** |
+| tile-frames on the still, the cover live elsewhere | 148 | **0** | 137 | **0** |
+| tile-frames off their siblings (> 24/255), worst | 203, 211 | **0**, 0 | 207, 205 | **0**, 2 |
+| one-frame flickers | 0 | **0** | 1 | **0** |
+| card 02 warmed: sharpness vs a sibling, least | 0.30 | **1.00** | 0.18 | **1.00** |
+| …back with its siblings after leaving, frames | 0 | 3 | 182 | **0** |
+| morph + slide: canvas writes | 94 | **16** | 98 | **16** |
+| frames over 33 ms (headed Chrome), per ~2850 | 0–6 | 0 | 0–1 | 0–1 |
+
+Frame times did not separate the two. At 1728×1117, one of `main`'s four runs
+had six long frames (worst 250 ms) and the rest none; at 2560×1440, six runs
+each, `main` and this change both had a single ~50 ms frame in two of them —
+a compositor frame in a fling (no Long Animation Frame on the main thread),
+the machine's rather than the page's. Every other drag frame was ≤ 17.8 ms.
+
+The cost of the band, `budgets` at 2× (worst grid frame of cover work):
+1728×1117 0.645 → 0.835 ms, 2560×1440 0.795 → 0.893 ms, against 1.2. And of
+sizing every tile up front, the GPU process before `verify:gpu`'s cycles:
+216.5 → 258.9 MB at 1728×1117, 225.3 → 268.7 at 2560×1440 — the tiles' canvases
+allocated at load rather than as a drag first shows each; the cycles stay flat.
 
 ## The clock, and the dome
 
@@ -1231,7 +1307,8 @@ npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
 npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,
                               #   rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,
-                              #   dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets
+                              #   dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets,drag
+npm run build && npx vite preview   # for drag's frame times: judged on a production build only
 npm run verify:detail         # its identity and hand-off cover cards 02 and 04
 ```
 
@@ -1306,6 +1383,15 @@ has two budgets of its own, documented in the script:
 | --- | --- | --- | --- |
 | hero | 0.000–0.004%; **1.92%** at 1728×996 @2× on #0d1220 (3.04% on #425EB6; 2.1–2.2% before 2026-10-01) | 3.5% (2.5% before) | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour. On the opaque navy ground the same drift puts more of the dot field past 32 levels: 3.04% every run, `main` 2.11% (the same script and machine), in the same pattern, no blob drawn apart |
 | as a neighbour (the still) | 1.0–5.0% | 7% (card 01's) | Chrome's scale(0.85) resampling of the `<img>` against a texture resized to the card — card 01's documented problem, on pure noise |
+| hero, since `detailCardScale` 0.81 | **5.68%** at 1728×996 @2×, every run; 0.00–0.06% elsewhere | 6.7% (`LAVA_HERO`) | the hero box is 555.7 × 722.4 CSS px there: the same drift over the dot field. The diff map is speckle and nothing else (best whole-pixel shift 1px, σ1 blur 0.37%, largest connected difference 44 px) |
+
+Card 03 as a neighbour since `detailSideScale` 1 (the neighbours at the hero's
+size): **1.1–8.2%**, held to 9.2% (`DREX_STILL_SIDE`); card 02's neighbour and
+card 03's hero keep 7% and 3.5%. Both were re-baselined on 2026-10-01 at the
+measured value + 1 point, after `verify:detail --diff-dir` maps of every
+failing row, `main` at the old dials beside the new: resampling drift only —
+card 03's dither moiré in the same places, denser; no shape out of place, no
+shift over 1px.
 
 Card 04, the same way: as the hero **0.149–0.434%**, the spec's 0.5% (the DOM
 face and the plane show one canvas; the suite waits for the live hero — until
