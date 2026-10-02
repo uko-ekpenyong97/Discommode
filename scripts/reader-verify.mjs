@@ -1,7 +1,7 @@
 /**
  * The reader, in Chrome. `npm run verify:reader` with the dev server running
  * (`npm run dev`; `--url` for another origin, `--runs N` for the frame budget,
- * `--only frames,zorder,nav,exit,hover,life,sky,pageanims` for a subset).
+ * `--only frames,zorder,nav,exit,hover,life,sky,pageanims,pageclip` for a subset).
  *
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
@@ -70,6 +70,15 @@
  *                         animated spread interleaved with a plain one (19 | 20),
  *                         asserted only when the plain one is clean; the load
  *                         average is printed.
+ *   sprites cut at the paper (`pageclip`) spread 2 (03 | 04), whose
+ *                         sprites run off their pages, at 1× and 2×: each
+ *                         canvas is exactly its paper in a clipping slot, the
+ *                         drawings reach the edges they leave by, at rest the
+ *                         layer changes no pixel off the paper and each sprite
+ *                         agrees ≥ 85% with the print over the drawing; through
+ *                         Next/Prev both ways, a drag and a riffle the layer
+ *                         never shows with a leaf up, and held mid-turn it adds
+ *                         no pixel anywhere.
  *
  * The z-order and exit checks photograph the book over the sky now, so they
  * hold the sky still first (`stillSky`: its clock pinned, its wake frozen) —
@@ -88,8 +97,8 @@ const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims').split(',');
+/** `--only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims,pageclip').split(',');
 /** Where `layout` writes its screenshots. */
 const SHOTS = arg('--shots', '.context/layout');
 const B = `${ORIGIN}/`;
@@ -1094,14 +1103,14 @@ const ANIM_PAGES = [17, 18];
 /** 19 | 20: nothing animated — the frame budget's baseline. */
 const PLAIN_SPREAD = 10;
 
-/** Both of 17 | 18's pages shown, i.e. settled and drawing. */
-const animsShown = (page) =>
+/** Both of 17 | 18's pages (or `pages`) shown, i.e. settled and drawing. */
+const animsShown = (page, pages = ANIM_PAGES) =>
   page.waitForFunction(
     (pages) => {
       const st = window.__pageAnims?.state() ?? [];
       return pages.every((n) => st.some((s) => s.page === n && s.shown && s.draws > 0));
     },
-    ANIM_PAGES,
+    pages,
     { timeout: 10000 },
   );
 
@@ -1319,6 +1328,278 @@ async function checkPageAnims(browser) {
   }
 }
 
+// ── 03 | 04: sprites that run off the page, cut at the paper ─────────────────
+
+/** Spread 2 is 03 | 04: xolo leaves 03 by its left and bottom edges, hippo
+ *  leaves 04 by its right. */
+const CLIP_SPREAD = 2;
+const CLIP_PAGES = [3, 4];
+const CLIP_EDGES = { 3: ['left', 'bottom'], 4: ['right'] };
+/** Each sprite's drawing where it is on its page, page px (its row cut at the page). */
+const CLIP_BOXES = { 3: { id: 'xolo', x0: 0, y0: 1819, x1: 849, y1: 2600 }, 4: { id: 'hippo', x0: 1145, y0: 414, x1: 2000, y1: 1256 } };
+/** A screenshot pixel "agrees" when every channel is within this (the registration's TAU). */
+const CLIP_TAU = 28;
+/**
+ * At rest, the sprite must agree with the print over their drawing at least
+ * this much. Registered, at 2×: xolo 89.1% (its thick rough outlines antialias
+ * differently from the print's at this size; the baked page itself agrees
+ * 95.2% with 03.png there), hippo 98.0%. xolo moved 4 page px scores 84.1%, 8 px
+ * 75.8%, 1% larger 75.4% (2026-10-02).
+ */
+const CLIP_MATCH_FLOOR = 0.85;
+
+/** The paper (each page's baked <img>), its slot and its sprite canvas, in CSS px. */
+const clipGeometry = (page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('.book > .book__page')].map((slot) => {
+      const r = (el) => {
+        const b = el.getBoundingClientRect();
+        return { x: b.x, y: b.y, w: b.width, h: b.height };
+      };
+      const img = slot.querySelector(':scope > img');
+      const wrap = slot.querySelector('.page-anim');
+      const c = wrap?.querySelector('canvas');
+      return {
+        page: wrap ? +wrap.dataset.page : null,
+        paper: img ? r(img) : null,
+        slot: r(slot),
+        overflow: getComputedStyle(slot).overflow,
+        canvas: c ? r(c) : null,
+      };
+    }),
+  );
+
+/** Ink on each sprite canvas's outermost columns and rows. */
+const edgeInk = (page) =>
+  page.evaluate(() =>
+    Object.fromEntries(
+      [...document.querySelectorAll('.page-anim')].map((w) => {
+        const c = w.querySelector('canvas');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        const at = (x, y) => d[(y * c.width + x) * 4 + 3] > 8;
+        const count = (n, f) => {
+          let k = 0;
+          for (let i = 0; i < n; i++) if (f(i)) k++;
+          return k;
+        };
+        return [
+          +w.dataset.page,
+          {
+            left: count(c.height, (y) => at(0, y)),
+            right: count(c.height, (y) => at(c.width - 1, y)),
+            top: count(c.width, (x) => at(x, 0)),
+            bottom: count(c.width, (x) => at(x, c.height - 1)),
+          },
+        ];
+      }),
+    ),
+  );
+
+/**
+ * The book alone on a flat ground: the sky and its washes hidden, and the
+ * chrome (which takes its colour from the sky). Even pinned, the sky redraws
+ * its weather when the DOM changes, so it cannot be the control here; these
+ * captures must differ only by what the sprite layer drew.
+ */
+const flatGround = (page) =>
+  page.addStyleTag({
+    content: '.reader-ground { visibility: hidden !important; } .reader { background: rgb(96, 112, 128) !important; } .reader__back, .reader__bar { visibility: hidden !important; }',
+  });
+
+const shot = async (page) => {
+  const { data, info } = await sharp(await page.screenshot()).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { data, w: info.width, h: info.height };
+};
+
+/**
+ * Pixels that differ between two screenshots: on a page, on a page's edge (a
+ * device pixel the paper only partly covers — the page sits at fractional CSS
+ * px, so its edge is antialiased whatever is drawn on it), or off the paper
+ * altogether, touching no page.
+ */
+function diffByPaper(a, b, papers, dpr) {
+  let on = 0;
+  let edge = 0;
+  let off = 0;
+  for (let y = 0; y < a.h; y++) {
+    for (let x = 0; x < a.w; x++) {
+      const i = (y * a.w + x) * 3;
+      if (a.data[i] === b.data[i] && a.data[i + 1] === b.data[i + 1] && a.data[i + 2] === b.data[i + 2]) continue;
+      const [x0, x1, y0, y1] = [x / dpr, (x + 1) / dpr, y / dpr, (y + 1) / dpr];
+      if (papers.some((p) => x0 >= p.x && x1 <= p.x + p.w && y0 >= p.y && y1 <= p.y + p.h)) on++;
+      else if (papers.some((p) => x1 > p.x && x0 < p.x + p.w && y1 > p.y && y0 < p.y + p.h)) edge++;
+      else off++;
+    }
+  }
+  return { on, edge, off };
+}
+
+/**
+ * How well the sprite (`shown`) agrees with the print (`baked`) inside its box
+ * on the page, counted only where there is drawing: where either differs from
+ * the plate. The empty paper around a drawing would agree whatever happened.
+ */
+function drawingAgreement(shown, baked, plate, paper, box, dpr) {
+  const same = (p, q, i) =>
+    Math.abs(p.data[i] - q.data[i]) < CLIP_TAU && Math.abs(p.data[i + 1] - q.data[i + 1]) < CLIP_TAU && Math.abs(p.data[i + 2] - q.data[i + 2]) < CLIP_TAU;
+  const a = shown;
+  const b = baked;
+  const k = (paper.w / 2000) * dpr;
+  const x0 = Math.ceil(paper.x * dpr + box.x0 * k);
+  const x1 = Math.floor(paper.x * dpr + box.x1 * k);
+  const y0 = Math.ceil(paper.y * dpr + box.y0 * k);
+  const y1 = Math.floor(paper.y * dpr + box.y1 * k);
+  let n = 0;
+  let hit = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * a.w + x) * 3;
+      if (same(a, plate, i) && same(b, plate, i)) continue;
+      n++;
+      if (same(a, b, i)) hit++;
+    }
+  }
+  return n ? hit / n : 0;
+}
+
+async function checkPageAnimClip(browser) {
+  console.log(`\nsprites cut at the paper (spread ${CLIP_SPREAD}: ${CLIP_PAGES.map((n) => String(n).padStart(2, '0')).join(' | ')})`);
+  for (const dpr of [1, 2]) {
+    // At rest, under reduced motion so both pages hold their rest frames.
+    {
+      const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: dpr, reducedMotion: 'reduce' });
+      const page = await context.newPage();
+      page.on('pageerror', (e) => errors.push(e.message));
+      await open(page, CLIP_SPREAD);
+      await flatGround(page);
+      await animsShown(page, CLIP_PAGES);
+      await page.waitForTimeout(300);
+
+      const geo = await clipGeometry(page);
+      const near = (a, b) => a && b && Math.abs(a.x - b.x) <= 0.5 && Math.abs(a.y - b.y) <= 0.5 && Math.abs(a.w - b.w) <= 0.5 && Math.abs(a.h - b.h) <= 0.5;
+      check(
+        geo.length === 2 && geo.every((g) => near(g.canvas, g.paper) && near(g.slot, g.paper) && g.overflow === 'hidden'),
+        `@${dpr}× each sprite canvas is exactly its page's paper, in a slot that clips`,
+        geo.map((g) => `${g.page}: paper ${g.paper.w.toFixed(1)}×${g.paper.h.toFixed(1)} at ${g.paper.x.toFixed(1)},${g.paper.y.toFixed(1)}; canvas ${g.canvas?.w.toFixed(1)}×${g.canvas?.h.toFixed(1)} at ${g.canvas?.x.toFixed(1)},${g.canvas?.y.toFixed(1)}; overflow ${g.overflow}`).join('; '),
+      );
+      const ink = await edgeInk(page);
+      check(
+        CLIP_PAGES.every((n) => CLIP_EDGES[n].every((e) => ink[n]?.[e] > 0)),
+        `@${dpr}× both drawings reach the edges they run off (cut there, not short of them)`,
+        CLIP_PAGES.map((n) => `${n}: ${CLIP_EDGES[n].map((e) => `${e} ${ink[n]?.[e]} px`).join(', ')}`).join('; '),
+      );
+
+      const papers = geo.map((g) => g.paper);
+      const shown = await shot(page);
+      await page.evaluate(() => document.querySelectorAll('.page-anim__sprites').forEach((c) => (c.style.visibility = 'hidden')));
+      const plateOnly = await shot(page);
+      await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.visibility = 'hidden')));
+      const baked = await shot(page);
+      await page.evaluate(() => document.querySelectorAll('.page-anim, .page-anim__sprites').forEach((el) => (el.style.visibility = '')));
+      const sprites = diffByPaper(shown, plateOnly, papers, dpr);
+      check(
+        sprites.on > 1000 && sprites.off === 0,
+        `@${dpr}× at rest: the sprites draw on the paper and nowhere else`,
+        `${sprites.on} px on the pages, ${sprites.edge} on their edges, ${sprites.off} off them`,
+      );
+      const layer = diffByPaper(shown, baked, papers, dpr);
+      check(layer.off === 0, `@${dpr}× at rest: plate and sprites together change nothing off the paper`, `${layer.on} px on the pages, ${layer.edge} on their edges, ${layer.off} off them`);
+      const match = CLIP_PAGES.map((n) => {
+        const g = geo.find((x) => x.page === n);
+        return { n, id: CLIP_BOXES[n].id, agree: drawingAgreement(shown, baked, plateOnly, g.paper, CLIP_BOXES[n], dpr) };
+      });
+      check(
+        match.every((m) => m.agree >= CLIP_MATCH_FLOOR),
+        `@${dpr}× at rest: each sprite agrees with the print over their drawing (≥ ${CLIP_MATCH_FLOOR * 100}%)`,
+        match.map((m) => `${m.id} ${(m.agree * 100).toFixed(1)}%`).join(', '),
+      );
+      await context.close();
+    }
+
+    // While the pages turn: every frame of a real Next and Prev off 03 | 04
+    // each way, a drag, and a riffle across it — the sprite layer never shows
+    // with a leaf in the air; held mid-turn, removing it changes no pixel.
+    {
+      const page = await newPage(browser, dpr);
+      await open(page, CLIP_SPREAD);
+      await flatGround(page);
+      await animsShown(page, CLIP_PAGES);
+      const box = await page.evaluate(() => {
+        const b = document.querySelector('.book').getBoundingClientRect();
+        return { x: b.x, y: b.y, w: b.width, h: b.height };
+      });
+      const frames = await sampleFrames(page, async () => {
+        for (const [dir, to] of [
+          ['next', CLIP_SPREAD + 1],
+          ['prev', CLIP_SPREAD],
+          ['prev', CLIP_SPREAD - 1],
+          ['next', CLIP_SPREAD],
+        ]) {
+          await page.evaluate((d) => window.__flip.turn(d), dir);
+          await settled(page, to);
+          await page.waitForTimeout(150);
+        }
+        await animsShown(page, CLIP_PAGES);
+        // A drag: 04 picked up by its outer edge and laid over to the left.
+        const y = box.y + box.h * 0.5;
+        await page.mouse.move(box.x + box.w * 0.97, y);
+        await page.mouse.down();
+        for (let i = 1; i <= 24; i++) {
+          await page.mouse.move(box.x + box.w * (0.97 - (0.9 * i) / 24), y + Math.sin(i / 4) * 6);
+          await page.waitForTimeout(16);
+        }
+        await page.mouse.up();
+        await settled(page, CLIP_SPREAD + 1);
+        await page.mouse.move(5, 500);
+        // A riffle across 03 | 04 and back.
+        await page.evaluate(() => window.__flip.turnTo(6));
+        await settled(page, 6);
+        await page.evaluate(() => window.__flip.turnTo(1));
+        await settled(page, 1);
+        await page.evaluate(() => window.__flip.turn('next'));
+        await settled(page, CLIP_SPREAD);
+        await animsShown(page, CLIP_PAGES);
+      });
+      const turning = frames.filter((s) => s.layer).length;
+      const leaked = frames.filter((s) => s.layer && s.vis).length;
+      check(
+        leaked === 0 && turning > 60,
+        `@${dpr}× through Next and Prev both ways, a drag and a riffle: the sprite layer never shows while a leaf is in the air`,
+        `${turning} turning frames, ${leaked} with it shown`,
+      );
+
+      const held = [];
+      for (const [dir, t] of [
+        ['next', 0.3],
+        ['next', 0.7],
+        ['prev', 0.3],
+        ['prev', 0.7],
+      ]) {
+        await page.evaluate(([d, tt]) => {
+          window.__flip.startTurn(d);
+          window.__flip.applyTurn(tt);
+        }, [dir, t]);
+        await page.waitForTimeout(150);
+        const withLayer = await shot(page);
+        await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.display = 'none')));
+        const without = await shot(page);
+        await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.display = '')));
+        const d = diffByPaper(withLayer, without, [], dpr); // no page exempt: anything is a failure
+        held.push({ dir, t, px: d.off });
+        await page.evaluate(() => window.__flip.cancelTurn(0.05));
+        await settled(page, CLIP_SPREAD);
+        await animsShown(page, CLIP_PAGES);
+      }
+      check(
+        held.every((h) => h.px === 0),
+        `@${dpr}× held mid-turn (04 and 03 lifting, t 0.3 and 0.7): the sprite layer adds no pixel anywhere`,
+        held.map((h) => `${h.dir} ${h.t}: ${h.px} px`).join(', '),
+      );
+      await page.context().close();
+    }
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   const probe = await newPage(browser);
@@ -1341,6 +1622,7 @@ async function run() {
   if (ONLY.includes('life')) await checkLife(browser);
   if (ONLY.includes('sky')) await checkSky(browser);
   if (ONLY.includes('pageanims')) await checkPageAnims(browser);
+  if (ONLY.includes('pageclip')) await checkPageAnimClip(browser);
 
   check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
   await browser.close();

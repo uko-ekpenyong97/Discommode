@@ -22,6 +22,10 @@
  * whose best (−58.95°) puts frame 2 within 5px of them but agrees only 71.9%:
  * the print's chain is whole where every frame's is not.
  *
+ * xolo (03) and hippo (04), 2026-10-02, the same way, on the new SUMARIO
+ * spread: both reuse the cover's frame folders and run off their pages' outer
+ * edges. The reader cuts them at the paper's edge (the canvas is its page).
+ *
  * Plain data and no imports: the build scripts import this file directly.
  */
 
@@ -60,6 +64,8 @@ export const PAGE_H = 2600;
 export const PAGE_ANIM_SCALE = 1;
 
 export const PAGE_ANIMS: PageAnim[] = [
+  { page: 3, id: 'xolo', x: -77.8, y: 1819.18, w: 926.19, h: 1234.62, rotation: 0, rest: 0 }, // matched: agree 98.2%, margin 13.4% — runs off the left and bottom edges
+  { page: 4, id: 'hippo', x: 1145.32, y: 413.85, w: 1063.25, h: 841.23, rotation: 0, rest: 1 }, // matched: agree 98.4%, margin 10.8% — runs off the right edge
   { page: 8, id: 'badges', x: 1143.2, y: 859.71, w: 723.95, h: 860.29, rotation: 0, rest: 2 }, // matched: agree 92.6%, margin 5.5%
   { page: 10, id: 'sfmoma', x: 308.73, y: 765.91, w: 487.46, h: 685.09, rotation: 16.36, rest: 1 }, // matched: agree 96.7%, margin 11.5%
   { page: 11, id: 'cuffs', x: 1002.84, y: 1695.32, w: 860.24, h: 602.07, rotation: -58.95, rest: 1 }, // registered at its turn: agree 71.9%, margin 26.1% — frame 2's chain is drawn broken where the print's is whole
