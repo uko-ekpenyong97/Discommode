@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent, Ref, RefObject } from 'react';
 import { CARD_ASPECT_H, CARD_ASPECT_W, PERSPECTIVE, useConfig } from '../config';
 import { brightnessForDistance } from '../grid';
 import type { GridPos } from '../grid';
 import { CONTENT, contentIndex, itemFace, itemOverlay } from '../content';
 import type { PosterItem } from '../content';
-import type { CardFace, CellOffset } from '../hooks/usePanController';
+import type { CardFace, OverlayStore } from '../hooks/usePanController';
 import { CardOverlay } from './CardOverlay';
 import { CoverTile } from '../covers/CoverTile';
 import './GridPlane.css';
@@ -38,8 +38,10 @@ interface GridPlaneProps {
   cardsRef: RefObject<CardFace[]>;
   /** Notify the controller after (re)collecting faces so it re-applies them. */
   markCardsChanged: () => void;
-  /** The window cell currently showing its hover overlay (null = none). */
-  overlayCell: CellOffset | null;
+  /** The window cell showing its hover overlay — read by each card. */
+  overlay: OverlayStore;
+  /** False in the detail view: no card shows its overlay. */
+  overlayEnabled: boolean;
   /** Open a window cell's detail (overlay CTA) — glide to centre, then FLIP. */
   onRequestOpen: (dc: number, dr: number) => void;
   /** Hide the three hero cells (centre + L/R, `dr 0`) — they're handled by the
@@ -80,7 +82,8 @@ export function GridPlane({
   tiltRef,
   cardsRef,
   markCardsChanged,
-  overlayCell,
+  overlay,
+  overlayEnabled,
   onRequestOpen,
   hideHero,
 }: GridPlaneProps) {
@@ -177,87 +180,129 @@ export function GridPlane({
             } as CSSProperties
           }
         >
-          {slots.map((s) => {
-            const distance = Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow));
-            const isFocused = s.dc === 0 && s.dr === 0;
-            const isOverlay = !!overlayCell && overlayCell.dc === s.dc && overlayCell.dr === s.dr;
-            // During a morph exit, the three hero cells (centre + L/R neighbours)
-            // are carried by the morph layer until handoff — hide them so they
-            // don't double; the rest of the grid fades in around them.
-            const isHeroHidden = hideHero && s.dr === 0 && Math.abs(s.dc) <= 1;
-            // The hovered card dims slightly so its white overlay type reads.
-            const brightness = brightnessForDistance(distance) * (isOverlay ? cfg.overlayCardDim : 1);
-            // An issue cover (when the item is a readable issue) takes the card
-            // face; otherwise a sample poster; otherwise the hue fallback.
-            const face = itemFace(s.item);
-            // Hover plate — only issues have one, so most cards render nothing here.
-            const overlayFace = itemOverlay(s.item);
-            return (
-              // Outer cell: the layout slot only. Inside it:
-              //   __fade      — per-card perspective + the imperative opacity
-              //   __transform — the imperative scale + cursor-facing rotation,
-              //                 and a preserve-3d context for its children
-              //   __face      — hue/image + brightness filter, at z = 0
-              //   __overlay   — the hover plate, floating at z = --overlay-z
-              //   .card-overlay — the hover headline/captions/CTA, just above it
-              // The overlay and the chrome are siblings of the face inside the
-              // transform wrapper, so they inherit the card's transform but NOT
-              // its brightness filter. The fade sits ABOVE the transform because
-              // opacity < 1 would flatten the 3D the plate depends on.
-              <div
-                key={`${s.dc}|${s.dr}`}
-                className="grid-card"
-                // The focused card overlaps neighbours; the hovered card sits on top of all.
-                style={{
-                  width: `${cardW}px`,
-                  height: `${cardH}px`,
-                  zIndex: isOverlay ? 3 : isFocused ? 2 : 1,
-                  visibility: isHeroHidden ? 'hidden' : undefined,
-                }}
-              >
-                <div className="grid-card__fade">
-                  <div className="grid-card__transform" data-dc={s.dc} data-dr={s.dr}>
-                    <div
-                      className="grid-card__face"
-                      style={{
-                        // A live cover has no fill behind it: the sky shows
-                        // through its ground (docs/covers.md).
-                        backgroundColor: s.item.cover ? undefined : `hsl(${s.item.hue}, 28%, 32%)`,
-                        filter: `brightness(${brightness})`,
-                      }}
-                    >
-                      {s.item.cover ? (
-                        <CoverTile coverId={s.item.cover.id} dome="own" />
-                      ) : face && (
-                        <img
-                          className="grid-card__img"
-                          src={face}
-                          alt=""
-                          draggable={false}
-                          loading={s.eager ? 'eager' : 'lazy'}
-                        />
-                      )}
-                    </div>
-                    {overlayFace && (
-                      <img
-                        className="grid-card__overlay"
-                        src={overlayFace}
-                        alt=""
-                        draggable={false}
-                        loading={s.eager ? 'eager' : 'lazy'}
-                        style={{ opacity: isOverlay ? 1 : 0 }}
-                      />
-                    )}
-                    {isOverlay && (
-                      <CardOverlay item={s.item} onOpen={() => onRequestOpen(s.dc, s.dr)} />
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {slots.map((s) => (
+            <GridCard
+              key={`${s.dc}|${s.dr}`}
+              slot={s}
+              distance={Math.max(Math.abs(s.dc - fracCol), Math.abs(s.dr - fracRow))}
+              cardW={cardW}
+              cardH={cardH}
+              overlayCardDim={cfg.overlayCardDim}
+              // During a morph exit, the three hero cells (centre + L/R neighbours)
+              // are carried by the morph layer until handoff — hide them so they
+              // don't double; the rest of the grid fades in around them.
+              heroHidden={hideHero && s.dr === 0 && Math.abs(s.dc) <= 1}
+              overlay={overlay}
+              overlayEnabled={overlayEnabled}
+              onRequestOpen={onRequestOpen}
+            />
+          ))}
         </div>
       </div>
     </div>
   );
 }
+
+interface GridCardProps {
+  slot: Slot;
+  /** Continuous distance from the centre, in cells (brightness). */
+  distance: number;
+  cardW: number;
+  cardH: number;
+  overlayCardDim: number;
+  heroHidden: boolean;
+  overlay: OverlayStore;
+  overlayEnabled: boolean;
+  onRequestOpen: (dc: number, dr: number) => void;
+}
+
+/**
+ * One slot of the window. Memoised, and the only thing that reads the hover
+ * store: a hover changes two cards' `isOverlay`, and only those two render.
+ */
+const GridCard = memo(function GridCard({
+  slot: s,
+  distance,
+  cardW,
+  cardH,
+  overlayCardDim,
+  heroHidden,
+  overlay,
+  overlayEnabled,
+  onRequestOpen,
+}: GridCardProps) {
+  const isOverlay = useSyncExternalStore(overlay.subscribe, () => {
+    const c = overlayEnabled ? overlay.get() : null;
+    return !!c && c.dc === s.dc && c.dr === s.dr;
+  });
+  const isFocused = s.dc === 0 && s.dr === 0;
+  // The hovered card dims slightly so its white overlay type reads.
+  const brightness = brightnessForDistance(distance) * (isOverlay ? overlayCardDim : 1);
+  // An issue cover (when the item is a readable issue) takes the card
+  // face; otherwise a sample poster; otherwise the hue fallback.
+  const face = itemFace(s.item);
+  // Hover plate — only issues have one, so most cards render nothing here.
+  const overlayFace = itemOverlay(s.item);
+  return (
+    // Outer cell: the layout slot only. Inside it:
+    //   __fade      — per-card perspective + the imperative opacity
+    //   __transform — the imperative scale + cursor-facing rotation,
+    //                 and a preserve-3d context for its children
+    //   __face      — hue/image + brightness filter, at z = 0
+    //   __overlay   — the hover plate, floating at z = --overlay-z
+    //   .card-overlay — the hover headline/captions/CTA, just above it
+    // The overlay and the chrome are siblings of the face inside the
+    // transform wrapper, so they inherit the card's transform but NOT
+    // its brightness filter. The fade sits ABOVE the transform because
+    // opacity < 1 would flatten the 3D the plate depends on.
+    <div
+      className="grid-card"
+      // The focused card overlaps neighbours; the hovered card sits on top of all.
+      style={{
+        width: `${cardW}px`,
+        height: `${cardH}px`,
+        zIndex: isOverlay ? 3 : isFocused ? 2 : 1,
+        visibility: heroHidden ? 'hidden' : undefined,
+      }}
+    >
+      <div className="grid-card__fade">
+        <div className="grid-card__transform" data-dc={s.dc} data-dr={s.dr}>
+          <div
+            className="grid-card__face"
+            style={{
+              // A live cover has no fill behind it: the sky shows
+              // through its ground (docs/covers.md).
+              backgroundColor: s.item.cover ? undefined : `hsl(${s.item.hue}, 28%, 32%)`,
+              filter: `brightness(${brightness})`,
+            }}
+          >
+            {s.item.cover ? (
+              <CoverTile coverId={s.item.cover.id} dome="own" />
+            ) : face && (
+              <img
+                className="grid-card__img"
+                src={face}
+                alt=""
+                draggable={false}
+                loading={s.eager ? 'eager' : 'lazy'}
+              />
+            )}
+          </div>
+          {overlayFace && (
+            <img
+              className="grid-card__overlay"
+              src={overlayFace}
+              alt=""
+              draggable={false}
+              loading={s.eager ? 'eager' : 'lazy'}
+              style={{ opacity: isOverlay ? 1 : 0 }}
+            />
+          )}
+          {isOverlay && (
+            <CardOverlay item={s.item} onOpen={() => onRequestOpen(s.dc, s.dr)} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});

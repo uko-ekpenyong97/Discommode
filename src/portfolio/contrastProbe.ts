@@ -368,7 +368,7 @@ export function probeContrast(overrides: SurfaceOverride = {}): ContrastReport |
 
 /**
  * The dials the sweep holds at the WORST the dock can set them — the maxima of
- * their DialKit ranges (`src/dev/Dials.tsx`) — so the figure is a floor for
+ * their DialKit ranges (`src/dev/DevPanels.tsx`) — so the figure is a floor for
  * any tuning session and not only for the shipped values. The wake's push on
  * the gradient and its stain, what the pointer puts in, how hard a star in the
  * wake flares, and the star itself.

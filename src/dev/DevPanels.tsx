@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo } from 'react';
-import { DialRoot, DialStore, useDialKit } from 'dialkit';
-import 'dialkit/styles.css';
+import { DialStore, useDialKit } from 'dialkit';
 import { DEFAULTS, config, setConfig } from '../config';
 import type { LiveConfig } from '../config';
 import { useDetailPaperDials } from './detailPaperDials';
@@ -9,9 +8,15 @@ import { useChromeDials } from './chromeDials';
 import { clampDial, loadAppDials, saveAppDials } from './dialState';
 
 /**
- * Dev-only DialKit panel for live feel/layout tuning. This whole module is
- * loaded behind an `import.meta.env.DEV` dynamic import (see App), so it and the
- * `dialkit` dependency are tree-shaken out of production builds entirely.
+ * The app's dev dials for live feel/layout tuning — the PANELS, with no UI:
+ * the dock that shows them is DevDock.tsx, mounted only at `?intro` (App).
+ * Mounted on every dev URL (except `?nodials`), so saved dial values and the
+ * `__setConfig` / `__dialStore` hooks are the same with the dock up or not,
+ * and kept mounted while the reader or the portfolio view is up: a remount
+ * re-registered a dozen panels and re-rendered the dock for ~200 ms on every
+ * return to the app. This whole module is loaded behind an
+ * `import.meta.env.DEV` dynamic import (see App), so it and the `dialkit`
+ * dependency are tree-shaken out of production builds entirely.
  *
  * Dial values flow into the reactive config store ([setConfig]) so every change
  * propagates live; they also persist to localStorage so a tuning session
@@ -22,7 +27,7 @@ import { clampDial, loadAppDials, saveAppDials } from './dialState';
  * it re-renders only when DialKit's own store changes a value.
  */
 
-function Dials() {
+function DevPanels() {
   // Restore saved values as each dial's starting point (defaults otherwise):
   // only this version's, only keys DEFAULTS has, of the right type (dialState.ts).
   const start = useMemo<LiveConfig>(() => ({ ...DEFAULTS, ...loadAppDials(DEFAULTS) }), []);
@@ -253,7 +258,7 @@ function Dials() {
     w.__dialStore = DialStore;
   }, []);
 
-  return <DialRoot position="top-right" />;
+  return null;
 }
 
-export default memo(Dials);
+export default memo(DevPanels);

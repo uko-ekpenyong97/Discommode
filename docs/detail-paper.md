@@ -148,18 +148,22 @@ of `#item-01` from its tile, 1728×996 @2×, 2026-09-28, before the change):
 
 **The model now:**
 
-1. **The first hover of a grid card** (or the first press) starts the
-   warm-up, one idle callback a step: the context on a 1×1 canvas (5–8 ms),
+1. **The page's idle warm-up after load** (src/warmup.ts, since 2026-10-01;
+   [below](#the-first-sweep-and-the-idle-warm-up)) starts the warm-up — or
+   **the first hover of a grid card** (or the first press), if that comes
+   first, which takes it over from the step it is at and runs the rest at
+   once. One idle callback a step: the context on a 1×1 canvas (5–8 ms),
    its drawing buffer sized once to the viewport (~6 ms), the paper's and the
    shadow's programs compiled WITHOUT blocking (`compileAsync`,
    KHR_parallel_shader_compile) and then drawn once, invisibly (the driver
    builds its pipeline on the first draw), the crease map, every face for this
    viewport — decoded off the main thread, the natural size read without a
    decode, uploaded one at a time, a few ms a frame — and card 02's renderer,
-   compiled the same way and drawn once into an 8×10 target. Not at app start
-   and not on a key: a grid that is only looked at, or steered with the
-   arrows, never makes the context (verify:cover's `contexts` holds the grid
-   at 2).
+   compiled the same way and drawn once into an 8×10 target. Until
+   2026-10-01 it waited for that hover, so that a grid only looked at never
+   made the context; now every page makes it, in idle moments after load,
+   and verify:cover's `contexts` counts the paper's apart (the grid's own
+   stay at 2, the paper's at most 1).
 2. **The click.** The detail view mounts; the layer moves the shared canvas
    into its host and asks for its faces, which are in. A click before the
    warm-up finished leaves the rest to the morph, which is 450 ms of runway.
@@ -214,13 +218,80 @@ sky's context) are printed and not judged. When the page's load stops dropping
 frames, make the cold rows enforced again (`enforce: false` in
 `checkArrival`).
 
-**In a dev build, the dock.** Every change of a DialKit readout (card 04's
-COVER status, once a second when it changes) re-renders the dev dock, 30–50 ms
-frames four in a row, and the dock's lazy mount on a load is 260–400 ms. A
-production build has neither, so `arrival` loads the page with `?nodials`
-(App.tsx), which leaves the dock out; a production build ignores it. Deferring
-the readout's writes out of the arrival was tried and dropped: it moved the
-re-render into `life`'s boil window (a 50 ms frame there, 16.8 ms without).
+**In a dev build, the dock.** Until 2026-10-01 the app's dev dock was up on
+every dev URL with every panel open, and a change of a DialKit readout (card
+04's COVER status) re-rendered all of it: 30–50 ms frames four in a row, and
+the dock's lazy mount on a load was 260–400 ms. The dock is only at `?intro`
+now, its panels folded ([below](#the-first-sweep-and-the-idle-warm-up)).
+`arrival` still loads the page with `?nodials` (App.tsx), which leaves the
+dials' panels and the readouts out as well; a production build ignores it.
+
+### The first sweep, and the idle warm-up
+
+**2026-10-01.** `npm run verify:jank -- --url <origin>`
+(`scripts/jank-check.mjs`; `--dock` for `/?intro`, `--early` for a sweep
+before the warm-up is done) replays the page's everyday paths at 1728×1117
+@2×, the pointer always moving — a slow and a fast sweep of the grid, the
+first sweep after load, grid → detail, Next ×3 and Previous ×3, the arrow
+keys, detail → reader → detail → grid, and (with the dock) card 04's panel
+open over its tile and its hero — and reports every case's worst frame, with
+the Long Animation Frame and the scripts in it. It passes with no frame over
+two vsyncs (33.4 ms) without the dock and three (50.1 ms) with it.
+
+**The first sweep after load** dropped a frame in a production build (50–67
+ms) with no script in it. A trace has it: card 01's hover plate
+(`overlay.webp`, `.grid-card__overlay`) is at opacity 0 until the first
+hover, so it was never rasterised, and that hover's commit waited on a 65–69
+ms WebP decode on a raster worker. The page's **idle warm-up** (src/warmup.ts)
+decodes it on its own `<img>` elements after load, then runs the paper's
+warm-up (above) behind the same gate:
+
+- one `requestIdleCallback` a step (no timeout: only a real idle moment);
+- only while the tab is visible, and nothing is moving — an arrival or an
+  exit, the paper's hand-in or hand-out, a slide, the doorway, a page turn or
+  a jump (`src/activity.ts`: each owner registers a probe of its own state).
+  Busy, it waits for the move to settle and goes on from the same step;
+- a hover, a press or a direct load before it is done warms up on demand as
+  before, from the step the chain is at: nothing twice, nothing waiting on
+  the chain;
+- `performance.mark('warmup:done')` when every step has run and every face
+  is in. 1.0–1.2 s after navigation at 1728×1117 @2× (1.02–1.04 s a
+  production build, 1.15–1.21 s dev); in the reader at `#read-01` with the
+  pages turned every 450 ms, no step ran until the last turn had landed.
+  `verify:jank`'s `hidden tab` hides the page as it loads (another tab
+  activated, over raw CDP — Playwright keeps every page it drives "visible")
+  and shows it 2.5 s later: 7–8 idle callbacks fired while it was hidden and
+  no step ran; the first ran 10–100 ms after it was shown, and `warmup:done`
+  came 0.6 s after that. With the visibility check taken out, five steps ran
+  hidden.
+
+The long frames in that first second — 100–150 ms at ~0.6 s and ~0.75 s after
+navigation — are the page's load: `main` has the same ones with no warm-up
+running.
+
+GPU process (`verify:gpu`, headed, `#view-02` ×20): 212.9 MB at 1.5 s after
+load against `main`'s 190.0 (the paper's GL, which `main` makes at the first
+hover); after a first sweep both read 195–204 MB, within the run-to-run noise;
+twenty cycles end at 193.0 against 199.5, with no climb.
+
+**The dev dock.** Only at `?intro` in the query (`/?intro`, `/?intro#item-NN`;
+App.tsx); `#item-NN?intro`, `#read-NN?intro` and `#view-NN?intro` are the
+doorway's, READER NAV's and the portfolio view's, as before. The panels
+(`src/dev/DevPanels.tsx`) are registered on every dev URL, so saved dials and
+the test hooks apply with or without the dock, and stay registered while the
+reader is up (their re-registration on every return was a ~200 ms commit).
+Every dock's panels start folded except the dock's own (DOORWAY, READER NAV,
+PV …) and the view's (DETAIL PAPER in a detail view, LAVA at card 02, COVER
+LIFE at card 01), which open once a move to the view has settled
+(`src/dev/dockPanels.ts`). Card 04's STATUS rows are a fixed height with
+tabular numbers, checked four times a second. Why: DialKit's root folder
+re-renders whenever its content's height changes, and with every panel open
+that was ~15,000 px of controls — 45–60 ms commits, four in a row, each time
+the readout wrapped differently (on a hover of card 04, on its arrival, on
+the swap) or a key was pressed (146 ms for an arrow key, in DialKit's
+shortcut listener). A grid hover no longer re-renders App either: the hovered
+cell is a small store (`usePanController`), read by each memoised
+`GridCard`.
 
 ### detailSideScale at 1
 
@@ -338,12 +409,14 @@ its `cover-plate.webp` at the hero's size. The plate is used exactly while a
 the sprites. A MutationObserver re-renders on the paint where that layer mounts
 or unmounts, so the cover never shows for a frame with its objects missing.
 Everything is uploaded (`initTexture`) before the hand-in, never mid-slide:
-since 2026-09-28 on the first hover of a grid card, one face at a time, and
-kept for the page's life ([the arrival](#the-arrival)).
+in the page's idle warm-up after load (or on the first hover of a grid card,
+if that comes first), one face at a time, and kept for the page's life
+([the arrival](#the-arrival)).
 
 GPU cost at 1728×996 @2×: four faces at two sizes plus one plate, about 65 MB,
-resident from the first hover of a card (it was allocated and freed on every
-open and close before).
+resident from the idle warm-up after load (it was allocated and freed on every
+open and close before 2026-09-28, and made on the first hover until
+2026-10-01).
 
 ### The live cover plane
 
@@ -446,8 +519,8 @@ same way.
 
 The boil's dials are on the COVER LIFE panel, in the same docks (see
 docs/reader.md). DETAIL PAPER panel. It is at `#item-01?intro` (the doorway dock), and also in the
-app's own dev dock at plain `#item-NN`, where the hero is uncovered and can be
-hovered: under the doorway dock the reader's cover sits over the hero and the app
+app's own dev dock at `/?intro#item-NN`, where the hero is uncovered and can be
+hovered (open there by default): under the doorway dock the reader's cover sits over the hero and the app
 is inert. It is the same panel id, persisted, so a value set in one dock is the
 value the other opens with. `paperDials.ts` is the source of truth.
 
@@ -674,10 +747,11 @@ are identical (0 levels).
    over a card that is crumpling in. For the ±1 slot this is at most `foldMs` of
    a label hanging over a half-revealed card (see `neighbour-unfold-mid.webp`).
 4. **A third WebGL context.** The sky and the portfolio sheet each have one. This
-   canvas is a third, made on the first hover of a grid card and kept for the
-   page's life — one, however many arrivals (it was one per arrival, destroyed
-   on close). With it go ~65 MB of face textures at 1728×996 @2×, resident from
-   that hover. (The live covers' stage is one more, for the whole page:
+   canvas is a third, made in the page's idle warm-up after load (or on the
+   first hover of a grid card, if that comes first) and kept for the page's
+   life — one, however many arrivals (it was one per arrival, destroyed on
+   close). With it go ~65 MB of face textures at 1728×996 @2×, resident from
+   then. (The live covers' stage is one more, for the whole page:
    docs/covers.md.)
 5. **A cold direct load still drops frames** — page load, not the paper
    ([the arrival](#the-arrival)): 67–133 ms frames in the first 300 ms after the

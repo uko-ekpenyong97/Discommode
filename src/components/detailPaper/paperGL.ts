@@ -38,9 +38,11 @@ import { span } from './span';
  * face's upload, on every card, every time: 120–480 ms frames for ~1.5 s
  * (docs/detail-paper.md, "The arrival"). Now:
  *
- *   warm-up    on the first hover of a grid card (or the first mount, for a
- *              direct load or a keyboard open), in idle callbacks, one step
- *              each: the context and its drawing buffer; the programs,
+ *   warm-up    after load, in idle callbacks, gated on a visible tab and
+ *              nothing moving (src/warmup.ts) — or on demand, at once, on
+ *              the first hover of a grid card (or the first mount, for a
+ *              direct load or a keyboard open), if that comes first; one
+ *              step a callback: the context and its drawing buffer; the programs,
  *              compiled without blocking (KHR_parallel_shader_compile) and
  *              then drawn once; the crease map; each shader cover's renderer.
  *   faces      every card's, wanted as the last warm-up step (and again by
@@ -179,13 +181,53 @@ const warmScene = new Scene();
 const warmCamera = new OrthographicCamera(0, 1, 0, -1, -10, 10);
 
 let warmActive = 0;
+
+/**
+ * Who paces the warm-up. `null`: today's pace — each step in an idle callback
+ * with a 150 ms timeout, under the morph as well as before it (the first
+ * hover, a press, a mount). A gate: the page's idle warm-up (src/warmup.ts),
+ * which runs a step only when it says so — `gate(go)` calls `go` when the tab
+ * is visible and nothing is moving, and returns a cancel.
+ */
+export type WarmGate = (go: () => void) => () => void;
+let gate: WarmGate | null = null;
+/** The step waiting on the gate, so a hover can run it at once. */
+let gated: { go: () => void; cancel: () => void } | null = null;
+let warmSteps = 0;
+let warmStepsDone = 0;
+let warmFaceKeys: string[] | null = null;
+
+/** Every warm-up step has run and every face it asked for is uploaded (or
+ *  given up on): the page's idle warm-up can say it is done. */
+export function paperWarmComplete(): boolean {
+  return warmStarted && warmStepsDone === warmSteps && !!warmFaceKeys && warmFaceKeys.every(faceSettled);
+}
+
 /**
  * Start the warm-up (idempotent). Each step is its own idle callback, so none
  * of it is a long task, and it runs under the morph as well as before it.
  * `active`: the card most likely to open, whose faces come first.
+ *
+ * Called with a `gate` by the idle warm-up after load; called without one
+ * (the first hover, a press, a mount) it is on demand, exactly as before: a
+ * warm-up the idle chain already started goes on from the step it is at, at
+ * today's pace, its waiting step run now — nothing done twice, nothing
+ * waiting on the chain.
  */
-export function warmPaper(active = 0) {
-  if (warmStarted) return;
+export function warmPaper(active = 0, opts: { gate?: WarmGate } = {}) {
+  if (warmStarted) {
+    if (!opts.gate && gate) {
+      gate = null;
+      const g = gated;
+      gated = null;
+      if (g) {
+        g.cancel();
+        g.go();
+      }
+    }
+    return;
+  }
+  gate = opts.gate ?? null;
   warmActive = active;
   warmStarted = true;
   const steps: (() => void | Promise<void>)[] = [
@@ -235,7 +277,9 @@ export function warmPaper(active = 0) {
     // Every face, for the viewport as it is: the ones any arrival needs (the
     // strip shows every card). Decoded and uploaded while the pointer is
     // still on the grid, so a first arrival uploads nothing, like a second.
-    () => void wantFaces(warmActive),
+    () => {
+      warmFaceKeys = wantFaces(warmActive);
+    },
     ...Object.keys(COVERS)
       .filter((id) => shaderCover(id))
       .map((id) => async () => {
@@ -243,27 +287,41 @@ export function warmPaper(active = 0) {
         if (c) await c.r.warmAsync();
       }),
   ];
+  warmSteps = steps.length;
   const run = (i: number) => {
     if (i >= steps.length) return;
-    idle(() => {
-      Promise.resolve(steps[i]())
-        .catch((e) => console.warn('[paper] warm-up step failed', e))
-        .then(() => {
-          progress();
-          run(i + 1);
-        });
-    });
+    const step = () => {
+      let ran = false;
+      const go = () => {
+        if (ran) return;
+        ran = true;
+        gated = null;
+        Promise.resolve(steps[i]())
+          .catch((e) => console.warn('[paper] warm-up step failed', e))
+          .then(() => {
+            warmStepsDone++;
+            progress();
+            run(i + 1);
+          });
+      };
+      if (!gate) return go();
+      const cancel = gate(go);
+      if (!ran) gated = { go, cancel };
+    };
+    // Gated: the gate waits for its own idle moment; on demand: today's.
+    if (gate) step();
+    else idle(step);
   };
   run(0);
 }
 
 /**
- * Warm up on the first hover of a grid card — the earliest sign that the
- * detail view is coming — or the first press. Not at app start, and not on a
- * key: a page that is only looked at, or steered with the arrows, never pays
- * for the context (verify:cover's `contexts` counts the grid's, steered with
- * the arrows, at 2). A keyboard open (Enter) warms up as the view mounts, and
- * the morph is its runway.
+ * Warm up ON DEMAND on the first hover of a grid card — the earliest sign
+ * that the detail view is coming — or the first press, if the page's idle
+ * warm-up (src/warmup.ts) has not already done it: since 2026-10-01 that runs
+ * after load, gated, so a first hover normally finds the context made. A
+ * hover before then takes the warm-up over at today's pace. A keyboard open
+ * (Enter) warms up as the view mounts, and the morph is its runway.
  */
 export function armPaperWarmup(): () => void {
   const EVENTS = ['pointerover', 'pointerdown'] as const;

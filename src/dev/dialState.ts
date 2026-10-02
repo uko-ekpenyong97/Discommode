@@ -1,6 +1,6 @@
 /**
  * The dev dials' SAVED state: every persisted DialKit panel (`dialkit:<id>`)
- * and the app's own `discommode-dials` (src/dev/Dials.tsx), in this origin's
+ * and the app's own `discommode-dials` (src/dev/DevPanels.tsx), in this origin's
  * localStorage. Dev-only: every importer is behind an `import.meta.env.DEV`
  * import.
  *
@@ -22,7 +22,7 @@
  *             keep a select only if it is still an option, and drop keys they
  *             no longer have; `discommode-dials` keeps only keys DEFAULTS has,
  *             of the default's type (finite numbers), and each slider clamps
- *             its start into its range (Dials.tsx).
+ *             its start into its range (DevPanels.tsx).
  *   reset     the dock's DIALS panel, "Reset dials": every saved dial deleted
  *             and the page reloaded on the defaults.
  */
@@ -76,7 +76,7 @@ pruneOtherVersions();
  * The app's saved dials, validated against `defaults`: a key DEFAULTS does not
  * have is dropped, and so is a value not of its default's type (a number must
  * be finite — `null` is what a NaN saves as). Ranges are clamped where each
- * dial is declared (Dials.tsx), which is where they are known.
+ * dial is declared (DevPanels.tsx), which is where they are known.
  */
 export function loadAppDials<T extends object>(defaults: T): Partial<T> {
   const out: Partial<T> = {};

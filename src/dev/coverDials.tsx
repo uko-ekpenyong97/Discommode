@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { useDialKit, useDialKitController } from 'dialkit';
 import type { DialConfig as KitConfig } from 'dialkit';
 import { COVERS } from '../covers/covers';
@@ -8,6 +8,7 @@ import { riveStatus } from '../covers/rive/riveCover';
 import type { RivePlayerStatus, RivePointerStatus } from '../covers/rive/riveCover';
 import { persistedPanelId } from './dialState';
 import { useResetDialsPanel } from './resetDialsPanel';
+import './statusReadout.css';
 
 const S = SITE_COVER_DEFAULTS;
 
@@ -19,7 +20,7 @@ const S = SITE_COVER_DEFAULTS;
  * Registered from OUTSIDE src/reader: DialKit's store is global, so the panel
  * shows in whichever dock is mounted — the doorway's at #item-02?intro (the
  * view is suspended there, which is why this host is mounted even then) and the
- * app's own everywhere else.
+ * app's own at /?intro.
  *
  * Card 02's `lava` folder is not here: it is the LAVA panel, below.
  *
@@ -105,8 +106,9 @@ function DrexPanel() {
  * reduced-motion media query — the grid's instance and the hero's apart, with
  * what the paper's hero plane samples (live, or the still) and its uploads a
  * second, and what is on screen (the artboard swap is a change there). Text
- * fields, checked once a second and set only when their text changes; the
- * console carries the same as it changes (`[covers] nosey: …`).
+ * fields, checked four times a second and set only when their text changes,
+ * in rows of a fixed height (statusReadout.css); the console carries the same
+ * as it changes (`[covers] nosey: …`).
  */
 const STATUS = {
   file: { type: 'text', default: '' },
@@ -120,11 +122,13 @@ const STATUS = {
 } as const;
 
 /**
- * The readout's lines are STATES, not counters: every change is a DialKit
- * re-render of the dock, ~300 ms in a dev build, and lines that ticked (a frame
- * count, an age, a pointer's coordinates while it moves) made the page stutter
- * once a second with the dock open. The live numbers are in the console and
- * `__covers.rive.status(id)`.
+ * The readout's lines are STATES, not counters: lines that ticked (a frame
+ * count, an age, a pointer's coordinates while it moves) would change on every
+ * check. A change re-renders this panel's controls; it used to re-render the
+ * whole dock — ~300 ms in a dev build with every panel open, and four 50 ms
+ * commits a time while the rows resized to their text — which is why the rows
+ * are a fixed height now and the other panels are folded (dockPanels.ts). The
+ * live numbers are in the console and `__covers.rive.status(id)`.
  */
 function playerLine(p: RivePlayerStatus | undefined, advancing: boolean | null): string {
   if (!p) return 'no instance';
@@ -157,6 +161,11 @@ function useRiveCoverPanel(id: string) {
   useEffect(() => {
     let shown = '';
     const last = { grid: -1, hero: -1, uploads: -1 };
+    // "advancing" and "uploading" stay judged over a SECOND (every fourth
+    // check), as they were: a quarter-second window would flip them on a
+    // single slow frame.
+    const judged = { grid: null as boolean | null, hero: null as boolean | null, uploading: false };
+    let n = 0;
     const tick = () => {
       const st = riveStatus(id);
       const at = Object.entries(st.at)
@@ -164,14 +173,20 @@ function useRiveCoverPanel(id: string) {
         .join(', ');
       const now = performance.now();
       const plane = st.plane && now - st.plane.t < 500 ? st.plane : null;
+      const judge = n++ % 4 === 0;
       const moved = (role: 'grid' | 'hero') => {
+        if (!judge) return st.players[role] ? judged[role] : null;
         const f = st.players[role]?.frames ?? -1;
         const on = last[role] >= 0 && f > last[role];
         last[role] = f;
+        judged[role] = on;
         return st.players[role] ? on : null;
       };
-      const uploading = plane ? plane.uploads > last.uploads && last.uploads >= 0 : false;
-      if (plane) last.uploads = plane.uploads;
+      if (judge) {
+        judged.uploading = plane ? plane.uploads > last.uploads && last.uploads >= 0 : false;
+        if (plane) last.uploads = plane.uploads;
+      }
+      const uploading = plane ? judged.uploading : false;
       const swap = st.swaps.at(-1);
       const next = {
         file: `${st.file}${st.error ? `: ${st.error}` : ''} (${at} ms)`,
@@ -193,9 +208,9 @@ function useRiveCoverPanel(id: string) {
       setValues({ status: next } as never);
     };
     tick();
-    // Once a second: every change is a DialKit re-render of the dock, and in a
-    // dev build that was a 280–340 ms frame every few seconds at four a second.
-    const t = window.setInterval(tick, 1000);
+    // Four times a second at most: a change re-renders the panel's own rows,
+    // which hold their height (statusReadout.css), so it moves nothing else.
+    const t = window.setInterval(tick, 250);
     return () => window.clearInterval(t);
   }, [id, setValues]);
 }
@@ -211,8 +226,10 @@ function DialsPanel() {
 }
 
 /** Mounted by App in dev, suspended or not — so the DIALS panel (Reset dials)
- *  is registered here too, and shows in whichever dock is up. */
-export default function CoverDials() {
+ *  is registered here too, and shows in whichever dock is up. Memoised (no
+ *  props): it re-rendered with every App render — every hover — and
+ *  re-serialised four panels' configs each time. */
+function CoverDials() {
   return (
     <>
       <DialsPanel />
@@ -223,3 +240,5 @@ export default function CoverDials() {
     </>
   );
 }
+
+export default memo(CoverDials);

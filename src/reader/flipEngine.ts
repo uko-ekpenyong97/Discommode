@@ -10,6 +10,7 @@
  * i, each hinged to its parent by `--td`. Per-strip rotations accumulate down
  * the chain, so a single scalar `t` bends the whole leaf into a curve.
  */
+import { registerBusy } from '../activity';
 import { animate } from 'motion';
 import type { Page, Spread } from './issue-01';
 import { CUT_MS, INNER_LEAF_EASE, JUMP, LAST_LEAF_EASE, cubicBezier, planRiffle } from './jump';
@@ -1256,8 +1257,12 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   book.addEventListener('dragstart', onDragStart);
   window.addEventListener('keydown', onKeyDown);
 
+  // A turn, a drag or a jump is motion the idle warm-up waits for.
+  const unbusy = registerBusy(busy);
+
   function destroy(): void {
     destroyed = true;
+    unbusy();
     book.removeEventListener('pointerdown', onPointerDown);
     book.removeEventListener('pointermove', onPointerMove);
     book.removeEventListener('pointerup', onPointerEnd);

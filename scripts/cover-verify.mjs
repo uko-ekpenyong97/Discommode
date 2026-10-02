@@ -39,7 +39,9 @@
  *   nogl      no WebGL at all: the tiles show the still.
  *   contexts  WebGL contexts on the page: main has the sky's in the grid and
  *             the paper's in the detail view; covers add ONE (the stage), never
- *             one per tile.
+ *             one per tile. The paper's is made by the idle warm-up after load
+ *             (src/warmup.ts), so the grid can have it too: it is counted
+ *             apart (its canvas is `.detail__paper`), and never more than one.
  *   sky       the cover's ground over the sky at NOON and at NIGHT: mean
  *             luminance differs by > 20% (the sky is really through it).
  *   ground    nothing between the hero's transparent ground and the sky, with
@@ -160,7 +162,8 @@ const VIEWPORTS = [
 ];
 const TOL = 32;
 const BUDGET = { hero: 1.0, tile: 0.15, total: 1.2, all: 8 };
-/** Main's WebGL contexts: the sky's (grid), plus the paper's (detail view). */
+/** Main's WebGL contexts: the sky's (grid), plus the paper's (detail view —
+ *  and, since the idle warm-up, the grid's too once it has run; counted apart). */
 const MAIN_CONTEXTS = { grid: 1, detail: 2 };
 const FRAME = { w: 900, h: 1326 };
 /** Card 04's: Main and Main Bounce. */
@@ -741,7 +744,7 @@ async function checkLavaSweep(browser) {
   const dpr = 2;
   const page = await newPage(browser, VIEWPORTS[0], dpr);
   await gridOn02(page);
-  await quiet(page); // the dev dock sits over the top-right tile's strip; production has none
+  await quiet(page); // a dev dock (`?intro`) would sit over the top-right tile's strip; this URL has none
   const pres = await page.evaluate(() => window.__covers.presenters().filter((p) => p.visible && p.cover === 'rive-site'));
   const big = pres.reduce((a, p) => (p.drawW > a.drawW ? p : a), { drawW: 0, drawH: 0 });
   const [w, h] = [big.drawW, big.drawH];
@@ -876,11 +879,15 @@ async function checkContexts(browser) {
     };
   });
   await gridOn02(page);
-  const grid = await page.evaluate(() => ({ n: window.__gl.size, tiles: document.querySelectorAll('.cover-tile__canvas').length }));
+  const grid = await page.evaluate(() => {
+    const all = [...window.__gl];
+    const paper = all.filter((c) => c.classList.contains('detail__paper')).length;
+    return { n: all.length - paper, paper, tiles: document.querySelectorAll('.cover-tile__canvas').length };
+  });
   await page.goto(`${B}#item-02`);
   await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
   const detail = await page.evaluate(() => window.__gl.size);
-  check(grid.n <= MAIN_CONTEXTS.grid + 1, 'grid', `${grid.n} contexts (main ${MAIN_CONTEXTS.grid}, +1: the cover stage) for ${grid.tiles} live tiles`);
+  check(grid.n <= MAIN_CONTEXTS.grid + 1 && grid.paper <= 1, 'grid', `${grid.n} contexts (main ${MAIN_CONTEXTS.grid}, +1: the cover stage) for ${grid.tiles} live tiles, + ${grid.paper} the paper's (the idle warm-up)`);
   check(detail <= MAIN_CONTEXTS.detail + 1, 'detail', `${detail} contexts (main ${MAIN_CONTEXTS.detail}, +1: the cover stage)`);
   await page.context().close();
 }
@@ -1753,14 +1760,15 @@ async function checkRiveContexts(browser) {
       const c = orig.call(this, type, ...a);
       if (c && /webgl/.test(type) && !had) {
         this.__glMade = true;
-        window.__gl.push({ rive: /rive-app|rive\.js/i.test(new Error().stack ?? '') });
+        window.__gl.push({ rive: /rive-app|rive\.js/i.test(new Error().stack ?? ''), paper: this.classList.contains('detail__paper') });
       }
       return c;
     };
   });
   await gridOn04(page);
   const grid = await page.evaluate(() => ({
-    n: window.__gl.length,
+    n: window.__gl.filter((g) => !g.paper).length,
+    paper: window.__gl.filter((g) => g.paper).length,
     rive: window.__gl.filter((g) => g.rive).length,
     tiles: document.querySelectorAll('.cover-tile[data-cover="nosey"] .cover-tile__canvas').length,
   }));
@@ -1768,7 +1776,7 @@ async function checkRiveContexts(browser) {
   await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
   await page.waitForTimeout(1500);
   const detail = await page.evaluate(() => ({ n: window.__gl.length, rive: window.__gl.filter((g) => g.rive).length }));
-  check(grid.n <= MAIN_CONTEXTS.grid + 1 && grid.rive === 0, 'grid', `${grid.n} contexts (main ${MAIN_CONTEXTS.grid}, +1: card 02's stage) with ${grid.tiles} card-04 tiles live; ${grid.rive} made by the Rive runtime`);
+  check(grid.n <= MAIN_CONTEXTS.grid + 1 && grid.paper <= 1 && grid.rive === 0, 'grid', `${grid.n} contexts (main ${MAIN_CONTEXTS.grid}, +1: card 02's stage) with ${grid.tiles} card-04 tiles live, + ${grid.paper} the paper's (the idle warm-up); ${grid.rive} made by the Rive runtime`);
   check(detail.n <= MAIN_CONTEXTS.detail + 1 && detail.rive === 0, 'detail #item-04', `${detail.n} contexts; ${detail.rive} made by the Rive runtime`);
   await page.context().close();
 }

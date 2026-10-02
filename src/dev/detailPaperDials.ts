@@ -10,7 +10,7 @@ const D = PAPER_DEFAULTS;
  *
  * Registered in TWO docks, never both at once: the doorway's at `#item-NN?intro`
  * (where the spec puts it, and where the reader's cover sits over the hero, so
- * it tunes what the neighbours show), and the app's own at plain `#item-NN`
+ * it tunes what the neighbours show), and the app's own at `/?intro#item-NN`
  * (where the hero is uncovered and can be hovered). Same panel id, persisted,
  * so a value set in one is the value the other opens with.
  *

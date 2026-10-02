@@ -9,7 +9,7 @@ const D = COVER_LIFE_DEFAULTS;
  * The COVER LIFE panel — page hover and the boil (src/reader/coverLife.ts).
  *
  * Registered in the doorway's dock at `#item-NN?intro`, the READER NAV dock at
- * `#read-NN?intro`, and the app's own dev dock at plain `#item-NN` (where the
+ * `#read-NN?intro`, and the app's own dev dock at `/?intro#item-NN` (where the
  * detail hero is uncovered and its paper boils). Same panel id, persisted, so a
  * value set in one dock is the value the others open with.
  *

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { animate } from 'motion';
+import { registerBusy } from '../activity';
 import { config } from '../config';
 import { panelStepFor } from '../detailLayout';
 import { computeHeroLayout } from '../layout/hero';
@@ -82,6 +83,9 @@ export function useDoorwayMotion({
   const autoOpenRef = useRef(false);
   const msRef = useRef(0);
   const clockRef = useRef<ClockControls | null>(null);
+  // Either clock running is motion the idle warm-up waits for.
+  const movingRef = useRef(false);
+  useEffect(() => registerBusy(() => movingRef.current), []);
   const flipRef = useRef(makeFlipDriveState());
   const exitingRef = useRef(false);
 
@@ -102,14 +106,19 @@ export function useDoorwayMotion({
     if (play !== 'entrance') return;
     autoOpenRef.current = decideAutoOpen();
     frame(0, true);
+    movingRef.current = true;
     clockRef.current = animate(0, TOTAL_MS, {
       duration: TOTAL_MS / 1000,
       ease: 'linear',
       onUpdate: (ms) => frame(ms, true),
+      onComplete: () => {
+        movingRef.current = false;
+      },
     });
     return () => {
       clockRef.current?.stop();
       clockRef.current = null;
+      movingRef.current = false;
       resetDoorwayValues();
     };
   }, [play, frame]);
@@ -136,11 +145,13 @@ export function useDoorwayMotion({
 
       // Reverse the schedule from the current playhead back to REST.
       const from = msRef.current || TOTAL_MS;
+      movingRef.current = true;
       clockRef.current = animate(from, 0, {
         duration: (from / 1000) * EXIT_RATE,
         ease: 'linear',
         onUpdate: (ms) => frame(ms, false),
         onComplete: () => {
+          movingRef.current = false;
           markDoorwayReversed(); // tell ReaderGate the reverse already ran
           onComplete();
         },

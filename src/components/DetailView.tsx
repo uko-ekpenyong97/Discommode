@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useConfig } from '../config';
+import { registerBusy } from '../activity';
 import { config } from '../config';
 import { mod } from '../grid';
 import { CONTENT, CONTENT_COUNT, itemHeroFace } from '../content';
@@ -105,6 +106,9 @@ export function DetailView({ detail, transition, suspended = false, hero, neighb
     prevActiveRef.current = activeIndex;
     targetRef.current += step;
   }, [activeIndex]);
+
+  // A Prev/Next slide is motion the idle warm-up waits for.
+  useEffect(() => registerBusy(() => posRef.current !== targetRef.current), []);
 
   useTicker((dt) => {
     const target = targetRef.current;

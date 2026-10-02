@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { DialRoot, useDialKit } from 'dialkit';
-// Its own stylesheet: the app's dev dials, which also import it, are not mounted
-// while the reader is open, so a direct load of `#read-NN?intro` would otherwise
-// render the dock unstyled and below the fold.
+// Its own stylesheet: the app's dock, which also imports it, is only loaded at
+// `?intro` and never while the reader is open, so a direct load of
+// `#read-NN?intro` would otherwise render the dock unstyled and below the fold.
 import 'dialkit/styles.css';
 import { JUMP } from './jump';
 import type { JumpMode, RiffleCurve } from './jump';
@@ -10,6 +10,10 @@ import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
 import { usePageAnimAlign } from '../dev/pageAnimAlign';
+import { installDockPanels } from '../dev/dockPanels';
+
+// Before this dock's panels register: which open, which stay folded.
+installDockPanels();
 
 /** The shipped values, so leaving the dock puts them back. */
 const SHIPPED = { ...JUMP };
