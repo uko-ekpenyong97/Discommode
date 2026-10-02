@@ -3,7 +3,7 @@ import { coverCropOf } from './coverRenderer';
 import type { CoverDrawer } from './coverRenderer';
 import { makeCoverRenderer } from './cachedCoverRenderer';
 import { riveCover, shaderCover } from './covers';
-import { coverTime } from './coverClock';
+import { coverStill, coverTime } from './coverClock';
 import { coverBackdrop, coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
 import { ensureRive, onRiveReady, peekRivePlayer, riveAvailable, riveCost, riveDomRoles, riveFrame, rivePlayer } from './rive/riveCover';
 import type { RivePlayerRole } from './rive/riveCover';
@@ -11,6 +11,7 @@ import { cssRgb } from './color';
 import { computeHeroRect } from '../layout/hero';
 import { config } from '../config';
 import { isBusy } from '../activity';
+import { afterFirstPaint } from '../firstPaint';
 import { DomeSpring, advanceDome, domeUp } from './dome';
 import type { Crop, Dome } from './types';
 
@@ -89,8 +90,16 @@ interface Group {
 }
 
 let renderer: WebGLRenderer | null = null;
+/** Making the stage's context failed: no shader cover can be live here. */
 let failed = false;
+/** The context is lost (until it is restored): instances keep their last frame. */
+let lost = false;
+/** The page's first paint is out: the covers may compile and draw. */
+let painted = false;
+const stageListeners = new Set<() => void>();
 const covers = new Map<string, CoverDrawer>();
+/** Covers whose programs have linked: drawn from then on (`coverFor`). */
+const compiled = new Set<CoverDrawer>();
 const presenters = new Set<Presenter>();
 let raf = 0;
 let running = false;
@@ -174,10 +183,56 @@ const ro = new ResizeObserver((entries) => {
   kick();
 });
 
-/** False if this browser cannot give the stage a WebGL2 context. */
+/**
+ * False if this browser cannot give the stage a WebGL2 context. Before the
+ * stage is made this is the browser's word for it (WebGL2 exists); if making
+ * it then fails, {@link subscribeStage}'s listeners hear it and the tiles drop
+ * their canvases for the still.
+ */
 export function coverStageAvailable(): boolean {
   if (failed) return false;
-  if (renderer) return true;
+  return !!renderer || typeof WebGL2RenderingContext !== 'undefined';
+}
+
+/** Called when the stage's availability changes (making it failed). */
+export function subscribeStage(fn: () => void): () => void {
+  stageListeners.add(fn);
+  return () => stageListeners.delete(fn);
+}
+
+/**
+ * THE BOOT. The stage's context, its programs and its first draws were all
+ * in React's first commit (a tile asking if it could be live made the
+ * context during render): the boot's longest task, and the sky's context,
+ * made a moment later, waited behind it in the GPU process. Now:
+ *
+ *   the context   made before React's first render (`prepareCoverStage`,
+ *                 main.tsx), right after the sky's, while the GPU process has
+ *                 nothing else to do. Made any later, the context's set-up
+ *                 calls (three's extension and parameter queries, each a
+ *                 round trip) wait behind the raster and the image uploads of
+ *                 the first frames: 30–40 ms after the first paint;
+ *   the covers    their programs compiled, and drawn, only after the first
+ *                 paint (`firstPaint.ts`). Nothing of a live cover shows
+ *                 before its first draw lands anyway: each tile shows its
+ *                 still until then (CoverTile).
+ *
+ * Under reduced motion no tile is live and nothing is made, as before.
+ */
+export function prepareCoverStage(): void {
+  if (!coverStill()) makeStage();
+}
+
+afterFirstPaint(() => {
+  painted = true;
+  if (![...presenters].some((p) => !riveCover(p.coverId))) return;
+  makeStage();
+  for (const p of presenters) if (!riveCover(p.coverId)) coverFor(p.coverId);
+  kick();
+});
+
+function makeStage() {
+  if (renderer || failed) return;
   try {
     const canvas = document.createElement('canvas');
     renderer = new WebGLRenderer({
@@ -193,25 +248,48 @@ export function coverStageAvailable(): boolean {
     if (!renderer.capabilities.isWebGL2) throw new Error('no WebGL2');
     renderer.setPixelRatio(1);
     renderer.autoClear = false;
+    // Lost: every instance keeps its last frame. Restored (three has rebuilt
+    // its own state by then — its listener was added first): the covers'
+    // programs and textures are made again, and the loop goes on.
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
-      failed = true;
+      lost = true;
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      for (const c of covers.values()) c.dispose();
+      covers.clear();
+      compiled.clear();
+      stageW = stageH = 0;
+      boundVersion = -1;
+      lost = false;
+      heroWarm.clear();
+      kick();
     });
   } catch {
     renderer = null;
     failed = true;
+    for (const fn of stageListeners) fn();
   }
-  return !failed;
 }
 
 function coverFor(id: string): CoverDrawer | null {
   let c = covers.get(id);
-  if (!c && renderer) {
+  if (!c && painted && renderer && !lost) {
     const def = shaderCover(id);
     if (!def) return null;
-    c = makeCoverRenderer(renderer, def, coverValues(id));
-    c.warm();
-    covers.set(id, c);
+    // Compiled WITHOUT blocking (KHR_parallel_shader_compile): the first draw
+    // waits for the link, so the cover is drawn only once both programs have
+    // linked — until then its tiles show the still, as before a first draw.
+    // A sync compile here and a draw on the next frame had the main thread
+    // wait on the link in that frame (docs/perf/first-second.md).
+    const made = makeCoverRenderer(renderer, def, coverValues(id));
+    c = made;
+    covers.set(id, made);
+    void made.compileAsync().then(() => {
+      if (covers.get(id) !== made) return;
+      compiled.add(made);
+      kick();
+    });
   }
   return c ?? null;
 }
@@ -247,7 +325,10 @@ export function addPresenter(p: Presenter): () => void {
   // it is now: fractional CSS px (offsetWidth rounds).
   layoutBox.set(p.host, layoutNow(p.host));
   if (rive) ensureRive(p.coverId);
-  else coverFor(p.coverId);
+  else if (painted) {
+    makeStage();
+    coverFor(p.coverId);
+  }
   pending.push(p);
   if (!flushQueued) {
     flushQueued = true;
@@ -476,7 +557,7 @@ function warmHeroPrint(id: string, dpr: number) {
     // is a new backing store or two, and it is the idle moment it is waiting
     // for. isBusy: the drag is known from its pointerdown, a frame before any
     // instance has moved.
-    if (!c?.ready() || moving() || isBusy()) {
+    if (!c?.ready() || !compiled.has(c) || moving() || isBusy()) {
       heroWarm.delete(id); // try again on a later hover frame
       return;
     }
@@ -547,8 +628,9 @@ function tick(now: number) {
       continue;
     }
     const rive = !!riveCover(p.coverId);
-    // A shader instance with no stage (its context lost) keeps its last frame.
-    if (!rive && (failed || !renderer)) continue;
+    // A shader instance with no stage (not made yet, or its context lost)
+    // keeps its last frame (or its still).
+    if (!rive && (failed || lost || !renderer)) continue;
     onScreen = true;
     // (checkVisibility: Safari 17.4+; without it, CSS-hidden instances draw too.)
     // Opacity counts: the grid under the detail view is `opacity: 0`
@@ -647,7 +729,7 @@ function draw(
   dome: Dome,
   backdrop: [number, number, number] | null,
 ): boolean {
-  if (!renderer || !cover.ready()) return false;
+  if (!renderer || lost || !compiled.has(cover) || !cover.ready()) return false;
   // Grow-only: a drawing buffer resized every frame would be reallocated every
   // frame. Draws use its bottom-left pxW × pxH.
   if (pxW > stageW || pxH > stageH) {
@@ -744,7 +826,9 @@ function drawRive(g: Group, t: number) {
 /** DEV / verify: the stage's renderer (for benchmarks) and counters. */
 export function coverStageProbe() {
   return {
-    renderer,
+    get renderer() {
+      return renderer;
+    },
     frames: () => frames,
     lastMs: () => lastMs,
     /** How many instances of cover `id` drew for themselves last frame. */

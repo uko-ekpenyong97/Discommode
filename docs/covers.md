@@ -399,6 +399,18 @@ renderer in it is made, compiled and drawn once then (docs/detail-paper.md,
 The stage also draws the morph card and the hero's DOM face (until the paper
 takes it over): 10:13 instead of 3:4, so a group of its own.
 
+**When it is made** (2026-10-02, docs/perf/first-second.md). The context
+before React's first render, in a task of its own right after the sky's
+(`prepareCoverStage`, main.tsx; none under reduced motion): made during the
+first render, as it was, it made React's first commit the boot's longest task
+and the sky's context waited behind it. The covers' programs only after the
+first contentful paint, compiled without blocking (`compileAsync`,
+KHR_parallel_shader_compile), and each cover drawn once its programs have
+linked — each tile shows its still until its first draw lands, as before. A
+lost context: every instance keeps its last frame; restored, the covers are
+made again. A context that cannot be made at all: the tiles drop their
+canvases for the still, as before.
+
 **What renders when.** Instances on screen render every frame, at full rate: the
 hero, the hovered tile, all of them — "on screen" being the viewport and a
 band of 25% of it around it (`ON_SCREEN_MARGIN`, below). Nothing renders when

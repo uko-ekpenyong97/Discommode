@@ -70,6 +70,9 @@ export interface CoverDrawer {
   setValues(values: DialValues): void;
   /** Compile the programs now rather than on the first visible frame. */
   warm(): void;
+  /** Compile without blocking (KHR_parallel_shader_compile); resolves once
+   *  both programs can draw without the main thread waiting on a link. */
+  compileAsync(): Promise<void>;
   /** Compile without blocking, then draw once into a throwaway target. */
   warmAsync(): Promise<void>;
   /** Allocate (and fill, if it can) what a draw of `crop` `pxW` wide will
@@ -182,6 +185,11 @@ export class CoverRenderer implements CoverDrawer {
   warm() {
     this.gl.compile(this.sceneA, this.camera);
     this.gl.compile(this.sceneB, this.camera);
+  }
+
+  async compileAsync() {
+    await this.gl.compileAsync(this.sceneA, this.camera);
+    await this.gl.compileAsync(this.sceneB, this.camera);
   }
 
   /**

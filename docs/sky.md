@@ -897,6 +897,17 @@ own wash, `readerScrim` (`src/reader/ground.ts`). The reader's and the detail
 view's chrome carries no wash at all: it takes its colour FROM the sky
 ([docs/reader.md, Chrome](reader.md#chrome)).
 
+**Made before React's first render** (2026-10-02, `prepareSky` in main.tsx,
+docs/perf/first-second.md). Built by the first claim, in the first commit's
+effects, the context waited 25–40 ms in the GPU process behind the raster of
+the first frame; made first, it is 4 ms. Its program is compiled and linked
+without reading the status (KHR_parallel_shader_compile), which is read at
+the first draw. The wake (`fluid.ts`) is made after the first contentful
+paint, its seven programs' statuses read at its first step: asleep, every
+fluid term is an exact zero, so until then the sky is the same frame. A lost
+context: the engine stops; restored, a new engine on the same canvas, the
+target and the motion preference replayed.
+
 Every host paints a CSS gradient of the current sky *behind* the canvas
 (`skyFallbackCss` — a zenith→horizon gradient plus a flat cloud-grey wash
 proportional to coverage). That covers the host that is not currently holding
