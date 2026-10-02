@@ -70,6 +70,34 @@ export interface CellOffset {
   dr: number;
 }
 
+/**
+ * The hovered cell, as a tiny external store rather than React state: a hover
+ * re-renders the two cards whose overlay changes (GridPlane's `GridCard`
+ * subscribes), not App and the whole grid.
+ */
+export interface OverlayStore {
+  get: () => CellOffset | null;
+  subscribe: (fn: () => void) => () => void;
+}
+
+function createOverlayStore(): OverlayStore & { set: (c: CellOffset | null) => void } {
+  let cur: CellOffset | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => cur,
+    set: (c) => {
+      cur = c;
+      for (const fn of listeners) fn();
+    },
+    subscribe: (fn) => {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+  };
+}
+
 /** A hit-tested card: its window offset, on-screen centre, and scaled size. */
 interface CardHit extends CellOffset {
   cx: number;
@@ -95,8 +123,9 @@ export interface PanController {
   world: GridPos;
   /** True while a pointer drag gesture is in progress. */
   isDragging: boolean;
-  /** The window cell currently showing its hover overlay (settled + hovered), or null. */
-  overlayCell: CellOffset | null;
+  /** The window cell currently showing its hover overlay (settled + hovered),
+   *  or null — a store, so a hover never re-renders the controller's owner. */
+  overlay: OverlayStore;
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerMove: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;
@@ -186,8 +215,9 @@ export function usePanController(options: PanOptions = {}): PanController {
   // Hover overlay on ANY card: the card under the cursor, shown only when the
   // grid is settled. The hovered cell is hit-tested each frame from the cursor +
   // live position (so it tracks the grid sliding under a still cursor); the
-  // visible cell is published to React when it changes.
-  const [overlayCell, setOverlayCell] = useState<CellOffset | null>(null);
+  // visible cell is published to the cards' store when it changes.
+  const [overlay] = useState(createOverlayStore);
+  const setOverlayCell = overlay.set;
   const overlayCellRef = useRef<CellOffset | null>(null);
   const hoverCellRef = useRef<CardHit | null>(null);
 
@@ -518,7 +548,7 @@ export function usePanController(options: PanOptions = {}): PanController {
       setOverlayCell(null);
     }
     setIsDragging(true);
-  }, []);
+  }, [setOverlayCell]);
 
   const onPointerMove = useCallback((e: ReactPointerEvent) => {
     if (!draggingRef.current) return;
@@ -741,7 +771,7 @@ export function usePanController(options: PanOptions = {}): PanController {
     position: { col: view.col, row: view.row },
     world: { col: view.cc, row: view.cr },
     isDragging,
-    overlayCell,
+    overlay,
     onPointerDown,
     onPointerMove,
     onPointerUp,

@@ -564,10 +564,13 @@ still simply stays.
 The feel and layout values are a small **reactive store**:
 [`src/config.ts`](src/config.ts) keeps a mutable `config` singleton that the rAF
 loop and handlers read directly each frame, plus `useConfig()` for components to
-subscribe and re-render. In development a **DialKit** panel
-([`src/dev/Dials.tsx`](src/dev/Dials.tsx)) wires those values to live sliders,
-grouped MOTION / GRID / DEPTH / LAYOUT / FOCUS / DETAIL / SKY / OVERLAY, and pushes changes through `setConfig`
-so they propagate without a reload. It is loaded behind an `import.meta.env.DEV`
+subscribe and re-render. In development **DialKit** panels
+([`src/dev/DevPanels.tsx`](src/dev/DevPanels.tsx)) wire those values to live sliders,
+grouped MOTION / GRID / DEPTH / LAYOUT / FOCUS / DETAIL / SKY / OVERLAY, and push changes through `setConfig`
+so they propagate without a reload. The dock that shows them
+([`src/dev/DevDock.tsx`](src/dev/DevDock.tsx)) is only up with `?intro` in the
+query — `/?intro`, `/?intro#item-NN` — its panels folded but the current
+view's; on a plain URL the saved values still apply, with nothing on screen. It is loaded behind an `import.meta.env.DEV`
 dynamic import, so **neither the panel nor the `dialkit` dependency is in the
 production bundle** (Rollup drops the dead branch); production uses the `DEFAULTS`.
 Values persist to `localStorage` across reloads, and a **Copy config** button
@@ -616,7 +619,8 @@ src/
     palette.ts               #   per-band field-color sets + dayPhase blend + weather mods (unit-tested)
     skyEngine.ts             #   raw WebGL2 engine (fbm color-field shader, eased uniforms, rAF loop)
   dev/
-    Dials.tsx                # dev-only DialKit panel (excluded from production)
+    DevPanels.tsx            # dev-only DialKit panels (excluded from production)
+    DevDock.tsx              # dev-only DialKit dock, at `?intro` (excluded from production)
     EnvReadout.tsx           # dev-only EnvState text readout (excluded from production)
   hooks/
     useTicker.ts             # the single requestAnimationFrame loop

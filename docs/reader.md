@@ -501,7 +501,7 @@ with `main`, run by run, 15 per DPR alternating 20→0 and 0→20: a frame over
 ### Dials
 
 CHROME panel — in the READER NAV dock (`#read-NN?intro`), the doorway dock
-(`#item-NN?intro`) and the app's dev dock at `#item-NN`; one id, persisted.
+(`#item-NN?intro`) and the app's dev dock at `/?intro#item-NN`; one id, persisted.
 **Copy** writes a paste-ready `CHROME_DEFAULTS` to the clipboard.
 `src/chrome/chromeDials.ts` is the source of truth.
 
@@ -705,7 +705,7 @@ exactly as it was.
 | `stagger` | 120 | most extra hold before an object's fade on a page leave |
 
 COVER LIFE panel, in the READER NAV dock at `#read-NN?intro`, the doorway dock
-at `#item-NN?intro` and the app's dev dock at plain `#item-NN`: one panel id,
+at `#item-NN?intro` and the app's dev dock at `/?intro#item-NN`: one panel id,
 persisted, so all three open on the same values. `coverLife.ts` is the source
 of truth. `docs/reader-nav/boil-steps.webp` is two consecutive steps of the
 closed cover side by side, held at full amplitude, with a 4× crop of the top

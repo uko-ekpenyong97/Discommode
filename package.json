@@ -23,6 +23,7 @@
     "verify:detail": "node scripts/detail-verify.mjs",
     "verify:sky": "node scripts/sky-fluid-verify.mjs",
     "verify:cover": "node scripts/cover-verify.mjs",
+    "verify:jank": "node scripts/jank-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

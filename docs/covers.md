@@ -103,15 +103,17 @@ out byte-identical: they are the cover alone. At the last runs:
 
 **The detail view's arrival (2026-09-28).** [Not done](#not-done) 9. The
 paper's GL — context, programs, crease map, card 02's renderer in it, every
-face — is made once, on the first hover of a grid card, and kept across
-every open and close (docs/detail-paper.md, "The arrival", which has the
+face — is made once, on the first hover of a grid card (since 2026-10-01: in
+the page's idle warm-up after load, or on that hover if it comes first), and
+kept across every open and close (docs/detail-paper.md, "The arrival", which has the
 numbers and the model). Two cover changes came with it: card 02's text SDF
 and its half-float copy are built in ≤ 6 ms slices (the same output; they were
 a 140 ms and a 20–40 ms task on every page load), and a Rive pointer event goes
 to the hero instance on screen or waits for the next draw — through
 `rivePlayer` it made a fresh hero whenever nobody was drawing one, which at
-`detailSideScale` 1 was forever. Grid contexts are 2 until the first hover of a
-card, 3 after; the detail view 3, on every arrival.
+`detailSideScale` 1 was forever. Grid contexts are 2 until the paper's is made
+(the idle warm-up after load, or the first hover), 3 after; the detail view 3,
+on every arrival.
 
 **Card 04's new file (2026-09-28).** Branch `update-nosey-cover-riv` ships
 Uko's updated Nosey file (from `publish.sh`, signed, 872,152 bytes). The
@@ -383,14 +385,15 @@ three.js renderer, so the paper holds a second one, for the same cover, with the
 same dials and the same clock. Why there and not in the stage: a texture cannot
 cross WebGL contexts. The alternative is copying a 2 MP frame from the stage's
 canvas into the paper's context every frame (`texImage2D` from a canvas), which
-costs more than drawing it. The paper's renderer exists from the first hover
-of a grid card (or the first detail view) for the page's life, and card 02's
+costs more than drawing it. The paper's renderer exists from the idle warm-up
+after load (or the first hover of a grid card, or the first detail view,
+whichever comes first) for the page's life, and card 02's
 renderer in it is made, compiled and drawn once then (docs/detail-paper.md,
 "The arrival").
 
 | | main | with covers |
 | --- | --- | --- |
-| grid | 1 (the sky) | **2** (+ the stage); 3 from the first hover of a card, when the paper's is made early |
+| grid | 1 (the sky) | **2** (+ the stage); 3 once the paper's is made — by the idle warm-up after load (src/warmup.ts), or the first hover of a card |
 | detail view | 2 (the sky, the paper) | **3** (+ the stage) — on every arrival: the paper's is made once (it was one more per arrival) |
 
 The stage also draws the morph card and the hero's DOM face (until the paper
@@ -499,10 +502,12 @@ has, stage toggles included, plus the site's `coverBackdrop`,
 detail view, the paper's light per unit of the cover's alpha; 0 is no paper
 light on the cover at all). **Copy pastes into
 `src/covers/covers/<id>.json`** (the site's three are not the JSON's). It is at
-`#item-02?intro`, as specified, and in the app's own dock everywhere else: DialKit's store is
+`#item-02?intro`, as specified, and in the app's own dock at `/?intro`: DialKit's store is
 global, so the panel is registered from outside `src/reader` and appears in
-whichever dock is mounted — the doorway's at `?intro`, where the app is
-suspended, which is why App mounts it even then.
+whichever dock is mounted — the doorway's at `#item-NN?intro`, where the app is
+suspended, which is why App mounts it even then. Every panel starts folded
+except the view's (LAVA at card 02; docs/detail-paper.md, "The first sweep,
+and the idle warm-up").
 
 The bench's own controls (size, DPR, freeze, lens mask, benchmark) stay on the
 bench. `rtScale` moved from them into the cover's `quality` folder, because the
@@ -1064,10 +1069,13 @@ the same lines as they change (`[covers] nosey: …`):
 | `heroPlane` | what the paper's hero plane samples — live Main Bounce or the still — and whether new frames are being uploaded to it | `the still`, or `no new frame uploaded` while the hero is on the paper |
 | `reducedMotion` | the media query as the page sees it | `reduce`: the stills everywhere, by design, and the runtime never loads |
 
-Its lines are STATES, not counters: every change of the panel is a DialKit
-re-render of the dock, ~300 ms in a dev build, and a readout that ticked (a
-frame count, an age, coordinates while the pointer moved — the first version
-of it) stuttered the page once a second while the dock was open. The live
+Its lines are STATES, not counters: a readout that ticked (a frame count, an
+age, coordinates while the pointer moved — the first version of it) changed on
+every check, and every change was a DialKit re-render of the whole dock, ~300
+ms in a dev build. Since 2026-10-01 its rows are a fixed height with tabular
+numbers (`src/dev/statusReadout.css`) and the other panels are folded, so a
+change re-renders this panel's rows and nothing else; it is checked four times
+a second (`advancing` and `uploading` still judged over a second). The live
 numbers — frames, dt, every pointer event, uploads — are in the console and
 `window.__covers.rive.status('nosey')`. Also in the console: the file's
 artboards, state machines and view models at load, the image assets not
@@ -1115,8 +1123,8 @@ thread (docs/detail-paper.md, Textures) — and the paper's WebGL context
 the click in a production build, on every card (card 02: 150–350 ms); `main`
 had 0.8–2.0 s frames there in the dev build. [Not done](#not-done) 9 —
 resolved 2026-09-28 for the tile's morph and a second arrival: the paper's GL
-is made once, on the first hover of a card, and kept (docs/detail-paper.md,
-"The arrival"). A cold direct load still drops frames, and they are the
+is made once, in the idle warm-up after load or on the first hover of a card,
+and kept (docs/detail-paper.md, "The arrival"). A cold direct load still drops frames, and they are the
 page's load, there with the paper removed.
 
 **The cover is hover-only, by design.** The headset's colour steps on
@@ -1172,7 +1180,7 @@ the neighbours show, and the tiles' first paint. Card 04's old face
 ### Dials
 
 Card 04's COVER panel (`COVER · nosey`, at `#item-04?intro` and in the app's
-dock) is its JSON only, with no site folder — two persisted panels writing the
+dock at `/?intro`) is its JSON only, with no site folder — two persisted panels writing the
 site's dials would overwrite each other:
 
 | dial | default | |

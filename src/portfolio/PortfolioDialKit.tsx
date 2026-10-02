@@ -19,6 +19,10 @@ import type { EntranceBend, PortfolioLook } from './portfolioMotion';
 import { logContrastProbe, subscribeContrast } from './contrastProbe';
 import type { ContrastReport } from './contrastProbe';
 import { persistedPanelId } from '../dev/dialState';
+import { installDockPanels } from '../dev/dockPanels';
+
+// Before this dock's panels register: which open, which stay folded.
+installDockPanels();
 
 /**
  * The contrast probe's verdict, beside the dials that change it. Red and

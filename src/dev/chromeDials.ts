@@ -11,7 +11,7 @@ const D = CHROME_DEFAULTS;
  * "Chrome").
  *
  * Registered in the READER NAV dock at `#read-NN?intro`, the doorway's dock at
- * `#item-NN?intro`, and the app's own dev dock at plain `#item-NN` (where the
+ * `#item-NN?intro`, and the app's own dev dock at `/?intro#item-NN` (where the
  * detail view's chrome is on screen): one panel id, persisted, so a value set
  * in one is the value the others open with. **Copy** writes a paste-ready
  * `CHROME_DEFAULTS` to the clipboard (and the console).

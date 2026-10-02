@@ -1,0 +1,18 @@
+/* Card 04's STATUS readout (coverDials.tsx), in whichever dock shows it.
+   Every row a FIXED height — four 18 px lines, scrolled if a line ever runs longer —
+   and the numbers tabular: DialKit sizes a text row to its text (and animates
+   the height), and a dock whose content changes height re-renders its whole
+   tree. A readout that wraps differently on every hover was that, four 50 ms
+   commits a time; with fixed rows a change of text re-renders the panel's own
+   controls and moves nothing. */
+.dialkit-folder:has(> .dialkit-folder-header [aria-label='Status']) .dialkit-text-control {
+  height: auto !important;
+  transition: none !important;
+}
+.dialkit-folder:has(> .dialkit-folder-header [aria-label='Status']) .dialkit-text-input {
+  height: 72px !important;
+  min-height: 72px !important;
+  max-height: 72px !important;
+  overflow-y: auto !important;
+  font-variant-numeric: tabular-nums;
+}

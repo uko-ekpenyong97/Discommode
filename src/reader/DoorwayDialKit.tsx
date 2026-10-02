@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { DialRoot, DialTimeline, useDialKit, useDialTimeline } from 'dialkit';
 import type { TimelineConfig } from 'dialkit';
+// Its own stylesheet: the app's dock (which also imports it) is only loaded at
+// `?intro`, and never on a direct load of `#item-NN?intro` — without this the
+// dock rendered unstyled, below the fold.
+import 'dialkit/styles.css';
 import type { FlipEngine } from './flipEngine';
 import {
   EASE,
@@ -17,6 +21,10 @@ import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
 import { persistedPanelId } from '../dev/dialState';
+import { installDockPanels } from '../dev/dockPanels';
+
+// Before this dock's panels register: which open, which stay folded.
+installDockPanels();
 
 /** Seconds (DialKit's unit) from a storyboard millisecond. */
 const s = (ms: number): number => ms / 1000;

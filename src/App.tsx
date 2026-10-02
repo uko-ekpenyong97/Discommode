@@ -17,15 +17,29 @@ import { cardHeight, cellSpanX, config, useConfig } from './config';
 import { CONTENT, CONTENT_COUNT, contentIndex } from './content';
 import { mod } from './grid';
 import { armPaperWarmup } from './components/detailPaper/paperGL';
+import { registerBusy } from './activity';
+import { startIdleWarmup } from './warmup';
 import './App.css';
 
-/** DEV: `?nodials` leaves the dev dock and readouts out — the page as a
- *  production build has it, for timing it (verify:detail `arrival`: every
- *  change of a DialKit readout is a 30–50 ms dev re-render of the dock). */
-const DOCK = import.meta.env.DEV && !new URLSearchParams(window.location.search).has('nodials');
-const DevDials = DOCK ? lazy(() => import('./dev/Dials')) : null;
-const DevEnvReadout = DOCK ? lazy(() => import('./dev/EnvReadout')) : null;
-const DevCoverDials = DOCK ? lazy(() => import('./dev/coverDials')) : null;
+const DEV_QUERY = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
+/** DEV: the dials' panels and the readouts, on every dev URL; `?nodials`
+ *  leaves them out — the page as a production build has it. */
+const DIALS = !!DEV_QUERY && !DEV_QUERY.has('nodials');
+/** DEV: the app's dock — DialKit's UI over those panels — only with `?intro`
+ *  in the QUERY (`/?intro`, `/?intro#item-NN`; the app's routing keeps the
+ *  query). `#item-NN?intro` in the hash is the doorway's dock, and
+ *  `#read-NN?intro` / `#view-NN?intro` the reader's and the portfolio
+ *  view's. Without it there is no dock to re-render: on a plain URL a dial
+ *  readout's change, a key or a return from the reader cost nothing. */
+const INTRO = DIALS && DEV_QUERY!.has('intro');
+const DevPanels = DIALS ? lazy(() => import('./dev/DevPanels')) : null;
+const DevDock = INTRO ? lazy(() => import('./dev/DevDock')) : null;
+const DevEnvReadout = DIALS ? lazy(() => import('./dev/EnvReadout')) : null;
+const DevCoverDials = DIALS ? lazy(() => import('./dev/coverDials')) : null;
+
+/** A dock of another layer is up: the doorway's (`#item-NN?intro`), READER
+ *  NAV (`#read-NN?intro`) or the portfolio view's (`#view-NN?intro`). */
+const otherDockHash = () => /\?(?:.*&)?intro(?:&|$)/.test(window.location.hash);
 
 /** Small buffer so the morph finishes painting at its end before the phase flips. */
 const TRANS_BUFFER_MS = 60;
@@ -80,18 +94,26 @@ export default function App({ suspended = false }: AppProps) {
   }, []);
 
   const pan = usePanController({ isSuspended, onTap });
-  // The detail paper's GL is made on the first hover of a card, not on the
-  // click that opens it (docs/detail-paper.md, "The arrival").
+  // The detail paper's GL is made before the click that opens it: in the
+  // page's idle warm-up after load (src/warmup.ts), or on the first hover of a
+  // card if that comes first (docs/detail-paper.md, "The arrival").
   useEffect(() => armPaperWarmup(), []);
+  useEffect(() => startIdleWarmup(), []);
   const detail = useDetail(suspended);
   const envSnapshot = useEnvState();
   // The one hero rect the detail panel, the FLIP morph, and the reader all use,
   // and the gap to its neighbours (layout/hero.ts).
   const { rect: hero, gap: neighbourGap } = useHeroLayout();
 
+  // The arrival and the exit (the morph, or the fade) are motion the idle
+  // warm-up waits for; the paper's hand-in after it registers its own.
+  const phaseRef = useRef(detail.phase);
+  useEffect(() => registerBusy(() => phaseRef.current !== 'active'), []);
+
   useEffect(() => {
     detailModeRef.current = detail.mode;
     openRef.current = detail.open;
+    phaseRef.current = detail.phase;
   });
 
   const { phase, activeIndex, origin } = detail;
@@ -205,7 +227,8 @@ export default function App({ suspended = false }: AppProps) {
           tiltRef={pan.tiltRef}
           cardsRef={pan.cardsRef}
           markCardsChanged={pan.markCardsChanged}
-          overlayCell={inDetail ? null : pan.overlayCell}
+          overlay={pan.overlay}
+          overlayEnabled={!inDetail}
           onRequestOpen={pan.requestCardOpen}
           hideHero={hideHero}
         />
@@ -239,9 +262,17 @@ export default function App({ suspended = false }: AppProps) {
         <MiniMap focusedIndex={miniIndex} onNavigate={miniNavigate} />
       </div>
 
-      {DevDials && !suspended && (
+      {/* The app's panels stay registered while the reader or the portfolio
+          view is up — unless that layer has a dock of its own, which would
+          list them. The dock itself only shows over the app. */}
+      {DevPanels && !(suspended && otherDockHash()) && (
         <Suspense fallback={null}>
-          <DevDials />
+          <DevPanels />
+        </Suspense>
+      )}
+      {DevDock && !suspended && (
+        <Suspense fallback={null}>
+          <DevDock />
         </Suspense>
       )}
 

@@ -49,6 +49,7 @@ import {
   warmPaper,
 } from './detailPaper/paperGL';
 import { span } from './detailPaper/span';
+import { registerBusy } from '../activity';
 import { riveCover, shaderCover } from '../covers/covers';
 import { riveCost, riveFrame, rivePlane, rivePlayer } from '../covers/rive/riveCover';
 import type { RivePlayer } from '../covers/rive/riveCover';
@@ -104,8 +105,9 @@ import { benchCoverDraw, benchDome } from '../covers/bench';
  * ── THE GL IS NOT THIS COMPONENT'S ────────────────────────────────────────
  *
  * The renderer, its canvas, its programs, the crease map, the live covers'
- * renderers and the face textures are made once for the page, warmed up on
- * the first hover of a grid card, and kept across every open and close
+ * renderers and the face textures are made once for the page, warmed up after
+ * load (src/warmup.ts) or on the first hover of a grid card, whichever comes
+ * first, and kept across every open and close
  * (paperGL.ts, docs/detail-paper.md "The arrival"). This component renders an
  * empty host; the engine moves the shared canvas into it, and out on unmount.
  * Made here, on mount, they were the detail view's janky arrival.
@@ -261,8 +263,9 @@ interface EngineInputs {
 
 function createEngine(host: HTMLElement, input: EngineInputs) {
   const root = host.parentElement as HTMLElement;
-  // The shared GL (paperGL.ts): made by the warm-up — on the first hover of a
-  // grid card, or here for a direct load — and never by this mount. Until it
+  // The shared GL (paperGL.ts): made by the warm-up — the page's idle one after
+  // load, the first hover of a grid card, or here for a direct load (which
+  // takes an unfinished idle warm-up over) — and never by this mount. Until it
   // is ready the layer stays on the DOM, which is showing the cards anyway.
   warmPaper();
   let canvas: HTMLCanvasElement | null = null;
@@ -541,6 +544,9 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   let freezePresence = false;
   let holdOut = false;
   let lastSig: number[] = [];
+
+  // The cross-fades in and out are motion the idle warm-up waits for.
+  const unbusy = registerBusy(() => state === 'in' || state === 'out');
 
   function setState(next: State) {
     state = next;
@@ -1018,6 +1024,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       unregister();
       unsubPaper();
       unsubBoil();
+      unbusy();
       window.removeEventListener('pointermove', onMove);
       document.documentElement.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('blur', onLeave);

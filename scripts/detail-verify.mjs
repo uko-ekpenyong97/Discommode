@@ -1050,9 +1050,9 @@ async function focusTile(page, idx) {
 
 async function checkArrival(browser) {
   console.log('\narrival: the tile click (or the navigation) to the settled hero, 1728×996 @2×, pointer moving');
-  // `?nodials`: without the dev dock (App.tsx), which a production build does
-  // not have and whose readouts re-render it for 30–50 ms a change in a dev
-  // build. A production build ignores it.
+  // `?nodials`: without the dev dials' panels and readouts (App.tsx), which a
+  // production build does not have. (The dock itself is only at `?intro`.) A
+  // production build ignores it.
   const B = `${ORIGIN}/?nodials`;
   const contexts = [];
   const worst = [];
