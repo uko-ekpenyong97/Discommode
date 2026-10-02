@@ -22,18 +22,14 @@ import './chrome.css';
 // The stylesheet's fallbacks are the same numbers.
 if (typeof document !== 'undefined') applyChrome();
 
-export type ShapeName = 'cover' | 'back-cover' | 'prev' | 'next';
+export type ShapeName = 'cover' | 'back-cover' | 'prev' | 'next' | 'escape';
 
 type Box = { x: number; y: number; w: number; h: number };
 const S = SHAPES as unknown as Record<string, { viewBox: [number, number]; base: Box; hairline?: Box }>;
 const pct = (n: number) => `${n * 100}%`;
 
-/**
- * A round shape: cover, back cover, prev, next. `flip` turns the PAPER over
- * (top for bottom, about the base's centre) and leaves the glyph as it is —
- * the back pill is the prev shape cut again, so it is not the same piece twice.
- */
-export function ShapeFace({ shape, flip = false }: { shape: ShapeName; flip?: boolean }) {
+/** A round shape: cover, back cover, prev, next, and the close X (`escape`). */
+export function ShapeFace({ shape }: { shape: ShapeName }) {
   const { viewBox: [vw, vh], base } = S[shape];
   const layer: CSSProperties = {
     left: pct(-base.x / base.w),
@@ -47,22 +43,8 @@ export function ShapeFace({ shape, flip = false }: { shape: ShapeName; flip?: bo
       className="paper__shape"
       style={style}
       aria-hidden="true"
-      // For the fit (chromeFit.ts): the base, its narrowest side, and how far
-      // the paper reaches from the base's centre toward the book — up for a
-      // row shape, down for the flipped back shape, the same number either way.
-      data-base={base.h}
-      data-min={Math.min(base.w, base.h)}
-      data-reach={base.y + base.h / 2}
     >
-      <span
-        className="paper__fill"
-        style={{
-          ...layer,
-          maskImage: `url(/ui/chrome/${shape}-paper.svg)`,
-          transformOrigin: `50% ${pct((base.y + base.h / 2) / vh)}`,
-          transform: flip ? 'scaleY(-1)' : undefined,
-        }}
-      />
+      <span className="paper__fill" style={{ ...layer, maskImage: `url(/ui/chrome/${shape}-paper.svg)` }} />
       <span className="paper__ink" style={{ ...layer, maskImage: `url(/ui/chrome/${shape}-ink.svg)` }} />
     </span>
   );
@@ -119,9 +101,6 @@ export function PillFace({ numbers, fixed = false, children }: { numbers?: strin
       className={cls}
       style={PILL_VARS}
       aria-hidden={numbers || fixed ? true : undefined}
-      data-base={PB.h}
-      data-min={PB.h}
-      data-reach={PB.y + PB.h / 2}
     >
       <span className="paper-pill__paper">
         <span className="paper__fill paper-pill__l" />

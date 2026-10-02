@@ -44,7 +44,7 @@ side, held at full amplitude, with a 4× crop of the top corner under each.
 | `src/dev/detailPaperDials.ts` | The DETAIL PAPER DialKit panel. |
 | `src/reader/coverLife.ts` | Page hover and the boil (docs/reader.md): the dials, the stepped signal, and the registry this layer reads the hero's boil from. |
 | `src/dev/coverLifeDials.ts` | The COVER LIFE DialKit panel. |
-| `src/chrome/` | The chrome — the back shape and the row — shared with the reader ([Chrome](#chrome)). |
+| `src/chrome/` | The chrome — the close X and the row — shared with the reader ([Chrome](#chrome)). |
 | `scripts/cover-life-checks.mjs` | The page-hover and boil checks `verify:detail` and `verify:reader` share. |
 | `scripts/make-crease-map.mjs` | `npm run creases`, which writes `public/textures/paper-creases.webp`. |
 | `scripts/detail-verify.mjs` | `npm run verify:detail`, the browser suite. |
@@ -72,7 +72,7 @@ Bottom to top, while the canvas carries the cards:
    still DOM and still on top: the number, and **the
    CoverAnimLayer's sprites**. The panels keep every click, and the sprites keep
    resolving hover from the panel, exactly as before.
-4. **The chrome**, the back shape and the row: paper shapes on the sky
+4. **The chrome**, the close X and the row: paper shapes on the sky
    ([Chrome](#chrome)).
 
 **The canvas draws the shadows** because the DOM cannot. A DOM panel whose face
@@ -117,7 +117,7 @@ later) or a second has passed. Measured order, from `verify:detail`:
 
 ```
 Read issue:        on #item-01 → out #item-01 → dom #read-01/0
-Back to the grid:  on #item-01 → out #item-01 → dom
+Close:             on #item-01 → out #item-01 → dom
 ```
 
 No frame ever shows the canvas under any hash other than the item's. After
@@ -268,15 +268,18 @@ The card pill is the old "Jump to item" select, kept: the `<select>` lies over
 the whole pill, invisible, so the pill is what shows and the select is what
 is pressed, focused and read out. Its focus ring is the pill's.
 
-**The back shape**, top-centre, is the reader's: the prev shape cut again (its
-paper turned over), labelled "Back to the grid".
+**The close X**, top-centre, is the reader's: Uko's `escape.svg`, a 58 circle,
+labelled "Close" (it was the back shape, the prev arrow with its paper turned
+over, "Back to the grid"). It does what that did: Escape, and the same exit.
 
-**It gives way to the hero card** the way the reader's gives way to the book
-([the chrome yields to the book](reader.md#the-chrome-yields-to-the-book)):
-the card is `detailCardScale` of the viewport and is not the chrome's to move,
-so at 1440×900 the row and the back shape stop at the 44px face floor (×0.957)
-and come in toward the edge (margins 30.0 and 30.2) to clear it by 3px; at
-1728×996 the row fits at its natural size.
+**The hero card yields to the chrome**, as the reader's book does
+([the book yields to the chrome](reader.md#the-book-yields-to-the-chrome)): the
+band over and under the card is the Studio Display's 129.6px on every screen,
+reserved before the card is sized, so the gaps are 36.6 (the X to the card)
+and 48.6 (the card to this 46-tall row) everywhere, and the card is what
+shrinks. The neighbours sit 4.40% of the hero's width from it (`detailGap` is
+the gap at the reference). Only under 70% of the height for the hero does the
+chrome shrink, everything × one k, to the 44px face floor (×0.957).
 
 **Nothing about how the chrome behaves changed.** It is still `.detail__back`
 and `.detail__bar`: the morph fades them in after the cards land and out before
@@ -292,8 +295,8 @@ because `data-paper` on `.detail` is this layer's hand-off state
 whole view as a shape.
 
 **The checks.** `verify:detail` presses "Previous item", "Next item", "Read
-issue" and "Back to the grid" by role, and reads `.detail__select`: the names
-and the class are kept, and the back shape's name lost its "←". Contrast:
+issue" and "Close" by role, and reads `.detail__select`; its `layout` section
+holds the spacing above at six viewports (reader.md has the table). Contrast:
 `scripts/sky-contrast.mjs` measures this row at `#item-01` beside the reader's
 (worst 5.21:1 at both viewports, no clamps; reader.md has the table).
 
@@ -527,7 +530,7 @@ above is read from the same inline px, so it was off by the same amount.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
-npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale
+npm run verify:detail         # --url <origin>, --only rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale,layout
 
 # the arrival against a production build (it needs no dev hooks):
 npm run build && npx vite preview --port 5231 --strictPort
@@ -682,3 +685,29 @@ are identical (0 levels).
    and GPU are doing in them (little of it is script), and card 04's Rive
    runtime and import, which load for the grid's hidden tiles under a detail
    view that does not show card 04 live.
+6. **Card 02's hero misses its identity budget at some sizes.** Its hand-off
+   difference is the resampling drift over its dot field (`COVER_HERO` in
+   `scripts/detail-verify.mjs`), and it depends on the hero's exact size, not
+   its place. When the hero started reserving the chrome's bands (2026-10-01)
+   the sizes moved, and the drift went with them. Card 02 as the hero, @2×,
+   the same machine, the same day:
+
+   | viewport | `main` | this layout |
+   | --- | --- | --- |
+   | 1440×880 | 0.93% | 0.53% |
+   | 1440×890 | 0.93% | 5.72% |
+   | 1440×900 | 0.00% | **10.6%** |
+   | 1440×910 | 0.00% | 0.16% |
+   | 1440×920 | 1.50% | 2.57% |
+   | 1728×996 | 1.92% | 0.01% |
+   | 1728×1117 | 3.94% | **8.41%** |
+   | 1920×1080 | 3.16% | 0.02% |
+   | 2560×1440 | 1.62% | 1.62% |
+
+   `main` is over the 3.5% bar too (1728×1117), just at other sizes. Snapping
+   the hero to whole device pixels was tried and made it worse (19.7% at
+   1440×910, 15.3% at 1728×996 @2×), so it is not the rect's alignment. Left as
+   a known failure of `identity` at 1440×900 @2×. Where to look: how the live
+   cover's DOM canvas and the plane's target are each sized from the hero
+   (`coverStage.ts`, `paperGL.ts`) — a backing store rounded one way and a
+   texture another would drift exactly like this.

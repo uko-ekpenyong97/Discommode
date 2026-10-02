@@ -527,8 +527,8 @@ message.
 | `lava` | card 02's lava and its ground: the LAVA panel ([Card 02's lava](#dials-lava)) |
 | site: `coverBackdrop`, `coverBackdropColor`, `coverMaxDpr`, `coverRenderMax`, `coverPaperShade` | not the cover's: in `coverDials.ts`, not the JSON |
 
-The COVER panel persists (`dialkit:cover-rive-site-v5` in localStorage; LAVA,
-`dialkit:cover-rive-site-lava-v5`), as the other
+The COVER panel persists (`dialkit:cover-rive-site-v6` in localStorage; LAVA,
+`dialkit:cover-rive-site-lava-v6`), as the other
 dev panels do. A value set there overrides the JSON in that browser until reset,
 and the verify suites run in fresh contexts, so they always see the JSON.
 

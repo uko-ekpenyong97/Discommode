@@ -51,10 +51,10 @@
   opacity: 0;
 }
 
-/* The back shape (top-centre) and the bar (bottom-centre) are paper shapes
+/* The close X (top-centre) and the bar (bottom-centre) are paper shapes
    (src/chrome, docs/detail-paper.md "Chrome"), placed by `.chrome-top` and
    `.chrome-row`; the rules above only fade them with the morph, and the
-   ticker drifts them out with the doorway's CLEAR. The back shape = Escape. */
+   ticker drifts them out with the doorway's CLEAR. The close X = Escape. */
 
 .detail__strip {
   position: absolute;
@@ -166,6 +166,18 @@
 .detail[data-paper='in'] .detail__panel,
 .detail[data-paper='on'] .detail__panel {
   box-shadow: none;
+}
+
+/* A card two or more from the centre is folded out of sight on the canvas
+   (paperMath.foldTarget), so its number — still DOM, over the canvas — goes
+   with it, and comes back as the card unfolds into a neighbour slot. While
+   the DOM has the cards (`dom`, `out`) the card is there, and so is its number. */
+.detail__panel-num {
+  transition: opacity 300ms ease;
+}
+.detail[data-paper='in'] .detail__panel[data-folded] .detail__panel-num,
+.detail[data-paper='on'] .detail__panel[data-folded] .detail__panel-num {
+  opacity: 0;
 }
 
 /* The faces: the panel's image, and the hover layer's plate (the canvas draws

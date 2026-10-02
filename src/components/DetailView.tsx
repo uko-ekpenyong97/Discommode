@@ -41,6 +41,9 @@ interface DetailViewProps {
   suspended?: boolean;
   /** The shared hero rect: the centre panel is positioned and sized to it. */
   hero: HeroRect;
+  /** Edge-to-edge gap between the centre panel and each neighbour, px — the
+   *  hero layout's, so it keeps its ratio to the hero on every screen. */
+  neighbourGap: number;
 }
 
 /**
@@ -53,7 +56,7 @@ interface DetailViewProps {
  * morph's end) when settled, while the chrome fades. Clicking empty backdrop
  * dismisses; arrow keys / horizontal swipes drive prev/next; a down-swipe exits.
  */
-export function DetailView({ detail, transition, suspended = false, hero }: DetailViewProps) {
+export function DetailView({ detail, transition, suspended = false, hero, neighbourGap }: DetailViewProps) {
   const { activeIndex, phase, next, prev, goto, close, transitioning } = detail;
   useConfig(); // re-render on layout/feel dial changes
 
@@ -69,7 +72,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   // ways), so the strip is laid out around it.
   const panelW = hero.w;
   const panelH = hero.h;
-  const panelStep = panelStepFor(hero.w, config.detailGap, config.detailSideScale);
+  const panelStep = panelStepFor(hero.w, neighbourGap, config.detailSideScale);
   const centerX = hero.x + hero.w / 2;
 
   // Continuous carousel slide: target accumulates signed shortest steps as the
@@ -143,6 +146,9 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         const driftX = clear === 0 ? 0 : Math.sign(i - pos) * clear * CLEAR_DRIFT_PX * d;
         el.style.transform = `translate(-50%, -50%) translateX(${driftX.toFixed(2)}px) scale(${scale})`;
         el.style.opacity = String(op * (1 - clear * d)); // sides fade; centre stays
+        // Two or more from the centre the paper draws the card folded out of
+        // sight (paperMath.foldTarget); its DOM number goes with it (the CSS).
+        el.toggleAttribute('data-folded', Math.abs(i - Math.round(pos)) >= 2);
         const z = Math.round(100 - Math.abs(i - pos) * 10);
         el.style.zIndex = String(z);
         // The same panel, as the paper canvas draws it. The centre is the hero
@@ -275,7 +281,7 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
   // reader is up over this view, which has its own.
   const rootRef = useRef<HTMLDivElement>(null);
   useSkyChrome(rootRef, !suspended);
-  // …and gives way to the hero card where the band is too small for it.
+  // …and shrinks with the band on a short screen (layout/hero.ts).
   useChromeFit(barRef, backRef);
   const tilt = (t: number) => ({ '--tilt': t }) as CSSProperties;
 
@@ -308,15 +314,15 @@ export function DetailView({ detail, transition, suspended = false, hero }: Deta
         ref={backRef}
         type="button"
         className="paper chrome-top detail__back"
-        data-chrome="back"
+        data-chrome="close"
         style={tilt(-1)}
         onClick={(e) => {
           e.stopPropagation();
           close();
         }}
-        aria-label="Back to the grid"
+        aria-label="Close"
       >
-        <ShapeFace shape="prev" flip />
+        <ShapeFace shape="escape" />
       </button>
 
       <div className="detail__strip" ref={trackRef}>
