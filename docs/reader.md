@@ -15,7 +15,7 @@ numbers that decided how they work.
 | File | What it is |
 | --- | --- |
 | `ReaderGate.tsx` | Outermost gate. The app is always mounted; the reader mounts as a fixed layer above it whenever the hash is `#read-…` (or, in dev, `#item-NN?intro`). |
-| `ReaderPage.tsx` | The stage: the chrome (the back shape, the row), the hash ↔ spread sync, Escape, the dev docks. |
+| `ReaderPage.tsx` | The stage: the chrome (the close X, the row), the hash ↔ spread sync, Escape, the dev docks. |
 | `FlipBook.tsx` | The static spread (two `<img>` slots), the host the engine builds its turn layers in, and the two hover layers (cover, back). |
 | `flipEngine.ts` | Plain TS, no React. Turns, drags, jumps (riffle and cut). Writes CSS variables and inline styles; React hears back once per landed spread. |
 | `jump.ts` | The jump dials (`JUMP`) and the riffle's pure schedule, `planRiffle`. |
@@ -56,7 +56,7 @@ Bottom to top, while the reader is open:
    with nothing turning; the back's only at the last spread with nothing turning.
    At `data-pos="cover"` and `data-pos="back"` the book slides half a page so
    the one occupied slot lands on the hero rect, so both use the same box.
-6. **Chrome** — the back shape (top-centre) and the row (bottom-centre): paper
+6. **Chrome** — the close X (top-centre) and the row (bottom-centre): paper
    shapes on the sky, no band behind them. They are the detail view's
    components (`src/chrome`), so the two cannot drift; `ReaderPage.css` only
    adds the doorway's gating. See [Chrome](#chrome).
@@ -101,9 +101,9 @@ the same schedule reversed at `EXIT_RATE`.
 for the plain reader. The chrome's own opacity transition is taken off, since a
 200ms transition on a value written every frame would trail the storyboard.
 
-**There is one way out.** The back shape and Escape both call `exit` in
+**There is one way out.** The close X and Escape both call `exit` in
 `ReaderPage`: land any jump in the air, then `requestExit → closeReader`. The
-back shape is first in the DOM so it is the first thing Tab reaches — this is a
+close X is first in the DOM so it is the first thing Tab reaches — this is a
 modal. At an identical playhead (table 0.4007) the pill's and Escape's exits
 differ in 439 of 1.72M px, all JPEG noise and the live sky (measured with the
 old pill, 2026-09-21).
@@ -232,7 +232,10 @@ after the second cut: `reader-noon`, `reader-dusk`, `reader-night` (the "07 |
 08" spread) and the detail view's three; `reader-hover` and `detail-hover` (the
 row at rest over the row with one shape hovered, at dusk); `pills` (the three
 pill widths — 131, "Read issue" 158, "Open project" 174 at their natural size;
-125, 151 and 166 in the capture, where the fit has the chrome at ×0.957).
+125, 151 and 166 in the capture, where the fit had the chrome at ×0.957).
+They predate the close X and [the book yielding to the
+chrome](#the-book-yields-to-the-chrome) (2026-10-01): the top shape in them is the
+old back ‹, and at 1440×900 the book is larger and the chrome smaller than now.
 
 ### The shapes
 
@@ -241,7 +244,7 @@ behind any of them:
 
 | | shape | size (the base) | action |
 | --- | --- | --- | --- |
-| top | back ‹ | 46×46 | the way out (Escape) |
+| top | close ✕ | 58×58 | the way out (Escape), "Close" |
 | row | cover-jump (book) | 58×58 | the riffle to spread 0 (Home) |
 | | ‹ prev | 46×46 | Prev (←) |
 | | page pill "07 \| 08" | 131×46 | — (the printed page numbers of the open pages; "Cover", "Back" closed) |
@@ -250,9 +253,9 @@ behind any of them:
 
 The row's shapes are 26 apart (`chromeGap`), on one centre line; its bottom
 edge, and the top shape's top edge, are 35 from the viewport's
-(`chromeMargin`). All of it scales with `chromeScale` — and gives way to the
-book where the band is too small for it ([the chrome yields to the
-book](#the-chrome-yields-to-the-book)).
+(`chromeMargin`). All of it scales with `chromeScale`. The band it sits in is
+reserved before the book is sized, so the book gives way to it, not the other
+way round ([the book yields to the chrome](#the-book-yields-to-the-chrome)).
 
 **Each shape is its outline, not a redraw.** An export is a BASE (a circle, or
 the pill's rounded rect) plus a scalloped EDGE around it (an outlined stroke),
@@ -261,9 +264,11 @@ CSS mask and the glyph as a second, over colours that come from the sky. The
 base is the size the frame gives and the layout box; the edge overhangs it by
 3–4 units, as in the file.
 
-**The back shape** has no export. It is the prev shape cut again: the same ‹
-glyph, with the paper turned top for bottom about the base's centre, so the
-top of the screen and the row do not carry the same piece twice.
+**The close X** is Uko's `escape.svg` (2026-10-01), used as drawn: a 58 circle
+like the book icons, its own scalloped edge and an ✕ glyph. It replaced the
+back shape, which had no export of its own (it was the prev shape with its
+paper turned over). It is labelled "Close" in both views and does what the back
+shape did: Escape and the same exits.
 
 **The pill's text is live**: Bowlby One 15px (`public/fonts/bowlby-one-latin-400.woff2`,
 fontsource 5.3.0, OFL — `BowlbyOne-OFL.txt` beside it), two digits either
@@ -299,7 +304,8 @@ it does change: numbers are rounded to 2 decimals (0.01 of a Figma px);
 at the viewBox's own ratio it is the same picture); and the pill's two
 numbers are dropped (they are live text). The manifest records each shape's
 viewBox and base box. Byte-stable: a re-run on unchanged sources writes
-identical files. 296 KB of exports ship as 228 KB, 57 KB gzipped.
+identical files. Six exports, 302 KB, ship as 220 KB, 62 KB gzipped (each
+file on its own, 2026-10-01).
 
 **Re-exported 2026-09-30.** Uko's second cut of the shapes changed three
 glyphs and no outline: `cover-ink`, `back-cover-ink` and `prev-ink` (a bolder
@@ -309,6 +315,11 @@ cleanly into paper and ink by fill. **The new `back-cover.svg` is
 byte-identical to `cover.svg`**, so the two ends of the row now carry the same
 book (the first cut's back-cover book had its spine on the other side). The
 pipeline ships what it is given.
+
+**The close X, 2026-10-01.** `escape.svg` is new: a 58 circle with its own
+scalloped edge (not the book icons' — its paper differs from both), the ✕ in
+white. It split cleanly; the run wrote `escape-paper.svg`, `escape-ink.svg`
+and one manifest entry, and every other file came out byte-identical.
 
 ### The pills: the middle stretched, not generated
 
@@ -370,7 +381,7 @@ procedural edge would make any width, and would not be his.
 
 Each shape is painted from the sky under ITSELF, so the chrome carries the
 sky's own gradient: at a clear dusk the row runs from a deeper amber on the
-left to a lighter one toward the sun, and the back shape at the top is violet.
+left to a lighter one toward the sun, and the close X at the top is violet.
 
 **What the sky decides is which paper, not whether the glyph reads.** The paper
 is opaque and the glyph is inside it, so contrast is fill against ink and the
@@ -396,6 +407,11 @@ before it is pasted. Exits non-zero under 4.5:1.
 | reader, 1440×900 | 7.53 (clear dawn, cover) | **5.21** | 0 |
 | detail, 1728×996 | 7.61 (clear dawn, prev) | **5.21** | 0 |
 | detail, 1440×900 | 7.30 (clear dawn, prev) | **5.21** | 0 |
+
+Re-run 2026-10-01 with the close X (`--chrome-only --sweep`, both views, both
+viewports): the same — worst **5.21:1** (clear sunrise, on prev or the cover),
+0 clamps anywhere. The X is well clear of the bar: its worst of the 24 states
+is 11.42:1 (rain night).
 
 The worst sky is a clear sunrise at the horizon: a golden hue, which at HSL
 0.22 is the lightest-reading dark there is. **At the shipped dials nothing
@@ -501,50 +517,87 @@ CHROME panel — in the READER NAV dock (`#read-NN?intro`), the doorway dock
 | `chromeHoverTilt` | 2 | hover tilt, degrees |
 | `chromeHoverMs` | 120 | hover in and out |
 | `chromePressNudge` | 0.05 | press: lightness away from the ink |
-| `chromeScale` | 1 | the whole chrome × the frame's sizes (× the fit, where the band is short) |
-| `chromeMargin` | 35 | the row's bottom / the top shape's top, px from the edge (less, where the fit floors) |
+| `chromeScale` | 1 | the whole chrome × the frame's sizes (× k on a short screen); the band does not grow with it, so a larger chrome eats the gap to the book |
+| `chromeMargin` | 35 | the row's bottom / the top shape's top, px from the edge (× k on a short screen); inside the band, like `chromeScale` |
 | `chromeGap` | 26 | between shapes in a row, px |
 
 There is no `chromeEdgeWobble`: the edge is Uko's, not generated (above).
 
-### The chrome yields to the book
+### The book yields to the chrome
 
-The book is the hero rect, `detailCardScale` (0.82) of the viewport's height,
-and it is not the chrome's to move. At 900 tall that leaves an 81px band under
-it and over it; the row wants 35 of margin and its 58 book icons, whose paper
-reaches 33 units above their centre — 98px. The first cut sat ~12px over the
-pages there (~3px at 1728×996) and the back shape's scallops touched the top
-of the page.
+**The spacing is the Studio Display's**, where it was signed off, and every
+screen keeps it in px. Measured on `main` at 2560×1440 on 2026-10-01, before
+this change (the base of each shape; the scallops in brackets):
 
-So each line of chrome — the row, and the back shape — gets a FIT for its band
-(`chromeFit.ts`, `useChromeFit.ts`; pure, tested):
+| 2560×1440 | detail | reader |
+| --- | --- | --- |
+| margin, top and bottom | 35 | 35 |
+| top line | back ‹, 46 | back ‹, 46 |
+| top line → hero / book | 48.6 (44.6) | 48.6 (44.6) |
+| hero / book → row | 48.6 (44.4) | 36.6 (32.7) |
+| row | 46 (arrows, pills) | 58 (book icons) |
+| hero → each neighbour | 40.0 = 4.40% of the hero's 908.3 | — |
 
-1. it scales down (`chromeScale` × the fit) until its paper clears the book
-   by 3px (the hover lift is ~1.3px of that);
-2. never so far that its smallest face is under 44px — the 46 arrows stop at
-   ×0.957 (the hit boxes are ≥ 44 in CSS anyway; this keeps the FACE a
-   button);
-3. and where that floor is reached and the line still does not clear, the
-   MARGIN gives way, down to 8px.
+Each band, margin + line + gap, is **129.6** = 1440 × (1 − 0.82) / 2. The old
+rule made the hero 0.82 of ANY viewport's height, so on a shorter screen the
+band shrank with it while the chrome did not: at 1728×1117 the band was 100.5,
+the gaps 19.5, and the reader's row sat **7.5px** under the book (3.7 to its
+scallops); at 900 tall the chrome had to shrink and come toward the edge
+(×0.957, margins down to 18.8) to clear it at all.
 
-The book's rect is computed (the hero's), the faces' sizes are on the faces
-as data, and it is recomputed on resize and on any dial that moves either. The
-detail view's row and back shape take the same fit against the hero card.
+So the order is turned round (`src/layout/hero.ts`, `computeHeroLayout`; pure,
+tested in `hero.test.ts`):
 
-| | band | the row | the back shape |
-| --- | --- | --- | --- |
-| 1440×900, reader | 81 | ×0.957 (floor), margin 35 → 18.8 | ×0.957 (floor), margin 35 → 30.2 |
-| 1728×996, reader | 89.6 | ×0.957 (floor), margin 35 → 27.5 | ×1, margin 35 |
-| 1440×900, detail | 81 | ×0.957 (floor), margin 35 → 30.0 | ×0.957 (floor), margin 35 → 30.2 |
-| 1728×996, detail | 89.6 | ×1, margin 35 | ×1, margin 35 |
+1. **The band is reserved first**: `REF_VH × (1 − detailCardScale) / 2` px
+   over the hero and under it, the same on every screen. `detailCardScale` is
+   still the dial; it now means the hero's share of the height at 1440 tall.
+2. **The hero (10:13) takes the height that is left**, and the open book (two
+   pages) must fit the width inside a side gap each side: the band's gap to
+   the tallest line, 36.6. No listed screen is narrow enough for that to bind.
+3. **Only a short screen shrinks the chrome**: where the hero would get less
+   than `HERO_MIN_SHARE` (0.7) of the height, the WHOLE band — margin, chrome,
+   gaps, the row's spacing — scales by one `k`, so the proportions stay the
+   Studio Display's; `k` stops at the face floor (no face under 44px: ×0.957
+   for the 46 arrows), and past it the hero gives way, not the chrome.
+   `useChromeFit` writes `k` on both lines (`--chrome-fit`,
+   `--chrome-line-margin`).
+4. **The neighbours keep the ratio**: their gap is `detailGap` × the hero's
+   height over the reference hero's, so 4.40% of the hero's width everywhere.
 
-At the shipped dials the floor binds wherever the book's band is short: the
-faces could only clear at their margin by shrinking to ×0.67 (31px arrows),
-so they stop at 44 and the line moves toward the edge instead. A taller
-viewport needs none of it. `verify:reader`'s `chrome` section checks, at
-both viewports and at the cover, a mid spread and the back, that the row's
-paper does not intersect the book's box nor the back shape's the page, and
-that every face is ≥ 44px and every hit area ≥ 44×44.
+The detail panel, the grid → detail morph, the doorway and the reader's cover
+slot all read the one layout, so none of them can drift from the others.
+
+With the close X at its drawn 58, the top gap is the band less 35 and 58:
+**36.6**, the reader row's gap, and the hero at 2560×1440 did not move. The
+detail row is 46, so its gap reads 48.6 as it did. Measured 2026-10-01
+(`verify:detail` and `verify:reader`, `layout`):
+
+| | hero (h, share) | k | top gap | row gap, reader / detail | neighbour gap |
+| --- | --- | --- | --- | --- | --- |
+| 2560×1440 | 1180.8, 0.82 | 1 | 36.6 | 36.6 / 48.6 | 40.0 |
+| 1920×1080 | 820.8, 0.76 (was 885.6) | 1 | 36.6 | 36.6 / 48.6 | 27.8 |
+| 1728×1117 | 857.8, 0.77 (was 915.9) | 1 | 36.6 | 36.6 / 48.6 | 29.1 |
+| 1512×982 | 722.8, 0.74 (was 805.2) | 1 | 36.6 | 36.6 / 48.6 | 24.5 |
+| 1440×900 | 640.8, 0.71 (was 738.0) | 1 | 36.6 | 36.6 / 48.6 | 21.7 |
+| 1280×720 | 472.1, 0.66 | 0.957 (floor) | 35.0 | 35.0 / 46.5 | 16.0 |
+
+Captures: `docs/chrome/layout-2560x1440.webp` and `layout-1728x1117.webp`, the
+detail view beside the reader at 11 | 12, 1×, the dev overlays hidden.
+
+The cost is the book: 6–13% smaller on the laptop screens than it was. What
+went: the old fit's solver (`chromeFit.ts`: shrink until the paper clears by
+`AIR` 3px, then give up margin down to `MIN_MARGIN` 8) — at the reserved band
+it never had anything to do.
+
+`layout`, in both suites (`scripts/layout-checks.mjs`), checks at those six
+viewports — the reader at the cover, 07 | 08 and the back — that the margins,
+the chrome's sizes and the gaps are the 2560×1440 numbers to ±2px (× k where
+the chrome shrank), that both lines carry that k, that no paper (the scallops
+included) is over the hero or book, the open book inside the side gaps, every
+face ≥ 44px and every hit area ≥ 44×44, and the neighbours at 4.40%. The
+numbers are written into the check, not read back from the code it checks. It
+saves a screenshot per viewport to `.context/layout/` (`--shots` for another
+place).
 
 ### Not done
 
@@ -892,9 +945,9 @@ it goes dark. `view: plate` shows it over the plate, as it ships. `x`, `y`, `w`
 Arrow keys nudge 1px, Shift+arrow 10px, while an animation is picked — ahead of
 the engine's own listener, so they do not turn the page. **Copy row** puts the
 `pageAnims.ts` row on the clipboard (and the console); **Reset to file** drops
-the panel's row. What persists (`DIAL_STATE_VERSION` 5): the pick and the view
+the panel's row. What persists (`DIAL_STATE_VERSION` 6): the pick and the view
 (the panel), and each animation's EDITED ROW, kept per id in localStorage
-(`dialkit:page-anim-align-rows-v5`, so "Reset dials" and a version bump clear
+(`dialkit:page-anim-align-rows-v6`, so "Reset dials" and a version bump clear
 it too): a reload draws it again, and a pick loads it into the sliders, until
 **Copy row** (it belongs in the file then) or **Reset to file** clears it. Copy
 keeps the row's `rest`. A row whose width changed rebuilds its atlas on the
@@ -1039,7 +1092,7 @@ magenta.
 ```
 npm test && npx tsc -b && npm run lint
 npm run dev                  # in another shell
-npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,chrome,exit,hover,life,sky,pageanims
+npm run verify:reader        # --url <origin>, --runs N (default 5), --only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims
 ```
 
 `scripts/reader-verify.mjs` is the browser suite. Everything in it is a question
@@ -1071,12 +1124,15 @@ exits non-zero on any ✗.
   code — "Cover" and "Back" closed, at one width throughout. Named rows for the
   cover, the first open spread, the 07 spread, the last open spread and the
   back.
-- **Chrome clears the book** (`chrome`). At 1440×900 and 1728×996, at the
-  cover, a mid spread and the back: the row's paper (every face's mask box,
-  the scallops included) does not intersect the book, the back shape's does
-  not touch the page, every face ≥ 44px and every hit area ≥ 44×44
-  ([the chrome yields to the book](#the-chrome-yields-to-the-book)).
-- **Back shape vs Escape.** The doorway exit from each, opened from `#item-01`,
+- **Layout** (`layout`, replacing `chrome`). At 2560×1440, 1920×1080,
+  1728×1117, 1512×982, 1440×900 and 1280×720, at the cover, 07 | 08 and the
+  back: the margins, the chrome and the gaps to the book are the Studio
+  Display's to ±2px (× k where the chrome shrank), no paper (the scallops
+  included) over the book, the open book inside the side gaps, every face ≥
+  44px and every hit area ≥ 44×44, the top shape "Close". A screenshot per
+  viewport to `.context/layout/`
+  ([the book yields to the chrome](#the-book-yields-to-the-chrome)).
+- **Close X vs Escape.** The doorway exit from each, opened from `#item-01`,
   screencast three times over. Every exit must end on `#item-01` with the reader
   unmounted, and the Escape exit must pass through a frame the pill exit also
   shows, to under 0.1% of pixels. Frames are paired by IMAGE, not by the

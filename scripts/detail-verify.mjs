@@ -1,7 +1,7 @@
 /**
  * The detail view's paper, in Chrome. `npm run verify:detail` with the dev
  * server running (`npm run dev`; `--url` for another origin, `--only
- * rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale`
+ * rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale,layout`
  * for a subset). `--only arrival` also runs against a production build
  * (`vite preview`): it needs none of the dev hooks.
  *
@@ -39,7 +39,7 @@
  *              alone cannot see that, since it predicts from the sprites' own px.
  *   nav        Next / Prev (including the wrap) land with the hash, the jump
  *              list, the centre panel and the centre PLANE agreeing.
- *   leave      Read issue and Back to the grid: the canvas hands the cards back
+ *   leave      Read issue and Close: the canvas hands the cards back
  *              (on → out → dom) BEFORE the hash moves, so the doorway and the exit
  *              morph start from the DOM; and it takes them again after the reader.
  *   frames     rAF intervals across a Prev slide and across a hover sweep, 1× and
@@ -75,6 +75,14 @@
  *              paper hands the cards back in, its hero plane is card 04's live
  *              Main Bounce, and the hero is instance #1 throughout. At 1 it was
  *              #2, #3, … for as long as the pointer moved.
+ *   layout     the Studio Display's spacing at 2560×1440, 1920×1080, 1728×1117,
+ *              1512×982, 1440×900 and 1280×720, at #item-01: the margins, the
+ *              chrome and the gaps to the hero are the spec to ±2px (× k where
+ *              the chrome shrank), the neighbours 4.40% of the hero's width
+ *              from it, no paper over the hero, the top shape is "Close", and
+ *              a number only on a card you can see — none on a card folded out
+ *              of sight (scripts/layout-checks.mjs). A screenshot per viewport to
+ *              `--shots` (default .context/layout/).
  *
  * Pixel checks hide the sky and the dev overlays first: the sky drifts, the
  * neighbours are 85% opaque over it, and the env readout's numbers tick.
@@ -85,11 +93,14 @@
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
+import { checkLayout } from './layout-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
-const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale').split(',');
+const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale,layout').split(',');
+/** Where `layout` writes its screenshots. */
+const SHOTS = arg('--shots', '.context/layout');
 const B = `${ORIGIN}/`;
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -666,12 +677,12 @@ async function checkLeave(browser) {
   await page.waitForFunction(() => !document.querySelector('.reader') && window.__paper?.state() === 'on', null, { timeout: 10000 });
   ok('closing the reader, the canvas takes the cards back');
   await record();
-  await page.getByRole('button', { name: 'Back to the grid' }).click();
+  await page.getByRole('button', { name: 'Close' }).click();
   await page.waitForFunction(() => !document.querySelector('.detail'), null, { timeout: 10000 });
   const back = await sequence();
   check(
     back[0] === 'on #item-01' && back[1] === 'out #item-01' && back[2]?.startsWith('dom') && clean(back, '#item-01'),
-    'Back to the grid: on → out → dom, then the exit',
+    'Close: on → out → dom, then the exit',
     back.slice(0, 4).join(' → '),
   );
   await page.context().close();
@@ -1170,6 +1181,20 @@ async function checkSideScale(browser) {
   await page.context().close();
 }
 
+/** The hero is sized after the chrome's bands (src/layout/hero.ts): the spec,
+ *  at every viewport (scripts/layout-checks.mjs). */
+async function checkDetailLayout(browser) {
+  await checkLayout({
+    browser,
+    view: 'detail',
+    states: ['01'],
+    open: (page, item) => open(page, item),
+    check,
+    errors,
+    shots: SHOTS,
+  });
+}
+
 async function run() {
   const browser = await chromium.launch({ channel: 'chrome' });
   try {
@@ -1186,6 +1211,7 @@ async function run() {
     if (ONLY.includes('life')) await checkLife(browser);
     if (ONLY.includes('arrival')) await checkArrival(browser);
     if (ONLY.includes('sidescale')) await checkSideScale(browser);
+    if (ONLY.includes('layout')) await checkDetailLayout(browser);
   } finally {
     await browser.close();
   }

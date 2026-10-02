@@ -14,10 +14,10 @@
 }
 
 /* One Figma px of the frame, at the chrome's scale — and at the line's FIT,
-   which useChromeFit writes on each line (.chrome-row, .chrome-top) when the
-   band between the book and the viewport's edge is too small for it
-   (chromeFit.ts). Declared on the lines themselves, not only on :root, so it
-   resolves with each line's own --chrome-fit. */
+   which useChromeFit writes on each line (.chrome-row, .chrome-top) when a
+   short screen shrinks the band over and under the book (layout/hero.ts).
+   Declared on the lines themselves, not only on :root, so it resolves with
+   each line's own --chrome-fit. */
 :root,
 .chrome-row,
 .chrome-top {
@@ -202,7 +202,7 @@
    No band behind either: the shapes float on the sky and carry their own
    contrast. The row's centre line is shared, so the 58s and the 46s sit on
    one axis, and its tallest shape's bottom edge is `chromeMargin` up. After
-   `.paper`, whose `position: relative` the back shape would otherwise take. */
+   `.paper`, whose `position: relative` the close X would otherwise take. */
 .chrome-row {
   position: absolute;
   left: 50%;

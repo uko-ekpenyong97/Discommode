@@ -121,13 +121,17 @@ export interface LiveConfig {
   // DETAIL — grid ↔ detail transition + in-detail slide (Phase 10) + 3-card layout (13/14)
   /** Grid ↔ detail expand/collapse duration, in ms. */
   detailTransitionMs: number;
-  /** Centre detail card height as a fraction of viewport height (3:4 preserved). */
+  /** The hero (detail centre card, reader page) as a fraction of the height on
+   *  the REFERENCE screen, 1440 tall (the Studio Display). It sets the band over
+   *  and under the hero that every screen keeps, in px (layout/hero.ts): the
+   *  hero takes what is left, so on a shorter screen its share is smaller. */
   detailCardScale: number;
   /** Side detail card size as a fraction of the centre card (the 3-up look). */
   detailSideScale: number;
   /** Side detail cards' resting opacity (distinct from the hover-isolate dim). */
   detailSideOpacity: number;
-  /** Horizontal gap (px) between adjacent detail cards. */
+  /** Gap (px) between the hero and each neighbour card AT THE REFERENCE hero
+   *  (1440 tall); on other screens it scales with the hero, so the ratio holds. */
   detailGap: number;
   /** Non-hovered detail panels dim to this while another is hovered. */
   detailHoverDim: number;

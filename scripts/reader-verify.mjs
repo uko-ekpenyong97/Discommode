@@ -21,6 +21,14 @@
  *   navigation            Prev / Next / arrows / drag / Home / End / Cover / Back
  *                         cover all land on one spread index; input during a
  *                         riffle is ignored; Escape mid-riffle lands, then exits.
+ *   layout                the Studio Display's spacing at 2560×1440, 1920×1080,
+ *                         1728×1117, 1512×982, 1440×900 and 1280×720, at the
+ *                         cover, 07 | 08 and the back: the margins, the chrome
+ *                         and the gaps to the book are the spec to ±2px (× k
+ *                         where the chrome shrank), no paper over the book, the
+ *                         open book inside the side gaps, the top shape is
+ *                         "Close" (scripts/layout-checks.mjs). A screenshot per
+ *                         viewport to `--shots` (default .context/layout/).
  *   pill vs Escape        the doorway exit from each, screencast three times; the
  *                         Escape exit must pass through a frame the pill exit
  *                         also shows (to under 0.1% of pixels), and both end on
@@ -74,13 +82,16 @@ import os from 'node:os';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
+import { checkLayout } from './layout-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const RUNS = Number(arg('--runs', 5));
-/** `--only frames,zorder,nav,folios,chrome,exit,hover,life,sky,pageanims` runs just those sections. */
-const ONLY = arg('--only', 'frames,zorder,nav,folios,chrome,exit,hover,life,sky,pageanims').split(',');
+/** `--only frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims` runs just those sections. */
+const ONLY = arg('--only', 'frames,zorder,nav,folios,layout,exit,hover,life,sky,pageanims').split(',');
+/** Where `layout` writes its screenshots. */
+const SHOTS = arg('--shots', '.context/layout');
 const B = `${ORIGIN}/`;
 const VIEWPORT = { width: 1728, height: 996 };
 const FRAME_BUDGET_MS = 20;
@@ -378,60 +389,30 @@ async function checkFolios(browser) {
   await page.context().close();
 }
 
-// ── chrome: the row and the back shape clear the book ────────────────────────
+// ── layout: the Studio Display's spacing at every viewport ───────────────────
 
 /**
- * The book is the hero rect and does not move for the chrome; the chrome gives
- * way (src/chrome/chromeFit.ts). At both signed-off viewports, at the cover, a
- * mid spread and the back: the row's PAPER (every face's mask box, which is
- * the scallops' extent, not just the base) must not intersect the book's box,
- * nor the back shape's paper the page; every face stays ≥ 44px and every hit
- * area ≥ 44×44. Measured with the pointer off the chrome (a hover lifts it).
+ * The book is sized after the chrome's bands (src/layout/hero.ts), so the
+ * margins, the chrome and the gaps to the book are the 2560×1440 spec on every
+ * viewport (× k where the chrome shrank). At the cover, a mid spread and the
+ * back. `scripts/layout-checks.mjs`; a screenshot per viewport to `--shots`.
  */
-async function checkChromeClear(browser) {
-  console.log('\nchrome: the row and the back shape clear the book');
-  for (const viewport of [{ width: 1440, height: 900 }, { width: 1728, height: 996 }]) {
-    const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
-    const page = await context.newPage();
-    page.on('pageerror', (e) => errors.push(e.message));
-    const name = `${viewport.width}×${viewport.height}`;
-    for (const spread of [0, 6, 21]) {
+async function checkReaderLayout(browser) {
+  await checkLayout({
+    browser,
+    view: 'reader',
+    states: [0, 6, 21],
+    openState: 6,
+    open: async (page, spread) => {
+      await page.goto(B);
       await page.goto(`${B}#read-01/${spread}`);
       await page.waitForSelector('.reader__bar');
-      await page.mouse.move(viewport.width / 2, viewport.height / 2);
-      await page.waitForTimeout(600);
-      const m = await page.evaluate(() => {
-        const box = (el) => {
-          const r = el.getBoundingClientRect();
-          return { l: r.left, t: r.top, r: r.right, b: r.bottom };
-        };
-        const union = (bs) => bs.reduce((a, b) => ({ l: Math.min(a.l, b.l), t: Math.min(a.t, b.t), r: Math.max(a.r, b.r), b: Math.max(a.b, b.b) }));
-        const paperOf = (line) => union([box(line), ...[...line.querySelectorAll('.paper__fill:not(.paper-pill__paper .paper__fill), .paper-pill__paper')].map(box)]);
-        const meet = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
-        const book = box(document.querySelector('.book'));
-        const row = paperOf(document.querySelector('.reader__bar'));
-        const back = paperOf(document.querySelector('.reader__back'));
-        const faces = [...document.querySelectorAll('.reader [data-chrome] .paper__shape')].map((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height));
-        const hits = [...document.querySelectorAll('.reader [data-chrome]')].filter((e) => e.matches('button')).map((e) => Math.min(e.getBoundingClientRect().width, e.getBoundingClientRect().height));
-        const cs = getComputedStyle(document.querySelector('.reader__bar'));
-        return {
-          rowGap: book.t < row.b && meet(book, row) ? book.b - row.t : row.t - book.b,
-          rowMeets: meet(book, row),
-          backGap: back.b <= book.t ? book.t - back.b : -(back.b - book.t),
-          backMeets: meet(book, back),
-          face: Math.min(...faces),
-          hit: Math.min(...hits),
-          fit: cs.getPropertyValue('--chrome-fit').trim() || '1',
-          margin: cs.bottom,
-        };
-      });
-      const tag = `${name}, spread ${spread}`;
-      check(!m.rowMeets, `${tag}: the row's paper does not intersect the book`, `${m.rowGap.toFixed(1)}px clear (fit ${m.fit}, bottom ${m.margin})`);
-      check(!m.backMeets, `${tag}: the back shape's paper does not touch the page`, `${m.backGap.toFixed(1)}px clear`);
-      check(m.face >= 44 - 0.01 && m.hit >= 44 - 0.01, `${tag}: faces ≥ 44px, hit areas ≥ 44×44`, `smallest face ${m.face.toFixed(1)}px, smallest hit area ${m.hit.toFixed(1)}px`);
-    }
-    await context.close();
-  }
+      await page.waitForTimeout(1200);
+    },
+    check,
+    errors,
+    shots: SHOTS,
+  });
 }
 
 // ── navigation: every way of moving agrees ───────────────────────────────────
@@ -538,7 +519,7 @@ async function exitFrames(browser, how) {
   });
   await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 92, everyNthFrame: 1 });
   await page.waitForTimeout(200);
-  if (how === 'pill') await page.getByRole('button', { name: 'Back', exact: true }).click();
+  if (how === 'pill') await page.locator('.reader').getByRole('button', { name: 'Close', exact: true }).click();
   else await page.keyboard.press('Escape');
   await page.waitForTimeout(2600);
   await cdp.send('Page.stopScreencast');
@@ -1354,7 +1335,7 @@ async function run() {
   if (ONLY.includes('zorder')) await checkZOrder(browser);
   if (ONLY.includes('nav')) await checkNavigation(browser);
   if (ONLY.includes('folios')) await checkFolios(browser);
-  if (ONLY.includes('chrome')) await checkChromeClear(browser);
+  if (ONLY.includes('layout')) await checkReaderLayout(browser);
   if (ONLY.includes('exit')) await checkExit(browser);
   if (ONLY.includes('hover')) await checkHover(browser);
   if (ONLY.includes('life')) await checkLife(browser);

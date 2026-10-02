@@ -152,7 +152,7 @@ export default function ReaderPage({
   // The chrome's paper takes its colour from the sky under it.
   const rootRef = useRef<HTMLDivElement>(null);
   useSkyChrome(rootRef, !authoring);
-  // …and gives way to the book where the band under or over it is too small.
+  // …and shrinks with the band on a short screen (layout/hero.ts).
   const backRef = useRef<HTMLButtonElement>(null);
   const barRef = useRef<HTMLElement>(null);
   useChromeFit(barRef, backRef, !authoring);
@@ -168,12 +168,12 @@ export default function ReaderPage({
           type="button"
           ref={backRef}
           className="paper chrome-top reader__back"
-          data-chrome="back"
+          data-chrome="close"
           style={tilt(-1)}
           onClick={exit}
-          aria-label="Back"
+          aria-label="Close"
         >
-          <ShapeFace shape="prev" flip />
+          <ShapeFace shape="escape" />
         </button>
       )}
       <FlipBook

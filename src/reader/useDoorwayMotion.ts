@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { animate } from 'motion';
 import { config } from '../config';
 import { panelStepFor } from '../detailLayout';
-import { computeHeroRect } from '../layout/hero';
+import { computeHeroLayout } from '../layout/hero';
 import { rectEdges, skyWake } from '../sky/skyStage';
 import type { FlipEngine } from './flipEngine';
 import {
@@ -46,10 +46,10 @@ interface DoorwayMotionOptions {
  * the hero rect the way `DetailView` and the reader lay them out.
  */
 function doorwayWake(clear: number, open: number): void {
-  const hero = computeHeroRect(window.innerWidth, window.innerHeight);
+  const { rect: hero, gap } = computeHeroLayout(window.innerWidth, window.innerHeight);
   const cx = hero.x + hero.w / 2;
   const cy = hero.y + hero.h / 2;
-  const step = panelStepFor(hero.w, config.detailGap, config.detailSideScale);
+  const step = panelStepFor(hero.w, gap, config.detailSideScale);
   const sw = hero.w * config.detailSideScale;
   const sh = hero.h * config.detailSideScale;
   const drift = clear * CLEAR_DRIFT_PX;

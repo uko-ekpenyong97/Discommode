@@ -21,7 +21,7 @@
 }
 
 /* ── the chrome ──────────────────────────────────────────────────────────
-   The paper shapes (src/chrome, docs/reader.md "Chrome"): the back shape
+   The paper shapes (src/chrome, docs/reader.md "Chrome"): the close X
    top-centre, the row bottom-centre — the detail view's language, placed by
    `.chrome-top` and `.chrome-row`. What differs here is only what drives
    them: the doorway's CHROME channel (--doorway-chrome: 0 through the entrance

@@ -11,7 +11,7 @@ import { usePanController } from './hooks/usePanController';
 import { useDetail } from './hooks/useDetail';
 import type { FlipOrigin } from './hooks/useDetail';
 import { gridCardRects, panelStepFor } from './detailLayout';
-import { useHeroRect } from './layout/hero';
+import { useHeroLayout } from './layout/hero';
 import { useEnvState } from './env';
 import { cardHeight, cellSpanX, config, useConfig } from './config';
 import { CONTENT, CONTENT_COUNT, contentIndex } from './content';
@@ -85,8 +85,9 @@ export default function App({ suspended = false }: AppProps) {
   useEffect(() => armPaperWarmup(), []);
   const detail = useDetail(suspended);
   const envSnapshot = useEnvState();
-  // The one hero rect the detail panel, the FLIP morph, and the reader all use.
-  const hero = useHeroRect();
+  // The one hero rect the detail panel, the FLIP morph, and the reader all use,
+  // and the gap to its neighbours (layout/hero.ts).
+  const { rect: hero, gap: neighbourGap } = useHeroLayout();
 
   useEffect(() => {
     detailModeRef.current = detail.mode;
@@ -162,7 +163,7 @@ export default function App({ suspended = false }: AppProps) {
     const sideScale = config.detailSideScale;
     const cx = hero.x + hero.w / 2;
     const cy = hero.y + hero.h / 2;
-    const step = panelStepFor(hero.w, config.detailGap, sideScale);
+    const step = panelStepFor(hero.w, neighbourGap, sideScale);
     const sideW = hero.w * sideScale;
     const sideH = hero.h * sideScale;
     const d = {
@@ -217,6 +218,7 @@ export default function App({ suspended = false }: AppProps) {
           transition={useMorph ? 'morph' : 'fade'}
           suspended={suspended}
           hero={hero}
+          neighbourGap={neighbourGap}
         />
       )}
 
