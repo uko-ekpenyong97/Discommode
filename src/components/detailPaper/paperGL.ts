@@ -25,6 +25,7 @@ import { issueAnims } from '../../reader/issue-01';
 import { createPaperMaterial, createShadowMaterial } from './paperMaterial';
 import { coverCrop } from './paperMath';
 import { span } from './span';
+import type { FaceJob, FaceReply } from './faceWorker';
 
 /**
  * THE PAPER'S GL, MADE ONCE — the renderer, its canvas, its programs, the
@@ -137,16 +138,63 @@ const nextIdle = () => new Promise<void>((r) => idle(() => r()));
  *  crops and resizes on the main thread, and the eight-odd faces the layer
  *  builds as the detail view mounts — during the grid→detail morph — were
  *  ~1 s of it (createImageBitmap, 981 ms in one real-Chrome profile), a run
- *  of 60–500 ms frames over the morph and the landing, on every card. From a
- *  blob it decodes and resizes off the main thread. */
+ *  of 60–500 ms frames over the morph and the landing, on every card.
+ *
+ *  And from a WORKER (faceWorker.ts): from a blob the decode is off the main
+ *  thread, but the crop and the resize run where the bitmap resolves — 18–50
+ *  ms a face on the main thread, several in one frame (docs/perf/
+ *  first-second.md). The same call, made in the worker, resolves there.
+ *  Without a worker (or if it fails) it is made here, as before. */
 async function resized(url: string, w: number, h: number, premultiply = false): Promise<ImageBitmap> {
-  const [n, blob] = await Promise.all([naturalSize(url), fetch(url).then((r) => r.blob())]);
+  const n = await naturalSize(url);
   const c = coverCrop(n.w, n.h, w, h);
+  const job = { url: new URL(url, location.href).href, sx: c.sx, sy: c.sy, sw: c.sw, sh: c.sh, w, h, premultiply };
+  const fromWorker = await inWorker(job).catch(() => null);
+  if (fromWorker) return fromWorker;
+  const blob = await fetch(url).then((r) => r.blob());
   return createImageBitmap(blob, c.sx, c.sy, c.sw, c.sh, {
     resizeWidth: w,
     resizeHeight: h,
     resizeQuality: 'high',
     premultiplyAlpha: premultiply ? 'premultiply' : 'default',
+  });
+}
+
+let worker: Worker | null | undefined;
+let jobId = 0;
+const jobs = new Map<number, { resolve: (b: ImageBitmap) => void; reject: (e: Error) => void }>();
+
+/** The face made in the worker; rejects (and the caller makes it here) if
+ *  there is no worker or it fails. */
+function inWorker(job: Omit<FaceJob, 'id'>): Promise<ImageBitmap> {
+  if (worker === undefined) {
+    try {
+      worker = new Worker(new URL('./faceWorker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (e: MessageEvent<FaceReply>) => {
+        const j = jobs.get(e.data.id);
+        if (!j) return;
+        jobs.delete(e.data.id);
+        if ('bitmap' in e.data) j.resolve(e.data.bitmap);
+        else j.reject(new Error(e.data.error));
+      };
+      // The worker itself failed (it could not load): every job, and every
+      // later one, is made on the main thread.
+      worker.onerror = () => {
+        worker?.terminate();
+        worker = null;
+        for (const j of jobs.values()) j.reject(new Error('face worker failed'));
+        jobs.clear();
+      };
+    } catch {
+      worker = null;
+    }
+  }
+  const w = worker;
+  if (!w) return Promise.reject(new Error('no face worker'));
+  return new Promise((resolve, reject) => {
+    const id = ++jobId;
+    jobs.set(id, { resolve, reject });
+    w.postMessage({ ...job, id } satisfies FaceJob);
   });
 }
 
