@@ -1934,10 +1934,19 @@ async function checkDrexCache(browser) {
   const d1 = await draws();
   // …except the hero's, which a hovered tile has the stage render in an idle
   // moment, so the morph does not pay for it on the click's first frame
+  // The print is the whole frame at the scale that makes the hero's crop its
+  // width, its own rounding: the hero's size, or a pixel over (at
+  // detailCardScale 0.81, 1112×1446 for a 1111×1445 hero at 1728×996 @2×).
   const hs = await heroRect(page);
-  const heroPrint = `${Math.round(hs.w * 2)}x${Math.round(hs.h * 2)}`;
+  const hw = Math.round(hs.w * 2);
+  const hh = Math.round(hs.h * 2);
+  const heroPrint = `${hw}x${hh}`;
+  const isHeros = (k) => {
+    const [w, h] = k.split('x').map(Number);
+    return w >= hw && w <= hw + 1 && h >= hh && h <= hh + 1;
+  };
   check(
-    a1.renders - a0.renders === 1 && a1.kept.includes(heroPrint) && d1 - d0 >= 90,
+    a1.renders - a0.renders === 1 && a1.kept.some(isHeros) && d1 - d0 >= 90,
     'grid, hovered',
     `pass A ${a1.renders - a0.renders} render (1: the hero's ${heroPrint}, ahead of the click; the tile's none), pass B ${d1 - d0} draws in 90 frames; prints kept ${a1.kept.join(', ')}`,
   );

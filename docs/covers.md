@@ -1306,6 +1306,15 @@ has two budgets of its own, documented in the script:
 | --- | --- | --- | --- |
 | hero | 0.000–0.004%; **1.92%** at 1728×996 @2× on #0d1220 (3.04% on #425EB6; 2.1–2.2% before 2026-10-01) | 3.5% (2.5% before) | the hero box is 628.2 × 816.7 CSS px there, so neither the DOM canvas nor the plane's texture lands on whole device pixels; two resamplers move a field of noise by a fraction of a pixel. The diff grows steadily toward the bottom-right: a 0.4px scale drift, not a clock or a colour. On the opaque navy ground the same drift puts more of the dot field past 32 levels: 3.04% every run, `main` 2.11% (the same script and machine), in the same pattern, no blob drawn apart |
 | as a neighbour (the still) | 1.0–5.0% | 7% (card 01's) | Chrome's scale(0.85) resampling of the `<img>` against a texture resized to the card — card 01's documented problem, on pure noise |
+| hero, since `detailCardScale` 0.81 | **5.68%** at 1728×996 @2×, every run; 0.00–0.06% elsewhere | 6.7% (`LAVA_HERO`) | the hero box is 555.7 × 722.4 CSS px there: the same drift over the dot field. The diff map is speckle and nothing else (best whole-pixel shift 1px, σ1 blur 0.37%, largest connected difference 44 px) |
+
+Card 03 as a neighbour since `detailSideScale` 1 (the neighbours at the hero's
+size): **1.1–8.2%**, held to 9.2% (`DREX_STILL_SIDE`); card 02's neighbour and
+card 03's hero keep 7% and 3.5%. Both were re-baselined on 2026-10-01 at the
+measured value + 1 point, after `verify:detail --diff-dir` maps of every
+failing row, `main` at the old dials beside the new: resampling drift only —
+card 03's dither moiré in the same places, denser; no shape out of place, no
+shift over 1px.
 
 Card 04, the same way: as the hero **0.149–0.434%**, the spec's 0.5% (the DOM
 face and the plane show one canvas; the suite waits for the live hero — until

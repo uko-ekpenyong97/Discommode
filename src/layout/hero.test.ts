@@ -59,15 +59,18 @@ describe('computeHeroLayout: the book yields to the chrome', () => {
   it('is the signed-off layout at the reference, 2560×1440', () => {
     const l = computeHeroLayout(2560, 1440);
     expect(l.k).toBe(1);
-    expect(l.band).toBeCloseTo(129.6, 6);
+    expect(l.band).toBeCloseTo(136.8, 6);
     expect(l.rect.h).toBeCloseTo(1440 * config.detailCardScale, 6);
-    expect(l.rect.y).toBeCloseTo(129.6, 6);
+    expect(l.rect.h).toBeCloseTo(1166.4, 6);
+    expect(l.rect.y).toBeCloseTo(136.8, 6);
     expect(l.gap).toBeCloseTo(config.detailGap, 6);
     // The band less the margin and the tallest line (58): the gap to the book.
-    expect(l.sideGap).toBeCloseTo(129.6 - CHROME.chromeMargin - CHROME_LINE, 6);
+    expect(l.sideGap).toBeCloseTo(136.8 - CHROME.chromeMargin - CHROME_LINE, 6);
   });
 
-  it.each(VIEWPORTS.filter(([, vh]) => vh >= 900))('keeps the reference band in px at %ix%i', (vw, vh) => {
+  // 982 tall and up: at 900 the band (2 × 136.8) would leave the hero under
+  // its share, so the chrome shrinks there (below).
+  it.each(VIEWPORTS.filter(([, vh]) => vh >= 982))('keeps the reference band in px at %ix%i', (vw, vh) => {
     const l = computeHeroLayout(vw, vh);
     expect(l.k).toBe(1);
     expect(l.rect.y).toBeCloseTo(referenceBand(), 6);
@@ -92,6 +95,14 @@ describe('computeHeroLayout: the book yields to the chrome', () => {
     expect(l.rect.h / 720).toBeLessThan(HERO_MIN_SHARE);
   });
 
+  it('shrinks the chrome a little at 1440×900, above the floor', () => {
+    const l = computeHeroLayout(1440, 900);
+    expect(l.k).toBeCloseTo((0.3 * 900) / (2 * 136.8), 9);
+    expect(l.k).toBeGreaterThan(chromeFloor());
+    expect(l.k).toBeLessThan(1);
+    expect(l.rect.h / 900).toBeCloseTo(HERO_MIN_SHARE, 6);
+  });
+
   it('shrinks only as far as the share needs, between the floor and 1', () => {
     // Where the share binds above the floor: k from (1 − share)·vh = 2·band·k.
     const band = referenceBand();
@@ -108,6 +119,8 @@ describe('computeHeroLayout: the book yields to the chrome', () => {
   });
 
   it('follows detailCardScale: the reference band is the dial', () => {
+    expect(referenceBand()).toBeCloseTo(136.8, 6);
+    expect(referenceBand(0.81)).toBeCloseTo(136.8, 6);
     expect(referenceBand(0.82)).toBeCloseTo(129.6, 6);
     expect(referenceBand(0.9)).toBeCloseTo(72, 6);
   });

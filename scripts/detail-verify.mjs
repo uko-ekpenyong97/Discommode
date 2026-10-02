@@ -90,6 +90,7 @@
  * channel — the portfolio view's hand-off tolerance, for its reason: below that
  * it is two rasterisers antialiasing one edge.
  */
+import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
@@ -101,6 +102,10 @@ const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg('--only', 'rects,identity,handoff,sprites,registration,routes,nav,leave,frames,reduced,life,arrival,sidescale,layout').split(',');
 /** Where `layout` writes its screenshots. */
 const SHOTS = arg('--shots', '.context/layout');
+/** `--diff-dir <dir>`: `identity` and `hand-off` save each card's two sides
+ *  and its difference map (past TOL in red, over the first side in grey) —
+ *  to see WHAT differs when a share is over its budget. */
+const DIFF_DIR = arg('--diff-dir', null);
 const B = `${ORIGIN}/`;
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -147,9 +152,20 @@ const COVER_STILL_SIDE = 0.07;
  * in the bottom-right; main 0.02% and 7.0%), and no blob drawn apart. Held to
  * 3.5%. On the ground it shipped with, #0d1220, it is 1.92%: the dots on near
  * black move fewer pixels past 32 levels than on the navy. The bar stays at
- * 3.5%, for a ground tuned lighter again.
+ * 3.5%, for a ground tuned lighter again — for card 03's hero (below).
  */
 const COVER_HERO = 0.035;
+/**
+ * CARD 02'S HERO since detailCardScale 0.81 (2026-10-01): 5.68% at 1728×996
+ * @2×, every run (0.00–0.06% at the other three sizes). The hero box is
+ * 555.7 × 722.4 CSS px there, again off whole device pixels both ways, and
+ * the diff map (`--diff-dir`) is the same drift over the same dot field and
+ * nothing else: speckle across the navy ground, denser to one side; the
+ * letters, the blobs and their outlines clean; the best whole-pixel shift
+ * between the two sides 1px (to 2.78%), a σ1 blur 0.37%, the largest
+ * connected difference 44 px. Held to what it measures + 1 point: 6.7%.
+ */
+const LAVA_HERO = 0.067;
 /**
  * CARD 04 AS A NEIGHBOUR. Card 04 is a Rive cover now (docs/covers.md, "Rive
  * covers"); as the hero it meets the spec's 0.5% (0.149–0.434%: the DOM face
@@ -168,7 +184,17 @@ const RIVE_STILL_SIDE = 0.02;
  * 2.5–6.1% on 2026-10-01 (card 01's line art beside it: 1.2–5.9%). As the hero
  * (`verify:cover`'s `dmorph`: the DOM hero → the paper 0.29–0.56%) it is the
  * same print on both sides, resampled by two resamplers off whole pixels.
+ *
+ * As a NEIGHBOUR since detailSideScale 1 (2026-10-01; the neighbours at the
+ * hero's size, no longer scale(0.85)): 1.1–8.2% (the high end at 1728×996
+ * @1×; 7.0–7.2% at 1440×900 @2×). The diff maps (`--diff-dir`, main at 0.85
+ * beside this) show the same moiré of the dither in the same places — the
+ * teal leaves and the halo — denser, and nothing else out of place: the logo,
+ * the wordmark and the number register; the best whole-pixel shift between
+ * the sides is 0–1px, after which 0.06–3.6% remain, and a σ1 blur leaves
+ * 1.3–2.0%. Held to what it measures + 1 point: 9.2%.
  */
+const DREX_STILL_SIDE = 0.092;
 const budget = (r) =>
   r.idx === 0
     ? r.slot === 0
@@ -176,8 +202,12 @@ const budget = (r) =>
       : CARD01_IDENTITY.side
     : r.idx === 1 || r.idx === 2
       ? r.slot === 0
-        ? COVER_HERO
-        : COVER_STILL_SIDE
+        ? r.idx === 1
+          ? LAVA_HERO
+          : COVER_HERO
+        : r.idx === 2
+          ? DREX_STILL_SIDE
+          : COVER_STILL_SIDE
       : r.idx === 3 && r.slot !== 0
         ? RIVE_STILL_SIDE
         : IDENTITY;
@@ -288,6 +318,43 @@ function diffIn(a, b, r, dpr) {
   return n ? d / n : 0;
 }
 
+/** Card `r`'s crop of shots `a` and `b` (diffIn's box) and their difference
+ *  map, as PNGs in DIFF_DIR. */
+async function saveDiff(tag, a, b, r, dpr) {
+  if (!DIFF_DIR) return;
+  await mkdir(DIFF_DIR, { recursive: true });
+  const x0 = Math.max(0, Math.ceil((r.cx - r.w / 2) * dpr) + 1);
+  const x1 = Math.min(a.W, Math.floor((r.cx + r.w / 2) * dpr) - 1);
+  const y0 = Math.ceil((r.cy - r.h / 2) * dpr) + 1;
+  const y1 = Math.floor((r.cy + r.h / 2) * dpr) - 1;
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w <= 0 || h <= 0) return;
+  const ca = Buffer.alloc(w * h * 3);
+  const cb = Buffer.alloc(w * h * 3);
+  const cd = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = ((y0 + y) * a.W + x0 + x) * a.C;
+      const o = (y * w + x) * 3;
+      let m = 0;
+      for (let c = 0; c < 3; c++) {
+        ca[o + c] = a.data[i + c];
+        cb[o + c] = b.data[i + c];
+        m = Math.max(m, Math.abs(a.data[i + c] - b.data[i + c]));
+      }
+      const g = Math.round((0.299 * a.data[i] + 0.587 * a.data[i + 1] + 0.114 * a.data[i + 2]) * 0.35);
+      if (m > TOL) cd.set([255, 40, 40], o);
+      else cd.set([g, g, g], o);
+    }
+  }
+  const name = `${DIFF_DIR}/${tag}-card${String(r.idx + 1).padStart(2, '0')}`;
+  const raw = { raw: { width: w, height: h, channels: 3 } };
+  await sharp(ca, raw).png().toFile(`${name}-a.png`);
+  await sharp(cb, raw).png().toFile(`${name}-b.png`);
+  await sharp(cd, raw).png().toFile(`${name}-diff.png`);
+}
+
 const settleFrames = (page, n = 3) =>
   page.evaluate(
     (n) =>
@@ -362,6 +429,7 @@ async function checkIdentity(browser) {
           window.__paper.set({ paper: 'on' });
         });
         const parts = rs.map((r) => ({ r, d: diffIn(on, off, r, dpr) }));
+        for (const p of parts) await saveDiff(`identity-${vp.width}x${vp.height}@${dpr}-item${item}`, on, off, p.r, dpr);
         const hero = parts.find((p) => p.r.slot === 0);
         const side = parts.filter((p) => p.r.slot !== 0);
         check(
@@ -401,6 +469,7 @@ async function checkHandoff(browser) {
       const canvasIn = await shot(page);
       const ins = rs.map((r) => ({ r, d: diffIn(dom, canvasIn, r, dpr) }));
       const dIn = Math.max(...ins.map((p) => p.d));
+      for (const p of ins) await saveDiff(`handoff-in@${dpr}-item${item}`, dom, canvasIn, p.r, dpr);
 
       // OUT — fully settled paper, then the reverse held at its last frame.
       await open(page, item);
@@ -424,6 +493,7 @@ async function checkHandoff(browser) {
       const rsOut = await cards(page);
       const outs = rsOut.map((r) => ({ r, d: diffIn(canvasOut, domOut, r, dpr) }));
       const dOut = Math.max(...outs.map((p) => p.d));
+      for (const p of outs) await saveDiff(`handoff-out@${dpr}-item${item}`, canvasOut, domOut, p.r, dpr);
       const worstOther = Math.max(...[...ins, ...outs].filter((p) => p.r.idx !== 0).map((p) => p.d));
       check(
         [...ins, ...outs].every((p) => p.d <= handoffBudget(p.r)),
@@ -1171,7 +1241,7 @@ async function checkSideScale(browser) {
     await page.waitForTimeout(1200); // three grace periods of pointer moves
     seen.push({ s, ...(await read()) });
   }
-  await page.evaluate(() => window.__config.set({ detailSideScale: 0.85 }));
+  await page.evaluate(() => window.__config.set({ detailSideScale: 1 }));
   await ptr.stop();
   check(
     seen.every((x) => x.paper === 'on' && x.plane === 'live' && x.inst === 1),

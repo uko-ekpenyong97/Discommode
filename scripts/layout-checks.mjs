@@ -3,11 +3,11 @@
  * and `verify:reader` share (src/layout/hero.ts, "the book yields to the
  * chrome").
  *
- * The spec is the Studio Display's, measured on `main` at 2560×1440 on
- * 2026-10-01 and written down here as numbers (not read back from the code it
- * checks): the band over the hero and under it is 129.6 — margin 35, the line
- * of chrome, and the gap to the hero/book — and the neighbours sit 40 from a
- * 908.3-wide hero. On every viewport, in both views, the margins, the chrome's
+ * The spec is the Studio Display's at the signed-off dials (detailCardScale
+ * 0.81, detailGap 40), written down here as numbers (not read back from the
+ * code it checks): the band over the hero and under it is 136.8 — margin 35,
+ * the line of chrome, and the gap to the hero/book — and the neighbours sit 40
+ * from an 897.2-wide hero. On every viewport, in both views, the margins, the chrome's
  * sizes and the gaps must be those numbers to ±2px — or, where the chrome
  * shrank on a short screen, those numbers × k (the same k for everything) —
  * and no line's paper (the scallops, not just the base) may overlap the
@@ -29,14 +29,14 @@ export const LAYOUT_VIEWPORTS = [
 /** The Studio Display's spacing, px at k = 1. The top line is the close X
  *  (58); the reader's row carries the 58 book icons, the detail row only 46s. */
 export const SPEC = {
-  band: 129.6,
+  band: 136.8,
   margin: 35,
-  top: { box: 58, gap: 36.6 },
-  row: { reader: { box: 58, gap: 36.6 }, detail: { box: 46, gap: 48.6 } },
+  top: { box: 58, gap: 43.8 },
+  row: { reader: { box: 58, gap: 43.8 }, detail: { box: 46, gap: 55.8 } },
   /** The hero at the reference itself. */
-  hero: { w: 908.31, h: 1180.8 },
+  hero: { w: 897.23, h: 1166.4 },
   /** Hero-to-neighbour gap over the hero's width. */
-  neighbourRatio: 40 / 908.3077,
+  neighbourRatio: 40 / 897.2308,
 };
 const TOL = 2;
 /** The hero's least share of the height before the chrome shrinks, and the
