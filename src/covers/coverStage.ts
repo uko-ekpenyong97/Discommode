@@ -98,6 +98,8 @@ let lost = false;
 let painted = false;
 const stageListeners = new Set<() => void>();
 const covers = new Map<string, CoverDrawer>();
+/** Covers whose programs have linked: drawn from then on (`coverFor`). */
+const compiled = new Set<CoverDrawer>();
 const presenters = new Set<Presenter>();
 let raf = 0;
 let running = false;
@@ -256,6 +258,7 @@ function makeStage() {
     canvas.addEventListener('webglcontextrestored', () => {
       for (const c of covers.values()) c.dispose();
       covers.clear();
+      compiled.clear();
       stageW = stageH = 0;
       boundVersion = -1;
       lost = false;
@@ -274,9 +277,19 @@ function coverFor(id: string): CoverDrawer | null {
   if (!c && painted && renderer && !lost) {
     const def = shaderCover(id);
     if (!def) return null;
-    c = makeCoverRenderer(renderer, def, coverValues(id));
-    c.warm();
-    covers.set(id, c);
+    // Compiled WITHOUT blocking (KHR_parallel_shader_compile): the first draw
+    // waits for the link, so the cover is drawn only once both programs have
+    // linked — until then its tiles show the still, as before a first draw.
+    // A sync compile here and a draw on the next frame had the main thread
+    // wait on the link in that frame (docs/perf/first-second.md).
+    const made = makeCoverRenderer(renderer, def, coverValues(id));
+    c = made;
+    covers.set(id, made);
+    void made.compileAsync().then(() => {
+      if (covers.get(id) !== made) return;
+      compiled.add(made);
+      kick();
+    });
   }
   return c ?? null;
 }
@@ -544,7 +557,7 @@ function warmHeroPrint(id: string, dpr: number) {
     // is a new backing store or two, and it is the idle moment it is waiting
     // for. isBusy: the drag is known from its pointerdown, a frame before any
     // instance has moved.
-    if (!c?.ready() || moving() || isBusy()) {
+    if (!c?.ready() || !compiled.has(c) || moving() || isBusy()) {
       heroWarm.delete(id); // try again on a later hover frame
       return;
     }
@@ -716,7 +729,7 @@ function draw(
   dome: Dome,
   backdrop: [number, number, number] | null,
 ): boolean {
-  if (!renderer || lost || !cover.ready()) return false;
+  if (!renderer || lost || !compiled.has(cover) || !cover.ready()) return false;
   // Grow-only: a drawing buffer resized every frame would be reallocated every
   // frame. Draws use its bottom-left pxW × pxH.
   if (pxW > stageW || pxH > stageH) {

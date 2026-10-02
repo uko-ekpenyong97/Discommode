@@ -263,15 +263,18 @@ export function createFluid(gl: WebGL2RenderingContext): Fluid | null {
     return null;
   }
 
+  // Every program's compile and link STARTED here, none of their statuses
+  // read: with KHR_parallel_shader_compile they run on the GPU process's own
+  // threads, and a status read made the main thread wait for each in turn —
+  // seven programs, ~15 ms of one task (docs/perf/first-second.md). They are
+  // read once, at the first step (`linkedOk`), which is the pointer's first
+  // splat, long after.
+  gl.getExtension('KHR_parallel_shader_compile');
   const shaders: WebGLShader[] = [];
   function compile(type: number, src: string): WebGLShader | null {
     const sh = gl.createShader(type)!;
     gl.shaderSource(sh, src);
     gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-      console.warn('[sky:fluid] shader compile failed:', gl.getShaderInfoLog(sh));
-      return null;
-    }
     shaders.push(sh);
     return sh;
   }
@@ -287,10 +290,6 @@ export function createFluid(gl: WebGL2RenderingContext): Fluid | null {
     gl.attachShader(p, vs!);
     gl.attachShader(p, fs);
     gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-      console.warn('[sky:fluid] program link failed:', gl.getProgramInfoLog(p));
-      return null;
-    }
     programs.push(p);
     const cache = new Map<string, WebGLUniformLocation | null>();
     return {
@@ -403,8 +402,23 @@ export function createFluid(gl: WebGL2RenderingContext): Fluid | null {
     return Math.min(SLEEP_CAP_S, f / 60);
   }
 
+  /** Every program linked — read once, at the first step. If one did not,
+   *  the wake never wakes: the sky has none, as when this returned null. */
+  let linkedOk: boolean | null = null;
+  function linked(): boolean {
+    if (linkedOk === null) {
+      linkedOk = programs.every((q) => gl.getProgramParameter(q, gl.LINK_STATUS) === true);
+      if (!linkedOk) {
+        const logs = [...programs.map((q) => gl.getProgramInfoLog(q)), ...shaders.map((sh) => gl.getShaderInfoLog(sh))];
+        console.warn('[sky:fluid] program link failed:', logs.filter(Boolean).join('\n'));
+      }
+    }
+    return linkedOk;
+  }
+
   function step(dtIn: number, splats: Splat[], p: FluidParams): void {
     if (!awake && splats.length === 0) return;
+    if (!linked()) return;
     const dt = Math.min(Math.max(dtIn, 0), 1 / 30);
     if (splats.length > 0) {
       awake = true;

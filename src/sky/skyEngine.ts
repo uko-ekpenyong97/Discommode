@@ -615,16 +615,13 @@ export interface SkyEngine {
   dispose(): void;
 }
 
+/** A shader, its compile STARTED — no status read here: that would make the
+ *  main thread wait for it (see `programReady` in createSkyEngine). */
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader | null {
   const sh = gl.createShader(type);
   if (!sh) return null;
   gl.shaderSource(sh, src);
   gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    console.warn('[sky] shader compile failed:', gl.getShaderInfoLog(sh));
-    gl.deleteShader(sh);
-    return null;
-  }
   return sh;
 }
 
@@ -677,17 +674,20 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   gl.attachShader(program, vs);
   gl.attachShader(program, fs);
   gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    console.warn('[sky] program link failed:', gl.getProgramInfoLog(program));
-    return null;
-  }
-  gl.useProgram(program);
+  // KHR_parallel_shader_compile: the compile and link run on the GPU
+  // process's own threads. Asked for here, this engine is made before React's
+  // first render (skyStage `prepareSky`) and its first frame is drawn a
+  // render and a commit later, so they are done by then; reading the status
+  // here (and every uniform's location, which waits for the link too) had the
+  // main thread wait ~7 ms for them in the boot's first task
+  // (docs/perf/first-second.md).
+  gl.getExtension('KHR_parallel_shader_compile');
 
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
 
   const loc = (name: string) => gl.getUniformLocation(program, name);
-  const u = {
+  const locations = () => ({
     res: loc('uRes'),
     time: loc('uTime'),
     zenith: loc('uZenith'),
@@ -725,7 +725,24 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     fogPart: loc('uFogPart'),
     rainBend: loc('uRainBend'),
     fluidDebug: loc('uFluidDebug'),
-  };
+  });
+  let u: ReturnType<typeof locations> | null = null;
+  let linked: boolean | null = null;
+  /** The program linked (read once, at the first draw), its uniforms found.
+   *  If it did not, the canvas hides and the host's CSS gradient — painted
+   *  behind it for exactly this — is the sky, as it was when a failed link
+   *  meant no engine at all. */
+  function programReady(): boolean {
+    if (linked === null) {
+      linked = gl!.getProgramParameter(program, gl!.LINK_STATUS) === true;
+      if (linked) u = locations();
+      else {
+        console.warn('[sky] program link failed:', gl!.getProgramInfoLog(program), gl!.getShaderInfoLog(vs!), gl!.getShaderInfoLog(fs!));
+        canvas.style.visibility = 'hidden';
+      }
+    }
+    return linked;
+  }
 
   // --- eased state ---
   // moonFraction starts at 0 — an unknown moon is no moon, and it eases up to
@@ -896,6 +913,7 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   }
 
   function render(nowMs: number, state: EasedSky = cur, flash = flashFor(nowMs), withWake = state === cur): void {
+    if (!programReady() || !u) return;
     const g = skyGradientAt(state.sun, state.phase);
     gl!.useProgram(program);
     gl!.uniform2f(u.res, width, height);

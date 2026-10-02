@@ -179,6 +179,11 @@ export class CachedCoverRenderer implements CoverDrawer {
     this.gl.compile(this.sceneB, this.camera);
   }
 
+  async compileAsync() {
+    await this.gl.compileAsync(this.sceneA, this.camera);
+    await this.gl.compileAsync(this.sceneB, this.camera);
+  }
+
   async warmAsync() {
     await this.gl.compileAsync(this.sceneA, this.camera);
     await this.gl.compileAsync(this.sceneB, this.camera);
