@@ -34,6 +34,24 @@ export interface Page {
    * Written by `npm run plates`.
    */
   plate?: string;
+  /**
+   * A page whose letters may be off ×1 as a turn starts (a chapter-break quote
+   * grown under the pointer or mid-breath, quotePlayer.ts): the page as two
+   * layers — `base` (the page without its letters) and `letters` (the letters
+   * alone, transparent) — and the point, as fractions of the page, the letters
+   * scale about. Wherever the engine puts this page on a lifting leaf or a
+   * riffle's slot it draws the letters at `--quote-s` (on the book) over the
+   * base, so the player can ease them to ×1 as the page lifts. Set by the
+   * player's `mapSpreads`; `src` stays the whole page at ×1.
+   */
+  ease?: PageEase;
+}
+
+export interface PageEase {
+  base: string;
+  letters: string;
+  fx: number;
+  fy: number;
 }
 
 export interface Issue {

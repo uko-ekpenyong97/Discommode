@@ -1138,9 +1138,22 @@ the numbers are the brief's).
   from rest); never again after the first tap (`breatheUntilFirstTap`), any
   toggle counting — until the page resets to Spanish.
 - **Reduced motion:** no breath, no grow, no flick; the wand and its colour.
-- **Turns:** none of it is baked. A turn hides the layer and the wand, and
-  shows the bake at ×1 — so a turn started on a grown quote steps from ×1.03 to
-  ×1 as the leaf lifts. A drag that starts on the quote still turns the page.
+- **Turns:** none of it is baked: a turn shows the bake at ×1 and hides the
+  wand. A turn that starts with the letters off ×1 — grown, or mid-breath —
+  EASES them to ×1 over 180ms (cubic-bezier(.4,0,.2,1)) as the page lifts,
+  rather than stepping. While page 05 lies under the leaf, the layer simply
+  stays up for those 180ms, easing. When page 05 IS the leaf (Prev, ←, a drag
+  from the quote, a riffle's first leaf), the curl covers the layer, so the
+  leaf draws the page as two images — `base` (the plate and the hint, no
+  letters) and `letters` (the letters alone, transparent), baked beside the
+  page at the first settle — the letters' `background-size` and position
+  scaled by `--quote-s` about the quote's centre (`Page.ease`, flipEngine
+  `paintFace`); a riffle's slot does the same with two `<img>`s
+  (`.book__ease-letters`). The player writes `--quote-s` on the book every
+  frame of the ease, the same value it draws the layer at, so the hand-over
+  from layer to leaf two frames in shows no step; once at ×1 the layer goes
+  and the variable is removed. The stored bake stays at ×1. A drag that starts
+  on the quote still turns the page.
 
 The breath keeps the player's frame loop running while page 05 is open and
 untapped (a redraw only while the scale moves, the 45% at rest costs a frame
@@ -1585,7 +1598,13 @@ exits non-zero on any ✗.
   the hotspot translates; a tap flicks the wand; mid-morph its colour leaves
   the palette's first and is back on it after; after the tap no breath. A turn
   from a grown quote shows a bake whose ink box is the page's at rest, no wand
-  on any turning frame; away and back, breathing again. Enter and Space on the
+  on any turning frame; away and back, breathing again. And the turn ease:
+  for Prev (05 lifting), Next (05 lying), a riffle and from mid-breath,
+  every frame's scale on screen — the layer's while it shows, else the
+  leaf's or the riffle slot's `--quote-s` — runs from where the letters were
+  to ×1 with no frame stepping over a third of the way (measured: ≤ 25%);
+  held at the ease's start and its end, the lifting leaf's letters measure
+  ×1.033 of themselves (the grow is ×1.03; a step would read ×1.000). Enter and Space on the
   button; a touch tap translates with no wand, a tap elsewhere turns; reduced
   motion: no breath, grow or flick, the wand and its colour still, and the
   crossfade draws no letter off the two layouts and settles in about 300ms.

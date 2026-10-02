@@ -30,6 +30,12 @@
  *   grow, breath    hovered, the letters go to ×1.03 and back on leave; until
  *                   the first tap they breathe to ×1.012 (not while hovered),
  *                   and after it never. A turn while grown shows the bake at ×1.
+ *   the turn ease   a turn that starts with the letters grown or mid-breath
+ *                   eases them to ×1 over ~180ms as the page lifts: on every
+ *                   frame of Prev (05 lifting), Next (05 lying), a riffle, and
+ *                   from mid-breath, what shows steps no more than a third of
+ *                   the way in a frame; held, the leaf draws the letters at the
+ *                   layer's size, and at the end at the bake's.
  *   keyboard        the button: Enter and Space toggle, its name and its
  *                   description's language follow, the live region speaks.
  *   touch           a tap on the quote translates, a tap elsewhere turns.
@@ -271,6 +277,7 @@ const recordFrames = (page) =>
         drawn: s ? s.drawn.map((g) => `${g.ch}@${g.x.toFixed(2)},${g.y.toFixed(2)}`) : null,
         wandOn: window.__quote.wand()?.on ?? false,
         scale: s?.scale ?? null,
+        easing: !!s?.turnEase,
         lang: s?.lang ?? null,
       });
       if (window.__qOn) requestAnimationFrame(f);
@@ -286,6 +293,156 @@ const stopFrames = (page) =>
 async function hitCentre(page) {
   const b = await page.locator('.quote-layer__hit').boundingBox();
   return { x: b.x + b.width / 2, y: b.y + b.height / 2, box: b };
+}
+
+// ── the turn ease ────────────────────────────────────────────────────────
+
+/** Every frame of `act`: the scale the quote's letters SHOW at — the layer's
+ *  while it is up, else the one a leaf or a riffle's slot draws them at
+ *  (--quote-s on the book, if anything there draws the eased letters). */
+async function easeFrames(page, act, ms = 700) {
+  await page.evaluate((n) => {
+    window.__qe = [];
+    window.__qeOn = true;
+    const f = () => {
+      const book = document.querySelector('.book');
+      const layer = document.querySelector('.quote-layer');
+      const slot = layer?.closest('.book__page');
+      const st = window.__quote.state().find((x) => x.page === n);
+      const layerUp = !!layer && !!st?.shown && getComputedStyle(layer).visibility !== 'hidden' && getComputedStyle(slot).visibility !== 'hidden';
+      const eased = [...document.querySelectorAll('.flip-curl .flip-face--front')].some((x) => x.style.backgroundImage.split('url(').length > 2) || !!document.querySelector('.book__turn .book__ease-letters');
+      const qs = getComputedStyle(book).getPropertyValue('--quote-s');
+      window.__qe.push({ turn: document.querySelector('.book__turn-host').childElementCount > 0, layerUp, eased, shown: layerUp ? st.scale : eased ? (qs ? Number(qs) : 1) : 1 });
+      if (window.__qeOn) requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  }, PAGE);
+  await act();
+  await page.waitForTimeout(ms);
+  return page.evaluate(() => {
+    window.__qeOn = false;
+    return window.__qe;
+  });
+}
+
+/** The biggest change in what shows from one frame to the next, as a share of
+ *  where it started from ×1; and where it starts and ends. */
+function steps(frames) {
+  const v = frames.map((f) => f.shown);
+  const from = v[0];
+  let worst = 0;
+  for (let i = 1; i < v.length; i++) worst = Math.max(worst, Math.abs(v[i] - v[i - 1]));
+  return { from, end: v.at(-1), worst, share: Math.abs(from - 1) > 1e-9 ? worst / Math.abs(from - 1) : 0, eased: frames.filter((f) => f.eased).length, layer: frames.filter((f) => f.turn && f.layerUp).length };
+}
+
+/** How wide the quote's letters are on screen, in a screenshot of the left
+ *  page: twice the darkness-weighted spread of their x (σ), which scales with
+ *  their size whatever the antialiasing. Returned as `w`. */
+async function inkBox(page) {
+  const slot = await page.locator('.book > .book__page--left').boundingBox();
+  const png = await page.screenshot({ clip: slot });
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const q = QUOTES.pages.find((p) => p.page === PAGE);
+  const y0 = Math.floor(((q.quote.top - 30) / H) * info.height);
+  const y1 = Math.ceil(((q.quote.top + 3 * QUOTES.styles.quote.lineHeightPx + 30) / H) * info.height);
+  let sw = 0, sx = 0, sxx = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = 0; x < info.width; x++) {
+      const i = (y * info.width + x) * 3;
+      // Black ink only: not the paper, not the green hint, not the yellow wand.
+      const k = Math.max(0, 200 - Math.max(data[i], data[i + 1], data[i + 2]));
+      sw += k; sx += k * x; sxx += k * x * x;
+    }
+  }
+  const m = sx / sw;
+  return { w: 2 * Math.sqrt(sxx / sw - m * m) };
+}
+
+async function checkTurnEase(page, check) {
+  const c = await hitCentre(page);
+  const over = async () => {
+    await page.mouse.move(c.x - 30, c.y - 10, { steps: 2 });
+    await page.mouse.move(c.x, c.y, { steps: 4 });
+    await page.waitForFunction((n) => Math.abs(window.__quote.state().find((s) => s.page === n).scale - 1.03) < 1e-6, PAGE, { timeout: 4000 });
+  };
+  const away = () => page.mouse.move(c.box.x + 4, c.box.y - 60, { steps: 4 });
+  // The ease layers are baked after the reveal.
+  await page.waitForFunction(() => {
+    const img = document.querySelector('.book > .book__page--left > img');
+    return !!img && img.getAttribute('src').startsWith('blob:');
+  });
+  await page.waitForTimeout(800);
+
+  // Held: the leaf at the ease's start draws the letters as much bigger than
+  // at its end as the grown layer is than the page at rest. (Leaf against
+  // leaf: a curl at t 0 is not in pixel register with the flat page — up to
+  // 13px across the spread, flipbook.css — so it is measured against itself.)
+  // The wand is hidden while measuring: it lies over the letters.
+  const wandVis = (v) => page.evaluate((v) => (document.querySelector('.quote-wand').style.visibility = v), v);
+  await away();
+  await unscaled(page);
+  const rest = await inkBox(page);
+  await over();
+  await wandVis('hidden');
+  const grown = await inkBox(page);
+  await page.evaluate(() => {
+    window.__quote.holdEase(0);
+    window.__flip.startTurn('prev');
+  });
+  await page.waitForTimeout(200);
+  const leaf0 = await inkBox(page);
+  await page.evaluate(() => window.__quote.holdEase(1));
+  await page.waitForTimeout(100);
+  const leaf1 = await inkBox(page);
+  await page.evaluate(() => {
+    window.__quote.holdEase(null);
+    window.__flip.clearTurn();
+  });
+  await wandVis('');
+  await page.waitForTimeout(300);
+  const layerRatio = grown.w / rest.w;
+  const leafRatio = leaf0.w / leaf1.w;
+  check(
+    // Against the grow itself (×1.03): a leaf that stepped would read ×1.000.
+    // The layer's own ratio is reported — the canvas re-antialiases at each
+    // scale, which moves a 1× measure of it by ~1%; the leaf scales one image.
+    Math.abs(leafRatio - QUOTES.settings.hoverScale) <= 0.008 && layerRatio > 1.02,
+    'held, the lifting leaf draws the letters grown (×1.03) at the ease’s start and at ×1 at its end',
+    `letters' spread: leaf at the ease's start ×${leafRatio.toFixed(4)} of its end; the layer grown ×${layerRatio.toFixed(4)} of rest`,
+  );
+
+  // Every frame: Prev (05 lifts), Next (05 lies under the leaf), a riffle.
+  const runs = [];
+  for (const [label, key, back, lands] of [
+    ['Prev (05 lifting)', 'ArrowLeft', 'ArrowRight', SPREAD - 1],
+    ['Next (05 lying)', 'ArrowRight', 'ArrowLeft', SPREAD + 1],
+    ['Home (a riffle)', 'Home', null, 0],
+  ]) {
+    await over();
+    const fr = await easeFrames(page, () => page.keyboard.press(key));
+    runs.push([label, steps(fr)]);
+    await away();
+    await settledAt(page, lands);
+    if (back) await page.keyboard.press(back);
+    else await page.evaluate((s) => (location.hash = `#read-01/${s}`), SPREAD);
+    await settledAt(page, SPREAD);
+    await shown(page);
+    await page.waitForTimeout(300);
+  }
+  // From mid-breath (untapped again: away and back reset it).
+  await unscaled(page);
+  await page.waitForFunction((n) => window.__quote.state().find((s) => s.page === n).scale > 1.006, PAGE, { timeout: 8000 });
+  runs.push(['Next from mid-breath', steps(await easeFrames(page, () => page.keyboard.press('ArrowRight')))]);
+  await settledAt(page, SPREAD + 1);
+  await page.keyboard.press('ArrowLeft');
+  await settledAt(page, SPREAD);
+  for (const [label, r] of runs) {
+    check(
+      r.from > 1.004 && r.end === 1 && r.share <= 0.34 && r.eased + r.layer > 0,
+      `a turn from a grown quote eases it to ×1, no frame a jump: ${label}`,
+      `×${r.from.toFixed(4)} → ×${r.end}; biggest step ${r.worst.toFixed(4)} (${(r.share * 100).toFixed(0)}% of the way); ${r.layer} frames on the layer, ${r.eased} on the leaf or slot`,
+    );
+  }
 }
 
 // ── the section ──────────────────────────────────────────────────────────
@@ -455,6 +612,11 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   await page.waitForTimeout(300);
   const enBake = await page.evaluate((n) => window.__quote.bakeUrl(n, 'en'), PAGE);
   const esBake = await page.evaluate((n) => window.__quote.bakeUrl(n, 'es'), PAGE);
+  const enEase = await page.evaluate((n) => window.__quote.easeUrls(n, 'en'), PAGE);
+  const esEase = await page.evaluate((n) => window.__quote.easeUrls(n, 'es'), PAGE);
+  /** A face shows page 05 in English: its bake, or (easing) its layers. */
+  const isEn = (b) => b.includes(enBake) || (!!enEase && b.includes(enEase.letters) && b.includes(enEase.base));
+  const is05 = (b) => isEn(b) || b.includes(esBake) || (!!esEase && b.includes(esEase.base)) || b.includes('/05.webp') || b.includes('plates/05');
   // Grown (hovered) now: the bake is still the page at rest, ×1, with no wand.
   const grown = (await qstate(page)).scale;
   const bakeVsRest = await page.evaluate(
@@ -488,18 +650,18 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   frames = await stopFrames(page);
   const turning = frames.filter((f) => f.turn);
   const firstTurn = turning[0];
-  const facesWith05 = turning.flatMap((f) => f.faces).filter((b) => b.includes(enBake) || b.includes(esBake) || b.includes('/05.webp') || b.includes('plates/05'));
+  const facesWith05 = turning.flatMap((f) => f.faces).filter(is05);
   check(
     turning.length > 0 &&
-      turning.every((f) => !f.layerShown) &&
+      turning.every((f) => !f.layerShown || f.easing) &&
       firstTurn.staticSrc === enBake &&
       firstTurn.staticReady &&
       facesWith05.length > 0 &&
-      facesWith05.every((b) => b.includes(enBake)) &&
+      facesWith05.every(isEn) &&
       turning.every((f) => !f.wandOn) &&
       !frames.some((f) => [...f.faces, ...f.plates].some((b) => b?.includes('/plates/'))),
     'a turn mid-morph shows page 05 in English, baked: the static slot and the curl, never the plate, no wand',
-    `${turning.length} turning frames; static ${firstTurn?.staticSrc === enBake ? 'the English bake' : firstTurn?.staticSrc}, ${firstTurn?.staticReady ? 'decoded' : 'NOT decoded'}; curl ${[...new Set(facesWith05)].map((b) => (b.includes(enBake) ? 'en bake' : b.slice(0, 30))).join(', ')}`,
+    `${turning.length} turning frames; static ${firstTurn?.staticSrc === enBake ? 'the English bake' : firstTurn?.staticSrc}, ${firstTurn?.staticReady ? 'decoded' : 'NOT decoded'}; curl ${[...new Set(facesWith05)].map((b) => (b.includes(enBake) ? 'en bake' : isEn(b) ? 'en, easing' : b.slice(0, 30))).join(', ')}`,
   );
   check(
     grown > 1.02 && bakeOff <= 1,
@@ -558,6 +720,8 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
     `Enter → ${k1.lang}, Space → ${k2.lang}; spread ${await hash(page)}`,
   );
   check(k2.desc.lang === 'es' && k2.label === 'Translate the quote to English', 'its name and its description’s language are back to Spanish', `"${k2.label}" [${k2.desc.lang}]`);
+  await page.locator('.quote-layer__hit').blur();
+  await checkTurnEase(page, check);
   await page.context().close();
 
   // ── touch ──

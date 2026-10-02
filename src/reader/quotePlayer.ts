@@ -40,7 +40,7 @@ import { PAGE_H, PAGE_W } from './pageAnims';
 import { SETTLE_FADE_MS } from './pageAnimPlayer';
 import { HINT_MS, hintAlpha, hintAlphaAt, layoutBlock, layoutHint, planMorph, sampleMorph, swapArrow } from './quoteMorph';
 import type { DrawnGlyph, Glyph, HintGlyph, Lang, Measure, MorphPlan } from './quoteMorph';
-import { breathAt, flickAt, FLICK_MS, follow, hexToOklab, labDistance, oklabToHex, paletteAt, settleLab, tweenAt, tweenDone } from './quoteMotion';
+import { breathAt, flickAt, FLICK_MS, follow, hexToOklab, labDistance, oklabToHex, paletteAt, settleLab, TURN_EASE_MS, turnEaseAt, tweenAt, tweenDone } from './quoteMotion';
 import type { ScaleTween } from './quoteMotion';
 import { QUOTE_FACES, quoteOnPage, quoteSettings, subscribeQuoteSettings } from './quotes';
 import type { QuotePage } from './quotes';
@@ -188,16 +188,21 @@ function paintHint(
 
 const restGlyphs = (l: Layout, lang: Lang): DrawnGlyph[] => l[lang].map((g) => ({ ...g, alpha: 1 }));
 
+/** What a bake holds: the whole page; the page without its letters; the
+ *  letters alone on transparent (the last two for a turn that starts with the
+ *  letters off ×1, `Page.ease`). */
+type BakeKind = 'page' | 'base' | 'letters';
+
 /** The page at rest in `lang` on a 2000×2600 canvas: the plate, then the
  *  letters and (`hint`) the hint — what the live layer draws, at 1:1. */
-function renderPage(q: QuotePage, plate: CanvasImageSource, lang: Lang, hint: boolean): HTMLCanvasElement {
+function renderPage(q: QuotePage, plate: CanvasImageSource, lang: Lang, hint: boolean, kind: BakeKind = 'page'): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = PAGE_W;
   c.height = PAGE_H;
   const ctx = c.getContext('2d')!;
-  ctx.drawImage(plate, 0, 0, PAGE_W, PAGE_H);
+  if (kind !== 'letters') ctx.drawImage(plate, 0, 0, PAGE_W, PAGE_H);
   const l = layoutOf(q);
-  paint(ctx, 1, q, restGlyphs(l, lang), hint ? l.hint : null, (g) => hintAlpha(g.lang, lang, q.hint.inactiveOpacity));
+  paint(ctx, 1, q, kind === 'base' ? [] : restGlyphs(l, lang), hint && kind !== 'letters' ? l.hint : null, (g) => hintAlpha(g.lang, lang, q.hint.inactiveOpacity));
   return c;
 }
 
@@ -212,15 +217,15 @@ interface Bake {
 
 const bakes = new Map<string, Bake>();
 const baking = new Map<string, Promise<Bake | null>>();
-const bakeKey = (page: number, lang: Lang, hint: boolean) => `${page}:${lang}:${hint ? 1 : 0}`;
+const bakeKey = (page: number, lang: Lang, hint: boolean, kind: BakeKind = 'page') => `${page}:${lang}:${hint ? 1 : 0}:${kind}`;
 
-function bakeOne(q: QuotePage, plate: HTMLImageElement, lang: Lang, hint: boolean): Promise<Bake | null> {
-  const key = bakeKey(q.page, lang, hint);
+function bakeOne(q: QuotePage, plate: HTMLImageElement, lang: Lang, hint: boolean, kind: BakeKind = 'page'): Promise<Bake | null> {
+  const key = bakeKey(q.page, lang, hint, kind);
   const done = bakes.get(key);
   if (done) return Promise.resolve(done);
   let p = baking.get(key);
   if (!p) {
-    p = new Promise<Blob | null>((resolve) => renderPage(q, plate, lang, hint).toBlob(resolve, BAKE_TYPE, BAKE_QUALITY))
+    p = new Promise<Blob | null>((resolve) => renderPage(q, plate, lang, hint, kind).toBlob(resolve, BAKE_TYPE, BAKE_QUALITY))
       .then(async (blob) => {
         if (!blob) return null;
         const img = new Image();
@@ -258,6 +263,9 @@ interface Slot {
   drawnScale: number;
   tween: ScaleTween | null;
   breathT0: number;
+  /** A turn started with the letters at `from`: the layer stays up while they
+   *  ease to ×1, and --quote-s carries the same scale to the leaf. */
+  turnEase: { from: number; t0: number } | null;
   onClick: () => void;
 }
 
@@ -318,6 +326,8 @@ export function createQuotePlayer(): QuotePlayer {
   /** When a tap last toggled: the button's own click right after it (an
    *  assistive tech that sends both) is the same press. */
   let lastTap = -Infinity;
+  /** DEV: hold a turn's ease at this share of its way (the verify suite). */
+  let easeHold: number | null = null;
   let memo: { spreads: Spread[]; version: number; out: Spread[] } | null = null;
 
   const langOf = (n: number): Lang => langs.get(n) ?? quoteSettings.defaultLang;
@@ -333,11 +343,16 @@ export function createQuotePlayer(): QuotePlayer {
     const q = quoteOnPage(page.n);
     if (!q) return page;
     const lang = langOf(page.n);
-    const b = bakes.get(bakeKey(page.n, lang, quoteSettings.showHint));
+    const hint = quoteSettings.showHint;
+    const b = bakes.get(bakeKey(page.n, lang, hint));
     if (!b) return page;
+    const base = bakes.get(bakeKey(page.n, lang, hint, 'base'));
+    const letters = bakes.get(bakeKey(page.n, lang, hint, 'letters'));
+    const [cx, cy] = scaleCentre(q);
+    const ease = base && letters ? { base: base.url, letters: letters.url, fx: cx / PAGE_W, fy: cy / PAGE_H } : undefined;
     // A riffle's fast leaves keep the printed half-size page in the printed
     // language (it lacks only the hint, for under 150ms); in the other, the bake.
-    return { ...page, src: b.url, riffle: lang === PRINTED ? page.riffle : b.url };
+    return { ...page, src: b.url, riffle: lang === PRINTED ? page.riffle : b.url, ease };
   }
 
   const ro = new ResizeObserver((entries) => {
@@ -384,7 +399,11 @@ export function createQuotePlayer(): QuotePlayer {
 
   /** The letters' scale now: a hover tween in flight, else the hover's, else
    *  the breath's. Reduced motion: 1. */
+  /** The turn ease's share of its way. */
+  const easeP = (s: Slot, now: number): number => (easeHold ?? (now - s.turnEase!.t0) / TURN_EASE_MS);
+
   function scaleOf(s: Slot, now: number): number {
+    if (s.turnEase) return turnEaseAt(s.turnEase.from, Math.min(1, easeP(s, now)) * TURN_EASE_MS);
     if (reducedMotion()) return 1;
     if (s.tween) {
       if (!tweenDone(s.tween, now)) return tweenAt(s.tween, now);
@@ -440,6 +459,11 @@ export function createQuotePlayer(): QuotePlayer {
     const made = await Promise.all((['es', 'en'] as Lang[]).map((l) => bakeOne(s.q, s.plate, l, hint)));
     if (at !== epoch || destroyed || turning || !slots.includes(s)) return;
     if (made.some((b) => !b)) return; // a turn would have nothing to show in the other language
+    // The two layers a turn eases the letters on (Page.ease), after: nothing
+    // waits for them, and until they exist a turn shows the page at ×1.
+    void Promise.all((['es', 'en'] as Lang[]).flatMap((l) => (['base', 'letters'] as BakeKind[]).map((k) => bakeOne(s.q, s.plate, l, hint, k)))).then(() => {
+      if (!destroyed) bump();
+    });
     sizeCanvas(s);
     s.morph = null;
     s.tween = null;
@@ -475,9 +499,31 @@ export function createQuotePlayer(): QuotePlayer {
     loop();
   }
 
+  /** A turn's first 180ms: the letters ease to ×1 on the layer (while it is
+   *  still what shows) and, through --quote-s, on the leaf. Then the layer goes. */
+  function turnTick(now: number): void {
+    let any = false;
+    for (const s of slots) {
+      if (!s.turnEase) continue;
+      const scale = scaleOf(s, now);
+      if (scale !== s.drawnScale) drawRest(s, scale);
+      book?.style.setProperty('--quote-s', String(scale));
+      if (easeP(s, now) >= 1 && easeHold === null) {
+        s.turnEase = null;
+        hide(s);
+        book?.style.removeProperty('--quote-s');
+      } else any = true;
+    }
+    if (any) raf = requestAnimationFrame(tick);
+  }
+
   function tick(now: number): void {
     raf = 0;
-    if (destroyed || turning) return;
+    if (destroyed) return;
+    if (turning) {
+      turnTick(now);
+      return;
+    }
     let any = false;
     for (const s of slots) {
       if (!s.shown) continue;
@@ -524,7 +570,7 @@ export function createQuotePlayer(): QuotePlayer {
     if (next === hoverSlot || !book) return;
     const now = performance.now();
     for (const s of [hoverSlot, next]) {
-      if (!s || !s.shown || reducedMotion()) continue;
+      if (!s || !s.shown || s.turnEase || reducedMotion()) continue;
       const from = scaleOf(s, now);
       s.tween = { from, to: s === next ? quoteSettings.hoverScale : 1, t0: now };
     }
@@ -681,6 +727,7 @@ export function createQuotePlayer(): QuotePlayer {
           drawnScale: 1,
           tween: null,
           breathT0: 0,
+          turnEase: null,
           onClick: () => {
             if (performance.now() - lastTap < 400) return;
             toggle(s);
@@ -705,12 +752,13 @@ export function createQuotePlayer(): QuotePlayer {
       let reset = false;
       if (quoteSettings.resetWhenPageLeaves) {
         for (const [n, lang] of langs) {
-          if (open.has(n) || lang === quoteSettings.defaultLang) continue;
+          if (open.has(n)) continue;
           langs.delete(n);
-          reset = true;
+          if (lang !== quoteSettings.defaultLang) reset = true;
         }
-        // Reset to the printed language: the page breathes again.
-        for (const n of tapped) if (!open.has(n) && !langs.has(n)) tapped.delete(n);
+        // Reset to the printed language — even one already back in it by
+        // hand: the page breathes again.
+        for (const n of tapped) if (!open.has(n)) tapped.delete(n);
       }
       if (reset) bump();
       if (turning) return; // a riffle's inner landing: wait for the book to settle (and fetch nothing)
@@ -725,15 +773,34 @@ export function createQuotePlayer(): QuotePlayer {
       epoch++;
       if (active) {
         // Synchronously, before the strips' first frame: a morph lands, and the
-        // page under the layer (its bake) is what shows.
+        // page under the layer (its bake) is what shows — at once if the
+        // letters are at ×1; else after they ease there (the layer stays up,
+        // and the leaf draws them at --quote-s: Page.ease).
         stop();
+        const now = performance.now();
+        let easing = false;
         for (const s of slots) {
-          finish(s);
+          const from = s.shown ? s.drawnScale : 1;
           s.tween = null;
-          hide(s);
+          if (s.shown && Math.abs(from - 1) > 1e-4) {
+            s.turnEase = { from, t0: now };
+            book?.style.setProperty('--quote-s', String(from));
+            easing = true;
+            finish(s);
+          } else {
+            finish(s);
+            hide(s);
+          }
         }
         setHover(null);
+        if (easing) raf = requestAnimationFrame(tick);
         return;
+      }
+      book?.style.removeProperty('--quote-s');
+      for (const s of slots) {
+        if (!s.turnEase) continue;
+        s.turnEase = null;
+        if (s.shown) drawRest(s);
       }
       prefetch();
       for (const s of slots) if (!s.shown) void reveal(s);
@@ -802,7 +869,12 @@ export function createQuotePlayer(): QuotePlayer {
             hovered: s === hoverSlot,
             breathing: breathes(s) && s !== hoverSlot,
             tapped: tapped.has(s.page.n),
+            turnEase: s.turnEase ? { from: s.turnEase.from } : null,
           }));
+        devHandle.holdEase = (p) => {
+          easeHold = p;
+          if (p === null && turning && slots.some((x) => x.turnEase)) raf ||= requestAnimationFrame(tick);
+        };
         devHandle.wand = () => {
           const hot = wand.el?.querySelector('.quote-wand__hot')?.getBoundingClientRect();
           return {
@@ -841,6 +913,7 @@ export function createQuotePlayer(): QuotePlayer {
         el.removeEventListener('pointerdown', onPointer);
         el.removeEventListener('pointerleave', onLeave);
         delete el.dataset.cursor;
+        el.style.removeProperty('--quote-s');
         platePrefetch.clear();
         book = null;
         if (import.meta.env.DEV && devHandle.player === player) devHandle.player = null;
@@ -863,6 +936,10 @@ const devHandle: {
   render: (page: number, lang: Lang, hint: boolean) => Promise<string | null>;
   /** The bake a turn shows for `page` in `lang`, if it has been made. */
   bakeUrl: (page: number, lang: Lang) => string | null;
+  /** The two layers a turn eases `page`'s letters on in `lang`, if made. */
+  easeUrls: (page: number, lang: Lang) => { base: string; letters: string } | null;
+  /** Hold a turn's letter ease at share `p` of its way (null lets it go). */
+  holdEase: (p: number | null) => void;
   /** The wand: shown, its opacity, colour, turn, and where its hotspot is on screen. */
   wand: () => { on: boolean; opacity: number; colour: string; angle: number; hot: { x: number; y: number } | null; height: number } | null;
 } = {
@@ -885,6 +962,13 @@ const devHandle: {
   },
   bakeUrl: (page, lang) => bakes.get(bakeKey(page, lang, quoteSettings.showHint))?.url ?? null,
   wand: () => null,
+  holdEase: () => {},
+  easeUrls(page, lang) {
+    const hint = quoteSettings.showHint;
+    const base = bakes.get(bakeKey(page, lang, hint, 'base'));
+    const letters = bakes.get(bakeKey(page, lang, hint, 'letters'));
+    return base && letters ? { base: base.url, letters: letters.url } : null;
+  },
 };
 
 if (import.meta.env.DEV && typeof window !== 'undefined') {

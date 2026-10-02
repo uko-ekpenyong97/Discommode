@@ -10,13 +10,25 @@
  *                `breathePeriodMs`: a half-sine over the first 55% of the loop,
  *                then rest.
  *   flick        on a tap the wand turns a further −22°, a sine over 420ms.
+ *   turn ease    a turn that starts with the letters off ×1 (grown, mid-breath)
+ *                eases them to ×1 over 180ms as the page lifts (in-out, so no
+ *                frame steps more than a sliver of the way).
  *   colour       while a morph runs the wand cycles `wandPalette`, one loop per
  *                `colorCycleMs`, each step blended in OKLab; after it, it eases
  *                back to the palette's first colour in OKLab (τ 220ms).
  */
 import { cubicBezier } from './jump';
 
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
 export const HOVER_MS = 500;
+export const TURN_EASE_MS = 180;
+export const TURN_EASE = cubicBezier([0.4, 0, 0.2, 1]);
+
+/** The letters' scale `ms` into a turn that started with them at `from`. */
+export function turnEaseAt(from: number, ms: number): number {
+  return from + (1 - from) * TURN_EASE(clamp01(ms / TURN_EASE_MS));
+}
 export const HOVER_EASE = cubicBezier([0.22, 0.8, 0.24, 1]);
 /** The share of a breathing loop that moves; the rest is still. */
 export const BREATHE_ACTIVE = 0.55;
@@ -26,8 +38,6 @@ export const FLICK_MS = 420;
  *  the pointer: exponential time constants. */
 export const COLOR_SETTLE_TAU_MS = 220;
 export const FOLLOW_TAU_MS = 28;
-
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 /** A scale tween from `from` to `to` starting at `t0`. */
 export interface ScaleTween {

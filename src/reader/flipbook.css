@@ -415,6 +415,14 @@
   outline-offset: 2px;
 }
 
+/* A quote page on a riffle's slot (flipEngine `buildPlate`, Page.ease): its
+   letters over its base, at the scale the player is easing to ×1. */
+.book__page img.book__ease-letters {
+  position: absolute;
+  inset: 0;
+  transform: scale(var(--quote-s, 1));
+}
+
 /* Over the quote a fine pointer's cursor gives way to the wand (wand.svg), a
    DOM element the player moves after the pointer (quotePlayer.ts). A touch
    never sets it, and has no cursor to hide. */

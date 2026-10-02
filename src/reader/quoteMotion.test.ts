@@ -11,6 +11,8 @@ import {
   oklabToHex,
   paletteAt,
   settleLab,
+  TURN_EASE_MS,
+  turnEaseAt,
   tweenAt,
   tweenDone,
 } from './quoteMotion';
@@ -25,6 +27,18 @@ describe('the hover grow', () => {
     expect(tweenAt(tw, 100 + HOVER_MS / 2)).toBeGreaterThan(1.02);
     expect(tweenDone(tw, 100 + HOVER_MS - 1)).toBe(false);
     expect(tweenDone(tw, 100 + HOVER_MS)).toBe(true);
+  });
+});
+
+describe('the turn ease', () => {
+  it('takes the letters from where they are to ×1 over 180ms, never stepping more than a quarter of the way in a 60Hz frame', () => {
+    expect(TURN_EASE_MS).toBe(180);
+    expect(turnEaseAt(1.03, 0)).toBe(1.03);
+    expect(turnEaseAt(1.03, TURN_EASE_MS)).toBeCloseTo(1, 12);
+    expect(turnEaseAt(1.03, 10_000)).toBeCloseTo(1, 12);
+    let worst = 0;
+    for (let ms = 0; ms <= TURN_EASE_MS; ms += 1) worst = Math.max(worst, Math.abs(turnEaseAt(1.03, ms + 1000 / 60) - turnEaseAt(1.03, ms)));
+    expect(worst / 0.03).toBeLessThan(0.25);
   });
 });
 
