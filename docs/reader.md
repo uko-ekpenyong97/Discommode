@@ -863,6 +863,11 @@ without a rebuild. 03 | 04 is also the spread after 01 | 02, where the
 doorway's first open lands. So that settle now FETCHES 1.2 MB of atlases and
 461 KB of plates. They are not decoded until the book settles on 03 | 04.
 
+What the heaviest spread costs a turn, measured against `main` (where 03 | 04
+is a plain spread), interleaved run by run, 2026-10-02, load average about 5:
+open on 03 | 04, idle 1.5 s, Next, Prev, 10 runs per DPR. No frame went over 20
+ms in any phase, at 1× or 2×, on either side.
+
 ### The manifest
 
 `src/reader/pageAnims.ts`, one row per animation, in page px (2000×2600):
@@ -1327,3 +1332,8 @@ against 2 and 2 on `main`. So the two were run INTERLEAVED, riffle by riffle,
 `main` and 7 of 30 on the branch**. With `readerFlipSplat` 0 against 0.5, on
 the branch: 4 of 24 against 3 of 24. The fluid a riffle wakes costs no frames
 that can be told from the machine; the misses are the riffle's own.
+
+**Nor is 03 | 04 (2026-10-02).** The full run on this change missed 3 of the 4
+riffle frame checks (single 33 ms frames in 1–3 of 5 runs each). Riffles
+interleaved with `main`, 15 per DPR, alternating 20→0 and 0→20: a frame over
+20 ms in **2 of 30 on the branch and 5 of 30 on `main`**.
