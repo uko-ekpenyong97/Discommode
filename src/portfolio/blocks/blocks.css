@@ -157,6 +157,18 @@
 .pv-body:last-child {
   margin-bottom: 0;
 }
+/* A link inside a paragraph: the paragraph's own ink, underlined, so it reads
+   as part of the sentence rather than as a button set into it (that is the
+   link pill's job). */
+.pv-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.pv-link:hover {
+  text-decoration-thickness: 2px;
+}
 
 /* ── media ─────────────────────────────────────────────────────────────── */
 

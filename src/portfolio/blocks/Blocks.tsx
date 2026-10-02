@@ -645,11 +645,20 @@ function BlockBodyView({ block }: { block: Block }) {
       return (
         <>
           {block.heading && <h3 className="pv-heading">{block.heading}</h3>}
-          {block.body.map((para, i) => (
-            <p key={i} className="pv-body">
-              {para}
-            </p>
-          ))}
+          {block.body.map((para, i) =>
+            typeof para === 'string' ? (
+              <p key={i} className="pv-body">
+                {para}
+              </p>
+            ) : (
+              <p key={i} className="pv-body">
+                {para.text}
+                <a className="pv-link" href={para.link.href} target="_blank" rel="noreferrer noopener">
+                  {para.link.label}
+                </a>
+              </p>
+            ),
+          )}
         </>
       );
     case 'twoUp':

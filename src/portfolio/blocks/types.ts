@@ -46,7 +46,7 @@ export type BlockBody =
    *  under the heading above them. Forcing one would mean inventing a
    *  subheading the writing does not have, which is a worse thing to put on a
    *  page than no subheading at all. */
-  | { type: 'text'; heading?: string; body: string[] }
+  | { type: 'text'; heading?: string; body: Paragraph[] }
   /** Two columns, each media + paragraph. Six grid columns each. */
   | { type: 'twoUp'; columns: [TwoUpColumn, TwoUpColumn] }
   /**
@@ -108,6 +108,17 @@ export type BlockBody =
        */
       surface?: 'paper' | 'ink';
     } & Sized);
+
+/**
+ * One paragraph of a `text` block: prose, or prose that ENDS IN A LINK OUT.
+ *
+ * The second form is for a line whose link is part of the sentence rather than
+ * a call to action under it — card 03's "Live: drex.style" in the intro and
+ * "Visit: drex.style" under its website. A link pill there would set one word
+ * of a list of facts as a button. It opens in a new tab, like the pill: the
+ * view is a reading surface and leaving it is not what a click on it means.
+ */
+export type Paragraph = string | { text: string; link: { label: string; href: string } };
 
 export interface TwoUpColumn {
   media: Media;
