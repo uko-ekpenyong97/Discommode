@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties } from 'react';
-import { addPresenter, coverLiveAvailable, coverStageAvailable, sizeIdleTile } from './coverStage';
+import { addPresenter, coverLiveAvailable, coverStageAvailable, sizeIdleTile, subscribeStage } from './coverStage';
 import { coverStill as clockStill, subscribeReducedMotion } from './coverClock';
 import { coverStillUrl, riveCover, shaderCover } from './covers';
 import { DomeSpring, heroDome } from './dome';
@@ -61,6 +61,8 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
   const [still, setStill] = useState(() => clockStill());
   useEffect(() => subscribeReducedMotion(() => setStill(clockStill())), []);
 
+  // The stage is made after the first paint; if that fails, the still.
+  useSyncExternalStore(subscribeStage, coverStageAvailable);
   // A canvas whenever a cover COULD be live here, so it outlives the cover in
   // it; a presenter only while this one is.
   const canvasOn = live && !still && (coverId ? coverLiveAvailable(coverId) : coverStageAvailable());

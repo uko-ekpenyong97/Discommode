@@ -29,7 +29,8 @@ import { config } from '../config';
 import type { LiveConfig } from '../config';
 import { createBandSweep, createRectMeans } from './bandSweep';
 import { MAX_SPLATS, createFluid } from './fluid';
-import type { Splat } from './fluid';
+import type { Fluid, Splat } from './fluid';
+import { afterFirstPaint } from '../firstPaint';
 import { skyGradientAt } from './palette';
 import type { DayPhase } from '../env/types';
 import { elevationFromHeight } from '../env/sun';
@@ -749,8 +750,22 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
 
   // --- the wake ---
   // Null where the context cannot render to half floats: the sky then simply
-  // has no wake, and every splat is dropped.
-  const fluid = createFluid(gl);
+  // has no wake, and every splat is dropped. Made after the first paint: its
+  // seven programs and its half-float targets were ~15 ms of the boot's
+  // longest task, and until the pointer stirs it there is nothing of it to
+  // see (asleep, every fluid term in the shader is an exact zero — the same
+  // frame as no fluid at all).
+  let fluid: Fluid | null = null;
+  let disposed = false;
+  afterFirstPaint(() => {
+    if (disposed || gl.isContextLost()) return;
+    fluid = createFluid(gl);
+    // It leaves its own state bound; the sky's back for the next frame.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.useProgram(program);
+    gl.bindVertexArray(vao);
+    gl.viewport(0, 0, width, height);
+  });
   const splats: Splat[] = [];
   /** The pointer as last reported, and as last splatted (CSS px). */
   let pointerX = 0;
@@ -1325,6 +1340,7 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
       return ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
     },
     dispose() {
+      disposed = true;
       cancelAnimationFrame(raf);
       running = false;
       window.removeEventListener('resize', resize);

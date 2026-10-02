@@ -67,6 +67,24 @@ function start(): void {
   }
   canvas = el;
   engine = made;
+  // A lost context: the engine stops (its loop, its listeners). Restored: a
+  // new engine on the same canvas — the context is the same object, with
+  // nothing in it — and the target and the motion preference replayed, as
+  // for a first paint.
+  el.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    engine?.dispose();
+    engine = null;
+  });
+  el.addEventListener('webglcontextrestored', () => {
+    if (canvas !== el) return;
+    const again = createSkyEngine(el);
+    if (!again) return;
+    engine = again;
+    again.setReducedMotion(window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    again.setEnv(target, true);
+    listeners.forEach((fn) => fn());
+  });
   // REPLAY THE TARGET INTO IT. The engine is built lazily by whichever host
   // claims first, and it is born at zeros — which is a clear midnight. Nothing
   // guarantees that a target has not already been pushed by the time that
@@ -76,7 +94,7 @@ function start(): void {
   made.setEnv(target, true);
   // The resolution dial changes the backing-store size, which only `resize`
   // knows how to do — and it only runs on a window resize otherwise.
-  subscribeConfig(() => made.syncSize());
+  subscribeConfig(() => engine?.syncSize());
 }
 
 function attach(): void {
@@ -115,6 +133,18 @@ export function releaseSky(host: HTMLElement): void {
   if (i < 0) return;
   hosts.splice(i, 1);
   attach();
+}
+
+/**
+ * Make the sky's context and program now, before React's first render
+ * (main.tsx). Made in the first commit's effects, the context waited in the
+ * GPU process behind the raster of the page's first frame: 25–40 ms of the
+ * boot's longest task (docs/perf/first-second.md). Before the first render
+ * the GPU process is idle. Nothing is drawn differently: the canvas is
+ * claimed into its host by the first SkyLayer, as before.
+ */
+export function prepareSky(): void {
+  start();
 }
 
 /** The shared engine, or null when WebGL2 is unavailable. */
