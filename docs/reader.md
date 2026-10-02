@@ -1032,6 +1032,11 @@ it goes back. The design is Uko's prototype
 behaviour; the data is his `quotes.json`. A later chapter break is a new entry
 in `quotes.json`'s `pages` and a plate, and nothing else.
 
+Captures in `docs/quote/`, 1728×996 @2x: `on-screen.webp` (Spanish at rest,
+mid-morph, English), `print-match.webp` (the print, the layer's Spanish and
+their difference at 2000×2600), `hint-and-cursor.webp` (the hint line,
+zoomed, and the cursor tag at 2×).
+
 ### The pieces
 
 | | |
@@ -1188,6 +1193,15 @@ frames,sky --runs 3` three times each, alternating:
 | --- | --- | --- | --- |
 | this change | 2 of 36 | 0 of 6 | 4.0–4.2ms |
 | base | 6 of 36 | 1 of 6 | 4.1–4.3ms |
+
+Again after rebasing onto `main` with 03 | 04's animations (9aeb731), whose
+full run missed five frame checks the same way (load average 2.9–5.1), main
+first each round:
+
+| | riffle runs with a frame over 20ms | "60fps over the sky" misses | flip main p95 |
+| --- | --- | --- | --- |
+| this change | 4 of 36 | 2 of 6 | 4.0–4.2ms |
+| `main` | 10 of 36 | 2 of 6 | 3.9–4.1ms |
 
 The misses are the machine's, as [before](#running-the-checks).
 
