@@ -9,7 +9,16 @@
     "scramble": true,
     "showHint": true,
     "defaultLang": "es",
-    "resetWhenPageLeaves": true
+    "resetWhenPageLeaves": true,
+    "wandTiltDeg": -32,
+    "wandSizePx": 52,
+    "hoverScale": 1.03,
+    "colorCycleMs": 1200,
+    "wandPalette": ["#E8D555", "#FF8E91", "#425EB6", "#519B66", "#F5A04A"],
+    "breatheScale": 1.012,
+    "breathePeriodMs": 3600,
+    "breatheUntilFirstTap": true,
+    "flickOnTap": true
   },
   "styles": {
     "quote": { "family": "Space Mono", "weight": 700, "sizePx": 45.833, "lineHeightPx": 68, "color": "#000000", "align": "center" },

@@ -22,17 +22,26 @@
  * (`tapTarget`): the engine holds the turn back on a press over the quote and
  * starts it only once the press moves like a drag. Keyboard: the button.
  *
+ * Around the morph (quoteMotion.ts): over the quote a fine pointer becomes the
+ * WAND (wand.svg, a DOM element following the pointer, its colour cycling while
+ * a morph runs); the letters grow ×`hoverScale` about the quote's centre while
+ * hovered, and breathe until the first tap — redrawn at their scale, so they
+ * stay crisp. None of it reaches a bake: a turn shows the page at rest.
+ *
  * Fonts (Space Mono Bold, Lora Regular) are loaded before anything is measured,
  * and nothing is measured again: the letters are drawn, not laid out, so
  * nothing on the page can reflow.
  */
 import { registerBusy } from '../activity';
+import WAND_SVG from './wand.svg?raw';
 import type { Page, Spread } from './issue-01';
 import { pagesNear } from './pageAnimGeometry';
 import { PAGE_H, PAGE_W } from './pageAnims';
 import { SETTLE_FADE_MS } from './pageAnimPlayer';
 import { HINT_MS, hintAlpha, hintAlphaAt, layoutBlock, layoutHint, planMorph, sampleMorph, swapArrow } from './quoteMorph';
 import type { DrawnGlyph, Glyph, HintGlyph, Lang, Measure, MorphPlan } from './quoteMorph';
+import { breathAt, flickAt, FLICK_MS, follow, hexToOklab, labDistance, oklabToHex, paletteAt, settleLab, tweenAt, tweenDone } from './quoteMotion';
+import type { ScaleTween } from './quoteMotion';
 import { QUOTE_FACES, quoteOnPage, quoteSettings, subscribeQuoteSettings } from './quotes';
 import type { QuotePage } from './quotes';
 
@@ -43,9 +52,9 @@ const MAX_DPR = 2;
 /** The bakes' encoding: as close to the printed pages' own WebPs as costs nothing. */
 const BAKE_TYPE = 'image/webp';
 const BAKE_QUALITY = 0.92;
-/** The cursor over the quote: the hint as a tag — the page's paper, edged and
- *  lettered in the hint's green, its ⇄ drawn as the hint's is. */
-const CURSOR = { sizePx: 11, padX: 8, h: 20, edge: 1.5, paper: '#FFF5EC' };
+/** wand.svg at its native size, and its hotspot (the star's centre) from its
+ *  top-left. */
+const WAND = { w: 325, h: 690, hx: 162, hy: 171 };
 
 const other = (l: Lang): Lang => (l === 'es' ? 'en' : 'es');
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -106,7 +115,14 @@ function layoutOf(q: QuotePage): Layout {
 
 // ── drawing ─────────────────────────────────────────────────────────────
 
-/** Letters and hint, page px × k, onto whatever is already in `ctx`. */
+/** The point the letters grow and breathe about: the quote's centre, page px. */
+function scaleCentre(q: QuotePage): [number, number] {
+  const b = q.blocks.find((x) => x.key === 'quote') ?? q.blocks[0];
+  return [b.anchorX, b.top + (b.lines.es.length * b.lineHeight) / 2];
+}
+
+/** Letters and hint, page px × k, onto whatever is already in `ctx`. The
+ *  letters (not the hint) at `scale` about the quote's centre. */
 function paint(
   ctx: CanvasRenderingContext2D,
   k: number,
@@ -114,8 +130,11 @@ function paint(
   glyphs: DrawnGlyph[],
   hint: HintGlyph[] | null,
   alphaOf: (g: HintGlyph) => number,
+  scale = 1,
 ): void {
-  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const [cx, cy] = scaleCentre(q);
+  const ks = k * scale;
+  ctx.setTransform(ks, 0, 0, ks, k * cx * (1 - scale), k * cy * (1 - scale));
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   // The outlines as drawn: Chrome's default on macOS emboldens canvas text by a
@@ -132,6 +151,7 @@ function paint(
       ctx.fillText(g.ch, g.x, g.y);
     }
   }
+  ctx.setTransform(k, 0, 0, k, 0, 0);
   if (hint) paintHint(ctx, q, hint, alphaOf, q.hint.sizePx);
   ctx.globalAlpha = 1;
 }
@@ -217,43 +237,6 @@ function bakeOne(q: QuotePage, plate: HTMLImageElement, lang: Lang, hint: boolea
   return p;
 }
 
-// ── the cursor ──────────────────────────────────────────────────────────
-
-let cursorValue: string | null = null;
-
-/** The tag, drawn once the fonts are in: a CSS cursor at 1× and 2×, its
- *  hotspot at its centre. Laid out and drawn by the hint's own code, at 11px. */
-function quoteCursor(q: QuotePage): string {
-  if (cursorValue) return cursorValue;
-  const spec = { ...q.hint, font: q.hint.font.replace(`${q.hint.sizePx}px`, `${CURSOR.sizePx}px`), letterSpacingPx: (q.hint.letterSpacingPx / q.hint.sizePx) * CURSOR.sizePx };
-  const probe = layoutHint({ ...spec, centerX: 0, top: 0, lineHeight: CURSOR.h }, measure);
-  const textW = -2 * probe[0].x; // centred on 0: its left edge is −width/2
-  const w = Math.ceil(textW + 2 * CURSOR.padX);
-  const glyphs = layoutHint({ ...spec, centerX: w / 2, top: 0, lineHeight: CURSOR.h }, measure);
-  const draw = (scale: number) => {
-    const c = document.createElement('canvas');
-    c.width = w * scale;
-    c.height = CURSOR.h * scale;
-    const ctx = c.getContext('2d')!;
-    ctx.scale(scale, scale);
-    ctx.textRendering = 'geometricPrecision';
-    ctx.fillStyle = CURSOR.paper;
-    ctx.strokeStyle = q.hint.color;
-    ctx.lineWidth = CURSOR.edge;
-    ctx.beginPath();
-    ctx.roundRect(CURSOR.edge / 2, CURSOR.edge / 2, w - CURSOR.edge, CURSOR.h - CURSOR.edge, (CURSOR.h - CURSOR.edge) / 2);
-    ctx.fill();
-    ctx.stroke();
-    paintHint(ctx, q, glyphs, () => 1, CURSOR.sizePx);
-    return c.toDataURL('image/png');
-  };
-  const hx = Math.round(w / 2);
-  const hy = CURSOR.h / 2;
-  const set = `image-set(url("${draw(1)}") 1x, url("${draw(2)}") 2x) ${hx} ${hy}, pointer`;
-  cursorValue = CSS.supports('cursor', set) ? set : `url("${draw(1)}") ${hx} ${hy}, pointer`;
-  return cursorValue;
-}
-
 // ── the player ──────────────────────────────────────────────────────────
 
 interface Slot {
@@ -270,6 +253,11 @@ interface Slot {
   morph: { plan: MorphPlan; t0: number; from: Lang; to: Lang } | null;
   /** The last frame's letters, for the verify suite. */
   drawn: DrawnGlyph[];
+  /** The letters' scale as last drawn, the hover tween in flight, and when
+   *  the breathing loop (re)started. */
+  drawnScale: number;
+  tween: ScaleTween | null;
+  breathT0: number;
   onClick: () => void;
 }
 
@@ -288,8 +276,8 @@ export interface QuotePlayer {
   /** Bumped whenever `mapSpreads` would change. */
   version: () => number;
   /**
-   * Live on `book` (the engine's pointer host, whose cursor is the tag over a
-   * quote): listeners, the busy probe, the dials. Returns the teardown, which
+   * Live on `book` (the engine's pointer host, whose cursor gives way to the
+   * wand over a quote): listeners, the wand, the busy probe, the dials. Returns the teardown, which
    * leaves the player as it was made — a StrictMode remount attaches again.
    */
   attach: (book: HTMLElement) => () => void;
@@ -309,7 +297,24 @@ export function createQuotePlayer(): QuotePlayer {
   let raf = 0;
   let epoch = 0;
   let version = 0;
-  let hovering = false;
+  /** The quote under a fine pointer, if any. */
+  let hoverSlot: Slot | null = null;
+  /** Pages tapped since they last reset: they breathe no more. */
+  const tapped = new Set<number>();
+  const pointer = { x: 0, y: 0 };
+  /** The wand: its element (made on attach), where it is drawn, its turn and
+   *  its colour (OKLab), and the clock its smoothing steps on. */
+  const wand = {
+    el: null as HTMLDivElement | null,
+    on: false,
+    x: 0,
+    y: 0,
+    angle: 0,
+    flickT0: -Infinity,
+    lab: hexToOklab(quoteSettings.wandPalette[0] ?? '#E8D555'),
+    hex: '',
+    last: 0,
+  };
   /** When a tap last toggled: the button's own click right after it (an
    *  assistive tech that sends both) is the same press. */
   let lastTap = -Infinity;
@@ -352,19 +357,49 @@ export function createQuotePlayer(): QuotePlayer {
     return true;
   }
 
-  function draw(s: Slot, glyphs: DrawnGlyph[], alphaOf: (g: HintGlyph) => number): void {
+  function draw(s: Slot, glyphs: DrawnGlyph[], alphaOf: (g: HintGlyph) => number, scale: number): void {
     const ctx = s.canvas.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
-    paint(ctx, s.canvas.width / PAGE_W, s.q, glyphs, quoteSettings.showHint ? layoutOf(s.q).hint : null, alphaOf);
+    paint(ctx, s.canvas.width / PAGE_W, s.q, glyphs, quoteSettings.showHint ? layoutOf(s.q).hint : null, alphaOf, scale);
     s.drawn = glyphs;
+    s.drawnScale = scale;
   }
 
-  function drawRest(s: Slot): void {
+  function drawRest(s: Slot, scale = scaleOf(s, performance.now())): void {
     const lang = langOf(s.page.n);
-    draw(s, restGlyphs(layoutOf(s.q), lang), (g) => hintAlpha(g.lang, lang, s.q.hint.inactiveOpacity));
+    draw(s, restGlyphs(layoutOf(s.q), lang), (g) => hintAlpha(g.lang, lang, s.q.hint.inactiveOpacity), scale);
   }
+
+  // ── hover grow and breathing ──────────────────────────────────────────
+
+  /** Breathing: until the page's first tap, never under reduced motion. */
+  const breathes = (s: Slot): boolean =>
+    !reducedMotion() &&
+    s.shown &&
+    !turning &&
+    quoteSettings.breatheScale !== 1 &&
+    !(quoteSettings.breatheUntilFirstTap && tapped.has(s.page.n));
+
+  /** The letters' scale now: a hover tween in flight, else the hover's, else
+   *  the breath's. Reduced motion: 1. */
+  function scaleOf(s: Slot, now: number): number {
+    if (reducedMotion()) return 1;
+    if (s.tween) {
+      if (!tweenDone(s.tween, now)) return tweenAt(s.tween, now);
+      const to = s.tween.to;
+      s.tween = null;
+      if (s !== hoverSlot) s.breathT0 = now; // the breath picks up from rest
+      return to;
+    }
+    if (s === hoverSlot) return quoteSettings.hoverScale;
+    if (breathes(s)) return breathAt(now - s.breathT0, quoteSettings.breathePeriodMs, quoteSettings.breatheScale);
+    return 1;
+  }
+
+  /** Something on the slot moves next frame: a tween, a breath. */
+  const animating = (s: Slot): boolean => s.shown && (s.tween !== null || (s !== hoverSlot && breathes(s)));
 
   /** The button's name, the quote it describes and its language. `announce`:
    *  the live region reads the quote now on the page. */
@@ -405,15 +440,18 @@ export function createQuotePlayer(): QuotePlayer {
     const made = await Promise.all((['es', 'en'] as Lang[]).map((l) => bakeOne(s.q, s.plate, l, hint)));
     if (at !== epoch || destroyed || turning || !slots.includes(s)) return;
     if (made.some((b) => !b)) return; // a turn would have nothing to show in the other language
-    book?.style.setProperty('--quote-cursor', quoteCursor(s.q));
     sizeCanvas(s);
     s.morph = null;
+    s.tween = null;
+    s.shown = true;
+    s.breathT0 = performance.now();
     drawRest(s);
     label(s, false);
-    s.shown = true;
     s.wrap.dataset.state = 'shown';
     const fade = s.wrap.animate([{ opacity: 0 }, { opacity: 1 }], { duration: SETTLE_FADE_MS, easing: 'linear' });
     s.fade = fade;
+    hoverAt(pointer.x, pointer.y, lastPointerFine);
+    loop();
     // The static slot under the layer takes the bake once the layer covers it:
     // on a first arrival the hint fades in with the layer rather than popping.
     const swap = () => {
@@ -430,6 +468,7 @@ export function createQuotePlayer(): QuotePlayer {
     const to = other(from);
     const l = layoutOf(s.q);
     langs.set(s.page.n, to);
+    tapped.add(s.page.n); // the breathing guide has done its work
     s.morph = { plan: planMorph(l[from], l[to], quoteSettings, reducedMotion()), t0: performance.now(), from, to };
     label(s, true);
     bump(); // the static slot and the next turn: the new language's bake
@@ -441,17 +480,26 @@ export function createQuotePlayer(): QuotePlayer {
     if (destroyed || turning) return;
     let any = false;
     for (const s of slots) {
-      if (!s.shown || !s.morph) continue;
-      const { plan, t0, from, to } = s.morph;
-      const ms = Math.max(0, now - t0);
-      if (ms >= Math.max(plan.totalMs, HINT_MS)) {
-        finish(s);
-        continue;
+      if (!s.shown) continue;
+      const scale = scaleOf(s, now);
+      if (s.morph) {
+        const { plan, t0, from, to } = s.morph;
+        const ms = Math.max(0, now - t0);
+        if (ms >= Math.max(plan.totalMs, HINT_MS)) {
+          finish(s);
+        } else {
+          any = true;
+          const inactive = s.q.hint.inactiveOpacity;
+          draw(s, sampleMorph(plan, ms), (g) => hintAlphaAt(g.lang, from, to, ms, inactive), scale);
+        }
+      } else if (Math.abs(scale - s.drawnScale) > 1e-5 || (scale !== s.drawnScale && (scale === 1 || scale === quoteSettings.hoverScale))) {
+        // A step too small to see is skipped, except the one onto a resting
+        // value: the letters come to rest at exactly ×1 (or the grow).
+        drawRest(s, scale);
       }
-      any = true;
-      const inactive = s.q.hint.inactiveOpacity;
-      draw(s, sampleMorph(plan, ms), (g) => hintAlphaAt(g.lang, from, to, ms, inactive));
+      if (animating(s)) any = true;
     }
+    if (stepWand(now)) any = true;
     if (any) raf = requestAnimationFrame(tick);
   }
 
@@ -470,15 +518,92 @@ export function createQuotePlayer(): QuotePlayer {
     const r = el.getBoundingClientRect();
     return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
   };
-  function setHover(on: boolean): void {
-    if (on === hovering || !book) return;
-    hovering = on;
-    if (on) book.dataset.cursor = 'quote';
+  /** The quote a fine pointer is over changes: the letters tween toward their
+   *  new scale (from wherever they are), and the wand shows or goes. */
+  function setHover(next: Slot | null): void {
+    if (next === hoverSlot || !book) return;
+    const now = performance.now();
+    for (const s of [hoverSlot, next]) {
+      if (!s || !s.shown || reducedMotion()) continue;
+      const from = scaleOf(s, now);
+      s.tween = { from, to: s === next ? quoteSettings.hoverScale : 1, t0: now };
+    }
+    hoverSlot = next;
+    if (next) book.dataset.cursor = 'quote';
     else delete book.dataset.cursor;
+    showWand(next !== null);
+    loop();
   }
-  const onPointer = (e: PointerEvent) =>
-    setHover(e.pointerType !== 'touch' && !turning && slots.some((s) => s.shown && inside(s.hit, e.clientX, e.clientY)));
-  const onLeave = () => setHover(false);
+
+  let lastPointerFine = false;
+  function hoverAt(x: number, y: number, fine: boolean): void {
+    setHover(fine && !turning ? (slots.find((s) => s.shown && inside(s.hit, x, y)) ?? null) : null);
+  }
+  const onPointer = (e: PointerEvent) => {
+    pointer.x = e.clientX;
+    pointer.y = e.clientY;
+    // Fine pointers only: a touch keeps no cursor.
+    lastPointerFine = e.pointerType === 'mouse' || e.pointerType === 'pen';
+    hoverAt(e.clientX, e.clientY, lastPointerFine);
+    if (wand.on) loop();
+  };
+  const onLeave = () => setHover(null);
+
+  // ── the wand ──────────────────────────────────────────────────────────
+
+  function placeWand(): void {
+    if (!wand.el) return;
+    const k = quoteSettings.wandSizePx / WAND.h;
+    wand.el.style.width = `${WAND.w * k}px`;
+    wand.el.style.height = `${WAND.h * k}px`;
+    wand.el.style.transformOrigin = `${WAND.hx * k}px ${WAND.hy * k}px`;
+  }
+
+  function showWand(on: boolean): void {
+    if (!wand.el || on === wand.on) return;
+    if (on && !wand.el.dataset.on && getComputedStyle(wand.el).opacity === '0') {
+      // Appearing from nothing: where the pointer is, not where it last was.
+      wand.x = pointer.x;
+      wand.y = pointer.y;
+    }
+    wand.on = on;
+    if (on) wand.el.dataset.on = '';
+    else delete wand.el.dataset.on;
+  }
+
+  /** One frame of the wand: following the pointer, flicking, its colour.
+   *  True if it moves again next frame. */
+  function stepWand(now: number): boolean {
+    if (!wand.el) return false;
+    const dt = wand.last ? Math.min(100, now - wand.last) : 16;
+    wand.last = now;
+    const palette = quoteSettings.wandPalette.length ? quoteSettings.wandPalette : ['#E8D555'];
+    const morph = slots.find((s) => s.morph)?.morph ?? null;
+    const base = hexToOklab(palette[0]);
+    let more = false;
+    if (morph) {
+      wand.lab = paletteAt(palette.map(hexToOklab), now - morph.t0, quoteSettings.colorCycleMs);
+      more = true;
+    } else if (labDistance(wand.lab, base) > 1e-4) {
+      wand.lab = settleLab(wand.lab, base, dt);
+      more = true;
+    } else wand.lab = base;
+    const hex = oklabToHex(wand.lab);
+    if (hex !== wand.hex) {
+      wand.hex = hex;
+      wand.el.style.setProperty('--wand', hex);
+    }
+    if (wand.on) {
+      wand.x = follow(wand.x, pointer.x, dt);
+      wand.y = follow(wand.y, pointer.y, dt);
+      const flicking = now - wand.flickT0 < FLICK_MS;
+      wand.angle = quoteSettings.wandTiltDeg + flickAt(now - wand.flickT0);
+      const k = quoteSettings.wandSizePx / WAND.h;
+      wand.el.style.transform = `translate3d(${(wand.x - WAND.hx * k).toFixed(2)}px, ${(wand.y - WAND.hy * k).toFixed(2)}px, 0) rotate(${wand.angle.toFixed(2)}deg)`;
+      if (flicking || Math.hypot(pointer.x - wand.x, pointer.y - wand.y) > 0.05) more = true;
+    }
+    return more;
+  }
 
   // ── neighbours: fonts and plates ahead of the settle ──────────────────
 
@@ -504,6 +629,8 @@ export function createQuotePlayer(): QuotePlayer {
 
   let lastHint = quoteSettings.showHint;
   const onSettings = (v: typeof quoteSettings) => {
+    placeWand();
+    loop();
     if (v.showHint === lastHint) return;
     lastHint = v.showHint;
     // Redrawn now; the bakes for the new hint follow, and the slot takes them.
@@ -551,6 +678,9 @@ export function createQuotePlayer(): QuotePlayer {
           fade: null,
           morph: null,
           drawn: [],
+          drawnScale: 1,
+          tween: null,
+          breathT0: 0,
           onClick: () => {
             if (performance.now() - lastTap < 400) return;
             toggle(s);
@@ -564,6 +694,7 @@ export function createQuotePlayer(): QuotePlayer {
       for (const s of slots) {
         if (next.includes(s)) continue;
         finish(s); // never reset under a morph: it lands first
+        if (s === hoverSlot) setHover(null);
         s.hit.removeEventListener('click', s.onClick);
         ro.unobserve(s.wrap);
       }
@@ -578,6 +709,8 @@ export function createQuotePlayer(): QuotePlayer {
           langs.delete(n);
           reset = true;
         }
+        // Reset to the printed language: the page breathes again.
+        for (const n of tapped) if (!open.has(n) && !langs.has(n)) tapped.delete(n);
       }
       if (reset) bump();
       if (turning) return; // a riffle's inner landing: wait for the book to settle (and fetch nothing)
@@ -596,9 +729,10 @@ export function createQuotePlayer(): QuotePlayer {
         stop();
         for (const s of slots) {
           finish(s);
+          s.tween = null;
           hide(s);
         }
-        setHover(false);
+        setHover(null);
         return;
       }
       prefetch();
@@ -611,6 +745,7 @@ export function createQuotePlayer(): QuotePlayer {
       if (!s) return null;
       return () => {
         lastTap = performance.now();
+        if (quoteSettings.flickOnTap && !reducedMotion() && wand.on) wand.flickT0 = performance.now();
         toggle(s);
       };
     },
@@ -639,6 +774,15 @@ export function createQuotePlayer(): QuotePlayer {
       el.addEventListener('pointerdown', onPointer);
       el.addEventListener('pointerleave', onLeave);
       const offSettings = subscribeQuoteSettings(onSettings);
+      // The wand: above everything, never in the way of a pointer.
+      const w = document.createElement('div');
+      w.className = 'quote-wand';
+      w.setAttribute('aria-hidden', 'true');
+      w.innerHTML = WAND_SVG;
+      document.body.append(w);
+      wand.el = w;
+      wand.hex = '';
+      placeWand();
       const unbusy = registerBusy(() => slots.some((s) => s.morph !== null));
       // The dev handle reads THIS player: StrictMode makes (and drops) a second.
       if (import.meta.env.DEV) {
@@ -654,7 +798,22 @@ export function createQuotePlayer(): QuotePlayer {
             label: s.hit.getAttribute('aria-label'),
             live: { lang: s.live.lang, text: s.live.textContent },
             desc: { lang: s.desc.lang, text: s.desc.textContent },
+            scale: s.drawnScale,
+            hovered: s === hoverSlot,
+            breathing: breathes(s) && s !== hoverSlot,
+            tapped: tapped.has(s.page.n),
           }));
+        devHandle.wand = () => {
+          const hot = wand.el?.querySelector('.quote-wand__hot')?.getBoundingClientRect();
+          return {
+            on: wand.on,
+            opacity: wand.el ? Number(getComputedStyle(wand.el).opacity) : 0,
+            colour: wand.hex,
+            angle: wand.angle,
+            hot: hot ? { x: hot.left + hot.width / 2, y: hot.top + hot.height / 2 } : null,
+            height: wand.el?.getBoundingClientRect().height ?? 0,
+          };
+        };
         devHandle.langs = () => Object.fromEntries(langs);
         devHandle.toggle = (n) => {
           const s = slots.find((x) => x.page.n === n);
@@ -674,12 +833,14 @@ export function createQuotePlayer(): QuotePlayer {
         }
         slots = [];
         turning = false;
-        hovering = false;
+        hoverSlot = null;
+        wand.on = false;
+        w.remove();
+        wand.el = null;
         el.removeEventListener('pointermove', onPointer);
         el.removeEventListener('pointerdown', onPointer);
         el.removeEventListener('pointerleave', onLeave);
         delete el.dataset.cursor;
-        el.style.removeProperty('--quote-cursor');
         platePrefetch.clear();
         book = null;
         if (import.meta.env.DEV && devHandle.player === player) devHandle.player = null;
@@ -702,8 +863,8 @@ const devHandle: {
   render: (page: number, lang: Lang, hint: boolean) => Promise<string | null>;
   /** The bake a turn shows for `page` in `lang`, if it has been made. */
   bakeUrl: (page: number, lang: Lang) => string | null;
-  /** The cursor tag's CSS value, once drawn. */
-  cursor: () => string | null;
+  /** The wand: shown, its opacity, colour, turn, and where its hotspot is on screen. */
+  wand: () => { on: boolean; opacity: number; colour: string; angle: number; hot: { x: number; y: number } | null; height: number } | null;
 } = {
   player: null,
   state: () => [],
@@ -723,7 +884,7 @@ const devHandle: {
     return renderPage(q, img, lang, hint).toDataURL('image/png');
   },
   bakeUrl: (page, lang) => bakes.get(bakeKey(page, lang, quoteSettings.showHint))?.url ?? null,
-  cursor: () => cursorValue,
+  wand: () => null,
 };
 
 if (import.meta.env.DEV && typeof window !== 'undefined') {

@@ -19,6 +19,23 @@ export interface QuoteSettings extends MorphSettings {
   defaultLang: Lang;
   /** Back to `defaultLang` once its page is off the open spread. */
   resetWhenPageLeaves: boolean;
+  /** The wand cursor (wand.svg) over the quote: its lean, degrees (negative
+   *  leans the star toward the text), and its height, CSS px. */
+  wandTiltDeg: number;
+  wandSizePx: number;
+  /** The letters' scale about the quote's centre while the quote is hovered. */
+  hoverScale: number;
+  /** One loop of `wandPalette` while a morph runs, ms; its first colour is the
+   *  wand's at rest. */
+  colorCycleMs: number;
+  wandPalette: string[];
+  /** The breathing guide: its peak scale and its loop. */
+  breatheScale: number;
+  breathePeriodMs: number;
+  /** Breathing stops for good at the first tap on the page (until it resets). */
+  breatheUntilFirstTap: boolean;
+  /** A tap flicks the wand. */
+  flickOnTap: boolean;
 }
 
 interface TextStyle {
@@ -153,9 +170,18 @@ export const QUOTE_DEFAULTS: QuoteSettings = {
   showHint: s.showHint,
   defaultLang: s.defaultLang === 'en' ? 'en' : 'es',
   resetWhenPageLeaves: s.resetWhenPageLeaves,
+  wandTiltDeg: s.wandTiltDeg,
+  wandSizePx: s.wandSizePx,
+  hoverScale: s.hoverScale,
+  colorCycleMs: s.colorCycleMs,
+  wandPalette: s.wandPalette.filter((c) => /^#[0-9a-f]{6}$/i.test(c)),
+  breatheScale: s.breatheScale,
+  breathePeriodMs: s.breathePeriodMs,
+  breatheUntilFirstTap: s.breatheUntilFirstTap,
+  flickOnTap: s.flickOnTap,
 };
 
-export const quoteSettings: QuoteSettings = { ...QUOTE_DEFAULTS };
+export const quoteSettings: QuoteSettings = { ...QUOTE_DEFAULTS, wandPalette: [...QUOTE_DEFAULTS.wandPalette] };
 
 type Listener = (s: QuoteSettings) => void;
 const listeners = new Set<Listener>();

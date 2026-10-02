@@ -22,11 +22,19 @@
  *                   the bare plate; flipping away and back, the quote is Spanish.
  *   elsewhere       a click off the quote turns the page; a drag that starts on
  *                   the quote turns it too.
- *   the cursor      the tag over the quote, the book's own off it; never on touch.
+ *   the wand        over the quote the native cursor goes and wand.svg follows
+ *                   the pointer, its hotspot (the star's centre) on it, 52px
+ *                   tall at −32°; it goes off the quote; a click at the hotspot
+ *                   translates; mid-morph its colour leaves the palette's first
+ *                   and comes back after; a tap flicks it. Never on touch.
+ *   grow, breath    hovered, the letters go to ×1.03 and back on leave; until
+ *                   the first tap they breathe to ×1.012 (not while hovered),
+ *                   and after it never. A turn while grown shows the bake at ×1.
  *   keyboard        the button: Enter and Space toggle, its name and its
  *                   description's language follow, the live region speaks.
  *   touch           a tap on the quote translates, a tap elsewhere turns.
- *   reduced motion  a 300ms crossfade: no letter moves and none scrambles.
+ *   reduced motion  a 300ms crossfade: no letter moves and none scrambles; no
+ *                   breathing, grow or flick, but the wand and its colour.
  */
 import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
@@ -51,6 +59,26 @@ const settledAt = (page, t) =>
     (t) => +location.hash.split('/')[1] === t && document.querySelector('.book__turn-host').childElementCount === 0,
     t,
     { timeout: 6000 },
+  );
+/** The letters at ×1: off the quote, the grow undone, the breath at rest. */
+const unscaled = (page) => page.waitForFunction((n) => window.__quote.state().find((s) => s.page === n)?.scale === 1, PAGE, { timeout: 8000 });
+const wandOf = (page) => page.evaluate(() => window.__quote.wand());
+const BASE = QUOTES.settings.wandPalette[0].toLowerCase();
+/** `ms` of the letters' scale, every frame. */
+const scaleFrames = (page, ms) =>
+  page.evaluate(
+    ({ n, ms }) =>
+      new Promise((done) => {
+        const out = [];
+        const t0 = performance.now();
+        const f = () => {
+          out.push(window.__quote.state().find((s) => s.page === n)?.scale ?? null);
+          if (performance.now() - t0 < ms) requestAnimationFrame(f);
+          else done(out);
+        };
+        requestAnimationFrame(f);
+      }),
+    { n: PAGE, ms },
   );
 const morphDone = (page) => page.waitForFunction((n) => !window.__quote.state().find((s) => s.page === n)?.morphing, PAGE, { timeout: 8000 });
 
@@ -241,6 +269,8 @@ const recordFrames = (page) =>
         plates: [...document.querySelectorAll('.book__turn img')].map((i) => i.getAttribute('src')),
         layerShown: !!layer && getComputedStyle(layer).visibility !== 'hidden',
         drawn: s ? s.drawn.map((g) => `${g.ch}@${g.x.toFixed(2)},${g.y.toFixed(2)}`) : null,
+        wandOn: window.__quote.wand()?.on ?? false,
+        scale: s?.scale ?? null,
         lang: s?.lang ?? null,
       });
       if (window.__qOn) requestAnimationFrame(f);
@@ -274,6 +304,7 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
     await shown(page);
     await page.waitForTimeout(300);
     if (dpr === 1) await checkPrint(page, check);
+    await unscaled(page);
     const s = await onScreen(page, '/issues/01/05.webp');
     check(
       Math.abs(s.ink - 1) <= 0.04,
@@ -292,26 +323,59 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   const s0 = await qstate(page);
   check(sameLetters(s0.drawn, es), 'at rest the layer draws every Spanish letter where quotes.json puts it', `${s0.drawn.length} letters`);
 
-  // ── the cursor ──
-  const c = await hitCentre(page);
-  await page.mouse.move(c.x, c.y);
-  await page.waitForTimeout(50);
-  const over = await page.evaluate(() => ({ data: document.querySelector('.book').dataset.cursor, css: getComputedStyle(document.querySelector('.book')).cursor }));
-  await page.mouse.move(c.box.x + 4, c.box.y - 60);
-  await page.waitForTimeout(50);
-  const off = await page.evaluate(() => ({ data: document.querySelector('.book').dataset.cursor ?? null, css: getComputedStyle(document.querySelector('.book')).cursor }));
+  // ── the breathing guide, before any tap ──
+  const breath = (await scaleFrames(page, QUOTES.settings.breathePeriodMs + 200)).filter((v) => v !== null);
+  const peak = Math.max(...breath);
   check(
-    over.data === 'quote' && over.css.includes('url(') && off.data === null && off.css === 'grab',
-    'the cursor is the ES ⇄ EN tag over the quote, and the book’s own off it',
-    `over: ${over.css.slice(0, 24)}…; off: ${off.css}`,
+    Math.abs(peak - QUOTES.settings.breatheScale) < 0.0008 && Math.min(...breath) === 1 && (await qstate(page)).breathing,
+    'until the first tap the quote breathes: to ×1.012 and back to rest, once a loop',
+    `peak ×${peak.toFixed(4)}; ${breath.filter((v) => v === 1).length} of ${breath.length} frames at rest`,
+  );
+
+  // ── the wand and the grow ──
+  const c = await hitCentre(page);
+  await page.mouse.move(c.x - 60, c.y - 20, { steps: 4 });
+  await page.mouse.move(c.x, c.y, { steps: 6 });
+  await page.waitForTimeout(700);
+  const on = await wandOf(page);
+  const hov = await qstate(page);
+  const native = await page.evaluate(() => getComputedStyle(document.querySelector('.book')).cursor);
+  const wandH = await page.evaluate(() => document.querySelector('.quote-wand').offsetHeight);
+  check(
+    on.on && on.opacity === 1 && native === 'none' && on.hot && Math.hypot(on.hot.x - c.x, on.hot.y - c.y) <= 1 && Math.abs(on.angle - QUOTES.settings.wandTiltDeg) < 1e-6 && wandH === QUOTES.settings.wandSizePx,
+    'over the quote the cursor is the wand: its star on the pointer, 52px tall, at −32°',
+    `opacity ${on.opacity}, native cursor ${native}; hotspot ${on.hot ? Math.hypot(on.hot.x - c.x, on.hot.y - c.y).toFixed(2) : '?'}px from the pointer; ${wandH}px, ${on.angle}°; colour ${on.colour}`,
+  );
+  check(
+    Math.abs(hov.scale - QUOTES.settings.hoverScale) < 1e-6 && hov.hovered && !hov.breathing,
+    'hovered, the quote and attribution grow to ×1.03 (and do not breathe)',
+    `×${hov.scale.toFixed(4)}`,
+  );
+  await page.mouse.move(c.box.x + 4, c.box.y - 60, { steps: 4 });
+  await page.waitForTimeout(700);
+  const offW = await wandOf(page);
+  const offS = await qstate(page);
+  const nativeOff = await page.evaluate(() => getComputedStyle(document.querySelector('.book')).cursor);
+  check(
+    !offW.on && offW.opacity === 0 && nativeOff === 'grab' && offS.scale <= 1.012 && !offS.hovered,
+    'off the quote the wand fades and the grow comes off',
+    `opacity ${offW.opacity}, cursor ${nativeOff}; ×${offS.scale.toFixed(4)}${offS.breathing ? ' (breathing again)' : ''}`,
   );
 
   // ── a click translates and turns nothing ──
-  await page.mouse.move(c.x, c.y);
+  await page.mouse.move(c.x, c.y, { steps: 4 });
+  await page.waitForTimeout(600);
   await recordFrames(page);
   await page.mouse.down();
   await page.mouse.up();
-  await page.waitForTimeout(400);
+  const angles = [];
+  const colours = [];
+  for (let i = 0; i < 6; i++) {
+    const w = await wandOf(page);
+    angles.push(w.angle);
+    colours.push(w.colour);
+    await page.waitForTimeout(60);
+  }
   let frames = await stopFrames(page);
   const s1 = await qstate(page);
   check(
@@ -324,13 +388,43 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
     'the button’s name, its description’s language and the live region follow',
     `"${s1.label}"; live [${s1.live.lang}] "${s1.live.text.slice(0, 26)}…"`,
   );
+  for (let i = 0; i < 8; i++) {
+    colours.push((await wandOf(page)).colour);
+    await page.waitForTimeout(150);
+  }
   await morphDone(page);
   const s2 = await qstate(page);
   check(sameLetters(s2.drawn, en), 'the morph ends with every English letter where quotes.json puts it', `${s2.drawn.length} letters, to 0.01px`);
+  check(
+    Math.min(...angles) < QUOTES.settings.wandTiltDeg - 5,
+    'a tap flicks the wand',
+    `deepest ${Math.min(...angles).toFixed(1)}° (rest ${QUOTES.settings.wandTiltDeg}°)`,
+  );
+  await page.waitForTimeout(1500);
+  const settledColour = (await wandOf(page)).colour;
+  const away = colours.filter((h) => h !== BASE);
+  check(
+    away.length >= 4 && new Set(away).size >= 4 && settledColour === BASE,
+    'mid-morph the wand cycles the palette, and comes back to its first colour after',
+    `${new Set(away).size} colours off ${BASE} (${[...new Set(away)].slice(0, 5).join(' ')}); after: ${settledColour}`,
+  );
+  await page.mouse.move(c.box.x + 4, c.box.y - 60, { steps: 4 });
+  await unscaled(page);
+  const still = (await scaleFrames(page, QUOTES.settings.breathePeriodMs + 200)).filter((v) => v !== null);
+  const tappedS = await qstate(page);
+  check(
+    still.every((v) => v === 1) && tappedS.tapped && !tappedS.breathing,
+    'after the first tap the quote breathes no more',
+    `${still.length} frames, max ×${Math.max(...still).toFixed(4)}`,
+  );
   const bake = await page.evaluate((n) => window.__quote.bakeUrl(n, 'en'), PAGE);
   const staticSrc = await page.evaluate(() => document.querySelector('.book > .book__page--left > img').getAttribute('src'));
   check(!!bake && staticSrc === bake, 'the static slot under the layer carries the English bake', staticSrc?.slice(0, 40));
+  await page.mouse.move(c.box.x + 4, c.box.y - 60, { steps: 4 });
+  await unscaled(page);
   const agree = await onScreen(page, '');
+  await page.mouse.move(c.x, c.y, { steps: 4 });
+  await page.waitForTimeout(600);
   check(
     agree.d64 <= floor.d64 * 1.25 && Math.abs(agree.ink - 1) <= 0.03,
     'the English layer and the English bake agree on screen, as the Spanish layer and the print do',
@@ -361,6 +455,33 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   await page.waitForTimeout(300);
   const enBake = await page.evaluate((n) => window.__quote.bakeUrl(n, 'en'), PAGE);
   const esBake = await page.evaluate((n) => window.__quote.bakeUrl(n, 'es'), PAGE);
+  // Grown (hovered) now: the bake is still the page at rest, ×1, with no wand.
+  const grown = (await qstate(page)).scale;
+  const bakeVsRest = await page.evaluate(
+    async ({ n, bake }) => {
+      const ink = async (src) => {
+        const img = new Image();
+        img.src = src;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = 2000;
+        c.height = 2600;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(600, 1050, 800, 500).data;
+        let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i] > 96 || d[i + 1] > 96) continue; // dark ink (not paper, not the green hint)
+          const p = i / 4, x = p % 800, y = Math.floor(p / 800);
+          x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        }
+        return [x0, y0, x1, y1];
+      };
+      return { bake: await ink(bake), rest: await ink(await window.__quote.render(n, 'en', true)) };
+    },
+    { n: PAGE, bake: enBake },
+  );
+  const bakeOff = Math.max(...bakeVsRest.bake.map((v, i) => Math.abs(v - bakeVsRest.rest[i])));
   await recordFrames(page);
   await page.keyboard.press('ArrowLeft');
   await settledAt(page, SPREAD - 1);
@@ -375,9 +496,15 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
       firstTurn.staticReady &&
       facesWith05.length > 0 &&
       facesWith05.every((b) => b.includes(enBake)) &&
+      turning.every((f) => !f.wandOn) &&
       !frames.some((f) => [...f.faces, ...f.plates].some((b) => b?.includes('/plates/'))),
-    'a turn mid-morph shows page 05 in English, baked: the static slot and the curl, never the plate',
+    'a turn mid-morph shows page 05 in English, baked: the static slot and the curl, never the plate, no wand',
     `${turning.length} turning frames; static ${firstTurn?.staticSrc === enBake ? 'the English bake' : firstTurn?.staticSrc}, ${firstTurn?.staticReady ? 'decoded' : 'NOT decoded'}; curl ${[...new Set(facesWith05)].map((b) => (b.includes(enBake) ? 'en bake' : b.slice(0, 30))).join(', ')}`,
+  );
+  check(
+    grown > 1.02 && bakeOff <= 1,
+    'grown under the pointer, the page a turn shows is still at ×1 (the bake has no grow and no wand)',
+    `letters ×${grown.toFixed(4)} on screen; the bake's ink box within ${bakeOff}px of the page at rest`,
   );
   // …and back: Spanish.
   await recordFrames(page);
@@ -389,9 +516,9 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   const back = await qstate(page);
   const backFaces = frames.filter((f) => f.turn).flatMap((f) => f.faces).filter((b) => b.includes(enBake) || b.includes(esBake));
   check(
-    back.lang === 'es' && sameLetters(back.drawn, es) && backFaces.length > 0 && backFaces.every((b) => b.includes(esBake)),
-    'flipping away and back, the quote is Spanish again (the arriving leaf too)',
-    `${back.lang}; arriving leaf ${backFaces.every((b) => b.includes(esBake)) ? 'the Spanish bake' : 'NOT the Spanish bake'}`,
+    back.lang === 'es' && sameLetters(back.drawn, es) && backFaces.length > 0 && backFaces.every((b) => b.includes(esBake)) && !back.tapped,
+    'flipping away and back, the quote is Spanish again (the arriving leaf too), and breathes again',
+    `${back.lang}; arriving leaf ${backFaces.every((b) => b.includes(esBake)) ? 'the Spanish bake' : 'NOT the Spanish bake'}; tapped ${back.tapped}`,
   );
 
   // ── elsewhere: a click turns; a drag from the quote turns ──
@@ -443,10 +570,11 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   await tp.waitForTimeout(300);
   const ts = await qstate(tp);
   const tcur = await tp.evaluate(() => document.querySelector('.book').dataset.cursor ?? null);
+  const twand = await wandOf(tp);
   const tbook = await tp.locator('.book').boundingBox();
   await tp.touchscreen.tap(tbook.x + tbook.width * 0.12, tbook.y + tbook.height * 0.15);
   await settledAt(tp, SPREAD - 1).catch(() => {});
-  check(ts.lang === 'en' && tcur === null, 'a tap on the quote translates it, with no cursor tag', `${ts.lang}, cursor ${tcur}`);
+  check(ts.lang === 'en' && tcur === null && !twand.on && twand.opacity === 0, 'a tap on the quote translates it, with no wand and no cursor', `${ts.lang}, wand ${twand.on ? 'on' : 'off'}, cursor ${tcur}`);
   check((await hash(tp)) === SPREAD - 1, 'a tap off the quote turns the page', `spread ${await hash(tp)}`);
   await touch.close();
 
@@ -456,12 +584,31 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   await open(rp, SPREAD);
   await shown(rp);
   const r = await hitCentre(rp);
+  const rmRest = (await scaleFrames(rp, 1200)).filter((v) => v !== null);
+  await rp.mouse.move(r.x, r.y, { steps: 4 });
+  await rp.waitForTimeout(700);
+  const rmHover = await qstate(rp);
+  const rmWand = await wandOf(rp);
   await recordFrames(rp);
   const t0 = Date.now();
   await rp.mouse.click(r.x, r.y);
+  const rmAngles = [];
+  const rmColours = [];
+  for (let i = 0; i < 4; i++) {
+    const w = await wandOf(rp);
+    rmAngles.push(w.angle);
+    rmColours.push(w.colour);
+    await rp.waitForTimeout(40);
+  }
   await morphDone(rp);
   const took = Date.now() - t0;
   frames = await stopFrames(rp);
+  check(
+    rmRest.every((v) => v === 1) && rmHover.scale === 1 && rmAngles.every((a) => a === QUOTES.settings.wandTiltDeg),
+    'reduced motion: no breathing, no grow, no flick',
+    `${rmRest.length} frames at rest all ×1; hovered ×${rmHover.scale}; wand ${Math.min(...rmAngles)}°`,
+  );
+  check(rmWand.on && rmWand.opacity === 1 && rmColours.some((h) => h !== BASE), 'reduced motion: the wand still shows, and its colour still changes', `opacity ${rmWand.opacity}; ${[...new Set(rmColours)].join(' ')}`);
   const rs = await qstate(rp);
   const places = new Set([...es, ...en].map((g) => `${g.ch}@${g.x.toFixed(2)},${g.y.toFixed(2)}`));
   const stray = frames.flatMap((f) => f.drawn ?? []).filter((d) => !places.has(d));

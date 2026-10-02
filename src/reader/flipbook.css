@@ -415,8 +415,31 @@
   outline-offset: 2px;
 }
 
-/* Over the quote the cursor is the hint as a small tag (drawn once the fonts
-   are in, quotePlayer.ts); never on touch, which has no cursor. */
+/* Over the quote a fine pointer's cursor gives way to the wand (wand.svg), a
+   DOM element the player moves after the pointer (quotePlayer.ts). A touch
+   never sets it, and has no cursor to hide. */
 .book[data-cursor='quote'] {
-  cursor: var(--quote-cursor, pointer);
+  cursor: none;
+}
+
+/* The wand: fixed to the viewport, above everything, never in a pointer's way.
+   Its size, turn and place are written by the player; it fades with the
+   hover. Its colour is --wand (the SVG's fill and stroke). */
+.quote-wand {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms linear;
+  will-change: transform, opacity;
+}
+.quote-wand[data-on] {
+  opacity: 1;
+}
+.quote-wand svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }

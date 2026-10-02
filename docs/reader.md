@@ -39,7 +39,9 @@ numbers that decided how they work.
 | `quotes.json` | The chapter-break quotes: settings, styles, each page's positions and lines in ES and EN. See [chapter-break quotes](#chapter-break-quotes). |
 | `quotes.ts` | `quotes.json` typed, and the TRANSLATE dials' store. |
 | `quoteMorph.ts` | The translate morph as pure functions: the layout, the letters the languages share, where each is at any moment. |
-| `quotePlayer.ts` | The quotes on the open spread: the letter canvas over the plate, the bakes a turn shows, the button, the cursor. |
+| `quotePlayer.ts` | The quotes on the open spread: the letter canvas over the plate, the bakes a turn shows, the button, the wand. |
+| `quoteMotion.ts` | Around the morph, as pure functions: the hover grow, the breathing guide, the wand's flick and its OKLab colour. |
+| `wand.svg` | Uko's wand cursor, its colour a variable and its hotspot marked. |
 | `../dev/translateDials.ts` | The TRANSLATE panel (dev). |
 
 ## Layers
@@ -1013,9 +1015,9 @@ it goes dark. `view: plate` shows it over the plate, as it ships. `x`, `y`, `w`
 Arrow keys nudge 1px, Shift+arrow 10px, while an animation is picked — ahead of
 the engine's own listener, so they do not turn the page. **Copy row** puts the
 `pageAnims.ts` row on the clipboard (and the console); **Reset to file** drops
-the panel's row. What persists (`DIAL_STATE_VERSION` 7): the pick and the view
+the panel's row. What persists (`DIAL_STATE_VERSION` 8): the pick and the view
 (the panel), and each animation's EDITED ROW, kept per id in localStorage
-(`dialkit:page-anim-align-rows-v7`, so "Reset dials" and a version bump clear
+(`dialkit:page-anim-align-rows-v8`, so "Reset dials" and a version bump clear
 it too): a reload draws it again, and a pick loads it into the sliders, until
 **Copy row** (it belongs in the file then) or **Reset to file** clears it. Copy
 keeps the row's `rest`. A row whose width changed rebuilds its atlas on the
@@ -1035,7 +1037,8 @@ in `quotes.json`'s `pages` and a plate, and nothing else.
 Captures in `docs/quote/`, 1728×996 @2x: `on-screen.webp` (Spanish at rest,
 mid-morph, English), `print-match.webp` (the print, the layer's Spanish and
 their difference at 2000×2600), `hint-and-cursor.webp` (the hint line,
-zoomed, and the cursor tag at 2×).
+zoomed, and the cursor tag at 2× — the tag has since given way to the wand),
+`wand.webp` (the wand over the grown quote, and mid-morph).
 
 ### The pieces
 
@@ -1104,12 +1107,44 @@ tap threshold), and released before that it is the quote's tap — no turn layer
 on any frame. Everywhere else, and for the arrow keys, the row and the riffle,
 nothing changed.
 
-Over the hit area the cursor is the hint as a tag: "ES ⇄ EN" at 11px, laid
-out and drawn by the hint's own code (the same drawn ⇄), in #519B66 on the
-page's paper inside a #519B66 edge — on a green fill the green arrow would
-not show. Drawn once the fonts are in and set as a CSS `image-set` cursor at
-1× and 2×, its hotspot at its centre. Off the quote, the book's own
-`grab`. A touch pointer never sets it.
+### The wand, the grow and the breath
+
+`quoteMotion.ts` (pure, `quoteMotion.test.ts`); the player samples it every
+frame. Uko's brief of 2026-10-02 (the prototype it cites had no such section;
+the numbers are the brief's).
+
+- **The wand.** Over the quote's hit area a fine pointer's cursor goes
+  (`cursor: none`) and `wand.svg` (Uko's, `src/reader/wand.svg`: the c2pa
+  metadata dropped, its fill and stroke a `--wand` variable, its hotspot
+  marked) follows the pointer as a fixed DOM element: `wandSizePx` 52 tall,
+  turned `wandTiltDeg` −32° about its hotspot — the star's centre, (162, 171)
+  from its top-left at its native 325×690 — so the star leans toward the text.
+  It eases after the pointer on a 28ms time constant (the hotspot sits within
+  0.01px of a still pointer) and fades in and out with the hover over 180ms. A
+  touch never shows it. A tap (`flickOnTap`) turns it a further −22°, a sine
+  over 420ms.
+- **Its colour.** While a morph runs it cycles `wandPalette` (#E8D555 →
+  #FF8E91 → #425EB6 → #519B66 → #F5A04A, and round), one loop per
+  `colorCycleMs` 1200, each step blended in OKLab; when the morph ends it eases
+  back to the first in OKLab, τ 220ms.
+- **The grow.** Hovered, the quote and the attribution — not the plate, not
+  the hint — ease to `hoverScale` ×1.03 about the quote's centre, 500ms on
+  cubic-bezier(.22,.8,.24,1), and back on leave, always from wherever they
+  are. The canvas is REDRAWN at the scale each frame, not scaled by CSS, so the
+  letters stay as sharp at ×1.03 as at ×1.
+- **The breath.** Until the first tap on the page, the letters pulse to
+  `breatheScale` ×1.012 every `breathePeriodMs` 3600: a half-sine over the
+  first 55% of the loop, then rest. Not while hovered (leaving, it starts again
+  from rest); never again after the first tap (`breatheUntilFirstTap`), any
+  toggle counting — until the page resets to Spanish.
+- **Reduced motion:** no breath, no grow, no flick; the wand and its colour.
+- **Turns:** none of it is baked. A turn hides the layer and the wand, and
+  shows the bake at ×1 — so a turn started on a grown quote steps from ×1.03 to
+  ×1 as the leaf lifts. A drag that starts on the quote still turns the page.
+
+The breath keeps the player's frame loop running while page 05 is open and
+untapped (a redraw only while the scale moves, the 45% at rest costs a frame
+callback); it does not count as busy for the idle warm-up.
 
 ### The button
 
@@ -1208,7 +1243,7 @@ The misses are the machine's, as [before](#running-the-checks).
 ### Dials
 
 TRANSLATE panel, in the READER NAV dock (`#read-NN?intro`), persisted
-(`DIAL_STATE_VERSION` 7). `quotes.json`'s `settings` are the source of truth;
+(`DIAL_STATE_VERSION` 8). `quotes.json`'s `settings` are the source of truth;
 **Copy** writes a paste-ready `"settings"` block, **Translate** toggles the
 open quote (turning to page 05 if none is open).
 
@@ -1222,6 +1257,15 @@ open quote (turning to page 05 if none is open).
 | `scramble` | on | |
 | `showHint` | on | the ES ⇄ EN line (re-bakes) |
 | `resetWhenPageLeaves` | on | |
+| `wandTiltDeg` | −32 | −90–90 |
+| `wandSizePx` | 52 | 20–120 |
+| `hoverScale` | 1.03 | 1–1.1 |
+| `colorCycleMs` | 1200 | 200–4000 |
+| `wandPalette` | #E8D555, #FF8E91, #425EB6, #519B66, #F5A04A | five colour dials, in order; the first is the wand at rest |
+| `breatheScale` | 1.012 | 1–1.05 |
+| `breathePeriodMs` | 3600 | 1000–8000 |
+| `breatheUntilFirstTap` | on | |
+| `flickOnTap` | on | |
 
 `defaultLang` (es) is read from the file, not dialled.
 
@@ -1534,10 +1578,17 @@ exits non-zero on any ✗.
   and the print do. A click mid-morph lands it and starts the next. A turn
   started mid-morph shows the English bake on the static slot and on the curl
   and never a plate; away and back, Spanish (the arriving leaf too). A click
-  off the quote and a drag from it turn the page. The cursor tag over the
-  quote and `grab` off it; Enter and Space on the button; a touch tap
-  translates with no tag, a tap elsewhere turns; reduced motion draws no
-  letter off the two layouts and settles in about 300ms.
+  off the quote and a drag from it turn the page. Until the first tap the
+  quote breathes to ×1.012 and back; over it the native cursor is `none` and
+  the wand's hotspot is within 1px of the pointer, 52px tall at −32°, and the
+  letters are at ×1.03; off it the wand is gone, the grow undone. A click at
+  the hotspot translates; a tap flicks the wand; mid-morph its colour leaves
+  the palette's first and is back on it after; after the tap no breath. A turn
+  from a grown quote shows a bake whose ink box is the page's at rest, no wand
+  on any turning frame; away and back, breathing again. Enter and Space on the
+  button; a touch tap translates with no wand, a tap elsewhere turns; reduced
+  motion: no breath, grow or flick, the wand and its colour still, and the
+  crossfade draws no letter off the two layouts and settles in about 300ms.
 
 The z-order and exit checks photograph the book over the sky now, so both hold
 it still first (`__skyPinTime`, `__skyHoldFluid`): two captures must differ by
