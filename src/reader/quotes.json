@@ -14,7 +14,7 @@
     "wandSizePx": 52,
     "hoverScale": 1.03,
     "colorCycleMs": 1200,
-    "wandPalette": ["#E8D555", "#FF8E91", "#425EB6", "#519B66", "#F5A04A"],
+    "wandPalette": ["#EDD431", "#FF8E91", "#425EB6", "#519B66", "#F5A04A"],
     "breatheScale": 1.012,
     "breathePeriodMs": 3600,
     "breatheUntilFirstTap": true,

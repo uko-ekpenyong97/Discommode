@@ -41,7 +41,7 @@ numbers that decided how they work.
 | `quoteMorph.ts` | The translate morph as pure functions: the layout, the letters the languages share, where each is at any moment. |
 | `quotePlayer.ts` | The quotes on the open spread: the letter canvas over the plate, the bakes a turn shows, the button, the wand. |
 | `quoteMotion.ts` | Around the morph, as pure functions: the hover grow, the breathing guide, the wand's flick and its OKLab colour. |
-| `wand.svg` | Uko's wand cursor, its colour a variable and its hotspot marked. |
+| `wand.svg` | Uko's wand cursor (Figma 413:30): its fill a variable, its black outline fixed, its hotspot marked. |
 | `../dev/translateDials.ts` | The TRANSLATE panel (dev). |
 
 ## Layers
@@ -1114,19 +1114,32 @@ frame. Uko's brief of 2026-10-02 (the prototype it cites had no such section;
 the numbers are the brief's).
 
 - **The wand.** Over the quote's hit area a fine pointer's cursor goes
-  (`cursor: none`) and `wand.svg` (Uko's, `src/reader/wand.svg`: the c2pa
-  metadata dropped, its fill and stroke a `--wand` variable, its hotspot
-  marked) follows the pointer as a fixed DOM element: `wandSizePx` 52 tall,
-  turned `wandTiltDeg` −32° about its hotspot — the star's centre, (162, 171)
-  from its top-left at its native 325×690 — so the star leans toward the text.
+  (`cursor: none`) and `wand.svg` (Uko's, Figma Discommode-Website frame
+  "wand" 413:30, `src/reader/wand.svg`: the c2pa metadata dropped, the shape
+  written once and `<use>`d three times) follows the pointer as a fixed DOM
+  element: `wandSizePx` 52 tall, turned `wandTiltDeg` −32° about its hotspot —
+  the star's centre, (139, 145) in its 279×671 viewBox — so the star leans
+  toward the text. Its fill (`#wandFill`) is the `--wand` variable; its
+  outline is black, a 16-unit stroke clipped to the shape so it is drawn
+  inside the edge, and is never recoloured.
+- **Drawn crisp.** The element is a square frame about the star (2 × 530
+  units of reach) that moves by whole device pixels only; the turn, the flick
+  and the sub-pixel rest of the way are the SVG's own transform on the art
+  inside it. So the compositor never resamples it — the old wand, a
+  `translate3d`-and-`rotate` layer, was a bitmap turned on the GPU, its edges
+  soft. At 52px the art's outline shows 0.62 CSS px, under a pixel at 1×, so
+  it is held to at least one device pixel (1× 1px; 2× the art's 1.24 device
+  px). Against librsvg's rendering of the same geometry: at 1×, 86 vs 87 px at
+  luma ≤ 64; at 2×, 251 vs 248 (the turned layer: 1 and 132).
   It eases after the pointer on a 28ms time constant (the hotspot sits within
   0.01px of a still pointer) and fades in and out with the hover over 180ms. A
   touch never shows it. A tap (`flickOnTap`) turns it a further −22°, a sine
   over 420ms.
-- **Its colour.** While a morph runs it cycles `wandPalette` (#E8D555 →
+- **Its colour.** While a morph runs its FILL cycles `wandPalette` (#EDD431 →
   #FF8E91 → #425EB6 → #519B66 → #F5A04A, and round), one loop per
   `colorCycleMs` 1200, each step blended in OKLab; when the morph ends it eases
-  back to the first in OKLab, τ 220ms.
+  back to the first in OKLab, τ 220ms. #EDD431, the art's own yellow, on
+  every page: on a yellow page the outline carries it.
 - **The grow.** Hovered, the quote and the attribution — not the plate, not
   the hint — ease to `hoverScale` ×1.03 about the quote's centre, 500ms on
   cubic-bezier(.22,.8,.24,1), and back on leave, always from wherever they
@@ -1256,7 +1269,7 @@ The misses are the machine's, as [before](#running-the-checks).
 ### Dials
 
 TRANSLATE panel, in the READER NAV dock (`#read-NN?intro`), persisted
-(`DIAL_STATE_VERSION` 8). `quotes.json`'s `settings` are the source of truth;
+(`DIAL_STATE_VERSION` 9: the wand's base colour changed). `quotes.json`'s `settings` are the source of truth;
 **Copy** writes a paste-ready `"settings"` block, **Translate** toggles the
 open quote (turning to page 05 if none is open).
 
@@ -1274,7 +1287,7 @@ open quote (turning to page 05 if none is open).
 | `wandSizePx` | 52 | 20–120 |
 | `hoverScale` | 1.03 | 1–1.1 |
 | `colorCycleMs` | 1200 | 200–4000 |
-| `wandPalette` | #E8D555, #FF8E91, #425EB6, #519B66, #F5A04A | five colour dials, in order; the first is the wand at rest |
+| `wandPalette` | #EDD431, #FF8E91, #425EB6, #519B66, #F5A04A | five colour dials, in order; the first is the wand at rest |
 | `breatheScale` | 1.012 | 1–1.05 |
 | `breathePeriodMs` | 3600 | 1000–8000 |
 | `breatheUntilFirstTap` | on | |
@@ -1608,6 +1621,11 @@ exits non-zero on any ✗.
   button; a touch tap translates with no wand, a tap elsewhere turns; reduced
   motion: no breath, grow or flick, the wand and its colour still, and the
   crossfade draws no letter off the two layouts and settles in about 300ms.
+  And the wand's pixels, on every quote page at 1× and 2×, shot alone on white
+  with the page hidden: the star on the pointer (≤ 1px), #EDD431; the outline
+  crisp (≥ 60 px at luma ≤ 64 at 1×, ≥ 100 at ≤ 32 at 2×, ≥ 1 device px wide);
+  mid-cycle, after the flick, every pixel black at rest stays black (luma ≤ 48,
+  chroma ≤ 24) while the fill is one colour off the base; #EDD431 after.
 
 The z-order and exit checks photograph the book over the sky now, so both hold
 it still first (`__skyPinTime`, `__skyHoldFluid`): two captures must differ by

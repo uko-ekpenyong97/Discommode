@@ -52,9 +52,11 @@ const MAX_DPR = 2;
 /** The bakes' encoding: as close to the printed pages' own WebPs as costs nothing. */
 const BAKE_TYPE = 'image/webp';
 const BAKE_QUALITY = 0.92;
-/** wand.svg at its native size, and its hotspot (the star's centre) from its
- *  top-left. */
-const WAND = { w: 325, h: 690, hx: 162, hy: 171 };
+/** wand.svg's art, SVG units: its viewBox, its hotspot (the star's centre),
+ *  how far it reaches from the hotspot (the handle's end, with room for the
+ *  edge's antialiasing), and its outline (a stroke clipped to the shape, so
+ *  half of it shows). */
+const WAND = { w: 279, h: 671, hx: 139, hy: 145, reach: 530, outline: 16 };
 
 const other = (l: Lang): Lang => (l === 'es' ? 'en' : 'es');
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -319,9 +321,18 @@ export function createQuotePlayer(): QuotePlayer {
     y: 0,
     angle: 0,
     flickT0: -Infinity,
-    lab: hexToOklab(quoteSettings.wandPalette[0] ?? '#E8D555'),
+    lab: hexToOklab(quoteSettings.wandPalette[0] ?? '#EDD431'),
     hex: '',
     last: 0,
+    /** The frame's SVG, the group the art is turned in, the outline; the
+     *  frame's half-size (CSS px), the DPR it was sized for, the art's last
+     *  transform. */
+    frame: null as SVGSVGElement | null,
+    art: null as SVGGElement | null,
+    outline: null as SVGElement | null,
+    r: 0,
+    dpr: 1,
+    drawn: '',
   };
   /** When a tap last toggled: the button's own click right after it (an
    *  assistive tech that sends both) is the same press. */
@@ -597,12 +608,25 @@ export function createQuotePlayer(): QuotePlayer {
 
   // ── the wand ──────────────────────────────────────────────────────────
 
+  /**
+   * The wand is drawn, turned, by the SVG itself — on a frame 2·reach square
+   * about the hotspot that moves by whole device pixels only — so the
+   * compositor never resamples it (a turned or sub-pixel layer is a blurred
+   * one), and its outline keeps at least one device pixel (the art's is 0.62px
+   * at 52px tall: under a pixel at 1×).
+   */
   function placeWand(): void {
     if (!wand.el) return;
     const k = quoteSettings.wandSizePx / WAND.h;
-    wand.el.style.width = `${WAND.w * k}px`;
-    wand.el.style.height = `${WAND.h * k}px`;
-    wand.el.style.transformOrigin = `${WAND.hx * k}px ${WAND.hy * k}px`;
+    const dpr = window.devicePixelRatio || 1;
+    wand.r = Math.ceil(WAND.reach * k);
+    wand.dpr = dpr;
+    wand.el.style.width = wand.el.style.height = `${2 * wand.r}px`;
+    wand.frame?.setAttribute('viewBox', `0 0 ${2 * wand.r} ${2 * wand.r}`);
+    wand.outline?.setAttribute('stroke-width', String(Math.max(WAND.outline, 2 / (k * dpr))));
+    // At rest about the frame's centre until the first step places it.
+    wand.drawn = `translate(${wand.r} ${wand.r}) rotate(${quoteSettings.wandTiltDeg}) scale(${k.toFixed(6)}) translate(${-WAND.hx} ${-WAND.hy})`;
+    wand.art?.setAttribute('transform', wand.drawn);
   }
 
   function showWand(on: boolean): void {
@@ -623,7 +647,7 @@ export function createQuotePlayer(): QuotePlayer {
     if (!wand.el) return false;
     const dt = wand.last ? Math.min(100, now - wand.last) : 16;
     wand.last = now;
-    const palette = quoteSettings.wandPalette.length ? quoteSettings.wandPalette : ['#E8D555'];
+    const palette = quoteSettings.wandPalette.length ? quoteSettings.wandPalette : ['#EDD431'];
     const morph = slots.find((s) => s.morph)?.morph ?? null;
     const base = hexToOklab(palette[0]);
     let more = false;
@@ -644,8 +668,19 @@ export function createQuotePlayer(): QuotePlayer {
       wand.y = follow(wand.y, pointer.y, dt);
       const flicking = now - wand.flickT0 < FLICK_MS;
       wand.angle = quoteSettings.wandTiltDeg + flickAt(now - wand.flickT0);
+      if ((window.devicePixelRatio || 1) !== wand.dpr) placeWand(); // moved to another screen
+      // The frame on the device pixel at or before the pointer; the rest of the
+      // way, and the turn, inside the SVG.
+      const dpr = wand.dpr;
+      const ix = Math.floor(wand.x * dpr) / dpr;
+      const iy = Math.floor(wand.y * dpr) / dpr;
       const k = quoteSettings.wandSizePx / WAND.h;
-      wand.el.style.transform = `translate3d(${(wand.x - WAND.hx * k).toFixed(2)}px, ${(wand.y - WAND.hy * k).toFixed(2)}px, 0) rotate(${wand.angle.toFixed(2)}deg)`;
+      const art = `translate(${(wand.r + wand.x - ix).toFixed(3)} ${(wand.r + wand.y - iy).toFixed(3)}) rotate(${wand.angle.toFixed(2)}) scale(${k.toFixed(6)}) translate(${-WAND.hx} ${-WAND.hy})`;
+      if (art !== wand.drawn) {
+        wand.drawn = art;
+        wand.art?.setAttribute('transform', art);
+      }
+      wand.el.style.transform = `translate3d(${ix - wand.r}px, ${iy - wand.r}px, 0)`;
       if (flicking || Math.hypot(pointer.x - wand.x, pointer.y - wand.y) > 0.05) more = true;
     }
     return more;
@@ -845,9 +880,12 @@ export function createQuotePlayer(): QuotePlayer {
       const w = document.createElement('div');
       w.className = 'quote-wand';
       w.setAttribute('aria-hidden', 'true');
-      w.innerHTML = WAND_SVG;
+      w.innerHTML = `<svg class="quote-wand__frame"><g class="quote-wand__art">${WAND_SVG}</g></svg>`;
       document.body.append(w);
       wand.el = w;
+      wand.frame = w.querySelector('svg');
+      wand.art = w.querySelector('g');
+      wand.outline = w.querySelector('.quote-wand__outline');
       wand.hex = '';
       placeWand();
       const unbusy = registerBusy(() => slots.some((s) => s.morph !== null));
@@ -877,13 +915,17 @@ export function createQuotePlayer(): QuotePlayer {
         };
         devHandle.wand = () => {
           const hot = wand.el?.querySelector('.quote-wand__hot')?.getBoundingClientRect();
+          // The art's size and turn as the browser maps it (its CTM), not as asked.
+          const m = wand.el?.querySelector<SVGSVGElement>('.quote-wand__art > svg')?.getScreenCTM();
           return {
             on: wand.on,
             opacity: wand.el ? Number(getComputedStyle(wand.el).opacity) : 0,
             colour: wand.hex,
             angle: wand.angle,
             hot: hot ? { x: hot.left + hot.width / 2, y: hot.top + hot.height / 2 } : null,
-            height: wand.el?.getBoundingClientRect().height ?? 0,
+            height: m ? WAND.h * Math.hypot(m.a, m.b) : 0,
+            turn: m ? (Math.atan2(m.b, m.a) * 180) / Math.PI : 0,
+            outline: wand.outline ? (Number(wand.outline.getAttribute('stroke-width')) / 2) * (m ? Math.hypot(m.a, m.b) : 0) : 0,
           };
         };
         devHandle.langs = () => Object.fromEntries(langs);
@@ -909,6 +951,7 @@ export function createQuotePlayer(): QuotePlayer {
         wand.on = false;
         w.remove();
         wand.el = null;
+        wand.frame = wand.art = wand.outline = null;
         el.removeEventListener('pointermove', onPointer);
         el.removeEventListener('pointerdown', onPointer);
         el.removeEventListener('pointerleave', onLeave);
@@ -941,7 +984,17 @@ const devHandle: {
   /** Hold a turn's letter ease at share `p` of its way (null lets it go). */
   holdEase: (p: number | null) => void;
   /** The wand: shown, its opacity, colour, turn, and where its hotspot is on screen. */
-  wand: () => { on: boolean; opacity: number; colour: string; angle: number; hot: { x: number; y: number } | null; height: number } | null;
+  wand: () => {
+    on: boolean;
+    opacity: number;
+    colour: string;
+    angle: number;
+    hot: { x: number; y: number } | null;
+    /** The art's height and turn on screen, and its outline's width (CSS px). */
+    height: number;
+    turn: number;
+    outline: number;
+  } | null;
 } = {
   player: null,
   state: () => [],
