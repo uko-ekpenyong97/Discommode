@@ -27,6 +27,10 @@
  *                   tall at −32°; it goes off the quote; a click at the hotspot
  *                   translates; mid-morph its colour leaves the palette's first
  *                   and comes back after; a tap flicks it. Never on touch.
+ *   its pixels      on every quote page at 1× and 2×, the wand alone on white:
+ *                   the star on the pointer, #EDD431; the outline crisp (≥ 1
+ *                   device px, dark all round); mid-cycle the outline stays
+ *                   black while only the fill changes; #EDD431 after.
  *   grow, breath    hovered, the letters go to ×1.03 and back on leave; until
  *                   the first tap they breathe to ×1.012 (not while hovered),
  *                   and after it never. A turn while grown shows the bake at ×1.
@@ -445,6 +449,117 @@ async function checkTurnEase(page, check) {
   }
 }
 
+// ── the wand's pixels ────────────────────────────────────────────────────
+
+/** The spread a printed inside page opens on (Issue 01 has a cover). */
+const spreadOfPage = (n) => Math.floor((n + 1) / 2);
+
+/** The wand alone on white, around its star (`hot`), as raw RGB. */
+async function wandShot(page, hot) {
+  const clip = { x: Math.floor(hot.x - 45), y: Math.floor(hot.y - 20), width: 90, height: 70 };
+  await page.evaluate(() => document.documentElement.classList.add('__wand-alone'));
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const png = await page.screenshot({ clip });
+  await page.evaluate(() => document.documentElement.classList.remove('__wand-alone'));
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { data, n: info.width * info.height, png };
+}
+const lumaAt = (d, i) => 0.2126 * d[i * 3] + 0.7152 * d[i * 3 + 1] + 0.0722 * d[i * 3 + 2];
+const chromaAt = (d, i) => Math.max(d[i * 3], d[i * 3 + 1], d[i * 3 + 2]) - Math.min(d[i * 3], d[i * 3 + 1], d[i * 3 + 2]);
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+
+/**
+ * On every quote page, at 1× and 2×: the wand's star on the pointer (≤ 1px),
+ * #EDD431 at rest; its outline crisp (at least one device pixel of black) and
+ * black mid-cycle while the fill takes the palette; back to #EDD431 after.
+ * The wand is shot alone on white (the page hidden for the shot), the pointer
+ * still, after the flick.
+ */
+async function checkWandPixels(browser, { newPage, open, check }) {
+  for (const entry of QUOTES.pages) {
+    const n = entry.page;
+    for (const dpr of [1, 2]) {
+      const page = await newPage(browser, dpr);
+      await open(page, spreadOfPage(n));
+      await page.waitForFunction((n) => window.__quote?.state().some((s) => s.page === n && s.shown), n, { timeout: 15000 });
+      await page.addStyleTag({ content: 'html.__wand-alone body > *:not(.quote-wand) { visibility: hidden !important } html.__wand-alone, html.__wand-alone body { background: #fff !important }' });
+      const b = await page.locator(`.quote-layer[data-page="${n}"] .quote-layer__hit`).boundingBox();
+      const x = Math.round(b.x + b.width / 2) + 0.3;
+      const y = Math.round(b.y + b.height / 2) + 0.6;
+      await page.mouse.move(x - 40, y, { steps: 4 });
+      await page.mouse.move(x, y, { steps: 6 });
+      await page.waitForTimeout(700);
+      const w0 = await wandOf(page);
+      const rest = await wandShot(page, w0.hot);
+      // The outline: what is black at rest; the fill: what is the base colour.
+      const base = hexRgb(BASE);
+      const outline = [];
+      const fill = [];
+      let dark64 = 0;
+      for (let i = 0; i < rest.n; i++) {
+        if (lumaAt(rest.data, i) <= 64) dark64++;
+        if (lumaAt(rest.data, i) <= 32) outline.push(i);
+        else if (Math.hypot(rest.data[i * 3] - base[0], rest.data[i * 3 + 1] - base[1], rest.data[i * 3 + 2] - base[2]) <= 6) fill.push(i);
+      }
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(600); // past the flick (420ms): the wand is where it rests
+      const mids = [];
+      for (let k = 0; k < 5; k++) {
+        const w = await wandOf(page);
+        mids.push({ colour: w.colour, shot: await wandShot(page, w.hot) });
+        await page.waitForTimeout(170);
+      }
+      let worstLuma = 0;
+      let worstChroma = 0;
+      let fillMoved = 0;
+      const offBase = mids.filter((m) => m.colour !== BASE);
+      for (const m of offBase) {
+        for (const i of outline) {
+          worstLuma = Math.max(worstLuma, lumaAt(m.shot.data, i));
+          worstChroma = Math.max(worstChroma, chromaAt(m.shot.data, i));
+        }
+        // The fill is one colour, off the base (the shot may be a frame or two
+        // on from the colour read beside it, so it is not matched to that).
+        const med = [0, 1, 2].map((c) => fill.map((i) => m.shot.data[i * 3 + c]).sort((a, b) => a - b)[fill.length >> 1]);
+        const one = fill.filter((i) => Math.hypot(m.shot.data[i * 3] - med[0], m.shot.data[i * 3 + 1] - med[1], m.shot.data[i * 3 + 2] - med[2]) <= 8).length;
+        if (Math.hypot(med[0] - base[0], med[1] - base[1], med[2] - base[2]) > 24) fillMoved = Math.max(fillMoved, one / Math.max(1, fill.length));
+      }
+      await page.waitForFunction((n) => !window.__quote.state().find((s) => s.page === n)?.morphing, n, { timeout: 8000 });
+      await page.waitForTimeout(1500);
+      const w1 = await wandOf(page);
+      const tag = `page ${String(n).padStart(2, '0')} @${dpr}×`;
+      if (dpr === 2 && n === QUOTES.pages[0].page) {
+        await mkdir(OUT, { recursive: true });
+        await sharp(rest.png).toFile(join(OUT, `wand-rest-${dpr}x.png`));
+        // The shot furthest from the base colour.
+        const far = (h) => Math.hypot(...hexRgb(h).map((v, i) => v - base[i]));
+        const most = mids.reduce((m, x) => (far(x.colour) > far(m.colour) ? x : m));
+        await sharp(most.shot.png).toFile(join(OUT, `wand-mid-${dpr}x.png`));
+      }
+      check(
+        Math.hypot(w0.hot.x - x, w0.hot.y - y) <= 1 && w0.colour === BASE && Math.abs(w0.height - QUOTES.settings.wandSizePx) < 0.01,
+        `${tag}: the wand's star is on the pointer, at #EDD431`,
+        `hotspot ${Math.hypot(w0.hot.x - x, w0.hot.y - y).toFixed(2)}px off; ${w0.colour}; ${w0.height.toFixed(2)}px tall`,
+      );
+      check(
+        // The bitmap-turned 0.62px outline this replaced had 1 px ≤ 64 at 1× and
+        // 38 ≤ 32 at 2×; drawn turned, at ≥ 1 device px, ~85 and ~140.
+        (dpr === 1 ? dark64 >= 60 : outline.length >= 100) && w0.outline * dpr >= 0.999,
+        `${tag}: the outline is crisp: dark all round, at least a device pixel wide`,
+        `${dark64} px at luma ≤ 64, ${outline.length} at ≤ 32; outline ${(w0.outline * dpr).toFixed(2)} device px`,
+      );
+      check(
+        offBase.length >= 3 && worstLuma <= 48 && worstChroma <= 24 && fillMoved >= 0.9,
+        `${tag}: mid-cycle only the fill changes colour; the outline stays black`,
+        `${offBase.length} shots off base (${offBase.map((m) => m.colour).join(' ')}); outline worst luma ${worstLuma.toFixed(0)}, chroma ${worstChroma}; fill one colour off the base: ${(fillMoved * 100).toFixed(0)}%`,
+      );
+      check(w1.colour === BASE, `${tag}: after the morph the wand is #EDD431 again`, w1.colour);
+      await page.context().close();
+    }
+  }
+}
+
 // ── the section ──────────────────────────────────────────────────────────
 
 export async function checkQuote(browser, { newPage, open, check, viewport }) {
@@ -497,11 +612,18 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
   const on = await wandOf(page);
   const hov = await qstate(page);
   const native = await page.evaluate(() => getComputedStyle(document.querySelector('.book')).cursor);
-  const wandH = await page.evaluate(() => document.querySelector('.quote-wand').offsetHeight);
   check(
-    on.on && on.opacity === 1 && native === 'none' && on.hot && Math.hypot(on.hot.x - c.x, on.hot.y - c.y) <= 1 && Math.abs(on.angle - QUOTES.settings.wandTiltDeg) < 1e-6 && wandH === QUOTES.settings.wandSizePx,
-    'over the quote the cursor is the wand: its star on the pointer, 52px tall, at −32°',
-    `opacity ${on.opacity}, native cursor ${native}; hotspot ${on.hot ? Math.hypot(on.hot.x - c.x, on.hot.y - c.y).toFixed(2) : '?'}px from the pointer; ${wandH}px, ${on.angle}°; colour ${on.colour}`,
+    on.on &&
+      on.opacity === 1 &&
+      native === 'none' &&
+      on.hot &&
+      Math.hypot(on.hot.x - c.x, on.hot.y - c.y) <= 1 &&
+      Math.abs(on.angle - QUOTES.settings.wandTiltDeg) < 1e-6 &&
+      Math.abs(on.turn - QUOTES.settings.wandTiltDeg) < 0.01 &&
+      Math.abs(on.height - QUOTES.settings.wandSizePx) < 0.01 &&
+      on.colour === BASE,
+    'over the quote the cursor is the wand: its star on the pointer, 52px tall, at −32°, #EDD431',
+    `opacity ${on.opacity}, native cursor ${native}; hotspot ${on.hot ? Math.hypot(on.hot.x - c.x, on.hot.y - c.y).toFixed(2) : '?'}px from the pointer; ${on.height.toFixed(2)}px, ${on.turn.toFixed(2)}° on screen; colour ${on.colour}; outline ${on.outline.toFixed(2)}px`,
   );
   check(
     Math.abs(hov.scale - QUOTES.settings.hoverScale) < 1e-6 && hov.hovered && !hov.breathing,
@@ -782,4 +904,6 @@ export async function checkQuote(browser, { newPage, open, check, viewport }) {
     `${frames.length} frames, ${stray.length} letters off both layouts${stray.length ? ` (${stray.slice(0, 3).join(' ')})` : ''}; ${took}ms to settle`,
   );
   await rm.close();
+
+  await checkWandPixels(browser, { newPage, open, check });
 }

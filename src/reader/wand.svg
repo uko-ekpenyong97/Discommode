@@ -1,8 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="215 125 325 690" width="325" height="690">
-  <!-- Discommode wand cursor. Hotspot = star centre (377,296) in viewBox units = (162,171) from the top-left. Fill and stroke are recoloured at runtime (--wand). -->
-  <g style="fill: var(--wand, #E8D555); stroke: var(--wand, #E8D555)">
-    <path stroke="none" d="M358 372 L396 372 L411 766 Q412 797 382 797 L372 797 Q342 797 343 766 Z"/>
-    <polygon stroke-linejoin="round" stroke-width="26" points="377.0,170.0 411.1,249.1 496.8,257.1 432.2,313.9 451.1,397.9 377.0,354.0 302.9,397.9 321.8,313.9 257.2,257.1 342.9,249.1"/>
-  </g>
-  <circle class="quote-wand__hot" cx="377" cy="296" r="1" fill="none" stroke="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 279 671" width="279" height="671">
+  <!-- Discommode wand cursor (Figma Discommode-Website, frame "wand" 413:30). Hotspot = star centre (139,145). Only #wandFill is recoloured at runtime (--wand); the outline is black, drawn inside the shape's edge (a 16-unit stroke clipped to the shape). -->
+  <defs>
+    <path id="wandShape" d="M120.164 13.8195C126.151 -4.60646 152.22 -4.60652 158.207 13.8195L177.352 72.7462C180.03 80.9865 187.709 86.5656 196.374 86.5656H258.332C277.706 86.5656 285.762 111.358 270.087 122.746L219.962 159.164C212.953 164.257 210.02 173.284 212.697 181.525L231.843 240.451C237.83 258.877 216.74 274.2 201.066 262.812L166.073 237.388L182.878 639.025C183.592 656.07 169.965 670.278 152.905 670.278H124.467C107.407 670.278 93.7805 656.07 94.4937 639.025L111.267 238.136L77.3043 262.812C61.6301 274.2 40.5403 258.877 46.5269 240.451L65.6734 181.525C68.3507 173.284 65.4174 164.257 58.4078 159.164L8.28279 122.746C-7.3914 111.358 0.663424 86.5658 20.0377 86.5656H81.9967C90.6611 86.5655 98.3406 80.9865 101.018 72.7462L120.164 13.8195Z"/>
+    <clipPath id="wandClip"><use href="#wandShape"/></clipPath>
+  </defs>
+  <use id="wandFill" href="#wandShape" style="fill: var(--wand, #EDD431)"/>
+  <use class="quote-wand__outline" href="#wandShape" fill="none" stroke="#000" stroke-width="16" clip-path="url(#wandClip)"/>
+  <circle class="quote-wand__hot" cx="139" cy="145" r="1" fill="none" stroke="none"/>
 </svg>

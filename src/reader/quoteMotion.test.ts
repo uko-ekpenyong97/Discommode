@@ -79,7 +79,7 @@ describe('the wand’s colour, in OKLab', () => {
   it('passes through each colour in turn, one loop per cycle, back to the first', () => {
     const n = palette.length;
     for (let i = 0; i < n; i++) expect(oklabToHex(paletteAt(palette, (i * 1200) / n, 1200))).toBe(data.settings.wandPalette[i].toLowerCase());
-    expect(oklabToHex(paletteAt(palette, 1200, 1200))).toBe('#e8d555');
+    expect(oklabToHex(paletteAt(palette, 1200, 1200))).toBe('#edd431');
     // Between two stops it is their OKLab midpoint, not their sRGB one.
     const mid = paletteAt(palette, 1200 / n / 2, 1200);
     expect(labDistance(mid, palette[0])).toBeCloseTo(labDistance(mid, palette[1]), 9);
@@ -108,7 +108,7 @@ describe('the settings', () => {
       wandSizePx: 52,
       hoverScale: 1.03,
       colorCycleMs: 1200,
-      wandPalette: ['#E8D555', '#FF8E91', '#425EB6', '#519B66', '#F5A04A'],
+      wandPalette: ['#EDD431', '#FF8E91', '#425EB6', '#519B66', '#F5A04A'],
       breatheScale: 1.012,
       breathePeriodMs: 3600,
       breatheUntilFirstTap: true,

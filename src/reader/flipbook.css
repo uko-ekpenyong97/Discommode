@@ -431,8 +431,10 @@
 }
 
 /* The wand: fixed to the viewport, above everything, never in a pointer's way.
-   Its size, turn and place are written by the player; it fades with the
-   hover. Its colour is --wand (the SVG's fill and stroke). */
+   A square frame about the star, moved by whole device pixels; the art inside
+   it is turned and placed by the SVG (quotePlayer.ts `placeWand`), so nothing
+   resamples it. It fades with the hover. Its fill is --wand; its outline is
+   black. */
 .quote-wand {
   position: fixed;
   left: 0;
@@ -446,8 +448,12 @@
 .quote-wand[data-on] {
   opacity: 1;
 }
-.quote-wand svg {
+.quote-wand__frame {
   display: block;
   width: 100%;
   height: 100%;
+  overflow: visible;
+}
+.quote-wand__art svg {
+  overflow: visible;
 }
