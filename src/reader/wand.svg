@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="215 125 325 690" width="325" height="690">
+  <!-- Discommode wand cursor. Hotspot = star centre (377,296) in viewBox units = (162,171) from the top-left. Fill and stroke are recoloured at runtime (--wand). -->
+  <g style="fill: var(--wand, #E8D555); stroke: var(--wand, #E8D555)">
+    <path stroke="none" d="M358 372 L396 372 L411 766 Q412 797 382 797 L372 797 Q342 797 343 766 Z"/>
+    <polygon stroke-linejoin="round" stroke-width="26" points="377.0,170.0 411.1,249.1 496.8,257.1 432.2,313.9 451.1,397.9 377.0,354.0 302.9,397.9 321.8,313.9 257.2,257.1 342.9,249.1"/>
+  </g>
+  <circle class="quote-wand__hot" cx="377" cy="296" r="1" fill="none" stroke="none"/>
+</svg>

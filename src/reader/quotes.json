@@ -1,0 +1,45 @@
+{
+  "_note": "Chapter-break quotes for the translate morph. Coordinates are page pixels (2000x2600), from Figma DM-I01.AUG.2026 'Page 05' (2007:3546). Lines break exactly as in the print. Add more pages here later. The quote's and the attribution's positions are REGISTERED against the printed page (05.png), not Figma's: Figma's put the quote 14.85px low and 0.85px right (centerX 1000.5, top 1128) and the attribution 24.10px low and 4.10px right (right 1284, top 1387). The hint moved up with the attribution (Figma 1540, less the attribution's 24.35), keeping the prototype's spacing under it. Its \"ES\" and \"EN\" are bold and the rest regular, as in the prototype; its ⇄ is drawn (Space Mono has none), its stroke Space Mono's stem at arrowStrokeWeight. See docs/reader.md, 'Chapter-break quotes'.",
+  "settings": {
+    "durationMs": 2400,
+    "staggerMs": 800,
+    "arcPx": 60,
+    "easing": "inOutCubic",
+    "reuseOutOfOrder": true,
+    "scramble": true,
+    "showHint": true,
+    "defaultLang": "es",
+    "resetWhenPageLeaves": true,
+    "wandTiltDeg": -32,
+    "wandSizePx": 52,
+    "hoverScale": 1.03,
+    "colorCycleMs": 1200,
+    "wandPalette": ["#E8D555", "#FF8E91", "#425EB6", "#519B66", "#F5A04A"],
+    "breatheScale": 1.012,
+    "breathePeriodMs": 3600,
+    "breatheUntilFirstTap": true,
+    "flickOnTap": true
+  },
+  "styles": {
+    "quote": { "family": "Space Mono", "weight": 700, "sizePx": 45.833, "lineHeightPx": 68, "color": "#000000", "align": "center" },
+    "attribution": { "family": "Lora", "weight": 400, "sizePx": 33, "lineHeightPx": 42, "color": "#000000", "align": "right" },
+    "hint": { "family": "Space Mono", "weight": 400, "labelWeight": 700, "arrowStrokeWeight": 700, "sizePx": 24, "letterSpacingEm": 0.08, "color": "#519B66", "text": "ES ⇄ EN", "inactiveOpacity": 0.45 }
+  },
+  "pages": [
+    {
+      "page": 5,
+      "quote": {
+        "centerX": 999.6, "top": 1113.05,
+        "es": ["No podemos celebrar", "que un pájaro se", "enamore de su jaula."],
+        "en": ["We cannot celebrate", "a bird falling in", "love with its cage."]
+      },
+      "attribution": {
+        "right": 1279.95, "top": 1362.65,
+        "es": ["-Juan Carvajal,", "escritor"],
+        "en": ["-Juan Carvajal,", "writer"]
+      },
+      "hint": { "centerX": 1000, "top": 1515.65 },
+      "hitArea": { "x": 690, "y": 1100, "w": 620, "h": 400 }
+    }
+  ]
+}

@@ -12,7 +12,7 @@
  */
 import { registerBusy } from '../activity';
 import { animate } from 'motion';
-import type { Page, Spread } from './issue-01';
+import type { Page, PageEase, Spread } from './issue-01';
 import { CUT_MS, INNER_LEAF_EASE, JUMP, LAST_LEAF_EASE, cubicBezier, planRiffle } from './jump';
 import type { RiffleLeaf } from './jump';
 import { flipWake } from './flipWake';
@@ -97,6 +97,14 @@ export interface FlipEngineOptions {
    * hover-animation layer is the one that does today.
    */
   onTurnActive?: (active: boolean) => void;
+  /**
+   * Something on the page that takes a tap (the chapter-break quote,
+   * quotePlayer.ts): asked at every press that would start a turn, it returns
+   * the thing's tap, or null. A press it claims starts no turn; it becomes the
+   * ordinary drag once it has moved TAP_PX, and released before that it is the
+   * thing's tap instead of a turn.
+   */
+  tapTarget?: (e: PointerEvent) => (() => void) | null;
 }
 
 export interface FlipEngine {
@@ -218,6 +226,11 @@ interface Curl {
 
 interface DragState {
   id: number;
+  /** Which way a held press would turn (`onTap`, before its turn exists). */
+  dir: TurnDir;
+  /** Set while a press on a tap target has not moved like a drag yet: no turn
+   *  has started, and releasing now is its tap. */
+  onTap: (() => void) | null;
   x0: number;
   w: number;
   /** t at grab time — a drag that takes over a running tween resumes from it. */
@@ -264,10 +277,38 @@ function offsetB(i: number, overlap: number): string {
   return `calc(${i + 1} * var(--bw) * 0.5 / ${STRIP_COUNT} - var(--bw) * 0.5 + ${overlap}px)`;
 }
 
+/** Each face's own background-position-x, for `paintFace` to build on. */
+const facePos = new WeakMap<HTMLDivElement, string>();
+
+/** The page's letters scaled by --quote-s about (fx, fy) of the page: their
+ *  size and place, for a face (whose page is one --bw/2 wide, its x at `posX`). */
+const EASE_S = 'var(--quote-s, 1)';
+const easeSize = `calc(var(--bw) * 0.5 * ${EASE_S}) auto`;
+const easeX = (posX: string, fx: number) => `calc(${posX} + ${fx} * var(--bw) * 0.5 * (1 - ${EASE_S}))`;
+const easeY = (fy: number) => `calc(${fy} * var(--bw) * 0.65 * (1 - ${EASE_S}))`;
+
+/** A face showing `src` — or, for a page with `ease`, its letters at
+ *  --quote-s over its base (see `Page.ease`). */
+function paintFace(face: HTMLDivElement, src: string | null, ease: PageEase | null | undefined): void {
+  const posX = facePos.get(face) ?? '0px';
+  if (src && ease) {
+    face.style.backgroundImage = `url("${ease.letters}"), url("${ease.base}")`;
+    face.style.backgroundSize = `${easeSize}, calc(var(--bw) * 0.5) auto`;
+    face.style.backgroundPositionX = `${easeX(posX, ease.fx)}, ${posX}`;
+    face.style.backgroundPositionY = `${easeY(ease.fy)}, center`;
+    return;
+  }
+  face.style.backgroundImage = src ? `url("${src}")` : 'none';
+  face.style.backgroundSize = '';
+  face.style.backgroundPositionX = posX;
+  face.style.backgroundPositionY = '';
+}
+
 function makeFace(side: 'front' | 'back', posX: string): HTMLDivElement {
   const face = document.createElement('div');
   face.className = `flip-face flip-face--${side}`;
   face.style.backgroundPositionX = posX;
+  facePos.set(face, posX);
   const sh = document.createElement('div');
   sh.className = 'flip-sh';
   const gl = document.createElement('div');
@@ -362,11 +403,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     return built;
   }
 
-  function paintCurl(curl: Curl, liftSrc: string | null, backSrc: string | null): void {
-    const lift = liftSrc ? `url("${liftSrc}")` : 'none';
-    const back = backSrc ? `url("${backSrc}")` : 'none';
-    for (let i = 0; i < curl.fronts.length; i++) curl.fronts[i].style.backgroundImage = lift;
-    for (let i = 0; i < curl.backs.length; i++) curl.backs[i].style.backgroundImage = back;
+  /** The leaf's two pages. The lifting page may ease its letters (`Page.ease`):
+   *  the page it lands on never does. */
+  function paintCurl(curl: Curl, liftSrc: string | null, backSrc: string | null, liftEase?: PageEase | null): void {
+    for (let i = 0; i < curl.fronts.length; i++) paintFace(curl.fronts[i], liftSrc, liftEase);
+    for (let i = 0; i < curl.backs.length; i++) paintFace(curl.backs[i], backSrc, null);
   }
 
   // --- the curl math ------------------------------------------------------
@@ -475,16 +516,24 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
    * Build the flat landing plate — exactly as React builds a static slot, so it
    * is pixel-identical to what the turn lands on (verified 0/468000 differing).
    */
-  function buildPlate(side: 'left' | 'right', src: string | null): HTMLDivElement {
+  function buildPlate(side: 'left' | 'right', src: string | null, ease?: PageEase | null): HTMLDivElement {
     const plate = document.createElement('div');
     plate.className = `book__page book__page--${side} book__page--plate`;
-    if (src) {
+    const add = (s: string) => {
       const img = document.createElement('img');
-      img.src = src;
+      img.src = s;
       img.alt = '';
       img.draggable = false;
       plate.append(img);
-    }
+      return img;
+    };
+    if (src && ease) {
+      // The base, and the letters over it at --quote-s (flipbook.css).
+      add(ease.base);
+      const letters = add(ease.letters);
+      letters.className = 'book__ease-letters';
+      letters.style.transformOrigin = `${ease.fx * 100}% ${ease.fy * 100}%`;
+    } else if (src) add(src);
     return plate;
   }
 
@@ -589,7 +638,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     layer.append(slot);
 
     const curl = getCurl(dir);
-    paintCurl(curl, lift?.src ?? null, back?.src ?? null);
+    paintCurl(curl, lift?.src ?? null, back?.src ?? null, lift?.ease);
     layer.append(curl.root);
 
     // Slide profile: the cover (spread 0) and back (last spread) rest half a page
@@ -807,8 +856,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     clearTurn();
     const layer = document.createElement('div');
     layer.className = 'book__turn';
-    const nearSlot = buildPlate(nearSide, spreads[from][near]?.src ?? null);
-    const farSlot = buildPlate(farSide, spreads[from][1 - near]?.src ?? null);
+    const nearSlot = buildPlate(nearSide, spreads[from][near]?.src ?? null, spreads[from][near]?.ease);
+    const farSlot = buildPlate(farSide, spreads[from][1 - near]?.src ?? null, spreads[from][1 - near]?.ease);
     // Slots, not landing plates: under every leaf, and casting the contact shadow.
     for (const slot of [nearSlot, farSlot]) slot.classList.replace('book__page--plate', 'book__page--slot');
     layer.append(nearSlot, farSlot);
@@ -983,7 +1032,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
         // if the leaf before this one was (the slot swapped to it at that size).
         const prev = r.leaves[l.k - 1];
         const liftFast = prev ? isFast(prev) : false;
-        const lift = srcFor(spreads[l.from][near], liftFast && fast);
+        const liftPage = spreads[l.from][near];
+        const lift = srcFor(liftPage, liftFast && fast);
         const back = srcFor(spreads[l.to][1 - near], fast);
         if (import.meta.env.DEV && debugColours) {
           const hue = DEBUG_HUES[l.k % DEBUG_HUES.length];
@@ -993,7 +1043,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
           }
         } else {
           for (const f of [...l.curl.fronts, ...l.curl.backs]) f.style.backgroundColor = '';
-          paintCurl(l.curl, lift, back);
+          // Only the first leaf lifts a page that can still be easing.
+          paintCurl(l.curl, lift, back, l.k === 0 && !(liftFast && fast) ? liftPage?.ease : null);
         }
         r.layer.append(wrapOf(l.curl));
         r.pendingNear = { src: srcFor(spreads[l.to][near], fast), frame: r.frame };
@@ -1203,18 +1254,36 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       // nothing left to drag — the turn is a frame from completing. Let it.
       if (state.plated) return;
       killTween();
-    } else if (!startTurn(dir)) {
-      return; // out of range: no capture, so the rest of the gesture is inert
+    } else {
+      // A press on something that takes a tap: no turn yet (see `tapTarget`).
+      const onTap = opts.tapTarget?.(e) ?? null;
+      if (onTap) {
+        drag = { id: e.pointerId, dir, onTap, x0: e.clientX, w: rect.width, t0: 0, moved: 0 };
+        book.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (!startTurn(dir)) return; // out of range: no capture, so the rest of the gesture is inert
     }
 
-    drag = { id: e.pointerId, x0: e.clientX, w: rect.width, t0: state?.t ?? 0, moved: 0 };
+    drag = { id: e.pointerId, dir, onTap: null, x0: e.clientX, w: rect.width, t0: state?.t ?? 0, moved: 0 };
     book.setPointerCapture(e.pointerId);
   }
 
   function onPointerMove(e: PointerEvent): void {
-    if (!drag || e.pointerId !== drag.id || !state) return;
+    if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x0;
     drag.moved = Math.max(drag.moved, Math.abs(dx));
+    if (drag.onTap) {
+      // A held press on a tap target: a drag once it has moved like one.
+      if (drag.moved < TAP_PX) return;
+      drag.onTap = null;
+      if (!startTurn(drag.dir)) {
+        if (book.hasPointerCapture(drag.id)) book.releasePointerCapture(drag.id);
+        drag = null;
+        return;
+      }
+    }
+    if (!state) return;
     const raw = (state.dir === 'next' ? -dx : dx) / (drag.w * DRAG_SPAN);
     applyTurn(Math.min(1, Math.max(0, drag.t0 + raw)));
   }
@@ -1222,8 +1291,14 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   function onPointerEnd(e: PointerEvent): void {
     if (!drag || e.pointerId !== drag.id) return;
     const tap = drag.moved < TAP_PX;
+    const onTap = drag.onTap;
     if (book.hasPointerCapture(drag.id)) book.releasePointerCapture(drag.id);
     drag = null;
+    if (onTap) {
+      // Never became a drag: the target's tap (a cancelled press is nothing).
+      if (e.type === 'pointerup') onTap();
+      return;
+    }
     if (!state) return;
     if (tap || state.t > COMMIT_T) commitTurn();
     else cancelTurn();
