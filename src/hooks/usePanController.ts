@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useMemo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import {
   START_COL,
@@ -282,6 +282,15 @@ export function usePanController(options: PanOptions = {}): PanController {
   // gap). Returns the card's window offset, on-screen centre, and scaled size —
   // used both for the hover overlay and for a tap's FLIP origin. Layout-based
   // (ignores the small per-card facing tilt), which is plenty for both uses.
+  // A screen that cannot hover (touch): the centred card shows its overlay.
+  const NO_HOVER = useMemo(() => window.matchMedia('(hover: none)'), []);
+  useEffect(() => {
+    const on = () => (cardFaceDirtyRef.current = true);
+    if (NO_HOVER.matches) on();
+    NO_HOVER.addEventListener('change', on);
+    return () => NO_HOVER.removeEventListener('change', on);
+  }, [NO_HOVER]);
+
   const cardHitAt = useCallback((px: number, py: number): CardHit | null => {
     const spanX = cellSpanX();
     const spanY = cellSpanY();
@@ -479,7 +488,10 @@ export function usePanController(options: PanOptions = {}): PanController {
       // The card under the cursor (null in a gap); hit-tested each frame so it
       // tracks the grid sliding beneath a still cursor. Drives the hover overlay
       // (when settled) and the per-card opacity lift.
-      const hover = cursorActiveRef.current ? cardHitAt(px, py) : null;
+      // With no hover at all (a touch screen), the card in the middle stands in
+      // for the hovered one once the grid is at rest: its number, captions and
+      // CTA show there, as they do under a mouse (docs/mobile.md).
+      const hover = cursorActiveRef.current ? cardHitAt(px, py) : NO_HOVER.matches && settled ? cardHitAt(hw, hh) : null;
       hoverCellRef.current = hover;
       const overlayActive = settled && hover !== null;
       const liftOp = config.hoverLiftOpacity;

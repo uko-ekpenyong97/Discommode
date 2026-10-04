@@ -505,14 +505,20 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
 
   // ── pointer ────────────────────────────────────────────────────────────
   let pointer: { x: number; y: number } | null = null;
+  // A finger dents the paper while it is down; lifting it lets the paper
+  // spring back, as the mouse leaving does.
   const onMove = (e: PointerEvent) => {
-    if (e.pointerType === 'touch') return;
     pointer = { x: e.clientX, y: e.clientY };
   };
   const onLeave = () => {
     pointer = null;
   };
+  const onLift = (e: PointerEvent) => {
+    if (e.pointerType !== 'mouse') pointer = null;
+  };
   window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('pointerup', onLift);
+  window.addEventListener('pointercancel', onLift);
   document.documentElement.addEventListener('pointerleave', onLeave);
   window.addEventListener('blur', onLeave);
 

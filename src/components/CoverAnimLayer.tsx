@@ -245,8 +245,9 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover', boilWith }: C
     const host = listen;
     if (!host || !data || fit.scale <= 0) return;
 
+    // A finger is the hover while it is down: a press on the cover plays its
+    // objects, and lifting it is leaving, so they run out their loop and rest.
     const onMove = (e: PointerEvent) => {
-      if (e.pointerType === 'touch') return;
       const root = rootRef.current;
       const el = root?.parentElement;
       if (!root || !el) return;
@@ -269,13 +270,23 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover', boilWith }: C
       setPageHover(false);
     };
 
+    const onPress = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') onMove(e);
+    };
+    const onLift = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') onLeave();
+    };
     host.addEventListener('pointermove', onMove);
     host.addEventListener('pointerleave', onLeave);
     host.addEventListener('pointercancel', onLeave);
+    host.addEventListener('pointerdown', onPress);
+    host.addEventListener('pointerup', onLift);
     return () => {
       host.removeEventListener('pointermove', onMove);
       host.removeEventListener('pointerleave', onLeave);
       host.removeEventListener('pointercancel', onLeave);
+      host.removeEventListener('pointerdown', onPress);
+      host.removeEventListener('pointerup', onLift);
     };
   }, [data, fit, listen]);
 
