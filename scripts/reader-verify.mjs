@@ -1,7 +1,8 @@
 /**
  * The reader, in Chrome. `npm run verify:reader` with the dev server running
  * (`npm run dev`; `--url` for another origin, `--runs N` for the frame budget,
- * `--only frames,zorder,nav,exit,hover,life,sky,pageanims,pageclip,quote` for a subset).
+ * `--only frames,zorder,nav,exit,hover,life,sky,pageanims,pageclip,quote` for a subset;
+ * `--quote-pages 2,39` for some of the quote pages).
  *
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
@@ -79,15 +80,19 @@
  *                         Next/Prev both ways, a drag and a riffle the layer
  *                         never shows with a leaf up, and held mid-turn it adds
  *                         no pixel anywhere.
- *   chapter-break quote   (`quote`, scripts/quote-checks.mjs) page 05: the
- *                         Spanish layer against the printed page, at 2000×2600
- *                         (each line registered, the ink, the differing pixels)
- *                         and on screen at 1× and 2×; a click on the quote
- *                         translates and turns nothing, a click elsewhere and a
- *                         drag from the quote turn; the morph ends on the
- *                         English layout; a turn mid-morph shows the English
- *                         bake, never the plate; away and back is Spanish; the
- *                         cursor tag, the keyboard, touch, reduced motion.
+ *   chapter-break quotes  (`quote`, scripts/quote-checks.mjs) every quote
+ *                         page — 02, 05, 12, 21, 29, 39; `--quote-pages 2,39`
+ *                         for some: the Spanish layer against the printed page,
+ *                         at 2000×2600 (each line registered, the ink, its
+ *                         colours, the differing pixels) and on screen at 1×
+ *                         and 2×; a click on the quote translates and turns
+ *                         nothing, a click elsewhere and a drag from the quote
+ *                         turn; the morph ends on the English layout; a turn
+ *                         mid-morph shows the English bake, never the plate;
+ *                         away and back is Spanish; the wand, the grow, the
+ *                         breath, the turn ease, the keyboard, touch, reduced
+ *                         motion. And 02 beside the cover: the doorway's open
+ *                         onto 01 | 02 and Prev back to the cover.
  *
  * The z-order and exit checks photograph the book over the sky now, so they
  * hold the sky still first (`stillSky`: its clock pinned, its wake frozen) —
@@ -1633,7 +1638,7 @@ async function run() {
   if (ONLY.includes('sky')) await checkSky(browser);
   if (ONLY.includes('pageanims')) await checkPageAnims(browser);
   if (ONLY.includes('pageclip')) await checkPageAnimClip(browser);
-  if (ONLY.includes('quote')) await checkQuote(browser, { newPage, open, check, viewport: VIEWPORT });
+  if (ONLY.includes('quote')) await checkQuote(browser, { newPage, open, check, viewport: VIEWPORT, origin: B });
 
   check(errors.length === 0, 'no page errors', errors.slice(0, 3).join(' | '));
   await browser.close();

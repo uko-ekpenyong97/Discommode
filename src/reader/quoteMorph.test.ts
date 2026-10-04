@@ -53,6 +53,23 @@ describe('layout', () => {
     expect(g.at(-1)!.x).toBe(190);
   });
 
+  it('left-aligns on the anchor', () => {
+    const g = layoutBlock({ ...block, align: 'left', anchorX: 50 }, 'es', mono);
+    expect(g.map((x) => x.x)).toEqual([50, 60, 80, 50, 60]);
+  });
+
+  it('keeps the kern before a letter: "Ya" set tight puts the a under the Y', () => {
+    // Monospace, but "Ya" kerned 2 tighter, as Lora sets "Yá".
+    const kerned: Measure = (_font, text) => ({ width: text.length * 10 - (text.includes('Ya') ? 2 : 0), ascent: 8, descent: 2 });
+    const g = layoutBlock({ ...block, align: 'left', anchorX: 0, lines: { es: ['xYaz'], en: ['x'] } }, 'es', kerned);
+    expect(g.map((x) => [x.ch, x.x])).toEqual([
+      ['x', 0],
+      ['Y', 10],
+      ['a', 18],
+      ['z', 28],
+    ]);
+  });
+
   it('puts the baseline where CSS centres a line box', () => {
     expect(baselineIn(68, { width: 0, ascent: 51.33, descent: 16.55 })).toBeCloseTo(51.39, 2);
   });

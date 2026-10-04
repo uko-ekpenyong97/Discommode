@@ -1,5 +1,5 @@
 {
-  "_note": "Chapter-break quotes for the translate morph. Coordinates are page pixels (2000x2600), from Figma DM-I01.AUG.2026 'Page 05' (2007:3546). Lines break exactly as in the print. Add more pages here later. The quote's and the attribution's positions are REGISTERED against the printed page (05.png), not Figma's: Figma's put the quote 14.85px low and 0.85px right (centerX 1000.5, top 1128) and the attribution 24.10px low and 4.10px right (right 1284, top 1387). The hint moved up with the attribution (Figma 1540, less the attribution's 24.35), keeping the prototype's spacing under it. Its \"ES\" and \"EN\" are bold and the rest regular, as in the prototype; its ⇄ is drawn (Space Mono has none), its stroke Space Mono's stem at arrowStrokeWeight. See docs/reader.md, 'Chapter-break quotes'.",
+  "_note": "Chapter-break quotes for the translate morph. Coordinates are page pixels (2000x2600), from Figma DM-I01.AUG.2026 'Page 05' (2007:3546). Lines break exactly as in the print. The quote's and the attribution's positions are REGISTERED against the printed page (05.png), not Figma's: Figma's put the quote 14.85px low and 0.85px right (centerX 1000.5, top 1128) and the attribution 24.10px low and 4.10px right (right 1284, top 1387). The hint moved up with the attribution (Figma 1540, less the attribution's 24.35), keeping the prototype's spacing under it. Its \"ES\" and \"EN\" are bold and the rest regular, as in the prototype; its ⇄ is drawn (Space Mono has none), its stroke Space Mono's stem at arrowStrokeWeight. See docs/reader.md, 'Chapter-break quotes'. Pages 02, 12, 21, 29 and 39 are from ~/Discommode-pages/01/translate/quotes-more.json (Figma DM-I01.AUG.2026, Design page), registered against 02.png … 39.png the same way (Figma had every block 7-27px low); their hints sit the prototype's 69px under the attribution's last line and their hit areas follow page 05's margins. Per page: ink and hintColor (styles' when absent); 39 is one left-aligned line (align, left).",
   "settings": {
     "durationMs": 2400,
     "staggerMs": 800,
@@ -21,25 +21,273 @@
     "flickOnTap": true
   },
   "styles": {
-    "quote": { "family": "Space Mono", "weight": 700, "sizePx": 45.833, "lineHeightPx": 68, "color": "#000000", "align": "center" },
-    "attribution": { "family": "Lora", "weight": 400, "sizePx": 33, "lineHeightPx": 42, "color": "#000000", "align": "right" },
-    "hint": { "family": "Space Mono", "weight": 400, "labelWeight": 700, "arrowStrokeWeight": 700, "sizePx": 24, "letterSpacingEm": 0.08, "color": "#519B66", "text": "ES ⇄ EN", "inactiveOpacity": 0.45 }
+    "quote": {
+      "family": "Space Mono",
+      "weight": 700,
+      "sizePx": 45.833,
+      "lineHeightPx": 68,
+      "color": "#000000",
+      "align": "center"
+    },
+    "attribution": {
+      "family": "Lora",
+      "weight": 400,
+      "sizePx": 33,
+      "lineHeightPx": 42,
+      "color": "#000000",
+      "align": "right"
+    },
+    "hint": {
+      "family": "Space Mono",
+      "weight": 400,
+      "labelWeight": 700,
+      "arrowStrokeWeight": 700,
+      "sizePx": 24,
+      "letterSpacingEm": 0.08,
+      "color": "#519B66",
+      "text": "ES ⇄ EN",
+      "inactiveOpacity": 0.45
+    }
   },
   "pages": [
     {
       "page": 5,
       "quote": {
-        "centerX": 999.6, "top": 1113.05,
-        "es": ["No podemos celebrar", "que un pájaro se", "enamore de su jaula."],
-        "en": ["We cannot celebrate", "a bird falling in", "love with its cage."]
+        "centerX": 999.6,
+        "top": 1113.05,
+        "es": [
+          "No podemos celebrar",
+          "que un pájaro se",
+          "enamore de su jaula."
+        ],
+        "en": [
+          "We cannot celebrate",
+          "a bird falling in",
+          "love with its cage."
+        ]
       },
       "attribution": {
-        "right": 1279.95, "top": 1362.65,
-        "es": ["-Juan Carvajal,", "escritor"],
-        "en": ["-Juan Carvajal,", "writer"]
+        "right": 1279.95,
+        "top": 1362.65,
+        "es": [
+          "-Juan Carvajal,",
+          "escritor"
+        ],
+        "en": [
+          "-Juan Carvajal,",
+          "writer"
+        ]
       },
-      "hint": { "centerX": 1000, "top": 1515.65 },
-      "hitArea": { "x": 690, "y": 1100, "w": 620, "h": 400 }
+      "hint": {
+        "centerX": 1000,
+        "top": 1515.65
+      },
+      "hitArea": {
+        "x": 690,
+        "y": 1100,
+        "w": 620,
+        "h": 400
+      }
+    },
+    {
+      "page": 2,
+      "ink": "#000000",
+      "hintColor": "#000000",
+      "quote": {
+        "centerX": 999.9,
+        "top": 1111.9,
+        "es": [
+          "Solo quien se arriesgue a ir",
+          "demasiado lejos podrá saber",
+          "que tan lejos puede llegar."
+        ],
+        "en": [
+          "Only those who dare to",
+          "go too far will know",
+          "how far they can go."
+        ]
+      },
+      "attribution": {
+        "right": 1392.35,
+        "top": 1369.05,
+        "es": [
+          "-Nahila Hernandez,",
+          "ultramaratonista"
+        ],
+        "en": [
+          "-Nahila Hernandez,",
+          "ultramarathon runner"
+        ]
+      },
+      "hint": {
+        "centerX": 1000,
+        "top": 1522.05
+      },
+      "hitArea": {
+        "x": 580,
+        "y": 1100,
+        "w": 840,
+        "h": 400
+      }
+    },
+    {
+      "page": 12,
+      "ink": "#FFF5EC",
+      "hintColor": "#FFF5EC",
+      "quote": {
+        "centerX": 999.8,
+        "top": 1111.9,
+        "es": [
+          "Estoy cansado de no saber",
+          "a dónde ir, es decir, de",
+          "no saber estar en mi."
+        ],
+        "en": [
+          "I'm tired of not knowing",
+          "where to go, that is, of not",
+          "knowing how to be in myself."
+        ]
+      },
+      "attribution": {
+        "right": 1350.2,
+        "top": 1361.3,
+        "es": [
+          "-Ricardo Yáñez,",
+          "escritor"
+        ],
+        "en": [
+          "-Ricardo Yáñez,",
+          "writer"
+        ]
+      },
+      "hint": {
+        "centerX": 1000,
+        "top": 1514.3
+      },
+      "hitArea": {
+        "x": 580,
+        "y": 1100,
+        "w": 840,
+        "h": 390
+      }
+    },
+    {
+      "page": 21,
+      "ink": "#FFF5EC",
+      "hintColor": "#FFF5EC",
+      "quote": {
+        "centerX": 999.75,
+        "top": 1110.9,
+        "es": [
+          "No basta siquiera",
+          "descubrir lo que somos.",
+          "Hay que inventarnos."
+        ],
+        "en": [
+          "Merely discovering who we",
+          "are is not enough.",
+          "We must reinvent ourselves."
+        ]
+      },
+      "attribution": {
+        "right": 1322.1,
+        "top": 1360.35,
+        "es": [
+          "-Rosario Castellanos,",
+          "escritora y diplomática"
+        ],
+        "en": [
+          "-Rosario Castellanos,",
+          "writer and diplomat"
+        ]
+      },
+      "hint": {
+        "centerX": 1000,
+        "top": 1513.35
+      },
+      "hitArea": {
+        "x": 590,
+        "y": 1100,
+        "w": 820,
+        "h": 390
+      }
+    },
+    {
+      "page": 29,
+      "ink": "#000000",
+      "hintColor": "#519B66",
+      "quote": {
+        "centerX": 998.85,
+        "top": 1111.9,
+        "es": [
+          "Si no cuentas una historia",
+          "se quedará en tu garganta,",
+          "se oxidará y te envenenará."
+        ],
+        "en": [
+          "Unless you tell a story,",
+          "it remains in your throat,",
+          "rusting and poisoning you."
+        ]
+      },
+      "attribution": {
+        "right": 1379,
+        "top": 1367.8,
+        "es": [
+          "-Guillermo Arriaga,",
+          "guionista y director de cine."
+        ],
+        "en": [
+          "-Guillermo Arriaga,",
+          "screenwriter and film director."
+        ]
+      },
+      "hint": {
+        "centerX": 1000,
+        "top": 1520.8
+      },
+      "hitArea": {
+        "x": 590,
+        "y": 1100,
+        "w": 820,
+        "h": 400
+      }
+    },
+    {
+      "page": 39,
+      "ink": "#000000",
+      "hintColor": "#519B66",
+      "quote": {
+        "align": "left",
+        "left": 538.25,
+        "top": 1253.05,
+        "es": [
+          "A vivir solo se aprende viviendo."
+        ],
+        "en": [
+          "You only learn to live by living."
+        ]
+      },
+      "attribution": {
+        "right": 1463.65,
+        "top": 1368.95,
+        "es": [
+          "-Sentencia Náhual"
+        ],
+        "en": [
+          "-Nahuatl proverb"
+        ]
+      },
+      "hint": {
+        "centerX": 1000,
+        "top": 1479.95
+      },
+      "hitArea": {
+        "x": 510,
+        "y": 1240,
+        "w": 980,
+        "h": 220
+      }
     }
   ]
 }

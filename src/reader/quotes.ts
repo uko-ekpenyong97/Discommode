@@ -63,7 +63,12 @@ interface HintStyle {
 
 interface PageEntry {
   page: number;
-  quote: { centerX: number; top: number; es: string[]; en: string[] };
+  /** The quote's and the attribution's colour, and the hint's, on this page's
+   *  ground; `styles`' when absent. */
+  ink?: string;
+  hintColor?: string;
+  /** `styles.quote.align` unless given: centred on `centerX`, or set from `left`. */
+  quote: { align?: 'center' | 'left'; centerX?: number; left?: number; top: number; es: string[]; en: string[] };
   attribution: { right: number; top: number; es: string[]; en: string[] };
   hint: { centerX: number; top: number };
   hitArea: { x: number; y: number; w: number; h: number };
@@ -102,6 +107,7 @@ export const QUOTE_FACES = [
 
 function toPage(e: PageEntry): QuotePage {
   const join = (lines: string[]) => lines.join(' ');
+  const quoteAlign = e.quote.align ?? styles.quote.align;
   return {
     page: e.page,
     blocks: [
@@ -109,8 +115,8 @@ function toPage(e: PageEntry): QuotePage {
         key: 'quote',
         font: QUOTE_FONTS.quote,
         lineHeight: styles.quote.lineHeightPx,
-        align: styles.quote.align,
-        anchorX: e.quote.centerX,
+        align: quoteAlign,
+        anchorX: (quoteAlign === 'left' ? e.quote.left : e.quote.centerX) ?? NaN,
         top: e.quote.top,
         lines: { es: e.quote.es, en: e.quote.en },
       },
@@ -124,7 +130,7 @@ function toPage(e: PageEntry): QuotePage {
         lines: { es: e.attribution.es, en: e.attribution.en },
       },
     ],
-    colors: { quote: styles.quote.color, attribution: styles.attribution.color },
+    colors: { quote: e.ink ?? styles.quote.color, attribution: e.ink ?? styles.attribution.color },
     hint: {
       font: QUOTE_FONTS.hint,
       text: styles.hint.text,
@@ -132,7 +138,7 @@ function toPage(e: PageEntry): QuotePage {
       lineHeight: styles.hint.sizePx,
       centerX: e.hint.centerX,
       top: e.hint.top,
-      color: styles.hint.color,
+      color: e.hintColor ?? styles.hint.color,
       inactiveOpacity: styles.hint.inactiveOpacity,
       sizePx: styles.hint.sizePx,
       arrowStrokeWeight: styles.hint.arrowStrokeWeight,

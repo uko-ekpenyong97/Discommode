@@ -34,6 +34,7 @@
  */
 import { registerBusy } from '../activity';
 import WAND_SVG from './wand.svg?raw';
+import type { BakeJob, BakeReply } from './bakeWorker';
 import type { Page, Spread } from './issue-01';
 import { pagesNear } from './pageAnimGeometry';
 import { PAGE_H, PAGE_W } from './pageAnims';
@@ -117,10 +118,13 @@ function layoutOf(q: QuotePage): Layout {
 
 // ── drawing ─────────────────────────────────────────────────────────────
 
-/** The point the letters grow and breathe about: the quote's centre, page px. */
+/** The point the letters grow and breathe about: the quote's centre, page px
+ *  (a left-aligned quote's by its printed lines' width; the fonts are loaded). */
 function scaleCentre(q: QuotePage): [number, number] {
   const b = q.blocks.find((x) => x.key === 'quote') ?? q.blocks[0];
-  return [b.anchorX, b.top + (b.lines.es.length * b.lineHeight) / 2];
+  const w = b.align === 'center' ? 0 : Math.max(...b.lines[PRINTED].map((l) => measure(b.font, l).width));
+  const cx = b.align === 'left' ? b.anchorX + w / 2 : b.align === 'right' ? b.anchorX - w / 2 : b.anchorX;
+  return [cx, b.top + (b.lines[PRINTED].length * b.lineHeight) / 2];
 }
 
 /** Letters and hint, page px × k, onto whatever is already in `ctx`. The
@@ -217,6 +221,52 @@ interface Bake {
   img: HTMLImageElement;
 }
 
+/** A drawn bake as WebP. Encoded in a worker (bakeWorker.ts): `toBlob` here
+ *  snapshots the 2000×2600 canvas on the main thread, 8–16ms a bake, and a
+ *  quote page's first settle runs inside the turn's last frames — it dropped
+ *  one. Here only the drawing (under a millisecond) and `createImageBitmap`.
+ *  `toBlob` if the worker cannot be had. */
+let encoder: Worker | null | undefined;
+let encodeId = 0;
+const encoding = new Map<number, (b: Blob | null) => void>();
+
+function encode(c: HTMLCanvasElement): Promise<Blob | null> {
+  const here = () => new Promise<Blob | null>((resolve) => c.toBlob(resolve, BAKE_TYPE, BAKE_QUALITY));
+  if (encoder === undefined) {
+    try {
+      encoder = typeof OffscreenCanvas === 'function' ? new Worker(new URL('./bakeWorker.ts', import.meta.url), { type: 'module' }) : null;
+    } catch {
+      encoder = null;
+    }
+    if (encoder) {
+      encoder.onmessage = (e: MessageEvent<BakeReply>) => {
+        const done = encoding.get(e.data.id);
+        encoding.delete(e.data.id);
+        done?.('blob' in e.data ? e.data.blob : null);
+      };
+      encoder.onerror = () => {
+        // Gone: what it held is encoded here, and so is everything after.
+        encoder = null;
+        for (const done of encoding.values()) done(null);
+        encoding.clear();
+      };
+    }
+  }
+  const w = encoder;
+  if (!w) return here();
+  return createImageBitmap(c)
+    .then(
+      (bitmap) =>
+        new Promise<Blob | null>((resolve) => {
+          const id = ++encodeId;
+          encoding.set(id, resolve);
+          w.postMessage({ id, bitmap, type: BAKE_TYPE, quality: BAKE_QUALITY } satisfies BakeJob, [bitmap]);
+        }),
+    )
+    .catch(() => null)
+    .then((blob) => blob ?? here());
+}
+
 const bakes = new Map<string, Bake>();
 const baking = new Map<string, Promise<Bake | null>>();
 const bakeKey = (page: number, lang: Lang, hint: boolean, kind: BakeKind = 'page') => `${page}:${lang}:${hint ? 1 : 0}:${kind}`;
@@ -227,7 +277,7 @@ function bakeOne(q: QuotePage, plate: HTMLImageElement, lang: Lang, hint: boolea
   if (done) return Promise.resolve(done);
   let p = baking.get(key);
   if (!p) {
-    p = new Promise<Blob | null>((resolve) => renderPage(q, plate, lang, hint, kind).toBlob(resolve, BAKE_TYPE, BAKE_QUALITY))
+    p = encode(renderPage(q, plate, lang, hint, kind))
       .then(async (blob) => {
         if (!blob) return null;
         const img = new Image();
