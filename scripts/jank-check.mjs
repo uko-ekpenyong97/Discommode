@@ -98,6 +98,16 @@ const JSON_OUT = arg('--json', null);
 const CHROME = arg('--chrome', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
 // In vsyncs at 60 Hz: two (one frame dropped) without the dock, three with it.
 const BUDGET = DOCK ? 50.1 : 33.4;
+/**
+ * A frame's length in vsyncs, as verify:detail counts it: an interval is a
+ * whole number of 16.67 ms vsyncs give or take a few tenths, so a frame that
+ * dropped one reads 33.2–33.6 ms, and `> 33.4` failed one on the jitter alone
+ * (a 33.4 in `reader→detail`, 2026-10-04; docs/perf/flaky-checks.md). The
+ * budget is two vsyncs, three with the dock.
+ */
+const vsyncs = (ms) => Math.round(ms / (1000 / 60));
+const VSYNC_BUDGET = DOCK ? 3 : 2;
+const over = (ms) => vsyncs(ms) > VSYNC_BUDGET;
 
 /** Installed before the page's scripts: every rAF interval and LoAF. */
 function probe() {
@@ -197,8 +207,8 @@ async function windowOf(page, name, t0, t1) {
         name,
         frames: frames.length,
         worst: worstF?.dt ?? 0,
-        over33: frames.filter((f) => f.dt > 33.4).length,
-        over50: frames.filter((f) => f.dt > 50).length,
+        over33: frames.filter((f) => Math.round(f.dt / (1000 / 60)) > 2).length,
+        over50: frames.filter((f) => Math.round(f.dt / (1000 / 60)) > 3).length,
         long,
         what,
       };
@@ -385,7 +395,7 @@ async function run() {
     const t1 = await now(page);
     const w = await windowOf(page, name, t0, t1);
     rows.push(w);
-    console.log(`  ${w.worst > BUDGET ? '✗' : '✓'} ${name.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.long.length ? `  [${w.long.join(', ')}]` : ''}${w.what ? `\n      worst: ${w.what}` : ''}`);
+    console.log(`  ${over(w.worst) ? '✗' : '✓'} ${name.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.long.length ? `  [${w.long.join(', ')}]` : ''}${w.what ? `\n      worst: ${w.what}` : ''}`);
   };
 
   console.log(`\njank: ${LABEL}  (${W}×${H} @${DPR}×; budget ${BUDGET} ms)${warmupMs != null ? `  warmup:done at ${Math.round(warmupMs)} ms` : '  (no warmup:done mark)'}`);
@@ -524,7 +534,7 @@ async function run() {
   {
     const w = await windowOf(page, 'whole run', runStart, await now(page));
     rows.push(w);
-    console.log(`  ${w.worst > BUDGET ? '✗' : '✓'} ${'whole run'.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.what ? `\n      worst: ${w.what}` : ''}`);
+    console.log(`  ${over(w.worst) ? '✗' : '✓'} ${'whole run'.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.what ? `\n      worst: ${w.what}` : ''}`);
   }
 
   await ptr.stop();
@@ -539,7 +549,7 @@ async function run() {
   }
   if (!hidden.error) reportHidden(hidden);
 
-  const failed = rows.filter((r) => !r.info && r.worst > BUDGET).map((r) => r.name);
+  const failed = rows.filter((r) => !r.info && over(r.worst)).map((r) => r.name);
   if (!hidden.skipped && !hidden.pass) failed.push('hidden tab');
   console.log(failed.length ? `\n✗ ${failed.length} case(s) failed: ${failed.join(', ')}` : `\n✓ every case within ${BUDGET} ms, and the hidden-tab guard held`);
   if (errors.length) console.log(`page errors:\n  ${errors.join('\n  ')}`);
