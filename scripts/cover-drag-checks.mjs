@@ -526,7 +526,9 @@ export async function checkDrag({ browser, origin, newPage, check, log = console
         )
         .catch(() => {});
       await page.waitForTimeout(1500);
-      const dev = await page.evaluate(() => !!window.__covers);
+      // The dev server (Vite's client in the page), not the hooks: the verify
+      // build (`npm run build:verify`) has the hooks and is a production bundle.
+      const dev = await page.evaluate(() => !!document.querySelector('script[src="/@vite/client"]'));
       row.build = dev ? 'dev' : 'production';
       await page.evaluate((on) => {
         window.__drag.sampling = on;
