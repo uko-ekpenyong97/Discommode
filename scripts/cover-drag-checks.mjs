@@ -62,8 +62,8 @@ const SHARP_MIN = 0.85;
 // "No frame over 33 ms" is scripts/frame-rule.mjs: one isolated dropped vsync
 // is forgiven (its 33.2–33.6 ms jitter used to fail it: every failure of four
 // runs was a 33.4, docs/perf/flaky-checks.md); a 50 ms frame, or two dropped
-// frames in a row, is over. Headed Chrome here runs at 120 Hz; its 41.7 ms
-// frame rounds to three vsyncs, over.
+// frames in a row, is over. Headed Chrome here runs at 120 Hz: its five-tick
+// frame (41.4-41.8 ms) is over, whichever way its jitter falls.
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
 
 /** Installed before the page's scripts. */
