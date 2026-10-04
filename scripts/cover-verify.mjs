@@ -80,8 +80,9 @@
  *             150 frames. The same on the hero under the paper.
  *   lsweep    1728×996 @2×: the pointer swept through every card-02 tile on
  *             screen in ~1 s; the most of them drawn for themselves in one
- *             frame, and that frame's cover work (the shared draw + that many
- *             warm draws + 4 copies, benched) ≤ 1.2.
+ *             frame ≤ 2 (the cap), and that frame's cover work (the shared
+ *             draw + that many warm draws + 4 copies, benched) ≤ 1.25 — its
+ *             own budget, from production-build runs (docs/perf/lsweep.md).
  *
  * CARD 04, the Rive cover (nosey: "Main" in the grid, "Main Bounce" as the
  * hero; docs/covers.md "Rive covers"). The Rive players advance by the cover
@@ -172,6 +173,20 @@ const VIEWPORTS = [
 ];
 const TOL = 32;
 const BUDGET = { hero: 1.0, tile: 0.15, total: 1.2, all: 8 };
+/**
+ * `lsweep`'s worst grid frame, ms: its own budget, re-baselined on production
+ * builds (2026-10-04, docs/perf/lsweep.md). 46 runs of the sweep — alone on a
+ * quiet machine, alone at a load average of 14–16, and inside a full run —
+ * measured 0.670–1.095 ms, p95 1.020; the budget is that p95 plus ~20% (the
+ * bench reads 1.2–1.6× its quiet value on a loaded machine). It was
+ * `BUDGET.total` (1.2), the design budget for the grid's cover work, which the
+ * sweep's benches overran only on the dev server or a busy machine. What the
+ * sweep is FOR — the cap on tiles drawn for themselves — is asserted on its
+ * own (`LSWEEP_OWN_MAX`), not left to the timing.
+ */
+const LSWEEP_BUDGET = 1.25;
+/** coverStage.ts's MAX_OWN_TILES: at most this many card-02 grid tiles drawn for themselves in a frame. */
+const LSWEEP_OWN_MAX = 2;
 /** Main's WebGL contexts: the sky's (grid), plus the paper's (detail view —
  *  and, since the idle warm-up, the grid's too once it has run; counted apart). */
 const MAIN_CONTEXTS = { grid: 1, detail: 2 };
@@ -827,9 +842,14 @@ async function checkLavaSweep(browser) {
   const tiles = Math.max(4, pres.length);
   const worst = shared + most * warm + tiles * copy;
   check(
-    worst <= BUDGET.total,
-    '1728×996 @2× sweep',
-    `${pres.length} tiles swept in ${sweepMs} ms; at most ${most} drawn for themselves in one frame (of ${rec.length}); worst grid frame ${ms(worst)} = shared ${ms(shared)} + ${most} × warm ${ms(warm)} + ${tiles} copies × ${ms(copy)} ≤ ${BUDGET.total}`,
+    most <= LSWEEP_OWN_MAX,
+    '1728×996 @2× sweep: the cap on tiles drawn for themselves',
+    `${pres.length} tiles swept in ${sweepMs} ms; at most ${most} drawn for themselves in one frame (of ${rec.length}) ≤ ${LSWEEP_OWN_MAX}`,
+  );
+  check(
+    worst <= LSWEEP_BUDGET,
+    '1728×996 @2× sweep: the worst grid frame',
+    `${ms(worst)} = shared ${ms(shared)} + ${most} × warm ${ms(warm)} + ${tiles} copies × ${ms(copy)} ≤ ${LSWEEP_BUDGET}`,
   );
   await page.context().close();
 }
