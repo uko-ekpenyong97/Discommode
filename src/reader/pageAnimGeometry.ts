@@ -12,6 +12,11 @@ export interface AtlasEntry {
   src: string;
   frames: number;
   fps: number;
+  /** Ticks (1/fps s) each frame is held, from the folder's Procreate APNG.
+   *  Absent: every frame one tick. */
+  holds?: number[];
+  /** The APNG's own loop, ms (what `holds` was counted from). */
+  apngMs?: number;
   mode: 'loop' | 'once';
   /** The frame the page rests on (0-based). */
   rest: number;
@@ -37,13 +42,41 @@ export function cellRect(e: AtlasEntry, i: number): { sx: number; sy: number; sw
   return { sx: col * (e.cellW + e.gutter), sy: row * (e.cellH + e.gutter), sw: e.cellW, sh: e.cellH };
 }
 
-/** Which frame shows `ms` after the loop started: from the rest frame (the
- *  row's, else the manifest's), stepped at the atlas's fps. A `once`
- *  animation holds its last frame. */
+/** The manifest's holds if there is a whole one per frame, else null (every
+ *  frame one tick). */
+export function holdsOf(e: AtlasEntry): number[] | null {
+  const h = e.holds;
+  return h && h.length === e.frames && h.every((t) => Number.isInteger(t) && t >= 1) ? h : null;
+}
+
+/** Which frame shows `ms` after the loop started: from the start of the rest
+ *  frame's hold (the row's rest, else the manifest's), counting ticks of the
+ *  atlas's fps against the cumulative holds. From elapsed time, never from
+ *  counted draws, so a loop keeps its length however frames are dropped. A
+ *  `once` animation holds its last frame. */
 export function frameAt(e: AtlasEntry, ms: number, rest = e.rest): number {
   const n = Math.max(0, stepsIn(Math.max(0, ms), e.fps));
-  if (e.mode === 'once') return Math.min(e.frames - 1, rest + n);
-  return (rest + n) % e.frames;
+  const holds = holdsOf(e);
+  if (!holds) {
+    if (e.mode === 'once') return Math.min(e.frames - 1, rest + n);
+    return (rest + n) % e.frames;
+  }
+  let t = n;
+  let total = 0;
+  for (let i = 0; i < holds.length; i++) {
+    if (i < rest) t += holds[i];
+    total += holds[i];
+  }
+  if (e.mode === 'once') {
+    if (t >= total) return e.frames - 1;
+  } else {
+    t %= total;
+  }
+  for (let i = 0; i < holds.length; i++) {
+    if (t < holds[i]) return i;
+    t -= holds[i];
+  }
+  return e.frames - 1;
 }
 
 /** The frame a row rests on: its own `rest` if it is a frame, else the atlas's. */

@@ -20,8 +20,20 @@
  * the encoder is deterministic, so a re-run on unchanged sources writes
  * identical files.
  *
- * A folder with no `fps.json` plays at the cover's boil rate; the run lists
- * which did. The REST frame — what the page shows under reduced motion, for the
+ * TIMING. A folder may also hold Procreate's Animated PNG export (an `.apng`,
+ * or a `.png` with no `-<n>` that is animated): the source of truth for its
+ * holds (scripts/apng.mjs). Its identical neighbouring frames collapse to one
+ * run per picture; the runs must be the `<Name>-<n>.png` frames, in order (each
+ * matched against the frames scaled to the APNG's size), or the run says so and
+ * writes no holds. Each frame is then held `holds[i]` ticks of 1/fps, written
+ * beside `fps` with the APNG's loop length (`apngMs`). The pictures are still
+ * the full-size PNGs: the APNG is a small preview. Without one, every frame is
+ * held one tick, as before.
+ *
+ * fps: `--fps`, else `fps.json`'s, else the APNG's (1000 / its shortest delay,
+ * rounded: Procreate writes 1/fps rounded down to a whole ms), else the cover's
+ * boil rate; the run prints which. An fps.json more than 2% off the APNG's
+ * frame delay is reported (the holds follow the fps.json). The REST frame — what the page shows under reduced motion, for the
  * fade-in on a settle, and in the align tool — is the row's `rest` (the frame
  * the baked page prints), else the first frame with any drawing. It is copied
  * into the manifest; changing it rewrites the manifest, not the atlas.
@@ -35,6 +47,7 @@
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
+import { fpsOfDelays, holdsOf, isApng, readApng, runsOf } from './apng.mjs';
 import { folderOptions, loadCover, loadFrame, orderFrames, unionOf } from './cover-register.mjs';
 import { rowSource, suggestRow } from './page-anim-register.mjs';
 import { PAGE_ANIMS, PAGE_ANIM_ISSUE, PAGE_ANIM_SCALE, PAGE_H, PAGE_W } from '../src/reader/pageAnims.ts';
@@ -45,6 +58,13 @@ const QUALITY = 85;
 const DEFAULT_FPS = 6;
 /** Transparent px between cells. */
 const GUTTER = 2;
+/** An fps.json this far off the APNG's frame delay is reported. */
+const FPS_MISMATCH = 0.02;
+/** A run this far off a whole number of ticks is reported. */
+const OFF_GRID_TICKS = 0.25;
+/** A PNG frame matches its APNG run within this mean difference (0–255,
+ *  premultiplied; Procreate's own downscale measures under 1). */
+const RUN_MATCH_MAX = 3;
 /** Scaled drawing past this far from the row's own box is reported. */
 const SUGGEST_REPORT_PX = 2;
 
@@ -103,9 +123,11 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
       continue;
     }
     const optsStat = await statOrNull(join(dir, 'fps.json'));
-    if (!optsStat && fpsOverride == null) defaulted.push(row.id);
+    const apngFile = await findApng(dir, entries, files, warnings, row.id);
+    const apngStat = apngFile ? await stat(join(dir, apngFile)) : null;
     const newest = Math.max(
       optsStat?.mtimeMs ?? 0,
+      apngStat?.mtimeMs ?? 0,
       ...(await Promise.all(files.map(async (f) => (await stat(join(dir, f))).mtimeMs))),
     );
     const outAtlas = join(outDir, `${row.id}.webp`);
@@ -116,8 +138,16 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
     // than that.
     const wantW = Math.max(1, Math.round(row.w * PAGE_ANIM_SCALE));
     const upToDate =
-      !force && prev && prevEntry && prev.mtimeMs > newest && prevEntry.cellW === wantW && prevEntry.scale === PAGE_ANIM_SCALE;
+      !force &&
+      prev &&
+      prevEntry &&
+      prev.mtimeMs > newest &&
+      prevEntry.cellW === wantW &&
+      prevEntry.scale === PAGE_ANIM_SCALE &&
+      // An APNG taken away drops its holds.
+      (apngFile != null || prevEntry.holds == null);
     if (upToDate) {
+      if (!optsStat && !apngFile && fpsOverride == null) defaulted.push(row.id);
       // `rest` is the manifest's alone: a new one needs no re-encode.
       if (row.rest != null && row.rest !== prevEntry.rest) anims[row.id] = { ...prevEntry, rest: restOf(row, prevEntry.frames, prevEntry.rest, warnings) };
       console.log(`  ${pad2(row.page)} ${row.id.padEnd(14)} ${String(prevEntry.frames).padStart(2)} frames  ${kb(prev.size).padStart(8)}   (up to date)`);
@@ -134,7 +164,23 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
     }
     const empty = frames.map((f, i) => (f.box ? null : i + 1)).filter(Boolean);
     const opts = await folderOptions(dir);
-    const fps = fpsOverride ?? opts.fps ?? DEFAULT_FPS;
+    const apng = apngFile
+      ? await readApng(join(dir, apngFile)).catch((err) => {
+          warnings.push(`${row.id}: ${apngFile} could not be read (${err.message}) — no holds`);
+          return null;
+        })
+      : null;
+    const apngFps = apng ? fpsOfDelays(apng.frames.map((f) => f.delayMs)) : null;
+    const [fps, fpsFrom] =
+      fpsOverride != null
+        ? [fpsOverride, '--fps']
+        : opts.fps != null
+          ? [opts.fps, 'fps.json']
+          : apngFps != null
+            ? [apngFps, `APNG ${apngFile}`]
+            : [DEFAULT_FPS, 'default'];
+    if (fpsFrom === 'default') defaulted.push(row.id);
+    const timing = apng ? await timingOf(row.id, apngFile, apng, frames, files, fps, fpsFrom, warnings, notes) : null;
     const firstDrawn = frames.findIndex((f) => f.box);
     const lastDrawn = frames.length - 1 - [...frames].reverse().findIndex((f) => f.box);
     const rest = restOf(row, frames.length, opts.rest === 'last' ? lastDrawn : firstDrawn, warnings);
@@ -175,6 +221,9 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
       src: `/issues/${issue}/page-anim/${row.id}.webp`,
       frames: frames.length,
       fps,
+      /** Ticks (1/fps s) each frame is held, from the folder's APNG; absent,
+       *  every frame one tick. `apngMs`: the APNG's own loop, for the test. */
+      ...(timing ? { holds: timing.holds, apngMs: timing.apngMs } : {}),
       mode: opts.mode,
       /** Index (0-based) of the frame the page rests on. */
       rest,
@@ -195,8 +244,14 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
     };
     console.log(
       `  ${pad2(row.page)} ${row.id.padEnd(14)} ${String(frames.length).padStart(2)} frames  ${kb(bytes).padStart(8)}   ` +
-        `${cellW}x${cellH} × ${cols}x${gridRows} = ${atlasW}x${atlasH} @ ${fps}fps   rest f${rest + 1}`,
+        `${cellW}x${cellH} × ${cols}x${gridRows} = ${atlasW}x${atlasH} @ ${fps}fps (${fpsFrom})   rest f${rest + 1}`,
     );
+    if (timing) {
+      const ticks = timing.holds.reduce((a, b) => a + b, 0);
+      console.log(
+        `       holds ${timing.holds.join(',')} = ${ticks} ticks, ${(ticks / fps).toFixed(3)} s a loop   (${apngFile}: ${apng.frames.length} frames, ${(timing.apngMs / 1000).toFixed(3)} s)`,
+      );
+    }
     suggestions.push({ row, ...(await suggestFor(row, dir, files, pageImage, frames, union)) });
   }
 
@@ -250,7 +305,7 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
     }
   }
 
-  if (defaulted.length) console.log(`\n  no fps.json, played at ${DEFAULT_FPS}fps (the cover's boil rate): ${defaulted.join(', ')}`);
+  if (defaulted.length) console.log(`\n  no fps.json or APNG, played at ${DEFAULT_FPS}fps (the cover's boil rate): ${defaulted.join(', ')}`);
   if (notes.length) {
     console.log(`\n  ${notes.length} note${notes.length === 1 ? '' : 's'}:`);
     for (const n of notes) console.log(`    - ${n}`);
@@ -260,6 +315,86 @@ export async function buildPageAnims({ sourceDir, outputDir, force, onlyId, fpsO
     for (const w of warnings) console.log(`!!  ${w}`);
   }
   return { built, warnings };
+}
+
+/** The folder's Animated PNG, if it has one: an `.apng`, or a `.png` that is
+ *  not a numbered frame and is animated. More than one is a problem. */
+async function findApng(dir, entries, files, warnings, id) {
+  const found = [];
+  for (const f of entries) {
+    const apngExt = /\.apng$/i.test(f);
+    if (!apngExt && !(/\.png$/i.test(f) && !files.includes(f))) continue;
+    const head = await readFile(join(dir, f)).catch(() => null);
+    if (head && isApng(head)) found.push(f);
+  }
+  if (found.length > 1) {
+    warnings.push(`${id}: ${found.length} animated PNGs (${found.join(', ')}) — which one is the timing? none used`);
+    return null;
+  }
+  return found[0] ?? null;
+}
+
+/** Mean difference of two same-size RGBA buffers, premultiplied, 0–255. */
+function meanDiff(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    const aa = a[i + 3];
+    const ba = b[i + 3];
+    for (let c = 0; c < 3; c++) s += Math.abs(a[i + c] * aa - b[i + c] * ba) / 255;
+    s += Math.abs(aa - ba);
+  }
+  return s / a.length;
+}
+
+/**
+ * An APNG's runs as holds over the PNG frames, or null (and a problem) when
+ * the runs are not the frames.
+ */
+async function timingOf(id, apngFile, apng, frames, files, fps, fpsFrom, warnings, notes) {
+  const delays = apng.frames.map((f) => f.delayMs);
+  const shortest = Math.min(...delays.filter((d) => d > 0));
+  if (!fpsFrom.startsWith('APNG') && Math.abs((shortest * fps) / 1000 - 1) > FPS_MISMATCH) {
+    warnings.push(
+      `${id}: ${fpsFrom} says ${fps}fps, but ${apngFile}'s frames are ${shortest}ms (${(1000 / shortest).toFixed(2)}fps) — holds counted at ${fps}fps`,
+    );
+  }
+  const runs = runsOf(apng.frames);
+  if (runs.length !== frames.length) {
+    warnings.push(
+      `${id}: ${apngFile} holds ${runs.length} different picture${runs.length === 1 ? '' : 's'} (${runs.map((r) => `×${r.count}`).join(' ')}), the folder has ${frames.length} frames — no holds`,
+    );
+    return null;
+  }
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i];
+    const small = await sharp(f.rgba, { raw: { width: f.w, height: f.h, channels: 4 } })
+      .resize(apng.w, apng.h, { fit: 'fill' })
+      .raw()
+      .toBuffer();
+    const ds = runs.map((r) => meanDiff(small, r.rgba));
+    // Its own run, or one drawn the same (a frame may repeat an earlier one).
+    if (ds[i] > RUN_MATCH_MAX || ds[i] > Math.min(...ds) + 0.5) {
+      warnings.push(
+        `${id}: ${files[i]} is not ${apngFile}'s picture ${i + 1} (differences ${ds.map((d) => d.toFixed(1)).join(' ')}) — no holds`,
+      );
+      return null;
+    }
+  }
+  const holds = holdsOf(
+    runs.map((r) => r.delayMs),
+    fps,
+  );
+  if (holds.some((h) => h < 1)) {
+    warnings.push(`${id}: ${apngFile} holds a picture under one tick at ${fps}fps (${holds.join(',')}) — no holds`);
+    return null;
+  }
+  const off = runs.filter((r) => {
+    const t = (r.delayMs * fps) / 1000;
+    return Math.abs(t - Math.round(t)) > OFF_GRID_TICKS;
+  });
+  if (off.length) notes.push(`${id}: ${off.length} of ${apngFile}'s holds fall between ticks at ${fps}fps — rounded`);
+  if (apng.plays !== 0) notes.push(`${id}: ${apngFile} plays ${apng.plays} time${apng.plays === 1 ? '' : 's'}; the page follows fps.json's mode`);
+  return { holds, apngMs: Math.round(delays.reduce((a, b) => a + b, 0)) };
 }
 
 /** The row's rest frame if it names one in range, else `fallback`. */

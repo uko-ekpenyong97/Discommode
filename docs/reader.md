@@ -815,6 +815,7 @@ the next turn they go before the strips move.
 ```
 ~/Discommode-pages/01/anim/<id>/<Name>-<n>.png    frames (any canvas; -10 sorts after -9)
 ~/Discommode-pages/01/anim/<id>/fps.json          optional: fps, mode, rest (as the cover's)
+~/Discommode-pages/01/anim/<id>/<Name>.png        optional: Procreate's Animated PNG — the holds
 ~/Discommode-pages/01/plates/NN.png               the page, its animated drawing hidden
 
 npm run plates    → public/issues/01/plates/NN.webp            (2000×2600, as `npm run pages`)
@@ -841,11 +842,36 @@ placed size on the page × `PAGE_ANIM_SCALE` (1: the baked page's own
 resolution, so a sprite is as sharp as the plate around it at any display
 size), and laid out in a near-square grid with a 2px transparent gutter, WebP at
 the cover's quality 85. Byte-stable: no timestamp, deterministic encode. An
-animation rebuilds when a frame or its `fps.json` is newer than its atlas, or
-when its row's width moved by a pixel or more.
+animation rebuilds when a frame, its `fps.json` or its APNG is newer than its
+atlas, or when its row's width moved by a pixel or more.
 
-A folder with no `fps.json` plays at the cover's boil rate, 6fps; the run lists
-which did (all thirteen, today). The REST frame — what the page shows under
+**Holds.** Procreate's frame holds do not survive the PNG frames: those are one
+picture each. They do survive its Animated PNG export (Share → Animated PNG),
+dropped in the folder beside the frames as an `.apng`, or a `.png` with no
+`-<n>` (`Badges.png`). Procreate writes a hold as REPEATED IDENTICAL FRAMES,
+every frame at the same delay — 1/fps rounded down to a whole ms, 166 at 6fps —
+and never as a longer delay. The build (`scripts/apng.mjs`) collapses identical
+neighbours into one run per picture, checks the runs ARE the PNG frames in
+order (each frame scaled to the APNG's size, mean difference under 3/255 —
+Procreate's own downscale measures under 1; anything else is reported and
+writes no holds), and writes each frame's hold in ticks, `holds`, beside `fps`
+in the manifest, with the APNG's own loop length `apngMs`. A hold is rounded at
+its run's END in cumulative time, so a loop is never more than half a tick off
+the APNG's. The pictures are still the full-size PNGs: the APNG is a 480px
+preview. The player counts ticks of elapsed time against the cumulative holds
+(`frameAt`), from the start of the rest frame's hold, so a dropped frame never
+stretches a loop. No APNG: every hold is one tick, as before.
+
+| animation | frame → ticks at 6fps | APNG loop | site loop |
+| --- | --- | --- | --- |
+| badges (08) | 1→2, 2→2, 3→1, 4→2, 5→5, 6→2 | 2.324 s (14 × 166ms) | 2.333 s |
+| cuffs (11) | 1→5, 2→5 | 1.660 s (10 × 166ms) | 1.667 s |
+
+**fps** is `--fps`'s, else `fps.json`'s, else the APNG's (1000 / its shortest
+delay, rounded: 166 → 6, 83 → 12), else the cover's boil rate, 6fps; the run
+prints which beside each animation, and lists the ones that defaulted (thirteen,
+today). An `fps.json` more than 2% off the APNG's frame delay is reported, and
+the holds are counted at the `fps.json`'s rate. The REST frame — what the page shows under
 reduced motion, through the settle's fade, and in the align tool — is the row's
 `rest` (the frame the baked page prints; [the manifest](#the-manifest)), else
 the first frame with any drawing. It is copied into the build's manifest, and
@@ -1637,7 +1663,10 @@ exits non-zero on any ✗.
   static slots carry the baked 17 | 18; on every rAF frame of a real Next and
   Prev, no wrapper is shown while a turn layer is up; turning on to 21 | 22, a
   newly-neighbouring atlas (sofa-green) is fetched at the settle and still not
-  decoded 1.5 s later, and on to 23 | 24 it is decoded at that settle; reduced motion holds the rest frame (1 draw). **The frame budget is gated on the machine**: the
+  decoded 1.5 s later, and on to 23 | 24 it is decoded at that settle; reduced motion holds the rest frame (1 draw). On 07 | 08 at 1×, badges' frame is
+  sampled on every rAF for 3 s: from its rest frame, each whole run must be
+  its Procreate hold (2,2,1,2,5,2 ticks of 1/6 s, within half a tick), in
+  order, all six frames seen. **The frame budget is gated on the machine**: the
   animated spread and a plain one (19 | 20), interleaved run by run, each idle
   1.5 s then a Next and a Prev; asserted only if the plain spread is clean,
   otherwise reported as "the machine is busy". The load average is printed.
