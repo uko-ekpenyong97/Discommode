@@ -199,3 +199,16 @@ measured beside it); or accept it.
 
 The drag's 41.7–41.8 ms frames are real dropped frames in headed Chrome at 120
 Hz (5 ticks), one in ~5400 frames, with nothing on the main thread.
+
+## The frame rule, tightened (2026-10-04, after Uko's review)
+
+"Only an isolated single dropped vsync is forgiven." The vsync rounding above
+did not hold to that twice over: two frames in a row that each dropped a
+vsync (33 + 33) passed, and at 120 Hz (headed Chrome on this Mac) a five-tick
+frame read 41.4 ms in one viewport (2.48 vsyncs: forgiven) and 41.8 in the
+other (2.51: over) — jitter deciding again. `scripts/frame-rule.mjs`, shared
+by `drag` and verify:jank, now judges against whole vsyncs plus a 3 ms
+jitter allowance: over if longer than two vsyncs + 3 ms (36.3 ms), or longer
+than one vsync + 3 ms next to another such frame. Unit tests:
+`scripts/frame-rule.test.mjs` (33.2–33.6 alone pass; 41.4, 41.7, 41.8, 50,
+33 + 33 and 25 + 25 fail; the dock's budget of three).
