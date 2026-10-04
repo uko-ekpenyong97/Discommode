@@ -139,3 +139,32 @@ still (the neighbours'), and card 01's drawn cover at rest (its hero face;
 the grid shows the photograph). **Fix** (`warmup.ts`): the idle warm-up
 decodes them, as it already did card 01's hover plates for the first hover.
 8 traced cold arrivals of 02 and 04 after it: no frame over 16.8 ms.
+
+## Frames of exactly two vsyncs (verify:cover `drag`, verify:jank)
+
+Both judged "no frame over 33 ms" as `> 33.4`. A frame that dropped one vsync
+reads 33.2–33.6 ms, so the same frame passed at 33.3 and failed at 33.4. Four
+`drag` runs, `main` and branch interleaved: every failure was a 33.4, every
+pass had a 33.3. `verify:jank` failed `reader→detail` on a 33.4, and the next
+run had a 33.4 in `keys →←`. **Fix** (the checks): a frame is over when it is
+three vsyncs or more, `Math.round(ms / 16.67) > 2` — verify:detail's rule
+("over 33 ms is three vsyncs (50 ms) or more, and 33.3 is two"). The drag
+check's timing pass is headed, and headed Chrome here runs at 120 Hz: its
+41.7 ms frame is 2.5 of these, rounds to 3, and still fails.
+
+## The first full run after the fixes
+
+One run of each suite on the verify build of this branch, 03:44–04:57:
+
+| suite | result | what failed |
+| --- | --- | --- |
+| verify:reader | 4 ✗ | riffle budget 1× 0→20 (one 33.4 in 5 runs) and 2× 20→0 (two in 5); "the flips and the riffle hold 60fps over the sky" at 1× and 2× (2 frames over 20 ms of 475 each) |
+| verify:detail | ✓ | |
+| verify:gpu | ✓ | |
+| verify:sky | ✓ | |
+| verify:cover | 1 ✗ | `drag` 1728×1117: one 41.7 ms frame in 5396 (headed, 120 Hz) |
+| verify:jank | ✗ | `reader→detail` 33.4 ms — the two-vsync rule above, fixed after this run |
+
+The "flips over the sky" frames passed alone on both builds, two rounds each
+(0 of 476 over 20 ms); the branch's flip main-thread p95 is lower there (3.1–3.6
+ms against 3.7–4.0 on `main`: the strips' shading in CSS).
