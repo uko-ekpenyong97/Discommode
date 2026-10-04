@@ -328,6 +328,20 @@ scalloped edge (not the book icons' — its paper differs from both), the ✕ in
 white. It split cleanly; the run wrote `escape-paper.svg`, `escape-ink.svg`
 and one manifest entry, and every other file came out byte-identical.
 
+**Prev and next, 2026-10-03.** Uko's third cut of the arrows: `prev.svg` and
+`next.svg` now carry a solid, filled arrow (the old one was an outlined,
+wobbly one), and next's paper is prev's mirrored — the export writes its
+base circle as prev's under a `matrix(-1 0 0 1 50.25 4.02)`, and its edge
+mirrored, so the manifest's next base moved from x 3.2 to 4.25 (the mirrored
+circle's true box; prev's is unchanged at 3.2) and the paper overhangs the
+other way. Four files and one manifest line moved, every other file
+byte-identical; a re-run is byte-stable. Contrast is the paper against the ink,
+which the glyph's shape does not enter: re-run (`sky-contrast.mjs
+--chrome-only`, both views, both viewports) — worst **5.21:1**, 0 clamps, as
+before. Captured before and after in `docs/chrome/prev-next.webp` (the reader's
+row and the detail view's, clear noon, dusk and night; at rest, then prev
+and next hovered and pressed).
+
 ### The pills: the middle stretched, not generated
 
 The detail view needs pills of other widths ("Read issue", "Open project"),
@@ -1025,29 +1039,49 @@ next `npm run anims`; the reader draws any width meanwhile.
 
 ## Chapter-break quotes
 
-Page 05 is a chapter break: a quote in Spanish, its attribution, and — new on
-the page, not in the print — a green "ES ⇄ EN" line under it. A click or tap
+Six pages are chapter breaks — 02, 05, 12, 21, 29 and 39: a quote in Spanish,
+its attribution, and — new on the page, not in the print — an "ES ⇄ EN" line
+under it. A click or tap
 on the quote translates it, letter by letter: the letters both languages share
 slide to their new places on an arc, the rest scramble out and in. Again, and
 it goes back. The design is Uko's prototype
 (`~/Discommode-pages/01/translate/prototype.html`), ported behaviour for
-behaviour; the data is his `quotes.json`. A later chapter break is a new entry
-in `quotes.json`'s `pages` and a plate, and nothing else.
+behaviour; the data is his `quotes.json` (page 05) and `quotes-more.json`
+(the other five). A chapter break is an entry in `quotes.json`'s `pages` and a
+plate, and nothing else: the player, the bakes, the wand and the checks are the
+same code on every page.
+
+| page | ground | ink | hint | quote |
+| --- | --- | --- | --- | --- |
+| 02 | yellow #E3ED55 | black | black | centred, 3 lines; the right-hand page beside the cover |
+| 05 | cream | black | green #519B66 | centred, 3 lines |
+| 12 | green #519B66 | cream #FFF5EC | cream | centred, 3 lines; right-hand |
+| 21 | pink #FF8E91 | cream | cream | centred, 3 lines |
+| 29 | cream | black | green | centred, 3 lines |
+| 39 | cream | black | green | ONE line, left-aligned (`"align": "left"`, `left`), a one-line attribution |
+
+`ink` (the quote and the attribution) and `hintColor` are per page, the
+`styles`' when absent. The wand is #EDD431 on every page, page 02's yellow
+included — `quotes-more.json`'s pink `wandBaseColor` for it was not taken: the
+black outline carries the wand on yellow. A left-aligned quote grows and
+breathes about the centre of its printed line.
 
 Captures in `docs/quote/`, 1728×996 @2x: `on-screen.webp` (Spanish at rest,
 mid-morph, English), `print-match.webp` (the print, the layer's Spanish and
 their difference at 2000×2600), `hint-and-cursor.webp` (the hint line,
 zoomed, and the cursor tag at 2× — the tag has since given way to the wand),
-`wand.webp` (the wand over the grown quote, and mid-morph).
+`wand.webp` (the wand over the grown quote, and mid-morph), `pages.webp` (all six
+chapter breaks on screen, at rest in Spanish over English, 2026-10-03).
 
 ### The pieces
 
 | | |
 | --- | --- |
-| `quotes.json` | The brief's file: `settings` (the morph's dials), `styles` (Space Mono Bold 45.833/68 for the quote, Lora Regular 33/42 for the attribution, the hint), and per page the quote's centre and top, the attribution's right edge and top, the hint's centre and top, the hit area, and every line in ES and EN broken as printed. Page px, 2000×2600. |
+| `quotes.json` | The brief's file: `settings` (the morph's dials), `styles` (Space Mono Bold 45.833/68 for the quote, Lora Regular 33/42 for the attribution, the hint), and per page the quote's centre (or `left`, with `"align": "left"`) and top, the attribution's right edge and top, the hint's centre and top, the hit area, `ink` and `hintColor`, and every line in ES and EN broken as printed. Page px, 2000×2600. |
 | `quoteMorph.ts` | Pure: the layout, the match, the plan, the frame at any ms. `quoteMorph.test.ts`. |
 | `quotePlayer.ts` | The layer on the open spread, on the page animations' lifecycle; the bakes; the cursor; the button. |
-| `plates/05.webp` | The page with the quote removed (`npm run plates -- --only 05`). |
+| `bakeWorker.ts` | The bakes' WebP encode, off the main thread. |
+| `plates/NN.webp` | Each page with its quote removed (`npm run plates -- --only 02,05,12,21,29,39`). |
 | `public/fonts/space-mono-latin-700.woff2`, `lora-latin-400.woff2` | fontsource 5.3.0, OFL (`SpaceMono-OFL.txt`, `Lora-OFL.txt` beside them). Loaded as `FontFace`s before anything is measured. |
 
 ### The layer
@@ -1154,9 +1188,10 @@ the numbers are the brief's).
 - **Turns:** none of it is baked: a turn shows the bake at ×1 and hides the
   wand. A turn that starts with the letters off ×1 — grown, or mid-breath —
   EASES them to ×1 over 180ms (cubic-bezier(.4,0,.2,1)) as the page lifts,
-  rather than stepping. While page 05 lies under the leaf, the layer simply
-  stays up for those 180ms, easing. When page 05 IS the leaf (Prev, ←, a drag
-  from the quote, a riffle's first leaf), the curl covers the layer, so the
+  rather than stepping. While the quote's page lies under the leaf, the layer
+  simply stays up for those 180ms, easing. When it IS the leaf (Prev for a
+  left-hand page such as 05, Next for a right-hand one such as 02 or 12; a
+  drag from the quote, a riffle's first leaf), the curl covers the layer, so the
   leaf draws the page as two images — `base` (the plate and the hint, no
   letters) and `letters` (the letters alone, transparent), baked beside the
   page at the first settle — the letters' `background-size` and position
@@ -1168,7 +1203,7 @@ the numbers are the brief's).
   and the variable is removed. The stored bake stays at ×1. A drag that starts
   on the quote still turns the page.
 
-The breath keeps the player's frame loop running while page 05 is open and
+The breath keeps the player's frame loop running while a quote page is open and
 untapped (a redraw only while the scale moves, the 45% at rest costs a frame
 callback); it does not count as busy for the idle warm-up.
 
@@ -1187,9 +1222,10 @@ A turn must show the page in the language it is in, never the bare plate. The
 page animations get that for free — the print IS the rest state. The quote's
 English has no print, so the player BAKES the page: the plate with the letters
 and the hint drawn on at 2000×2600 by the same code that draws the live layer,
-encoded to WebP (q 0.92), once per language, at the page's first settle (the
-layer waits for both). `mapSpreads` hands the engine and the static slot the
-bake for the page's current language — so the curl's faces, the landing plate,
+encoded to WebP (q 0.92, in a worker: [what it costs](#what-it-costs-1)),
+once per language, at the page's first settle (the layer waits for both).
+`mapSpreads` hands the engine and the static slot the bake for the page's
+current language — so the curl's faces, the landing plate,
 a riffle's slots and the static `<img>` under the layer all carry it — and the
 printed page until there is one. A riffle's fast leaves keep the printed
 half-size page in Spanish (it lacks only the hint, for under 150ms); in
@@ -1198,8 +1234,8 @@ English the bake.
 On a first arrival the static slot swaps to the bake only once the layer has
 faded in over it, so the hint fades in rather than popping.
 
-**The language goes back to Spanish once page 05 is no longer on the open
-spread** — at the commit that leaves it, or a riffle's inner landing. Not
+**The language goes back to Spanish once the page is no longer on the open
+spread** (and it breathes again) — at the commit that leaves it, or a riffle's inner landing. Not
 under a morph: a slot leaving lands its morph first, and a turn has already
 landed it.
 
@@ -1239,12 +1275,88 @@ and 86 by 128 (the print has 21,415 ink pixels); every one on a glyph's edge
 snapping to whole pixels. On screen, the Spanish layer against the printed
 page in the same slot: ink 99.5% at 1×, 99.0% at 2×.
 
+**The other five pages, 2026-10-03**, registered the same way against
+`02.png`, `12.png`, `21.png`, `29.png` and `39.png` — one least-squares pass
+per block, from `quotes-more.json`'s Figma positions, which put every block
+7–27px low, as on 05:
+
+| page | quote: Figma → registered | attribution: Figma → registered |
+| --- | --- | --- |
+| 02 | centre 1000 → 999.9, top 1128 → 1111.9 | right 1393 → 1392.35, top 1387 → 1369.05 |
+| 12 | 1000 → 999.8, 1128 → 1111.9 | 1351 → 1350.2, 1387 → 1361.3 |
+| 21 | 1000 → 999.75, 1128 → 1110.9 | 1325 → 1322.1, 1387 → 1360.35 |
+| 29 | 1000 → 998.85, 1129 → 1111.9 | 1379 → 1379, 1388 → 1367.8 |
+| 39 | left 538 → 538.25, 1260 → 1253.05 | 1464 → 1463.65, 1383 → 1368.95 |
+
+A second pass moved nothing usefully and twice for the worse: a block's top
+nudged 0.3px crossed a baseline snap and put page 12's and 21's attributions
+0.8px off, so the first pass stands. **The ink is measured as distance from
+the plate** (RGB, per pixel), not darkness — cream letters on green and pink
+lighten the page — the same measure for 05, which reads as before.
+
+**Kerning.** A letter was placed at the width of the line BEFORE it, which
+drops the kern between it and the one before: Lora kerns "Yá" in "Yáñez"
+1.62px tighter at 2000px, and the print has it. Now a letter sits at the
+width of the line up to and including it, less its own advance, so every
+kern is kept. Space Mono has none; the attributions moved by up to 1.6px
+(05's "-J" 0.96px). Pixels more than 128 levels off the print: page 12 173 → 18,
+05 557 → 438, 02 128 → 64 — and no line moved by more than 0.05px in the table.
+
+Measured (`verify:reader`, `quote`, 2026-10-03), each page in Spanish without
+the hint against its print — offset (px), ink:
+
+| line | 02 | 05 | 12 | 21 | 29 | 39 |
+| --- | --- | --- | --- | --- | --- | --- |
+| quote 1 | −0.05, 0.00 · 99.4% | 0.00, 0.00 · 99.8% | 0.00, 0.00 · 99.3% | −0.05, 0.00 · 99.3% | 0.00, 0.00 · 99.6% | 0.00, 0.05 · 99.8% |
+| quote 2 | −0.05, −0.10 · 99.5% | 0.00, −0.10 · 99.8% | 0.00, −0.10 · 99.3% | −0.05, −0.10 · 99.1% | 0.00, −0.10 · 99.9% | |
+| quote 3 | 0.00, −0.25 · 99.6% | 0.00, −0.25 · 99.8% | 0.00, −0.25 · 99.3% | −0.05, −0.20 · 99.3% | 0.00, −0.25 · 99.8% | |
+| attribution 1 | 0.05, −0.10 · 100.4% | 0.05, −0.30 · 99.6% | 0.05, 0.20 · 99.4% | 0.00, 0.20 · 99.4% | 0.00, −0.35 · 100.0% | 0.00, −0.10 · 100.3% |
+| attribution 2 | 0.05, 0.15 · 99.9% | 0.05, −0.05 · 100.5% | 0.00, 0.45 · 99.5% | 0.00, 0.45 · 99.1% | 0.00, −0.10 · 100.0% | |
+| px > 128 levels off | 64 | 438 | 18 | 0 | 740 | 94 |
+| on screen, ink 1× / 2× | 99.1 / 96.4% | 98.6 / 97.7% | 99.9 / 98.8% | 98.7 / 98.7% | 98.5 / 97.5% | 98.8 / 98.1% |
+
+Every differing pixel on a glyph's edge (`.context/quote/print-diff-NN.png`).
+The letters' strongest ink is the page's `ink` exactly (#000000, #FFF5EC), as
+printed, and the hint's its `hintColor`.
+
+**The hint and the hit area**, which the print does not have, follow 05's:
+the hint 69px under the attribution's last line (the prototype's gap, Figma
+1540 under 1387 + 84; 05's 1515.65), centred on the page at 1000; the hit
+area 25px beyond the widest line in EITHER language (page 12's English is
+wider than its Spanish), 10px above the quote and 15px above the hint,
+rounded out to tens — 05's 690, 1100, 620×400 exactly.
+
 ### What it costs
 
 The first settle on page 05 draws and encodes two 2000×2600 pages; no Long
 Animation Frame (over 50ms) in it at 2× (two runs). A riffle passing page 05
 fetches nothing (the plate and the fonts are fetched only at a settle within a
-spread of it). The full `verify:reader` run on this change, 2026-10-02 (load
+spread of it).
+
+**The bakes are encoded in a worker** (`bakeWorker.ts`). `toBlob` on the
+main thread snapshots the 2000×2600 canvas there — 16ms for a page's first
+bake, 8ms for its second (20ms the first in a session) — and a quote page's
+reveal starts at the commit, inside the turn's last frames. Turning onto 11 |
+12 dropped a frame there every time: `verify:reader`'s sky budget (which
+turns 3 → 8, 120ms apart) missed one 33ms frame in 6 of 6 runs with the six
+pages against 4 of 6 with 05 alone, and timed per turn, the miss was in the
+120ms after settling on 6 in 4 of 4 runs with the six and 0 of 4 with 05
+alone. Two bakes started a frame apart did not help (6 of 6): one `toBlob`
+is a frame. Now the page is drawn here (under a millisecond), handed over as
+an ImageBitmap and drawn and encoded there (`convertToBlob`, the same WebP at
+0.92); `toBlob` here if there is no worker. The same sequence, 2026-10-03: 0
+long frames in 6 runs at 1× and 4 at 2×, against 4 of 4 at 2× with `toBlob`.
+
+**Page 02 is the doorway's page**: the first visit's open turns the cover onto
+01 | 02, so 02's fonts, plate and bakes come in the reader's first seconds.
+Measured 2026-10-03, the doorway's open from `#item-01` at 2× in Chrome,
+from the click to 3s after the settle, six runs with 02 quoted interleaved with
+six with 02 taken out of `quotes.json` (load average ~7): no frame over 33ms
+and no Long Animation Frame over 50ms in either; 7 frames of two vsyncs in
+each set of six. Prev back to the cover: no frame over 20ms. `verify:reader`'s
+`quote` section reports both, each run.
+
+The full `verify:reader` run on page 05's change, 2026-10-02 (load
 average 3.7–5.1, the plain-spread baseline missing in 5 of 5), missed three
 frame checks: two riffles and the sky section's 2× "60fps", single 33–67ms
 frames. Run against the change's base (e6bb66b) INTERLEAVED, `--only
@@ -1271,7 +1383,7 @@ The misses are the machine's, as [before](#running-the-checks).
 TRANSLATE panel, in the READER NAV dock (`#read-NN?intro`), persisted
 (`DIAL_STATE_VERSION` 9: the wand's base colour changed). `quotes.json`'s `settings` are the source of truth;
 **Copy** writes a paste-ready `"settings"` block, **Translate** toggles the
-open quote (turning to page 05 if none is open).
+open quote (turning to the first quote page, 02, if none is open).
 
 | dial | shipped | range |
 | --- | --- | --- |
@@ -1592,10 +1704,14 @@ exits non-zero on any ✗.
   rough outlines, which antialias differently at this size. The floor was
   checked against a moved sprite: xolo 4 page px off scores 84.1%, 8 px off
   75.8%, and 1% too big 75.4%.
-- **The chapter-break quote** (`quote`, `scripts/quote-checks.mjs`), page 05:
-  the Spanish layer against the printed page at 2000×2600 — every line
-  registered to ≤ 0.5px with its ink within 2%, the differing pixels reported
-  and the difference written to `.context/quote/` — and on screen at 1× and
+- **The chapter-break quotes** (`quote`, `scripts/quote-checks.mjs`), every
+  quote page in turn — 02, 05, 12, 21, 29, 39 (`--quote-pages 2,39` for
+  some); the turns are each page's own (the one that lifts it, Prev for a
+  left-hand page and Next for a right-hand one, and the one that leaves it
+  lying). Per page: the Spanish layer against the printed page at 2000×2600 — every line
+  registered to ≤ 0.5px with its ink within 2% (ink: distance from the
+  plate), the letters in the page's `ink` and the hint in its `hintColor`, the
+  differing pixels reported and the difference written to `.context/quote/` — and on screen at 1× and
   2× within 4% of the print's ink. A click on the quote translates and turns
   nothing (no turn layer on any frame); the morph ends with every English
   letter where `quotes.json` puts it, measured in the check from the file,
@@ -1612,12 +1728,16 @@ exits non-zero on any ✗.
   the palette's first and is back on it after; after the tap no breath. A turn
   from a grown quote shows a bake whose ink box is the page's at rest, no wand
   on any turning frame; away and back, breathing again. And the turn ease:
-  for Prev (05 lifting), Next (05 lying), a riffle and from mid-breath,
+  for the page lifting, the page lying, Home (a riffle; from 01 | 02 the
+  close) and from mid-breath,
   every frame's scale on screen — the layer's while it shows, else the
   leaf's or the riffle slot's `--quote-s` — runs from where the letters were
   to ×1 with no frame stepping over a third of the way (measured: ≤ 25%);
   held at the ease's start and its end, the lifting leaf's letters measure
-  ×1.033 of themselves (the grow is ×1.03; a step would read ×1.000). Enter and Space on the
+  ×1.032–1.036 of themselves (the grow is ×1.03; a step would read ×1.000) —
+  measured as the letters' extent at half their strongest ink, which the
+  curl's uneven light on a leaf does not skew (an ink-weighted spread read
+  ×1.046 on page 12's cream on green). Enter and Space on the
   button; a touch tap translates with no wand, a tap elsewhere turns; reduced
   motion: no breath, grow or flick, the wand and its colour still, and the
   crossfade draws no letter off the two layouts and settles in about 300ms.
@@ -1626,12 +1746,19 @@ exits non-zero on any ✗.
   crisp (≥ 60 px at luma ≤ 64 at 1×, ≥ 100 at ≤ 32 at 2×, ≥ 1 device px wide);
   mid-cycle, after the flick, every pixel black at rest stays black (luma ≤ 48,
   chroma ≤ 24) while the fill is one colour off the base; #EDD431 after.
+  And page 02 beside the cover: the doorway's first-visit open from
+  `#item-01` turns onto 01 | 02 with no quote layer up while it turns and
+  never the plate, then 02 is Spanish and breathing; Prev from a grown 02
+  closes onto the cover over 02's Spanish bake, easing, and leaves no quote
+  layer, no wand and no turn layer on the cover; Next opens onto it again,
+  Spanish and breathing. The frames of both are reported.
 
 The z-order and exit checks photograph the book over the sky now, so both hold
 it still first (`__skyPinTime`, `__skyHoldFluid`): two captures must differ by
 what the reader did, not by the weather.
 
-A full run takes about fifteen minutes, most of it the z-order check.
+A full run takes about forty minutes: the z-order check and the quote section
+(six pages, about seventeen) most of it.
 
 **The riffle frame budget is not reliably green on this machine.** On
 2026-09-21, with the cover-life change, a full run missed 3 of the 4 riffle

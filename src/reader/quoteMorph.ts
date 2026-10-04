@@ -113,8 +113,9 @@ export function baselineIn(lineHeight: number, m: Metrics): number {
 
 /**
  * Every visible letter of `block` in `lang`, in reading order. A letter's x is
- * the width of the line up to it (so kerning is kept), as the prototype placed
- * them; spaces take no glyph.
+ * the width of the line up to and including it, less its own advance: so the
+ * kern before it is kept too (the prototype's width-up-to-it dropped it, up to
+ * 1.6px at 2000px in Lora — "Yá" on page 12). Spaces take no glyph.
  */
 export function layoutBlock(block: TextBlock, lang: Lang, measure: Measure): Glyph[] {
   const out: Glyph[] = [];
@@ -125,7 +126,7 @@ export function layoutBlock(block: TextBlock, lang: Lang, measure: Measure): Gly
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (ch === ' ') continue;
-      out.push({ ch, x: x0 + (i ? measure(block.font, line.slice(0, i)).width : 0), y, block: block.key });
+      out.push({ ch, x: x0 + measure(block.font, line.slice(0, i + 1)).width - measure(block.font, ch).width, y, block: block.key });
     }
   });
   return out;
