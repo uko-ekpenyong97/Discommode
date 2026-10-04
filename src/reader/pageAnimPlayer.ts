@@ -180,6 +180,12 @@ export interface PageAnimPlayer {
   setSlots: (spread: number, spreads: Spread[], wraps: (HTMLDivElement | null)[]) => void;
   /** From the engine's `onTurnActive`, synchronously. */
   setTurning: (active: boolean) => void;
+  /**
+   * In paper (`PAGE_ANIM_LOOK.inPaper`): page `n` as it is on screen now —
+   * its plate with the frame it is on multiplied in — as an image URL for the
+   * leaf that turns it, or null (the baked page) when there is none ready yet.
+   */
+  frozenSrc: (n: number) => string | null;
   destroy: () => void;
 }
 
@@ -364,6 +370,57 @@ export function createPageAnimPlayer(manifestUrl: string): PageAnimPlayer {
     s.last = frames.slice();
     s.first ??= frames.slice();
     s.draws++;
+    if (inPaper) keepFrozen(s);
+  }
+
+  // ── in paper: the frame a turning page keeps ──
+
+  /** Per page, its frames as composited images (`frozenKey`). Made once per
+   *  frame of a loop, so after the first pass every frame has one. */
+  const frozen = new Map<number, Map<string, { url: string; img: HTMLImageElement }>>();
+  const composing = new Set<string>();
+  const frozenKey = (s: Slot) => `${s.canvas.width}x${s.canvas.height}:${s.last.join(',')}`;
+
+  /** The page as shown — the plate, the canvas multiplied over it, as
+   *  flipbook.css blends them — encoded off the frame (toBlob), and decoded
+   *  and held, so the leaf that shows it does not wait on it at the lift. */
+  function keepFrozen(s: Slot): void {
+    const key = frozenKey(s);
+    const id = `${s.page.n}|${key}`;
+    if (frozen.get(s.page.n)?.has(key) || composing.has(id)) return;
+    if (!s.plate.complete || !s.plate.naturalWidth) return;
+    const c = document.createElement('canvas');
+    c.width = s.canvas.width;
+    c.height = s.canvas.height;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    composing.add(id);
+    ctx.drawImage(s.plate, 0, 0, c.width, c.height);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(s.canvas, 0, 0);
+    c.toBlob(
+      (blob) => {
+        composing.delete(id);
+        if (!blob || destroyed || !slots.includes(s)) return;
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.src = url;
+        void img.decode().catch(() => {});
+        let byKey = frozen.get(s.page.n);
+        if (!byKey) frozen.set(s.page.n, (byKey = new Map()));
+        byKey.set(key, { url, img });
+      },
+      'image/webp',
+      0.92,
+    );
+  }
+
+  function dropFrozen(keep: (n: number) => boolean): void {
+    for (const [n, byKey] of frozen) {
+      if (keep(n)) continue;
+      for (const { url } of byKey.values()) URL.revokeObjectURL(url);
+      frozen.delete(n);
+    }
   }
 
   async function reveal(s: Slot): Promise<void> {
@@ -455,6 +512,7 @@ export function createPageAnimPlayer(manifestUrl: string): PageAnimPlayer {
         next.push(s);
       }
       for (const s of slots) if (!next.includes(s)) ro.unobserve(s.wrap);
+      dropFrozen((n) => next.some((s) => s.page.n === n));
       slots = next;
       if (turning) return; // a riffle's inner landing: wait for the book to settle
       epoch++;
@@ -470,20 +528,32 @@ export function createPageAnimPlayer(manifestUrl: string): PageAnimPlayer {
       epoch++;
       if (active) {
         // Synchronously, before the strips' first frame: the baked page is back.
+        // In paper, the pages keep the frame they are on instead (the lifting
+        // one's leaf carries the same frame, `frozenSrc`): the loops stop,
+        // nothing hides; the lifting page's static copy goes with its slot.
         stop();
-        for (const s of slots) hide(s);
+        if (!PAGE_ANIM_LOOK.inPaper) for (const s of slots) hide(s);
+        else for (const s of slots) s.fade?.finish();
         return;
       }
       void manifestP.then(() => {
         if (!destroyed && !turning) keepWindow();
       });
-      for (const s of slots) void reveal(s);
+      for (const s of slots) if (!(PAGE_ANIM_LOOK.inPaper && s.shown)) void reveal(s);
+      if (PAGE_ANIM_LOOK.inPaper) loop();
+    },
+
+    frozenSrc(n) {
+      if (!PAGE_ANIM_LOOK.inPaper) return null;
+      const s = slots.find((x) => x.page.n === n && x.shown);
+      return s ? (frozen.get(n)?.get(frozenKey(s))?.url ?? null) : null;
     },
 
     destroy() {
       destroyed = true;
       epoch++;
       stop();
+      dropFrozen(() => false);
       ro.disconnect();
       rowListeners.delete(onRows);
       for (const c of cache.values()) {

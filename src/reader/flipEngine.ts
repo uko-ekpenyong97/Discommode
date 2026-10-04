@@ -105,6 +105,13 @@ export interface FlipEngineOptions {
    * thing's tap instead of a turn.
    */
   tapTarget?: (e: PointerEvent) => (() => void) | null;
+  /**
+   * What a lifting page's leaf shows instead of its baked image, or null for
+   * the baked image: the inside-page animations "in paper" (pageAnimPlayer.ts,
+   * a dial, off) hand over the frame the page was on, so the page turns with
+   * its drawing frozen in it rather than snapping to the print.
+   */
+  liftSrc?: (page: Page) => string | null;
 }
 
 export interface FlipEngine {
@@ -629,8 +636,10 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     }
     layer.append(slot);
 
+    const frozen = lift ? (opts.liftSrc?.(lift) ?? null) : null;
+    const liftSrc = frozen ?? lift?.src ?? null;
     const curl = getCurl(dir);
-    paintCurl(curl, lift?.src ?? null, back?.src ?? null, lift?.ease);
+    paintCurl(curl, liftSrc, back?.src ?? null, frozen ? null : lift?.ease);
     layer.append(curl.root);
 
     // Slide profile: the cover (spread 0) and back (last spread) rest half a page
@@ -642,7 +651,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     turnSeq++;
     state = {
       dir, from, to, t: 0, committed: false, plated: false,
-      liftSrc: lift?.src ?? null, backSrc: back?.src ?? null,
+      liftSrc, backSrc: back?.src ?? null,
       slideFromK: slideK(from), slideToK: slideK(to),
     };
     turnHost.append(layer);
@@ -1032,7 +1041,10 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
         const prev = r.leaves[l.k - 1];
         const liftFast = prev ? isFast(prev) : false;
         const liftPage = spreads[l.from][near];
-        const lift = srcFor(liftPage, liftFast && fast);
+        // The first leaf lifts the page the reader was on: its frozen frame, if
+        // it has one (`liftSrc`).
+        const frozenLift = l.k === 0 && liftPage ? (opts.liftSrc?.(liftPage) ?? null) : null;
+        const lift = frozenLift ?? srcFor(liftPage, liftFast && fast);
         const back = srcFor(spreads[l.to][1 - near], fast);
         if (import.meta.env.DEV && debugColours) {
           const hue = DEBUG_HUES[l.k % DEBUG_HUES.length];
@@ -1043,7 +1055,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
         } else {
           for (const f of [...l.curl.fronts, ...l.curl.backs]) f.style.backgroundColor = '';
           // Only the first leaf lifts a page that can still be easing.
-          paintCurl(l.curl, lift, back, l.k === 0 && !(liftFast && fast) ? liftPage?.ease : null);
+          paintCurl(l.curl, lift, back, l.k === 0 && !frozenLift && !(liftFast && fast) ? liftPage?.ease : null);
         }
         r.layer.append(wrapOf(l.curl));
         r.pendingNear = { src: srcFor(spreads[l.to][near], fast), frame: r.frame };

@@ -1071,12 +1071,15 @@ more than 2 levels (mean 6.8), 11 | 12 15% (mean 0.9).
 `docs/page-anims/in-paper-07-08.webp` and `in-paper-11-12.webp`: before
 (off) and after (in paper), the spread and the drawing 1:1.
 
-Not done, and the other reading of "in the paper": a turning leaf carrying the
-frame the page was on (today it shows the print, the rest pose, from the first
-frame of a lift). The strips paint the page as a CSS background, so that needs
-each frame composited with its plate and encoded to an image ahead of the
-turn, then decoded before the lift — a decode at the lift is a dropped frame
-(docs/perf/flaky-checks.md).
+**A turning page keeps its frame** (in paper only). The sprites no longer
+hide when a leaf lifts: their loops stop, and the lifting page's leaf carries
+the frame it was on — the plate with that frame multiplied in, as on screen,
+composited once per frame of a loop (`toBlob`, WebP 0.92), held decoded, and
+handed to the engine (`liftSrc`: ordinary turns, a drag, a riffle's first
+leaf). Until a loop has been through once, a frame with no composite yet turns
+as the print. The page that is not lifting keeps its frozen frame until the
+leaf covers it. Off, a turn is exactly as before (the layer hides, the leaf is
+the baked page); `pageanims` and `pageclip` hold that, and run off.
 
 ### The align tool
 
