@@ -58,7 +58,15 @@ const SPIKE_BACK = 12;
 const HOVER_HOLD_MS = 3000;
 const REJOIN_FRAMES = 150;
 const SHARP_MIN = 0.85;
-const FRAME_BUDGET = 33.4;
+/**
+ * Over the budget is THREE vsyncs or more (50 ms at 60 Hz), counted as
+ * verify:detail counts them: an interval is a whole number of vsyncs give or
+ * take a few tenths, so a frame that dropped one vsync reads 33.2–33.6 ms, and
+ * `> 33.4` failed it on the jitter alone — every failure of four runs, main and
+ * branch, was a 33.4 (docs/perf/flaky-checks.md). Headed Chrome here runs at
+ * 120 Hz; its 41.7 ms is 2.5 of these and rounds to 3, over.
+ */
+const overBudget = (d) => Math.round(d / (1000 / 60)) > 2;
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
 
 /** Installed before the page's scripts. */
@@ -608,9 +616,9 @@ export async function checkDrag({ browser, origin, newPage, check, log = console
         }
       } else {
         const fr = D.frames.filter(([, , p]) => p.startsWith('drag:')).map(([s, e]) => e - s);
-        const over = fr.filter((d) => d > FRAME_BUDGET);
+        const over = fr.filter(overBudget);
         // Each long frame, its case and what ran in it.
-        for (const [s0, e0, p] of D.frames.filter(([s1, e1, p1]) => p1.startsWith('drag:') && e1 - s1 > FRAME_BUDGET)) {
+        for (const [s0, e0, p] of D.frames.filter(([s1, e1, p1]) => p1.startsWith('drag:') && overBudget(e1 - s1))) {
           const lo = D.loaf.filter((l) => l.start < e0 && l.end > s0);
           const what = lo.length ? lo.map((l) => `LoAF ${Math.round(l.end - l.start)} (render ${Math.round(l.render)})${l.scripts.length ? `: ${l.scripts.slice(0, 3).join(', ')}` : ''}`).join('; ') : 'no LoAF: compositor / GPU';
           log(`      ${p} ${(e0 - s0).toFixed(1)} ms — ${what}`);
