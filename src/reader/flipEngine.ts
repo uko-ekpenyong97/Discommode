@@ -321,7 +321,6 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   const { book, turnHost, getSpreads, getSpread } = opts;
 
   let state: TurnState | null = null;
-  let strips: HTMLDivElement[] = [];
   let drag: DragState | null = null;
   let tween: { stop: () => void } | null = null;
   /** The chain -> plate crossfade, while it is running. */
@@ -382,6 +381,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       // lifts the LEFT page, whose strips nest the other way, so the pair swaps.
       // Only the mirrored back face carries the overlap term, and only where the
       // face actually overhangs — the edge strip's is clamped to 0 in CSS.
+      // Its place in the chain, for its shading (flipbook.css, `.flip-strip`):
+      // the tip's last EDGE_TAPER strips fade it out toward the edge.
+      const fromTip = STRIP_COUNT - 1 - i;
+      strip.style.setProperty('--i', String(i));
+      strip.style.setProperty('--taper', String(fromTip < EDGE_TAPER ? fromTip / EDGE_TAPER : 1));
       const back0 = i === STRIP_COUNT - 1 ? 0 : FACE_OVERLAP;
       const front = makeFace('front', dir === 'next' ? offsetA(i, 0) : offsetB(i, 0));
       const back = makeFace('back', dir === 'next' ? offsetB(i, back0) : offsetA(i, back0));
@@ -413,7 +417,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   // --- the curl math ------------------------------------------------------
   function applyTurn(t: number): void {
     if (state) state.t = t;
-    const tt = bend(book, strips, t);
+    const tt = bend(book, t);
 
     // Book slide, tied to t so it tracks a drag and springs back on cancel. Only
     // written for a cover/back turn; other turns leave the CSS data-pos value.
@@ -429,12 +433,12 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   }
 
   /**
-   * The curl at `t`, written onto `host` (whose descendants read `--tt`, `--td`
-   * and `--shade`) and the chain's own strips. An ordinary turn writes onto the
+   * The curl at `t`, written onto `host`, whose descendants read `--tt`, `--td`
+   * and `--shade` (each strip's shading follows in CSS). An ordinary turn writes onto the
    * book; a riffle writes onto each leaf's own chain root, since several are in
    * the air at once. Returns the chain angle.
    */
-  function bend(host: HTMLElement, strips: HTMLDivElement[], t: number): number {
+  function bend(host: HTMLElement, t: number): number {
     const th = Math.PI * t; // true half-turn
     const beta = BETA * Math.sin(Math.PI * t); // overshoot: 0 at both ends
     const tt = th + beta; // chain rotation, runs past 180deg and back
@@ -443,21 +447,11 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     host.style.setProperty('--tt', `${(tt * DEG).toFixed(2)}deg`);
     host.style.setProperty('--td', `${(td * DEG).toFixed(3)}deg`);
     host.style.setProperty('--shade', Math.sin(Math.PI * t).toFixed(3));
-
-    const last = strips.length - 1;
-    for (let i = 0; i < strips.length; i++) {
-      // cos^2, not |cos|: same 0..1 range with no cusp as a strip crosses edge-on.
-      const c1 = Math.cos(tt - i * td);
-      const c2 = Math.cos(tt - (i + 1) * td);
-      const l1 = c1 * c1;
-      const l2 = c2 * c2;
-      const distFromTip = last - i;
-      const taper = distFromTip < EDGE_TAPER ? distFromTip / EDGE_TAPER : 1;
-      const st = strips[i].style;
-      st.setProperty('--lit', Math.sqrt(l1).toFixed(3));
-      st.setProperty('--a1', ((1 - l1) * 0.55 * taper).toFixed(3));
-      st.setProperty('--a2', ((1 - l2) * 0.55 * taper).toFixed(3));
-    }
+    // Each strip's shading follows from these two angles and its own place in
+    // the chain (`--i`, `--taper`, set when the chain is built): flipbook.css
+    // computes it. Three writes a frame for the whole leaf, where there were
+    // 87 — and with the cover stage drawing under the reader, a riffle's
+    // ~260 a frame were a major GC in every riffle (docs/perf/flaky-checks.md).
     return tt;
   }
 
@@ -507,7 +501,6 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     book.classList.remove(LIFTING_CLASS.next, LIFTING_CLASS.prev);
     // Hand the slide back to CSS (the settled data-pos value for the new spread).
     book.style.removeProperty('--book-slide');
-    strips = [];
     state = null;
     setTurnActive(false);
   }
@@ -573,7 +566,6 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
         if (fade === anim) fade = null;
         if (destroyed || turnSeq !== seq) return;
         layer.querySelector('.flip-curl')?.remove(); // cached curl, reused as-is
-        strips = [];
       })
       .catch(() => {
         if (fade === anim) fade = null;
@@ -653,7 +645,6 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       liftSrc: lift?.src ?? null, backSrc: back?.src ?? null,
       slideFromK: slideK(from), slideToK: slideK(to),
     };
-    strips = curl.strips;
     turnHost.append(layer);
 
     applyTurn(0);
@@ -787,15 +778,23 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
   /** Decodes in flight or done, by src. A page decoded once is warm in the
    *  image cache for the next jump that needs it. */
   const decodes = new Map<string, Promise<void>>();
+  /** And the elements that hold them. An `Image` nothing refers to is
+   *  collected, and its decode with it, often before its leaf lifts: the
+   *  strips then decoded the page in the very frame they showed it (a 33 ms
+   *  frame in about a third of riffles, docs/perf/flaky-checks.md). Kept for
+   *  the engine's life, as `decodes` is: ~40 pages, their bytes only. */
+  const decodedImgs = new Map<string, HTMLImageElement>();
   function decode(src: string): Promise<void> {
     const cached = decodes.get(src);
     if (cached) return cached;
     const img = new Image();
     img.src = src;
+    decodedImgs.set(src, img);
     // A failed decode is not cached (the next jump retries) and does not hold
     // the riffle: the leaf goes, as an ordinary turn would on a cold page.
     const p = img.decode().catch(() => {
       decodes.delete(src);
+      decodedImgs.delete(src);
     });
     decodes.set(src, p);
     return p;
@@ -1055,7 +1054,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       }
       if (local < 1) {
         l.t = l.ease(local);
-        l.tt = bend(l.curl!.root, l.curl!.strips, l.t);
+        l.tt = bend(l.curl!.root, l.t);
         if (l.last && l.t >= PLATE_T) plateRiffle(r, farSide, spreads[l.to][1 - near]?.src ?? null);
         continue;
       }
@@ -1063,7 +1062,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       l.t = 1;
       l.phase = 'landed';
       if (l.last) {
-        bend(l.curl!.root, l.curl!.strips, 1);
+        bend(l.curl!.root, 1);
         plateRiffle(r, farSide, spreads[l.to][1 - near]?.src ?? null);
         r.done = true;
         jump = null;
