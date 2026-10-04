@@ -11,6 +11,7 @@ import type { PageAnimPlayer } from './pageAnimPlayer';
 import { animsOnPage } from './pageAnims';
 import { createQuotePlayer } from './quotePlayer';
 import { quoteOnPage } from './quotes';
+import { useSinglePage } from './singlePage';
 import type { QuotePage } from './quotes';
 import './flipbook.css';
 
@@ -266,8 +267,36 @@ export function FlipBook({
   // CSS; the engine takes over inline during a cover/back turn).
   const pos = spread === 0 ? 'cover' : spread >= spreads.length - 1 ? 'back' : 'mid';
 
+  // One page at a time (singlePage.ts; a dial, off): which page of an open
+  // spread is shown. A Next lands on the new spread's left page, a Prev on
+  // its right; the closed cover and back have one page anyway.
+  const single = useSinglePage();
+  const [side, setSide] = useState<'left' | 'right'>('left');
+  const lastSpread = useRef(spread);
+  useLayoutEffect(() => {
+    if (spread !== lastSpread.current) setSide(spread > lastSpread.current ? 'left' : 'right');
+    lastSpread.current = spread;
+  }, [spread]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!single || !stage || pos !== 'mid') return;
+    // A press on the screen's half toward the spread's OTHER page goes there,
+    // and is not a turn: it never reaches the book (the engine's listener).
+    const onDown = (e: PointerEvent) => {
+      const toward = e.clientX < window.innerWidth / 2 ? 'left' : 'right';
+      if (toward === side) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setSide(toward);
+    };
+    stage.addEventListener('pointerdown', onDown, { capture: true });
+    return () => stage.removeEventListener('pointerdown', onDown, { capture: true });
+  }, [single, side, pos]);
+  const singleShows = !single ? undefined : pos === 'mid' ? side : 'page';
+
   return (
-    <div className="book-stage">
+    <div className="book-stage" ref={stageRef} data-single={singleShows}>
       <div className="book" ref={setBook} data-pos={pos}>
         <div className="book__page book__page--left" ref={leftSlotRef}>
           {left && (

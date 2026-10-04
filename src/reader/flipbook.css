@@ -16,6 +16,23 @@
   justify-content: center;
 }
 
+/* One page at a time (singlePage.ts; a dial, off; portrait only): the stage at
+   twice its size, about the book's centre, moved so one page is centred — a
+   page is half the book, (hero-h · 10/13) wide. The closed cover and back are
+   already centred (data-pos). */
+.book-stage[data-single] {
+  transition: transform 260ms ease;
+}
+.book-stage[data-single='page'] {
+  transform: translateY(-50%) scale(2);
+}
+.book-stage[data-single='left'] {
+  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * 10 / 13)) scale(2);
+}
+.book-stage[data-single='right'] {
+  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * -10 / 13)) scale(2);
+}
+
 .book {
   /* Defaults so the curl's calc()s are valid before the engine's first write. */
   --bw: 0px;

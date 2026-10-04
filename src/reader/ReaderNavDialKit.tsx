@@ -12,6 +12,7 @@ import { useChromeDials } from '../dev/chromeDials';
 import { usePageAnimAlign } from '../dev/pageAnimAlign';
 import { usePageAnimLook } from '../dev/pageAnimLook';
 import { useTranslateDials } from '../dev/translateDials';
+import { useReaderPageDials } from '../dev/readerPageDials';
 import { installDockPanels } from '../dev/dockPanels';
 
 // Before this dock's panels register: which open, which stay folded.
@@ -80,6 +81,9 @@ export default function ReaderNavDialKit() {
 
   // The chapter-break quotes' translate morph (quotes.ts).
   useTranslateDials();
+
+  // One page at a time on a portrait screen (singlePage.ts; off).
+  useReaderPageDials();
 
   useEffect(
     () => () => {
