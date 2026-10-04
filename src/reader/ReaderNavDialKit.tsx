@@ -40,6 +40,7 @@ export default function ReaderNavDialKit() {
         default: SHIPPED.riffleCurve,
       },
       riffleHalfResBelowMs: [SHIPPED.riffleHalfResBelowMs, 0, 1000, 5],
+      riffleHalfResInMotion: SHIPPED.riffleHalfResInMotion,
       jumpMode: { type: 'select', options: ['riffle', 'cut'], default: SHIPPED.mode },
     },
     { id: 'reader-nav-3' },
@@ -52,6 +53,7 @@ export default function ReaderNavDialKit() {
     JUMP.riffleMaxInAir = nav.riffleMaxInAir;
     JUMP.riffleCurve = nav.riffleCurve as RiffleCurve;
     JUMP.riffleHalfResBelowMs = nav.riffleHalfResBelowMs;
+    JUMP.riffleHalfResInMotion = nav.riffleHalfResInMotion;
     JUMP.mode = nav.jumpMode as JumpMode;
   }, [
     nav.riffleMsPer20,
@@ -60,6 +62,7 @@ export default function ReaderNavDialKit() {
     nav.riffleMaxInAir,
     nav.riffleCurve,
     nav.riffleHalfResBelowMs,
+    nav.riffleHalfResInMotion,
     nav.jumpMode,
   ]);
 

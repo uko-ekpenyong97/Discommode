@@ -218,7 +218,7 @@ interface Riffle {
   held: number | null;
   frame: number;
   /** A near-slot swap waiting for its leaf's faces to have painted. */
-  pendingNear: { src: string | null; frame: number } | null;
+  pendingNear: { src: string | null; page: Page | null; frame: number } | null;
   plated: boolean;
   done: boolean;
 }
@@ -824,7 +824,31 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
    * The cost of full size is a page decoded at a new scale while other leaves
    * are moving; see docs/reader.md for what that costs in frames.
    */
-  const isFast = (l: RiffleLeaf): boolean => l.duration < JUMP.riffleHalfResBelowMs;
+  const isFast = (l: RiffleLeaf): boolean => JUMP.riffleHalfResInMotion || l.duration < JUMP.riffleHalfResBelowMs;
+
+  /**
+   * `riffleHalfResInMotion`: a slot (a page at rest — under the stack still to
+   * lift, or the top of the landed one) shows the half-resolution page it was
+   * given at once, already decoded with its leaf, and goes to full size when a
+   * hidden full-size copy has decoded, unless the slot has moved on by then.
+   */
+  function upgradeSlot(slot: HTMLDivElement, page: Page | null | undefined, half: string | null): void {
+    if (!JUMP.riffleHalfResInMotion || !page?.riffle || !half || half === page.src) return;
+    const img = document.createElement('img');
+    img.src = page.src;
+    img.alt = '';
+    img.draggable = false;
+    img.style.visibility = 'hidden';
+    slot.append(img);
+    const drop = () => img.remove();
+    void img.decode().then(() => {
+      if (!img.isConnected) return;
+      const others = [...slot.querySelectorAll('img')].filter((o) => o !== img);
+      if (others.at(-1)?.getAttribute('src') !== half) return drop();
+      img.style.visibility = '';
+      for (const o of others) o.remove();
+    }, drop);
+  }
 
   /** The image a leaf should use for `page`. */
   const srcFor = (page: Page | null, fast: boolean): string | null =>
@@ -1025,6 +1049,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     // have painted over the page before the page under it changes.
     if (r.pendingNear && r.frame > r.pendingNear.frame) {
       swapSlot(r.near, r.pendingNear.src);
+      upgradeSlot(r.near, r.pendingNear.page, r.pendingNear.src);
       r.pendingNear = null;
     }
 
@@ -1058,7 +1083,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
           paintCurl(l.curl, lift, back, l.k === 0 && !frozenLift && !(liftFast && fast) ? liftPage?.ease : null);
         }
         r.layer.append(wrapOf(l.curl));
-        r.pendingNear = { src: srcFor(spreads[l.to][near], fast), frame: r.frame };
+        r.pendingNear = { src: srcFor(spreads[l.to][near], fast), page: spreads[l.to][near], frame: r.frame };
         // Keep the decode ahead of the lifts.
         for (const ahead of r.leaves.slice(l.k + 1, l.k + 1 + DECODE_AHEAD)) {
           for (const src of leafPages(ahead)) void decode(src);
@@ -1088,7 +1113,9 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       // An inner leaf lies flat on the landed stack: the far slot takes its page
       // and the chain goes back to the pool. React hears the spread, so the
       // caption and the hash count along with the pages.
-      swapSlot(r.far, srcFor(spreads[l.to][1 - near], isFast(l)));
+      const farSrc = srcFor(spreads[l.to][1 - near], isFast(l));
+      swapSlot(r.far, farSrc);
+      upgradeSlot(r.far, spreads[l.to][1 - near], farSrc);
       giveCurl(r.dir, l.curl!);
       l.curl = null;
       opts.onSpreadChange(l.to);
