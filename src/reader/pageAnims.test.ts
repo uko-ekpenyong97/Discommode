@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { ANIMATED_PAGES, PAGE_ANIMS, PAGE_H, PAGE_W, animsOnPage } from './pageAnims';
 import type { PageAnimManifest } from './pageAnimGeometry';
-import { cellRect, frameAt, lockedH, pagesNear, restOf } from './pageAnimGeometry';
+import { cellRect, frameAt, holdsOf, lockedH, pagesNear, restOf } from './pageAnimGeometry';
 import type { AtlasEntry } from './pageAnimGeometry';
 import { buildSpreads, issue01 } from './issue-01';
 import { QUOTED_PAGES } from './quotes';
 // The build's own geometry (plain JS, no browser): what seeded the rows.
 import { fitInside, turnedBounds } from '../../scripts/page-anim-register.mjs';
+// The build's APNG reader, for the sources when they are on this machine.
+import { fpsOfDelays, holdsOf as holdsOfDelays, readApng, runsOf, sourceApngPath } from '../../scripts/apng.mjs';
 // What `npm run anims` wrote.
 import manifestJson from '../../public/issues/01/page-anim/manifest.json';
 
@@ -141,4 +143,93 @@ describe('atlas geometry and timing', () => {
     expect([...pagesNear(spreads, 9)].sort((a, b) => a - b)).toEqual([15, 16, 17, 18, 19, 20]);
     expect([...pagesNear(spreads, 0)].sort((a, b) => a - b)).toEqual([0, 1, 2]);
   });
+});
+
+describe('frame holds', () => {
+  // badges as built: frame 1 blank, rests on frame 3.
+  const e: AtlasEntry = {
+    page: 8, src: '', frames: 6, fps: 6, holds: [2, 2, 1, 2, 5, 2], mode: 'loop', rest: 2,
+    cols: 3, rows: 2, cellW: 100, cellH: 50, gutter: 2, aspect: 2,
+  };
+  const tick = 1000 / 6;
+  const at = (ticks: number, rest?: number) => frameAt(e, ticks * tick + 1, rest);
+
+  it('holds each frame its ticks, from the start of the rest frame’s hold, and loops', () => {
+    // From rest (frame 2): 2 ×1, 3 ×2, 4 ×5, 5 ×2, 0 ×2, 1 ×2 — then round again.
+    const want = [2, 3, 3, 4, 4, 4, 4, 4, 5, 5, 0, 0, 1, 1, 2, 3];
+    expect(want.map((_, t) => at(t))).toEqual(want);
+    expect(frameAt(e, -500)).toBe(2);
+    expect(frameAt(e, 0)).toBe(2);
+  });
+
+  it('keeps time from the clock: a thousand loops later it is on the same frame', () => {
+    const loop = 14;
+    for (let t = 0; t < loop; t++) expect(at(t + 1000 * loop)).toBe(at(t));
+  });
+
+  it('starts from the row’s rest when it has one', () => {
+    expect(at(0, 4)).toBe(4);
+    expect(at(4, 4)).toBe(4);
+    expect(at(5, 4)).toBe(5);
+    expect(at(7, 4)).toBe(0);
+  });
+
+  it('a once animation holds its last frame after its last hold', () => {
+    const once = { ...e, mode: 'once' as const, rest: 0 };
+    expect(frameAt(once, 11 * tick + 1)).toBe(4);
+    expect(frameAt(once, 12 * tick + 1)).toBe(5);
+    expect(frameAt(once, 100_000)).toBe(5);
+  });
+
+  it('holds that do not fit the atlas fall back to one tick a frame', () => {
+    expect(holdsOf({ ...e, holds: [2, 2] })).toBeNull();
+    expect(holdsOf({ ...e, holds: [2, 2, 0, 2, 5, 2] })).toBeNull();
+    expect(frameAt({ ...e, holds: [2, 2] }, tick + 1)).toBe(3);
+  });
+
+  it('an animation without holds steps exactly as before', () => {
+    const plain = { ...e, holds: undefined, rest: 1 };
+    for (let t = 0; t < 20; t++) expect(frameAt(plain, t * tick + 1)).toBe((1 + t) % 6);
+  });
+});
+
+describe('Procreate holds as built', () => {
+  /** What Procreate's APNG exports say (2026-10-03): 166ms frames, 6fps. */
+  const PROCREATE: Record<string, { file: string; holds: number[]; apngMs: number }> = {
+    cuffs: { file: 'Golden_Cuffs.png', holds: [5, 5], apngMs: 1660 },
+    badges: { file: 'Badges.png', holds: [2, 2, 1, 2, 5, 2], apngMs: 2324 },
+  };
+
+  for (const [id, want] of Object.entries(PROCREATE)) {
+    it(`${id}: holds ${want.holds.join(',')}, its loop within a frame of the APNG’s`, () => {
+      const e = manifest.anims[id];
+      expect(e.fps).toBe(6);
+      expect(e.holds).toEqual(want.holds);
+      expect(e.apngMs).toBe(want.apngMs);
+      const ticks = e.holds!.reduce((a, b) => a + b, 0);
+      expect(Math.abs((ticks / e.fps) * 1000 - want.apngMs)).toBeLessThanOrEqual(1000 / e.fps);
+    });
+  }
+
+  it('no other animation has holds (each plays as before)', () => {
+    for (const [id, e] of Object.entries(manifest.anims)) if (!(id in PROCREATE)) expect(e.holds).toBeUndefined();
+  });
+
+  // The sources live outside the repo; where they are, the manifest must be
+  // what their APNGs say now.
+  for (const [id, want] of Object.entries(PROCREATE)) {
+    const path = sourceApngPath('01', id, want.file);
+    it.skipIf(!path)(`${id}: the manifest’s holds are its APNG’s delays`, async () => {
+      const apng = await readApng(path!);
+      const delays = runsOf(apng.frames).map((r) => r.delayMs);
+      const fps = fpsOfDelays(apng.frames.map((f) => f.delayMs));
+      const e = manifest.anims[id];
+      expect(fps).toBe(e.fps);
+      expect(holdsOfDelays(delays, fps!)).toEqual(e.holds);
+      expect(Math.round(delays.reduce((a, b) => a + b, 0))).toBe(e.apngMs);
+      // Each run is held exactly its delay, in whole ticks.
+      for (let i = 0; i < delays.length; i++) expect(e.holds![i]).toBe(Math.round((delays[i] * e.fps) / 1000));
+      expect(apng.plays).toBe(0);
+    });
+  }
 });

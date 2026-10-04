@@ -47,6 +47,15 @@
       "src": "/issues/01/page-anim/badges.webp",
       "frames": 6,
       "fps": 6,
+      "holds": [
+        2,
+        2,
+        1,
+        2,
+        5,
+        2
+      ],
+      "apngMs": 2324,
       "mode": "loop",
       "rest": 2,
       "cols": 3,
@@ -87,6 +96,11 @@
       "src": "/issues/01/page-anim/cuffs.webp",
       "frames": 2,
       "fps": 6,
+      "holds": [
+        5,
+        5
+      ],
+      "apngMs": 1660,
       "mode": "loop",
       "rest": 1,
       "cols": 2,

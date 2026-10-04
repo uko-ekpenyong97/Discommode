@@ -67,7 +67,10 @@
  *                         real Next and Prev, no plate or sprite is shown while
  *                         a turn layer is up, and the strips and static slots
  *                         carry the baked pages; reduced motion holds the rest
- *                         frame. The frame budget is gated on the machine: the
+ *                         frame. Spread 4 (07 | 08) at 1×: badges, sampled
+ *                         every frame for 3 s, holds each frame its Procreate
+ *                         ticks (2,2,1,2,5,2 at 6fps, from its APNG) in order
+ *                         from its rest frame. The frame budget is gated on the machine: the
  *                         animated spread interleaved with a plain one (19 | 20),
  *                         asserted only when the plain one is clean; the load
  *                         average is printed.
@@ -1115,6 +1118,11 @@ async function checkSky(browser) {
 /** Spread 9 is 17 | 18: cuqui and highlander, one sprite canvas each. */
 const ANIM_SPREAD = 9;
 const ANIM_PAGES = [17, 18];
+/** 7 | 8: badges, whose frames carry Procreate's holds (its APNG's). */
+const HOLDS_SPREAD = 4;
+const HOLDS_PAGE = 8;
+/** Ticks of 1/6 s each badges frame is held: Badges.png's 14 frames of 166ms. */
+const BADGES_HOLDS = [2, 2, 1, 2, 5, 2];
 /** 19 | 20: nothing animated — the frame budget's baseline. */
 const PLAIN_SPREAD = 10;
 
@@ -1301,6 +1309,44 @@ async function checkPageAnims(browser) {
       st.map((s) => `${s.page}: frame ${s.last} (rest ${s.rest}), ${s.draws} draws`).join('; '),
     );
     await context.close();
+  }
+
+  // Procreate's holds, in the browser: badges' frame on every rAF for 3 s,
+  // its runs measured on the page's own clock. The first and last runs seen
+  // are partial. `open` idles past the settle, so the loop's start is the
+  // player's first drawn frame, which must be the rest frame.
+  {
+    const page = await newPage(browser, 1);
+    await open(page, HOLDS_SPREAD);
+    await animsShown(page, [HOLDS_PAGE]);
+    const changes = await page.evaluate(
+      ({ pageN, ms }) =>
+        new Promise((done) => {
+          const out = [];
+          const t0 = performance.now();
+          const f = (now) => {
+            const s = window.__pageAnims.state().find((x) => x.page === pageN);
+            const frame = s?.last[0];
+            if (out.at(-1)?.frame !== frame) out.push({ frame, at: now });
+            if (now - t0 < ms) requestAnimationFrame(f);
+            else done(out);
+          };
+          requestAnimationFrame(f);
+        }),
+      { pageN: HOLDS_PAGE, ms: 3000 },
+    );
+    const st = (await page.evaluate(() => window.__pageAnims.state())).find((x) => x.page === HOLDS_PAGE);
+    const tick = 1000 / 6;
+    const runs = changes.slice(1, -1).map((c, i) => ({ frame: c.frame, ticks: (changes[i + 2].at - c.at) / tick }));
+    const seen = new Set(runs.map((r) => r.frame));
+    const inOrder = runs.every((r, i) => i === 0 || r.frame === (runs[i - 1].frame + 1) % BADGES_HOLDS.length);
+    const held = runs.every((r) => Math.round(r.ticks) === BADGES_HOLDS[r.frame] && Math.abs(r.ticks - BADGES_HOLDS[r.frame]) < 0.5);
+    check(
+      st?.first?.[0] === st?.rest[0] && st?.rest[0] === 2 && seen.size === BADGES_HOLDS.length && inOrder && held,
+      `@1× 07 | 08: badges holds each frame its Procreate ticks (${BADGES_HOLDS.join(',')} at 6fps), in order from its rest frame`,
+      `first drawn ${st?.first?.[0]} (rest ${st?.rest[0]}); ${runs.map((r) => `${r.frame}×${r.ticks.toFixed(2)}`).join(' ')}`,
+    );
+    await page.context().close();
   }
 
   // The frame budget, gated on the machine: the animated spread and a plain

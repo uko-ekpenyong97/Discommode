@@ -20,8 +20,9 @@
  * a hidden tab and is 0 under reduced motion, so reduced motion is the rest
  * frame for good); the shared clock itself is untouched.
  *
- * Frames step on the boil's clock (`stepsIn`, coverLife.ts). There is no boil
- * wobble on inside pages: only the stepping.
+ * Frames step on the boil's clock (`stepsIn`, coverLife.ts), each held its
+ * manifest `holds` (Procreate's frame holds, from the folder's APNG). There is
+ * no boil wobble on inside pages: only the stepping.
  *
  * Atlases are fetched for the open spread and the spreads either side; each
  * spread's are decoded off the main thread (`createImageBitmap` from the blob)
