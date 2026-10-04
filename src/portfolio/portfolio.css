@@ -269,9 +269,13 @@
   left: -5px; /* half the nav's gap */
   right: -5px;
 }
-.pv-letterhead__no:hover,
 .pv-letterhead__no:focus-visible {
   color: #fff;
+}
+@media (hover: hover) {
+  .pv-letterhead__no:hover {
+    color: #fff;
+  }
 }
 .pv-letterhead__no[data-current] {
   color: #fff;
@@ -327,9 +331,13 @@
   cursor: pointer;
   transition: color 180ms ease;
 }
-.pv-letterhead__back:hover,
 .pv-letterhead__back:focus-visible {
   color: #fff;
+}
+@media (hover: hover) {
+  .pv-letterhead__back:hover {
+    color: #fff;
+  }
 }
 .pv-letterhead__back:focus-visible {
   outline: 1px solid currentColor;

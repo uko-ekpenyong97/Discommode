@@ -76,8 +76,11 @@
 /* ── hover and press — nothing else ──────────────────────────────────────
    Hover lifts: a scale and a small tilt, alternating along the row. Press is
    the paper's lightness nudged away from the ink (`--paper-press`). */
-.paper:not(:disabled, .paper--static):hover .paper__shape {
-  transform: scale(var(--chrome-hover-lift, 1.04)) rotate(calc(var(--chrome-hover-tilt, 2deg) * var(--tilt, 1)));
+/* Only where there is a hover: on a touch screen a tap would leave it stuck. */
+@media (hover: hover) {
+  .paper:not(:disabled, .paper--static):hover .paper__shape {
+    transform: scale(var(--chrome-hover-lift, 1.04)) rotate(calc(var(--chrome-hover-tilt, 2deg) * var(--tilt, 1)));
+  }
 }
 .paper:not(:disabled, .paper--static):active .paper__fill,
 .paper:has(select:active) .paper__fill {
@@ -87,8 +90,10 @@
   .paper__shape {
     transition: none;
   }
-  .paper:not(:disabled, .paper--static):hover .paper__shape {
-    transform: scale(var(--chrome-hover-lift, 1.04));
+  @media (hover: hover) {
+    .paper:not(:disabled, .paper--static):hover .paper__shape {
+      transform: scale(var(--chrome-hover-lift, 1.04));
+    }
   }
 }
 

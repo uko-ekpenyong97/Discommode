@@ -119,10 +119,12 @@
     border-color 120ms ease;
 }
 
-.card-overlay__cta:hover {
-  transform: scale(var(--cta-hover-scale, 1.08));
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.85);
+@media (hover: hover) {
+  .card-overlay__cta:hover {
+    transform: scale(var(--cta-hover-scale, 1.08));
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.85);
+  }
 }
 
 .card-overlay__cta:focus-visible {

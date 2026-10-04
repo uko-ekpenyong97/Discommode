@@ -166,8 +166,10 @@
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
-.pv-link:hover {
-  text-decoration-thickness: 2px;
+@media (hover: hover) {
+  .pv-link:hover {
+    text-decoration-thickness: 2px;
+  }
 }
 
 /* ── media ─────────────────────────────────────────────────────────────── */
@@ -318,9 +320,11 @@
     border-color 180ms ease,
     background 180ms ease;
 }
-.pv-linkpill:hover {
-  border-color: rgba(20, 18, 15, 0.6);
-  background: rgba(20, 18, 15, 0.05);
+@media (hover: hover) {
+  .pv-linkpill:hover {
+    border-color: rgba(20, 18, 15, 0.6);
+    background: rgba(20, 18, 15, 0.05);
+  }
 }
 .pv-linkpill__icon {
   width: 13px;

@@ -66,6 +66,19 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* A touch screen: the book takes every gesture on it. With pan-y, a turn that
+   started a little off the horizontal was the browser's (a pointercancel
+   mid-turn), and a double tap or a pinch zoomed the page. The reader's chrome
+   takes a tap as a tap (no double-tap zoom wait). */
+@media (pointer: coarse) {
+  .book {
+    touch-action: none;
+  }
+  .reader-layer {
+    touch-action: manipulation;
+  }
+}
+
 /* Closed spreads: shift the book so the single occupied slot lands on the hero
    rect (cover on the right, back on the left). page-width/2 = (hero-h·10/13)/2. */
 .book[data-pos='cover'] {
