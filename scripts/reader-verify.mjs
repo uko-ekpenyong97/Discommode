@@ -1473,6 +1473,27 @@ const shot = async (page) => {
 };
 
 /**
+ * A screenshot of a frame that has stopped changing: captured until two in a
+ * row are the same (at most 10, 100 ms apart), the last one returned with how
+ * many extra captures it took. A held turn is a still frame, but the leaf's
+ * newly shown face can land a capture or two after the turn is applied: a page
+ * decoded late (after half an hour of other sections, its decode evicted) drew
+ * a frame without it, and pageclip compared that against the next one — 595,814
+ * px "added by the sprite layer" that were the leaf's back face arriving
+ * (docs/perf/flaky-checks.md).
+ */
+async function settledShot(page) {
+  let prev = await shot(page);
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(100);
+    const next = await shot(page);
+    if (next.data.equals(prev.data)) return { ...next, waits: i };
+    prev = next;
+  }
+  return { ...prev, waits: 10 };
+}
+
+/**
  * Pixels that differ between two screenshots: on a page, on a page's edge (a
  * device pixel the paper only partly covers — the page sits at fractional CSS
  * px, so its edge is antialiased whatever is drawn on it), or off the paper
@@ -1641,12 +1662,12 @@ async function checkPageAnimClip(browser) {
           window.__flip.applyTurn(tt);
         }, [dir, t]);
         await page.waitForTimeout(150);
-        const withLayer = await shot(page);
+        const withLayer = await settledShot(page);
         await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.display = 'none')));
-        const without = await shot(page);
+        const without = await settledShot(page);
         await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.display = '')));
         const d = diffByPaper(withLayer, without, [], dpr); // no page exempt: anything is a failure
-        held.push({ dir, t, px: d.off });
+        held.push({ dir, t, px: d.off, waits: withLayer.waits + without.waits });
         await page.evaluate(() => window.__flip.cancelTurn(0.05));
         await settled(page, CLIP_SPREAD);
         await animsShown(page, CLIP_PAGES);
@@ -1654,7 +1675,7 @@ async function checkPageAnimClip(browser) {
       check(
         held.every((h) => h.px === 0),
         `@${dpr}× held mid-turn (04 and 03 lifting, t 0.3 and 0.7): the sprite layer adds no pixel anywhere`,
-        held.map((h) => `${h.dir} ${h.t}: ${h.px} px`).join(', '),
+        held.map((h) => `${h.dir} ${h.t}: ${h.px} px${h.waits ? ` (settled after ${h.waits} more captures)` : ''}`).join(', '),
       );
       await page.context().close();
     }
