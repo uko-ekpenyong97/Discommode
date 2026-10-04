@@ -378,6 +378,13 @@
   height: 100%;
 }
 
+/* PAGE ANIM "in paper" (dev, READER NAV dock; off by default): the sprites
+   multiplied into the plate under them, as ink into paper (pageAnimPlayer.ts,
+   PAGE_ANIM_LOOK). The wrapper is the blend's group while it fades. */
+.page-anim[data-look='paper'] .page-anim__sprites {
+  mix-blend-mode: multiply;
+}
+
 /* The align tool (dev, READER NAV dock): the rest frame over the BAKED page,
    difference-blended, so a misregistered sprite shows as bright edges. */
 .page-anim[data-align='difference'] .page-anim__plate {

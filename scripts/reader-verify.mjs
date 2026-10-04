@@ -1314,11 +1314,15 @@ async function checkPageAnims(browser) {
   // Procreate's holds, in the browser: badges' frame on every rAF for 3 s,
   // its runs measured on the page's own clock. The first and last runs seen
   // are partial. `open` idles past the settle, so the loop's start is the
-  // player's first drawn frame, which must be the rest frame.
-  {
+  // player's first drawn frame, which must be the rest frame. Twice: as it
+  // ships, and with the PAGE ANIM dial's "in paper" (dev), which changes how a
+  // frame is drawn and must not change which one, or when.
+  for (const inPaper of [false, true]) {
     const page = await newPage(browser, 1);
     await open(page, HOLDS_SPREAD);
     await animsShown(page, [HOLDS_PAGE]);
+    if (inPaper) await page.evaluate(() => window.__pageAnims.setLook({ inPaper: true }));
+    const look = await page.evaluate((n) => document.querySelector(`.page-anim[data-page="${n}"]`)?.dataset.look ?? 'over the paper', HOLDS_PAGE);
     const changes = await page.evaluate(
       ({ pageN, ms }) =>
         new Promise((done) => {
@@ -1342,9 +1346,9 @@ async function checkPageAnims(browser) {
     const inOrder = runs.every((r, i) => i === 0 || r.frame === (runs[i - 1].frame + 1) % BADGES_HOLDS.length);
     const held = runs.every((r) => Math.round(r.ticks) === BADGES_HOLDS[r.frame] && Math.abs(r.ticks - BADGES_HOLDS[r.frame]) < 0.5);
     check(
-      st?.first?.[0] === st?.rest[0] && st?.rest[0] === 2 && seen.size === BADGES_HOLDS.length && inOrder && held,
-      `@1× 07 | 08: badges holds each frame its Procreate ticks (${BADGES_HOLDS.join(',')} at 6fps), in order from its rest frame`,
-      `first drawn ${st?.first?.[0]} (rest ${st?.rest[0]}); ${runs.map((r) => `${r.frame}×${r.ticks.toFixed(2)}`).join(' ')}`,
+      st?.first?.[0] === st?.rest[0] && st?.rest[0] === 2 && seen.size === BADGES_HOLDS.length && inOrder && held && (look === 'paper') === inPaper,
+      `@1× 07 | 08${inPaper ? ', in paper' : ''}: badges holds each frame its Procreate ticks (${BADGES_HOLDS.join(',')} at 6fps), in order from its rest frame`,
+      `look: ${look}; first drawn ${st?.first?.[0]} (rest ${st?.rest[0]}); ${runs.map((r) => `${r.frame}×${r.ticks.toFixed(2)}`).join(' ')}`,
     );
     await page.context().close();
   }

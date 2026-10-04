@@ -78,6 +78,60 @@ export function setAlign(next: AlignState | null): void {
 
 export const alignState = (): AlignState | null => align;
 
+// ── the look (PAGE ANIM, the READER NAV dock) ───────────────────────────
+
+/**
+ * How a page's sprites sit on it. Off (the default, what ships): the canvas
+ * draws them over the plate, as the layer on top of the paper they are. In
+ * paper: the canvas is multiplied into the plate (`mix-blend-mode`,
+ * flipbook.css), so the paper's tone shows through the ink as it does through
+ * the print, and the ink takes the paper's TOOTH — a fine speckle fixed to the
+ * page, not to the drawing, stamped into it with `source-atop` (the sprites'
+ * own alpha, edges included, is untouched). `tooth` is how strong (0–1); the
+ * default is badges' print, the one page that carries it (about 3% of its
+ * light ink speckled dark, docs/reader.md "In paper"). Which frame shows when
+ * — the holds — is not touched: only how a frame is drawn.
+ */
+export interface PageAnimLook {
+  inPaper: boolean;
+  tooth: number;
+}
+export const PAGE_ANIM_LOOK: PageAnimLook = { inPaper: false, tooth: 0.35 };
+
+/** DEV: the PAGE ANIM dials. Every shown page redraws with the new look. */
+export function setPageAnimLook(next: Partial<PageAnimLook>): void {
+  Object.assign(PAGE_ANIM_LOOK, next);
+  for (const fn of rowListeners) fn();
+}
+
+/** The tooth: TOOTH_TILE² cells of TOOTH_CELL page px, each dark with
+ *  probability TOOTH_DENSITY. Made once, drawn as a pattern in page space. */
+const TOOTH_TILE = 512;
+const TOOTH_CELL = 2;
+const TOOTH_DENSITY = 0.033;
+let toothTile: HTMLCanvasElement | null = null;
+function toothPattern(ctx: CanvasRenderingContext2D, k: number): CanvasPattern | null {
+  if (!toothTile) {
+    toothTile = document.createElement('canvas');
+    toothTile.width = toothTile.height = TOOTH_TILE;
+    const t = toothTile.getContext('2d')!;
+    const img = t.createImageData(TOOTH_TILE, TOOTH_TILE);
+    // A fixed hash: the same speckle on every load, every page.
+    let h = 0x9e3779b9;
+    for (let i = 0; i < TOOTH_TILE * TOOTH_TILE; i++) {
+      h ^= h << 13;
+      h ^= h >>> 17;
+      h ^= h << 5;
+      const u = (h >>> 0) / 4294967296;
+      if (u < TOOTH_DENSITY) img.data[i * 4 + 3] = Math.round(255 * (0.55 + 0.45 * (u / TOOTH_DENSITY)));
+    }
+    t.putImageData(img, 0, 0);
+  }
+  const p = ctx.createPattern(toothTile, 'repeat');
+  p?.setTransform(new DOMMatrix().scale(k * TOOTH_CELL));
+  return p;
+}
+
 // ── manifest ───────────────────────────────────────────────────────────
 
 const manifests = new Map<string, Promise<PageAnimManifest | null>>();
@@ -280,6 +334,7 @@ export function createPageAnimPlayer(manifestUrl: string): PageAnimPlayer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
     ctx.imageSmoothingQuality = 'high';
+    const inPaper = PAGE_ANIM_LOOK.inPaper && !(align !== null && s.ids.includes(align.id));
     s.ids.forEach((id, i) => {
       const e = manifest!.anims[id];
       const bmp = cache.get(id)?.bitmap;
@@ -292,6 +347,20 @@ export function createPageAnimPlayer(manifestUrl: string): PageAnimPlayer {
       if (row.flipX) ctx.scale(-1, 1);
       ctx.drawImage(bmp, c.sx, c.sy, c.sw, c.sh, -row.w / 2, -row.h / 2, row.w, row.h);
     });
+    if (inPaper && PAGE_ANIM_LOOK.tooth > 0) {
+      const tooth = toothPattern(ctx, k);
+      if (tooth) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = Math.min(1, PAGE_ANIM_LOOK.tooth);
+        ctx.fillStyle = tooth;
+        ctx.fillRect(0, 0, s.canvas.width, s.canvas.height);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    }
+    if (inPaper) s.wrap.dataset.look = 'paper';
+    else delete s.wrap.dataset.look;
     s.last = frames.slice();
     s.first ??= frames.slice();
     s.draws++;
@@ -457,6 +526,7 @@ const devHandle: {
   rowOf: typeof rowOf;
   setRowOverride: typeof setRowOverride;
   setAlign: typeof setAlign;
+  setLook: typeof setPageAnimLook;
 } = {
   player: null,
   state: () => [],
@@ -465,6 +535,7 @@ const devHandle: {
   rowOf,
   setRowOverride,
   setAlign,
+  setLook: setPageAnimLook,
 };
 
 if (import.meta.env.DEV && typeof window !== 'undefined') {

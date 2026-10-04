@@ -1044,6 +1044,40 @@ canvas) keyed by page, hidden until the player shows it.
   holds both, in pixels ([running the checks](#running-the-checks)).
 - The cover's and the back's hover layers, and the closed book, are untouched.
 
+### In paper (a dial, off)
+
+PAGE ANIM in the READER NAV dock (`#read-NN?intro`, `src/dev/pageAnimLook.ts`):
+**in paper** draws a page's sprites INTO its paper instead of over it, and
+**tooth** sets how strongly. Off by default and back to off when the dock goes,
+so nothing ships different (`PAGE_ANIM_LOOK`, pageAnimPlayer.ts).
+
+- **Multiplied into the plate.** The sprite canvas gets `mix-blend-mode:
+  multiply` over the plate under it, so the paper's cream shows through the
+  ink's lighter tones (and anything printed under a drawing shows through
+  it), where today the ink covers the paper. The clearest change is badges':
+  its blue-grey cards go a warmer, neutral grey.
+- **The paper's tooth.** A fine speckle, fixed to the PAGE (a 512-cell tile of
+  2-page-px cells, ~3.3% dark — badges' print, the one page whose print
+  carries it), stamped into the ink with `source-atop`: it never moves with
+  the drawing, and the sprite's own alpha, edges included, is untouched.
+  `tooth` 0.35 by default; 0 is the multiply alone.
+- **Not changed:** which frame shows and for how long (the holds,
+  `frameAt`) — `verify:reader`'s badges holds check runs with it off and on
+  (identical runs, 5×2.00 0×2.00 1×2.00 2×1.00 3×2.00 4×5.00 5×2.00). A turn
+  still hides the layer and shows the baked page.
+
+Measured on the drawing's box at 2×, rest frame: 07 | 08 43% of pixels move
+more than 2 levels (mean 6.8), 11 | 12 15% (mean 0.9).
+`docs/page-anims/in-paper-07-08.webp` and `in-paper-11-12.webp`: before
+(off) and after (in paper), the spread and the drawing 1:1.
+
+Not done, and the other reading of "in the paper": a turning leaf carrying the
+frame the page was on (today it shows the print, the rest pose, from the first
+frame of a lift). The strips paint the page as a CSS background, so that needs
+each frame composited with its plate and encoded to an image ahead of the
+turn, then decoded before the lift — a decode at the lift is a dropped frame
+(docs/perf/flaky-checks.md).
+
 ### The align tool
 
 PAGE ANIM ALIGN, in the READER NAV dock at `#read-01?intro`
