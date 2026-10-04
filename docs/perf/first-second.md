@@ -178,3 +178,60 @@ three's. The sky's 5K frame is 5–6 ms of GPU; the copy is free in Chrome
 (transfer, not copy), but the claim stack, the CSS fallback and the
 read-backs (`readMeans`, the contrast probe) all assume a canvas of the sky's
 own.
+
+## The font preload (2026-10-04)
+
+The frame before the first paint, above: React's first render with the page's
+first forced style and layout inside it, 29–33 ms of which is the font
+system's start-up on the renderer's first text layout (a trace shows nothing
+inside that layout but 0.2 ms of shaping). On a grid load the only text in the
+first paint is the minimap's and the frame HUD's, in `ui-monospace` — a macOS
+system font, nothing to preload. Bowlby One (the chrome's pills) is the one
+web font in a first paint, on a direct `#item-NN` or `#read-…` load; it was
+fetched only once layout asked for it (requested at 108–170 ms, landed at
+181–202 ms, just before the first paint).
+
+`index.html` now preloads Bowlby One. What that does, from traces of both
+builds: **the main thread's work is the same** — React's first task is 40–44
+ms with the same 29–33 ms forced layout — but Chrome holds the first paint for
+the preloaded font for a moment, and with rendering held there is no frame
+for that task to land in. So the pre-paint frame is gone from the frame
+timeline, and the first paint comes a little later.
+
+Production builds, cold browser, the pointer moving; frames from the
+navigation to 2.5 s. Interleaved run by run (6 rounds), load average 3–5:
+
+| route | build | frames > 50 ms before the first paint | worst before it, ms | first contentful paint, median (range), ms |
+| --- | --- | --- | --- | --- |
+| `/` | before | 6 of 6 | 83–117 | 224 (216–248) |
+| `/` | Bowlby One preloaded | 0 of 6 | 17–50 | 252 (232–272) |
+| `/` | + Inter preloaded too | 0 of 6 | 33 | 268 (260–268) |
+| `/#item-01` | before | 6 of 6 | 83–117 | 204 (196–208) |
+| `/#item-01` | Bowlby One preloaded | 0 of 6 | 17–33 | 236 (216–252) |
+| `/#read-01/3` | before | 6 of 6 | 83–150 | 280 (244–284) |
+| `/#read-01/3` | Bowlby One preloaded | 0 of 6 | 17–33 | 280 (252–284) |
+
+Preloading Inter as well (the Rive cover's canvas text, `riveText.ts`) holds
+the paint longer for nothing in it, so it is not preloaded. Starting the font
+system early instead — an invisible `ui-monospace` "0" in `index.html`, laid
+out while the bundle loads — made it worse on every route (a 133–150 ms frame
+before the paint on `#item-01` and `#read-01/3`, and a later paint), and is not
+done.
+
+`first-second.mjs`, 5 runs each, before → after:
+
+| | 1728×1117 @2× before | after | 2560×1440 @2× before | after |
+| --- | --- | --- | --- | --- |
+| **load, 3 s from the navigation: no frame > 50 ms** | 100, 100, 83, 83, 100 (✗) | 33, 33, 33, 33, 33 (✓) | 117, 133, 83, 83, 100 (✗) | 33, 33, 33, 33, 33 (✓) |
+| from the first contentful paint | 33 ×5 (✓) | 33 ×5 (✓) | 33, 50, 33, 33, 33 (✓) | 33 ×5 (✓) |
+| first detail arrival | 17, 33, 33, 17, 17 | 17 ×5 | 17 ×5 | 17 ×5 |
+| after `warmup:done` (> 33 ms: none) | ✓ | ✓ | ✓ | ✓ |
+| first contentful paint, ms | 216, 220, 216, 208, 220 | 256, 240, 224, 224, 224 | 232, 240, 208, 212, 208 | 244, 260, 264, 264, 232 |
+| `warmup:done`, ms | 705, 707, 698, 733, 721 | 754, 745, 702, 632, 638 | 978, 970, 947, 958, 931 | 821, 956, 914, 944, 964 |
+
+Every bar passes at both sizes now, every run. The cost is the first paint:
++8 ms (median) at 1728×1117, +48 at 2560×1440, +28–32 on the grid and
+`#item-01` in the interleaved runs above, none on the reader. The fonts are
+the same files: the Bowlby One text in `#item-01` ("0104", "Read issue"),
+`#read-01/3` ("0506") and `#read-01/0` ("Cover"), screenshotted on both
+builds — 0 bytes differ in their boxes.

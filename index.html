@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The chrome's face (src/chrome/chrome.css, font-display: block), the one
+         web font in a first paint: the detail view's and the reader's pills.
+         Preloaded, it is fetched at once instead of when layout first asks for
+         it, and Chrome holds the first paint for it a moment, so the page's
+         first task (React's first render and the font system's start-up in
+         its first layout) no longer lands inside a frame
+         (docs/perf/first-second.md, "The font preload"). -->
+    <link rel="preload" href="/fonts/bowlby-one-latin-400.woff2" as="font" type="font/woff2" crossorigin />
     <title>Interactive Portfolio — Phase 1</title>
   </head>
   <body>
