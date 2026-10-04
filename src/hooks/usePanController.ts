@@ -167,6 +167,9 @@ const START: View = {
  * The grid is unbounded: drags, flicks, and arrows travel forever in any
  * direction with no clamping and no edge rubber-band.
  */
+/** How far a press that starts on a card's open button must move to be a drag. */
+const CTA_DRAG_PX = 6;
+
 export function usePanController(options: PanOptions = {}): PanController {
   const optionsRef = useRef(options);
   useLayoutEffect(() => {
@@ -215,6 +218,8 @@ export function usePanController(options: PanOptions = {}): PanController {
   const cursorRef = useRef({ x: 0, y: 0 });
   const cursorActiveRef = useRef(false);
   const cardFaceDirtyRef = useRef(false);
+  /** This gesture's dead zone (`dragDeadZonePx`, or CTA_DRAG_PX on the open button). */
+  const deadZoneRef = useRef(dragDeadZonePx);
 
   // Hover overlay on ANY card: the card under the cursor, shown only when the
   // grid is settled. The hovered cell is hit-tested each frame from the cursor +
@@ -360,9 +365,10 @@ export function usePanController(options: PanOptions = {}): PanController {
       const dx = pointerRef.current.x - originRef.current.pointer.x;
       const dy = pointerRef.current.y - originRef.current.pointer.y;
       const len = Math.hypot(dx, dy);
-      if (len > dragDeadZonePx) {
+      const dead = deadZoneRef.current;
+      if (len > dead) {
         draggedRef.current = true;
-        const scale = (len - dragDeadZonePx) / len;
+        const scale = (len - dead) / len;
         posRef.current.col = originRef.current.pos.col - (dx * scale) / cellSpanX();
         posRef.current.row = originRef.current.pos.row - (dy * scale) / cellSpanY();
         // The card under the finger drags air with it: its edges splat into
@@ -400,7 +406,10 @@ export function usePanController(options: PanOptions = {}): PanController {
 
     // Grid is "settled" when neither dragging nor gliding — the only time the
     // hover overlay shows.
-    const settled = !draggingRef.current && !settlingRef.current;
+    // A press on a card's open button that has not moved is still settled: it
+    // may be the button's click, and its overlay stays until it drags.
+    const ctaPress = draggingRef.current && !draggedRef.current && deadZoneRef.current === CTA_DRAG_PX;
+    const settled = (!draggingRef.current || ctaPress) && !settlingRef.current;
 
     // Phase 14: a click-to-centre glide has just settled → chain into the detail
     // FLIP (begin it as the glide lands, so it reads as one continuous motion).
@@ -540,14 +549,20 @@ export function usePanController(options: PanOptions = {}): PanController {
     draggingRef.current = true;
     draggedRef.current = false;
     settlingRef.current = false;
+    // A press on a card's open button (CardOverlay) is the grid's too: a
+    // drag past CTA_DRAG_PX pans, anything less is the button's click — the
+    // tap path below opens the card under it, the same open the button makes.
+    deadZoneRef.current = (e.target as Element).closest?.('.card-overlay__cta') ? CTA_DRAG_PX : dragDeadZonePx;
     pointerRef.current = { x: e.clientX, y: e.clientY };
     originRef.current = {
       pointer: { x: e.clientX, y: e.clientY },
       pos: { col: posRef.current.col, row: posRef.current.row },
     };
     samplesRef.current = [{ t: e.timeStamp, x: e.clientX, y: e.clientY }];
-    // The overlay vanishes the instant a drag begins (don't wait for the ticker).
-    if (overlayCellRef.current) {
+    // The overlay vanishes the instant a drag begins (don't wait for the ticker)
+    // — but a press on its own open button keeps it until it moves: it may be
+    // a click (the ticker drops it once the grid is dragged).
+    if (overlayCellRef.current && deadZoneRef.current !== CTA_DRAG_PX) {
       overlayCellRef.current = null;
       setOverlayCell(null);
     }

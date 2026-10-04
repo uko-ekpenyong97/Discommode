@@ -27,11 +27,13 @@ interface CardOverlayProps {
 export function CardOverlay({ item, onOpen }: CardOverlayProps) {
   const cfg = useConfig();
 
+  const pressed = (el: HTMLElement) =>
+    el.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.9)' }, { transform: 'scale(1)' }], {
+      duration: 220,
+      easing: 'ease-out',
+    });
   const onCta = (e: MouseEvent<HTMLButtonElement>) => {
-    e.currentTarget.animate(
-      [{ transform: 'scale(1)' }, { transform: 'scale(0.9)' }, { transform: 'scale(1)' }],
-      { duration: 220, easing: 'ease-out' },
-    );
+    pressed(e.currentTarget);
     onOpen();
   };
 
@@ -58,7 +60,11 @@ export function CardOverlay({ item, onOpen }: CardOverlayProps) {
           className="card-overlay__cta"
           style={{ '--cta-hover-scale': cfg.ctaHoverScale } as CSSProperties}
           aria-label={`${item.cta} ${item.title}`}
-          onPointerDown={(e) => e.stopPropagation()}
+          // The press is the grid's too (usePanController): past 6 px it is a
+          // drag, short of that a tap, which opens this card. The grid holds
+          // the pointer, so the click lands on it, not here; a keyboard's
+          // Enter or Space still comes here.
+          onPointerDown={(e) => pressed(e.currentTarget)}
           onClick={onCta}
         >
           <span aria-hidden="true">→</span>
