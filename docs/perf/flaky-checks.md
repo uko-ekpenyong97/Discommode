@@ -168,3 +168,34 @@ One run of each suite on the verify build of this branch, 03:44–04:57:
 The "flips over the sky" frames passed alone on both builds, two rounds each
 (0 of 476 over 20 ms); the branch's flip main-thread p95 is lower there (3.1–3.6
 ms against 3.7–4.0 on `main`: the strips' shading in CSS).
+
+## Where it ended (2026-10-04, 08:00)
+
+Full runs of all six on the verify build of this branch:
+
+| suite | first run | final 1 | final 2 |
+| --- | --- | --- | --- |
+| verify:reader | ✗ riffle ×2, flips over the sky ×2 | ✗ riffle ×3 | ✗ riffle ×4, flips over the sky @1× |
+| verify:detail | ✓ | ✓ | ✓ |
+| verify:gpu | ✓ | ✓ | ✓ |
+| verify:sky | ✓ | ✓ | ✓ |
+| verify:cover | ✗ drag 41.7 ms | ✓ | ✗ drag 41.8 ms; a Drex tile 79 off its siblings in one fling frame @2560 |
+| verify:jank | ✗ 33.4 (fixed after) | ✓ | ✓ |
+
+(A third final run was stopped for the riffle A/B below.)
+
+**The riffle budget is not fixed.** `verify:reader --only frames` (20 riffles
+a run), `main` and this branch interleaved, three rounds: a dropped frame in
+**18 of 60** riffles on `main`, **13 of 60** on the branch — and round to
+round each swung from 2 to 8 of 20. The fixes above remove real work (the
+covers drawing under the reader; 40.6 → 6 MB of garbage a riffle; a lower flip
+main-thread p95), and the per-riffle diagnostic measured fewer drops with them
+(16/48 → 7/48, 13/40 → 3/40, and once 6/40 vs 8/40 while Spotlight indexed),
+but in the suite's own runs the difference is inside the noise. What is left is
+Chrome decoding full-size pages as the slower leaves lift. Options: more
+half-resolution leaves (`riffleHalfResBelowMs`, a visual trade); gate the
+budget on a control, as `pageanims` already does (an ordinary Next is already
+measured beside it); or accept it.
+
+The drag's 41.7–41.8 ms frames are real dropped frames in headed Chrome at 120
+Hz (5 ticks), one in ~5400 frames, with nothing on the main thread.
