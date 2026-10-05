@@ -135,6 +135,24 @@ const ownDraws = new Map<string, number>();
 const HOLD = '.grid-stage--fading, .grid-stage--fading-in, .detail[data-paper="in"]';
 
 /**
+ * The reader covers the whole app once its layer is up and opaque: not on its
+ * way out, its ground holding the sky (TABLE 1 — through the doorway the
+ * ground is transparent until then), and its plain fade-in done. Under it,
+ * every instance in the app (the grid's tiles, the detail view's) is out of
+ * sight, and holds its last frame as it does under the detail view. Opened by
+ * its hash, the grid stayed fully visible beneath the reader and its covers
+ * went on drawing: card 04's Rive player and the shader covers, 60 times a
+ * second — about 30 MB of garbage a riffle, a major GC in every riffle and the
+ * CPU the riffle's page decodes needed (docs/perf/flaky-checks.md). On the way
+ * out the first frame of the exit draws them again.
+ */
+function readerCoversApp(): boolean {
+  const layer = document.querySelector<HTMLElement>('.reader-layer');
+  if (!layer || layer.dataset.exiting !== undefined || !layer.querySelector('.reader-ground[data-held]')) return false;
+  return getComputedStyle(layer).opacity === '1';
+}
+
+/**
  * At most this many GRID TILES of a cover that keeps per-instance state (card
  * 02's lava warmth, which eases out for ~2 s after the pointer leaves) are
  * drawn for themselves at once. A pointer swept across the grid in a second
@@ -609,6 +627,7 @@ function tick(now: number) {
   const vh = window.innerHeight;
   const mx = vw * ON_SCREEN_MARGIN;
   const my = vh * ON_SCREEN_MARGIN;
+  const covered = readerCoversApp();
   for (const p of presenters) {
     p.visible = false;
     if (!p.host.isConnected) {
@@ -637,7 +656,7 @@ function tick(now: number) {
     // (.grid-stage--hidden), not `visibility: hidden`, and was drawn — every
     // frame, behind the hero — while only visibility was checked.
     if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
-    if (p.drawn && p.host.closest(HOLD)) continue;
+    if (p.drawn && (p.host.closest(HOLD) || (covered && p.host.closest('.app')))) continue;
     p.visible = true;
     any = true;
     // Its box on screen only says whether the page is moving (prime, above);

@@ -259,7 +259,19 @@
 
 /* Per-strip shading: darkens toward the edge turning away from the light. --a1
    is the strip's spine-side edge, --a2 its tip-side edge; the two selector
-   groups are the faces whose local x runs spine->tip vs tip->spine. */
+   groups are the faces whose local x runs spine->tip vs tip->spine.
+
+   Computed HERE, from the chain's angle and hinge (--tt, --td, written on the
+   chain's host every frame) and the strip's place in it (--i, --taper, written
+   once when the chain is built): l = cos² of the strip edge's angle — cos², not
+   |cos|, so there is no cusp as a strip crosses edge-on. The engine used to
+   write --lit, --a1 and --a2 on every strip every frame (docs/perf/flaky-checks.md). */
+.flip-strip {
+  --l1: pow(cos(calc(var(--tt) - var(--i) * var(--td))), 2);
+  --l2: pow(cos(calc(var(--tt) - (var(--i) + 1) * var(--td))), 2);
+  --a1: calc((1 - var(--l1)) * 0.55 * var(--taper));
+  --a2: calc((1 - var(--l2)) * 0.55 * var(--taper));
+}
 .flip-sh {
   position: absolute;
   inset: 0;
@@ -278,7 +290,7 @@
   position: absolute;
   inset: 0;
   background: #fffaf0;
-  opacity: calc(var(--shade, 0) * var(--lit, 1) * var(--lit, 1) * 0.18);
+  opacity: calc(var(--shade, 0) * var(--l1, 1) * 0.18);
 }
 
 /* Last strip: fade the shadow out toward the TIP so the curl relaxes into flat
@@ -364,6 +376,13 @@
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+/* PAGE ANIM "in paper" (dev, READER NAV dock; off by default): the sprites
+   multiplied into the plate under them, as ink into paper (pageAnimPlayer.ts,
+   PAGE_ANIM_LOOK). The wrapper is the blend's group while it fades. */
+.page-anim[data-look='paper'] .page-anim__sprites {
+  mix-blend-mode: multiply;
 }
 
 /* The align tool (dev, READER NAV dock): the rest frame over the BAKED page,

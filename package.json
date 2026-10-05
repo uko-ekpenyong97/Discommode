@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:verify": "tsc -b && vite build --mode verify",
     "pages": "node scripts/optimize-pages.mjs",
     "plates": "node scripts/optimize-pages.mjs --plates",
     "anims": "node scripts/optimize-anims.mjs",
@@ -24,7 +25,8 @@
     "verify:sky": "node scripts/sky-fluid-verify.mjs",
     "verify:cover": "node scripts/cover-verify.mjs",
     "verify:jank": "node scripts/jank-check.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:verify": "vite preview --mode verify"
   },
   "dependencies": {
     "@rive-app/canvas": "^2.42.1",

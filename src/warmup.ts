@@ -1,4 +1,6 @@
 import { isBusy, whenSettled } from './activity';
+import { CONTENT, itemFace, itemHeroFace } from './content';
+import { coverStillUrl } from './covers/covers';
 import { paperWarmComplete, warmPaper } from './components/detailPaper/paperGL';
 import type { WarmGate } from './components/detailPaper/paperGL';
 
@@ -12,6 +14,14 @@ import type { WarmGate } from './components/detailPaper/paperGL';
  *            browser never rasterised it, and the first hover's frame waited
  *            on a 65–69 ms WebP decode on a raster worker (a 50 ms frame on a
  *            production build, the commit blocked behind it).
+ *   morph    the pictures the grid→detail morph shows that the grid never
+ *            drew: the live tiles' own stills (`.cover-tile__still`, hidden
+ *            once a cover draws — the morph's centre card shows it until the
+ *            cover's first draw), every cover's full still (the neighbours'),
+ *            and an issue's drawn cover at rest (its hero face; the grid shows
+ *            the photograph). The morph's first frame waited on one of them, a
+ *            ~28 ms decode: 33–67 ms frames in the first arrival of cards
+ *            02–04 (docs/perf/flaky-checks.md).
  *   paper    the detail paper's warm-up (paperGL.ts, `warmPaper`): the
  *            context, the programs and their first draw, the crease map,
  *            every face's upload, each shader cover's renderer in the paper's
@@ -76,21 +86,43 @@ const gate: WarmGate = (go) => {
 
 const step = () => new Promise<void>((resolve) => void gate(resolve));
 
-/** Card 01's hover plates, decoded where they will be drawn. Only the ones
- *  already loaded (or loading eagerly): `decode()` on a lazy image the page
- *  has not asked for would wait for a load that never starts. */
-async function decodePlates() {
-  const imgs = [...document.querySelectorAll<HTMLImageElement>('img.grid-card__overlay')].filter(
+/** Images the page has not drawn yet, decoded where they will be drawn, one
+ *  idle step per picture: card 01's hover plates, then the covers' stills.
+ *  Only the ones already loaded (or loading eagerly): `decode()` on a lazy
+ *  image the page has not asked for would wait for a load that never starts. */
+async function decodeUndrawn(selector: string) {
+  const imgs = [...document.querySelectorAll<HTMLImageElement>(selector)].filter(
     (img) => img.complete || img.loading !== 'lazy',
   );
   const bySrc = new Map<string, HTMLImageElement[]>();
   for (const img of imgs) {
     const k = img.currentSrc || img.src;
+    if (!k) continue;
     bySrc.set(k, [...(bySrc.get(k) ?? []), img]);
   }
   for (const group of bySrc.values()) {
     await step();
     await Promise.all(group.map((img) => img.decode().catch(() => {})));
+  }
+}
+
+/** The morph's pictures that are not in the grid's DOM, decoded through
+ *  elements kept here: one an `Image` nothing held would be collected with
+ *  its decode before the click. */
+const morphImages: HTMLImageElement[] = [];
+async function decodeMorphFaces() {
+  const urls = new Set<string>();
+  for (const item of CONTENT) {
+    if (item.cover) urls.add(coverStillUrl(item.cover.id, 'full'));
+    const hero = itemHeroFace(item);
+    if (hero && hero !== itemFace(item)) urls.add(hero);
+  }
+  for (const url of urls) {
+    await step();
+    const img = new Image();
+    img.src = url;
+    morphImages.push(img);
+    await img.decode().catch(() => {});
   }
 }
 
@@ -101,7 +133,9 @@ export function startIdleWarmup(): void {
   if (started) return;
   started = true;
   const begin = async () => {
-    await decodePlates();
+    await decodeUndrawn('img.grid-card__overlay');
+    await decodeUndrawn('.grid-stage img.cover-tile__still');
+    await decodeMorphFaces();
     await step();
     warmPaper(0, { gate });
     // Done once the paper's last step has run and its faces are in — or the

@@ -55,6 +55,7 @@
  * any case; with it, none over 50 ms; and the hidden-tab guard held.
  */
 import { chromium } from 'playwright';
+import { overFrames } from './frame-rule.mjs';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -98,6 +99,8 @@ const JSON_OUT = arg('--json', null);
 const CHROME = arg('--chrome', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
 // In vsyncs at 60 Hz: two (one frame dropped) without the dock, three with it.
 const BUDGET = DOCK ? 50.1 : 33.4;
+/** Two vsyncs for an isolated frame, three with the dock (scripts/frame-rule.mjs). */
+const VSYNC_BUDGET = DOCK ? 3 : 2;
 
 /** Installed before the page's scripts: every rAF interval and LoAF. */
 function probe() {
@@ -181,7 +184,7 @@ const now = (page) => page.evaluate(() => performance.now());
 
 /** The frames and long frames between two page times. */
 async function windowOf(page, name, t0, t1) {
-  return page.evaluate(
+  const w = await page.evaluate(
     ({ name, t0, t1 }) => {
       const J = window.__jank;
       const frames = J.frames.filter(([s, e]) => e > t0 && s < t1).map(([s, e]) => ({ s, dt: e - s }));
@@ -197,14 +200,20 @@ async function windowOf(page, name, t0, t1) {
         name,
         frames: frames.length,
         worst: worstF?.dt ?? 0,
-        over33: frames.filter((f) => f.dt > 33.4).length,
-        over50: frames.filter((f) => f.dt > 50).length,
+        over33: frames.filter((f) => Math.round(f.dt / (1000 / 60)) > 2).length,
+        over50: frames.filter((f) => Math.round(f.dt / (1000 / 60)) > 3).length,
         long,
         what,
+        dts: frames.map((f) => f.dt),
       };
     },
     { name, t0, t1 },
   );
+  // Judged by scripts/frame-rule.mjs: one isolated dropped vsync is forgiven,
+  // a longer frame or two dropped in a row are not.
+  w.fail = overFrames(w.dts, VSYNC_BUDGET).length;
+  delete w.dts;
+  return w;
 }
 
 async function centreCard(page) {
@@ -385,7 +394,7 @@ async function run() {
     const t1 = await now(page);
     const w = await windowOf(page, name, t0, t1);
     rows.push(w);
-    console.log(`  ${w.worst > BUDGET ? '✗' : '✓'} ${name.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.long.length ? `  [${w.long.join(', ')}]` : ''}${w.what ? `\n      worst: ${w.what}` : ''}`);
+    console.log(`  ${w.fail ? '✗' : '✓'} ${name.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.long.length ? `  [${w.long.join(', ')}]` : ''}${w.what ? `\n      worst: ${w.what}` : ''}`);
   };
 
   console.log(`\njank: ${LABEL}  (${W}×${H} @${DPR}×; budget ${BUDGET} ms)${warmupMs != null ? `  warmup:done at ${Math.round(warmupMs)} ms` : '  (no warmup:done mark)'}`);
@@ -524,7 +533,7 @@ async function run() {
   {
     const w = await windowOf(page, 'whole run', runStart, await now(page));
     rows.push(w);
-    console.log(`  ${w.worst > BUDGET ? '✗' : '✓'} ${'whole run'.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.what ? `\n      worst: ${w.what}` : ''}`);
+    console.log(`  ${w.fail ? '✗' : '✓'} ${'whole run'.padEnd(15)} ${String(w.frames).padStart(4)} frames, worst ${w.worst.toFixed(1)} ms, >33: ${w.over33}, >50: ${w.over50}${w.what ? `\n      worst: ${w.what}` : ''}`);
   }
 
   await ptr.stop();
@@ -539,7 +548,7 @@ async function run() {
   }
   if (!hidden.error) reportHidden(hidden);
 
-  const failed = rows.filter((r) => !r.info && r.worst > BUDGET).map((r) => r.name);
+  const failed = rows.filter((r) => !r.info && r.fail).map((r) => r.name);
   if (!hidden.skipped && !hidden.pass) failed.push('hidden tab');
   console.log(failed.length ? `\n✗ ${failed.length} case(s) failed: ${failed.join(', ')}` : `\n✓ every case within ${BUDGET} ms, and the hidden-tab guard held`);
   if (errors.length) console.log(`page errors:\n  ${errors.join('\n  ')}`);

@@ -656,10 +656,24 @@ async function main() {
         'a grid drag',
         '',
         async (p) => {
-          await p.mouse.move(W / 2, H / 2);
+          // On the focused card, but not on its CTA: the hover overlay puts
+          // the round "open" button at the card's centre — the screen's — and
+          // a press there is the button's, not the grid's (it pans nothing).
+          // Pressed at the centre, this drag moved the grid 0 px and woke
+          // nothing, every run (docs/perf/flaky-checks.md).
+          const at = await p.evaluate(() => {
+            let best = null;
+            for (const el of document.querySelectorAll('.grid-card')) {
+              const r = el.getBoundingClientRect();
+              const d = Math.hypot(r.x + r.width / 2 - innerWidth / 2, r.y + r.height / 2 - innerHeight / 2);
+              if (!best || d < best.d) best = { d, x: r.x + r.width / 2, y: r.y + r.height * 0.2 };
+            }
+            return best;
+          });
+          await p.mouse.move(at.x, at.y);
           await p.mouse.down();
           for (let i = 1; i <= 20; i++) {
-            await p.mouse.move(W / 2 - i * 12, H / 2);
+            await p.mouse.move(at.x - i * 12, at.y);
             await p.waitForTimeout(16);
           }
           await p.mouse.up();

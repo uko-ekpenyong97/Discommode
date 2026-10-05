@@ -7,10 +7,13 @@
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
  *
- *   riffle frame budget   real 20→0 and 0→20 riffles at 1× and 2×: no frame over
- *                         20ms (rAF intervals). An ordinary Next from the cover is
- *                         measured beside it and reported, not asserted — it is
- *                         the baseline a riffle's first leaf shares.
+ *   riffle frame budget   real 20→0 and 0→20 riffles at 1× and 2×, each followed
+ *                         by two ordinary Nexts off the cover — the control, which
+ *                         lifts the same full-size leaf. Dropped vsyncs per frame
+ *                         (a frame over 20ms), pooled per DPR: the riffles fail
+ *                         only when they drop meaningfully more often than the
+ *                         control — more than 2× its rate, shown at p < 0.05
+ *                         (scripts/riffle-gate.mjs).
  *   riffle landing        after every one of those: hash, caption, data-pos and
  *                         the rendered pages agree, and the turn layer is gone.
  *   riffle z-order        pixel-exact. The riffle is held at every 60Hz frame
@@ -110,6 +113,7 @@ import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
 import { checkLayout } from './layout-checks.mjs';
 import { checkQuote } from './quote-checks.mjs';
+import { ALPHA, RATE_MARGIN, droppedVsyncs, riffleGate } from './riffle-gate.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
@@ -215,46 +219,58 @@ async function stillSky(page) {
 
 // ── riffle: frame budget and landing ─────────────────────────────────────────
 
+/** Ordinary Nexts measured after each riffle, as its control (riffle-gate.mjs). */
+const CONTROL_PER_RIFFLE = 2;
+
 async function checkRiffleFrames(browser) {
-  console.log(`\nriffle frame budget and landing (${RUNS} runs each)`);
+  console.log(`\nriffle frame budget and landing (${RUNS} runs each way, ${CONTROL_PER_RIFFLE} ordinary Nexts after each as the control)`);
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, dpr);
-    for (const [from, to] of [
-      [20, 0],
-      [0, 20],
-    ]) {
-      const worst = [];
-      const landings = [];
-      for (let i = 0; i < RUNS; i++) {
+    const riffle = { frames: 0, drops: 0 };
+    const control = { frames: 0, drops: 0, runs: 0, dropped: 0 };
+    const worst = { '20→0': [], '0→20': [] };
+    const landings = { '20→0': [], '0→20': [] };
+    // Interleaved, so the riffles and their control share the machine's state:
+    // each riffle, then CONTROL_PER_RIFFLE ordinary Nexts off the cover, which
+    // lift the same full-size leaf a riffle's first leaf does.
+    for (let i = 0; i < RUNS; i++) {
+      for (const [from, to] of [
+        [20, 0],
+        [0, 20],
+      ]) {
         await open(page, from);
         const fr = await frameTimes(page, async () => {
           await page.evaluate((to) => window.__flip.turnTo(to), to);
           await settled(page, to);
         });
-        worst.push(Math.max(...fr));
-        landings.push(await readState(page));
+        riffle.frames += fr.length;
+        riffle.drops += droppedVsyncs(fr);
+        worst[`${from}→${to}`].push(Math.max(...fr));
+        landings[`${from}→${to}`].push({ to, state: await readState(page) });
+        for (let k = 0; k < CONTROL_PER_RIFFLE; k++) {
+          await open(page, 0);
+          const cf = await frameTimes(page, async () => {
+            await page.evaluate(() => window.__flip.turn('next'));
+            await settled(page, 1);
+          });
+          control.frames += cf.length;
+          control.drops += droppedVsyncs(cf);
+          control.runs++;
+          if (Math.max(...cf) > FRAME_BUDGET_MS) control.dropped++;
+        }
       }
-      const over = worst.filter((w) => w > FRAME_BUDGET_MS).length;
-      check(
-        over === 0,
-        `${dpr}× ${from}→${to}: no frame over ${FRAME_BUDGET_MS}ms`,
-        `worst per run ${worst.map((w) => w.toFixed(1)).join(' / ')}ms`,
-      );
-      const wrong = landings.filter((s) => !agrees(s, to));
-      check(wrong.length === 0, `${dpr}× ${from}→${to}: lands with hash, caption, data-pos and pages agreeing`, wrong.length ? JSON.stringify(wrong[0]) : `${pagesOf(to)} #read-01/${to}`);
     }
-    // The baseline: an ordinary Next off the cover lifts the same full-size
-    // leaf a riffle's first leaf does. Reported, not asserted.
-    let dropped = 0;
-    for (let i = 0; i < RUNS; i++) {
-      await open(page, 0);
-      const fr = await frameTimes(page, async () => {
-        await page.evaluate(() => window.__flip.turn('next'));
-        await settled(page, 1);
-      });
-      if (Math.max(...fr) > FRAME_BUDGET_MS) dropped++;
+    for (const [dir, ls] of Object.entries(landings)) {
+      const wrong = ls.filter((l) => !agrees(l.state, l.to));
+      const to = ls[0].to;
+      check(wrong.length === 0, `${dpr}× ${dir}: lands with hash, caption, data-pos and pages agreeing`, wrong.length ? JSON.stringify(wrong[0].state) : `${pagesOf(to)} #read-01/${to}`);
     }
-    console.log(`    baseline ${dpr}×: an ordinary Next from the cover went over ${FRAME_BUDGET_MS}ms in ${dropped} of ${RUNS} runs`);
+    const g = riffleGate(riffle, control);
+    check(
+      g.pass,
+      `${dpr}× the riffles drop frames no more often than an ordinary Next (rate ≤ ${RATE_MARGIN}× the control's, one-sided p ≥ ${ALPHA})`,
+      `riffles ${riffle.drops} dropped vsyncs in ${riffle.frames} frames (${g.rateR.toFixed(2)}/1000), control ${control.drops} in ${control.frames} (${g.rateC.toFixed(2)}/1000), p ${g.p.toFixed(3)}; worst per riffle 20→0 ${worst['20→0'].map((w) => w.toFixed(1)).join(' / ')}, 0→20 ${worst['0→20'].map((w) => w.toFixed(1)).join(' / ')}; the control's Nexts went over ${FRAME_BUDGET_MS}ms in ${control.dropped} of ${control.runs}`,
+    );
     await page.context().close();
   }
 }
@@ -1314,11 +1330,15 @@ async function checkPageAnims(browser) {
   // Procreate's holds, in the browser: badges' frame on every rAF for 3 s,
   // its runs measured on the page's own clock. The first and last runs seen
   // are partial. `open` idles past the settle, so the loop's start is the
-  // player's first drawn frame, which must be the rest frame.
-  {
+  // player's first drawn frame, which must be the rest frame. Twice: as it
+  // ships, and with the PAGE ANIM dial's "in paper" (dev), which changes how a
+  // frame is drawn and must not change which one, or when.
+  for (const inPaper of [false, true]) {
     const page = await newPage(browser, 1);
     await open(page, HOLDS_SPREAD);
     await animsShown(page, [HOLDS_PAGE]);
+    if (inPaper) await page.evaluate(() => window.__pageAnims.setLook({ inPaper: true }));
+    const look = await page.evaluate((n) => document.querySelector(`.page-anim[data-page="${n}"]`)?.dataset.look ?? 'over the paper', HOLDS_PAGE);
     const changes = await page.evaluate(
       ({ pageN, ms }) =>
         new Promise((done) => {
@@ -1342,9 +1362,9 @@ async function checkPageAnims(browser) {
     const inOrder = runs.every((r, i) => i === 0 || r.frame === (runs[i - 1].frame + 1) % BADGES_HOLDS.length);
     const held = runs.every((r) => Math.round(r.ticks) === BADGES_HOLDS[r.frame] && Math.abs(r.ticks - BADGES_HOLDS[r.frame]) < 0.5);
     check(
-      st?.first?.[0] === st?.rest[0] && st?.rest[0] === 2 && seen.size === BADGES_HOLDS.length && inOrder && held,
-      `@1× 07 | 08: badges holds each frame its Procreate ticks (${BADGES_HOLDS.join(',')} at 6fps), in order from its rest frame`,
-      `first drawn ${st?.first?.[0]} (rest ${st?.rest[0]}); ${runs.map((r) => `${r.frame}×${r.ticks.toFixed(2)}`).join(' ')}`,
+      st?.first?.[0] === st?.rest[0] && st?.rest[0] === 2 && seen.size === BADGES_HOLDS.length && inOrder && held && (look === 'paper') === inPaper,
+      `@1× 07 | 08${inPaper ? ', in paper' : ''}: badges holds each frame its Procreate ticks (${BADGES_HOLDS.join(',')} at 6fps), in order from its rest frame`,
+      `look: ${look}; first drawn ${st?.first?.[0]} (rest ${st?.rest[0]}); ${runs.map((r) => `${r.frame}×${r.ticks.toFixed(2)}`).join(' ')}`,
     );
     await page.context().close();
   }
@@ -1471,6 +1491,27 @@ const shot = async (page) => {
   const { data, info } = await sharp(await page.screenshot()).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   return { data, w: info.width, h: info.height };
 };
+
+/**
+ * A screenshot of a frame that has stopped changing: captured until two in a
+ * row are the same (at most 10, 100 ms apart), the last one returned with how
+ * many extra captures it took. A held turn is a still frame, but the leaf's
+ * newly shown face can land a capture or two after the turn is applied: a page
+ * decoded late (after half an hour of other sections, its decode evicted) drew
+ * a frame without it, and pageclip compared that against the next one — 595,814
+ * px "added by the sprite layer" that were the leaf's back face arriving
+ * (docs/perf/flaky-checks.md).
+ */
+async function settledShot(page) {
+  let prev = await shot(page);
+  for (let i = 0; i < 10; i++) {
+    await page.waitForTimeout(100);
+    const next = await shot(page);
+    if (next.data.equals(prev.data)) return { ...next, waits: i };
+    prev = next;
+  }
+  return { ...prev, waits: 10 };
+}
 
 /**
  * Pixels that differ between two screenshots: on a page, on a page's edge (a
@@ -1641,12 +1682,12 @@ async function checkPageAnimClip(browser) {
           window.__flip.applyTurn(tt);
         }, [dir, t]);
         await page.waitForTimeout(150);
-        const withLayer = await shot(page);
+        const withLayer = await settledShot(page);
         await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.display = 'none')));
-        const without = await shot(page);
+        const without = await settledShot(page);
         await page.evaluate(() => document.querySelectorAll('.page-anim').forEach((w) => (w.style.display = '')));
         const d = diffByPaper(withLayer, without, [], dpr); // no page exempt: anything is a failure
-        held.push({ dir, t, px: d.off });
+        held.push({ dir, t, px: d.off, waits: withLayer.waits + without.waits });
         await page.evaluate(() => window.__flip.cancelTurn(0.05));
         await settled(page, CLIP_SPREAD);
         await animsShown(page, CLIP_PAGES);
@@ -1654,7 +1695,7 @@ async function checkPageAnimClip(browser) {
       check(
         held.every((h) => h.px === 0),
         `@${dpr}× held mid-turn (04 and 03 lifting, t 0.3 and 0.7): the sprite layer adds no pixel anywhere`,
-        held.map((h) => `${h.dir} ${h.t}: ${h.px} px`).join(', '),
+        held.map((h) => `${h.dir} ${h.t}: ${h.px} px${h.waits ? ` (settled after ${h.waits} more captures)` : ''}`).join(', '),
       );
       await page.context().close();
     }

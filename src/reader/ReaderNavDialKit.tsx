@@ -10,6 +10,7 @@ import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
 import { usePageAnimAlign } from '../dev/pageAnimAlign';
+import { usePageAnimLook } from '../dev/pageAnimLook';
 import { useTranslateDials } from '../dev/translateDials';
 import { installDockPanels } from '../dev/dockPanels';
 
@@ -70,6 +71,9 @@ export default function ReaderNavDialKit() {
 
   // The paper buttons, and their colour from the sky.
   useChromeDials();
+
+  // How the inside pages' sprites sit on their pages: over the paper, or in it.
+  usePageAnimLook();
 
   // Registering the inside pages' sprites on their pages (pageAnims.ts).
   usePageAnimAlign();

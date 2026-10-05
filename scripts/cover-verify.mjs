@@ -80,8 +80,9 @@
  *             150 frames. The same on the hero under the paper.
  *   lsweep    1728×996 @2×: the pointer swept through every card-02 tile on
  *             screen in ~1 s; the most of them drawn for themselves in one
- *             frame, and that frame's cover work (the shared draw + that many
- *             warm draws + 4 copies, benched) ≤ 1.2.
+ *             frame ≤ 2 (the cap), and that frame's cover work (the shared
+ *             draw + that many warm draws + 4 copies, benched) ≤ 1.25 — its
+ *             own budget, from production-build runs (docs/perf/lsweep.md).
  *
  * CARD 04, the Rive cover (nosey: "Main" in the grid, "Main Bounce" as the
  * hero; docs/covers.md "Rive covers"). The Rive players advance by the cover
@@ -172,6 +173,20 @@ const VIEWPORTS = [
 ];
 const TOL = 32;
 const BUDGET = { hero: 1.0, tile: 0.15, total: 1.2, all: 8 };
+/**
+ * `lsweep`'s worst grid frame, ms: its own budget, re-baselined on production
+ * builds (2026-10-04, docs/perf/lsweep.md). 46 runs of the sweep — alone on a
+ * quiet machine, alone at a load average of 14–16, and inside a full run —
+ * measured 0.670–1.095 ms, p95 1.020; the budget is that p95 plus ~20% (the
+ * bench reads 1.2–1.6× its quiet value on a loaded machine). It was
+ * `BUDGET.total` (1.2), the design budget for the grid's cover work, which the
+ * sweep's benches overran only on the dev server or a busy machine. What the
+ * sweep is FOR — the cap on tiles drawn for themselves — is asserted on its
+ * own (`LSWEEP_OWN_MAX`), not left to the timing.
+ */
+const LSWEEP_BUDGET = 1.25;
+/** coverStage.ts's MAX_OWN_TILES: at most this many card-02 grid tiles drawn for themselves in a frame. */
+const LSWEEP_OWN_MAX = 2;
 /** Main's WebGL contexts: the sky's (grid), plus the paper's (detail view —
  *  and, since the idle warm-up, the grid's too once it has run; counted apart). */
 const MAIN_CONTEXTS = { grid: 1, detail: 2 };
@@ -198,6 +213,24 @@ const skip = (label, extra) => {
 };
 const pct = (x) => `${(100 * x).toFixed(2)}%`;
 const ms = (x) => `${x.toFixed(3)}ms`;
+
+/**
+ * "Nothing moves": two screenshots of the same still, a second apart. Bytes
+ * that changed by MORE than one level are motion; a byte one level off is the
+ * compositor re-rasterising the same still image (the grid's cover stills were
+ * redrawn ~2 s after a load in about 1 run in 8, every changed byte exactly
+ * ±1 — docs/perf/flaky-checks.md). Both are reported.
+ */
+function stillDiff(a, b) {
+  let moved = 0;
+  let lsb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = Math.abs(a[i] - b[i]);
+    if (d > 1) moved++;
+    else if (d === 1) lsb++;
+  }
+  return { moved, note: `${moved} bytes changed over 1s${lsb ? ` (and ${lsb} by one level: a re-raster)` : ''}` };
+}
 
 const errors = [];
 async function newPage(browser, viewport, dpr = 1, extra = {}, init = null) {
@@ -514,9 +547,8 @@ async function checkReduced(browser) {
   const a = await sharp(await page.screenshot()).raw().toBuffer();
   await page.waitForTimeout(1000);
   const b = await sharp(await page.screenshot()).raw().toBuffer();
-  let moved = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) moved++;
-  check(grid.canvases === 0 && grid.stills > 0 && moved === 0, 'grid', `${grid.stills} tiles on the still, ${grid.canvases} cover canvases, ${moved} bytes changed over 1s`);
+  const g = stillDiff(a, b);
+  check(grid.canvases === 0 && grid.stills > 0 && g.moved === 0, 'grid', `${grid.stills} tiles on the still, ${grid.canvases} cover canvases, ${g.note}`);
   await heroOn02(page, { settle: false });
   await quiet(page);
   await page.waitForTimeout(500);
@@ -524,9 +556,8 @@ async function checkReduced(browser) {
   const c = await sharp(await page.screenshot()).raw().toBuffer();
   await page.waitForTimeout(1000);
   const d = await sharp(await page.screenshot()).raw().toBuffer();
-  let moved2 = 0;
-  for (let i = 0; i < c.length; i++) if (c[i] !== d[i]) moved2++;
-  check(drawn === 0 && moved2 === 0, 'detail hero', `paper drew the live cover ${drawn} times (0 = the still), ${moved2} bytes changed over 1s`);
+  const h = stillDiff(c, d);
+  check(drawn === 0 && h.moved === 0, 'detail hero', `paper drew the live cover ${drawn} times (0 = the still), ${h.note}`);
   await page.context().close();
 }
 
@@ -811,9 +842,14 @@ async function checkLavaSweep(browser) {
   const tiles = Math.max(4, pres.length);
   const worst = shared + most * warm + tiles * copy;
   check(
-    worst <= BUDGET.total,
-    '1728×996 @2× sweep',
-    `${pres.length} tiles swept in ${sweepMs} ms; at most ${most} drawn for themselves in one frame (of ${rec.length}); worst grid frame ${ms(worst)} = shared ${ms(shared)} + ${most} × warm ${ms(warm)} + ${tiles} copies × ${ms(copy)} ≤ ${BUDGET.total}`,
+    most <= LSWEEP_OWN_MAX,
+    '1728×996 @2× sweep: the cap on tiles drawn for themselves',
+    `${pres.length} tiles swept in ${sweepMs} ms; at most ${most} drawn for themselves in one frame (of ${rec.length}) ≤ ${LSWEEP_OWN_MAX}`,
+  );
+  check(
+    worst <= LSWEEP_BUDGET,
+    '1728×996 @2× sweep: the worst grid frame',
+    `${ms(worst)} = shared ${ms(shared)} + ${most} × warm ${ms(warm)} + ${tiles} copies × ${ms(copy)} ≤ ${LSWEEP_BUDGET}`,
   );
   await page.context().close();
 }
@@ -1610,12 +1646,11 @@ async function checkRiveReduced(browser) {
   const a = await sharp(await page.screenshot()).raw().toBuffer();
   await page.waitForTimeout(1000);
   const b = await sharp(await page.screenshot()).raw().toBuffer();
-  let moved = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) moved++;
+  const g = stillDiff(a, b);
   check(
-    grid.tiles > 0 && grid.canvases === 0 && grid.stills === grid.tiles && !grid.loaded && moved === 0,
+    grid.tiles > 0 && grid.canvases === 0 && grid.stills === grid.tiles && !grid.loaded && g.moved === 0,
     'grid',
-    `${grid.stills} of ${grid.tiles} tiles on the still, ${grid.canvases} canvases, runtime loaded: ${grid.loaded}, ${moved} bytes changed over 1s`,
+    `${grid.stills} of ${grid.tiles} tiles on the still, ${grid.canvases} canvases, runtime loaded: ${grid.loaded}, ${g.note}`,
   );
   await heroOn04(page, { settle: false });
   await quiet(page);
@@ -1624,8 +1659,7 @@ async function checkRiveReduced(browser) {
   const c = await sharp(await page.screenshot()).raw().toBuffer();
   await page.waitForTimeout(1000);
   const d = await sharp(await page.screenshot()).raw().toBuffer();
-  let moved2 = 0;
-  for (let i = 0; i < c.length; i++) if (c[i] !== d[i]) moved2++;
+  const h = stillDiff(c, d);
   // …and the pointer across it loads nothing either.
   for (let i = 0; i < 10; i++) {
     await page.mouse.move(hr.x + hr.w * (0.2 + 0.06 * i), hr.y + hr.h * 0.3);
@@ -1633,7 +1667,7 @@ async function checkRiveReduced(browser) {
   }
   await page.waitForTimeout(600);
   const r = await page.evaluate(() => ({ uploads: window.__paper.riveUploads().n, loaded: window.__covers.rive.ready('nosey') }));
-  check(r.uploads === 0 && !r.loaded && moved2 === 0, 'detail hero', `paper uploaded the live cover ${r.uploads} times, runtime loaded: ${r.loaded} (after the pointer crossed it), ${moved2} bytes changed over 1s`);
+  check(r.uploads === 0 && !r.loaded && h.moved === 0, 'detail hero', `paper uploaded the live cover ${r.uploads} times, runtime loaded: ${r.loaded} (after the pointer crossed it), ${h.note}`);
   await page.context().close();
 }
 
@@ -2085,9 +2119,8 @@ async function checkDrexReduced(browser) {
   const a = await sharp(await page.screenshot()).raw().toBuffer();
   await page.waitForTimeout(1000);
   const b = await sharp(await page.screenshot()).raw().toBuffer();
-  let moved = 0;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) moved++;
-  check(drawn === 0 && moved === 0, 'detail hero', `paper drew the live cover ${drawn} times (0 = the still), ${moved} bytes changed over 1s`);
+  const h = stillDiff(a, b);
+  check(drawn === 0 && h.moved === 0, 'detail hero', `paper drew the live cover ${drawn} times (0 = the still), ${h.note}`);
   // the still itself (npm run covers): its light is on the logo
   const res = await page.request.get(`${B}projects/drex/cover-still.webp`);
   const img = sharp(await res.body());

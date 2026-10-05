@@ -191,6 +191,7 @@ export function FlipBook({
       onSpreadChange,
       onTurnActive,
       tapTarget: quote.tapAt,
+      liftSrc: (page) => pageAnimRef.current?.frozenSrc(page.n) ?? null,
     });
     engineRef.current = engine;
     onEngineReady?.(engine);

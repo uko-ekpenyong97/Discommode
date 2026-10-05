@@ -1044,6 +1044,43 @@ canvas) keyed by page, hidden until the player shows it.
   holds both, in pixels ([running the checks](#running-the-checks)).
 - The cover's and the back's hover layers, and the closed book, are untouched.
 
+### In paper (a dial, off)
+
+PAGE ANIM in the READER NAV dock (`#read-NN?intro`, `src/dev/pageAnimLook.ts`):
+**in paper** draws a page's sprites INTO its paper instead of over it, and
+**tooth** sets how strongly. Off by default and back to off when the dock goes,
+so nothing ships different (`PAGE_ANIM_LOOK`, pageAnimPlayer.ts).
+
+- **Multiplied into the plate.** The sprite canvas gets `mix-blend-mode:
+  multiply` over the plate under it, so the paper's cream shows through the
+  ink's lighter tones (and anything printed under a drawing shows through
+  it), where today the ink covers the paper. The clearest change is badges':
+  its blue-grey cards go a warmer, neutral grey.
+- **The paper's tooth.** A fine speckle, fixed to the PAGE (a 512-cell tile of
+  2-page-px cells, ~3.3% dark — badges' print, the one page whose print
+  carries it), stamped into the ink with `source-atop`: it never moves with
+  the drawing, and the sprite's own alpha, edges included, is untouched.
+  `tooth` 0.35 by default; 0 is the multiply alone.
+- **Not changed:** which frame shows and for how long (the holds,
+  `frameAt`) — `verify:reader`'s badges holds check runs with it off and on
+  (identical runs, 5×2.00 0×2.00 1×2.00 2×1.00 3×2.00 4×5.00 5×2.00). A turn
+  still hides the layer and shows the baked page.
+
+Measured on the drawing's box at 2×, rest frame: 07 | 08 43% of pixels move
+more than 2 levels (mean 6.8), 11 | 12 15% (mean 0.9).
+`docs/page-anims/in-paper-07-08.webp` and `in-paper-11-12.webp`: before
+(off) and after (in paper), the spread and the drawing 1:1.
+
+**A turning page keeps its frame** (in paper only). The sprites no longer
+hide when a leaf lifts: their loops stop, and the lifting page's leaf carries
+the frame it was on — the plate with that frame multiplied in, as on screen,
+composited once per frame of a loop (`toBlob`, WebP 0.92), held decoded, and
+handed to the engine (`liftSrc`: ordinary turns, a drag, a riffle's first
+leaf). Until a loop has been through once, a frame with no composite yet turns
+as the print. The page that is not lifting keeps its frozen frame until the
+leaf covers it. Off, a turn is exactly as before (the layer hides, the leaf is
+the baked page); `pageanims` and `pageclip` hold that, and run off.
+
 ### The align tool
 
 PAGE ANIM ALIGN, in the READER NAV dock at `#read-01?intro`
@@ -1582,9 +1619,18 @@ reader through `window.__flip` (the dev-only engine handle) and its `probe`, and
 exits non-zero on any ✗.
 
 - **Riffle frame budget.** Real 20→0 and 0→20 riffles, `--runs` each at 1× and
-  2×: no rAF interval over 20ms. An ordinary Next from the cover is measured
-  alongside and REPORTED, not asserted — it lifts the same full-size leaf a
-  riffle's first leaf does, so it is the baseline a miss should be read against.
+  2×, each followed by two ordinary Nexts off the cover — the CONTROL, measured
+  in the same page and minute, lifting the same full-size leaf a riffle's first
+  leaf does. Dropped vsyncs per frame (a frame over 20ms; 50ms is two), pooled
+  per DPR. The riffles fail only when they drop **meaningfully more often**
+  than the control: more than **2×** its rate, shown by a one-sided exact test
+  at **p < 0.05** (`scripts/riffle-gate.mjs`, tests beside it). Why gated:
+  through the night of 2026-10-03 a riffle dropped a frame in 36 of 140 runs and
+  an ordinary Next in 4 of 70 — per frame about the same, ~1 in 1000 — and an
+  absolute "no frame over 20ms" in 20 four-second riffles failed nearly every
+  run on this machine whatever the code did. A control that happens to drop
+  nothing cannot fail the riffles on its own; riffles dropping several times as
+  often as an ordinary Next, over enough frames, do.
 - **Riffle landing.** After every one of those: hash, caption, `data-pos` and
   the rendered pages agree, and the turn layer is gone.
 - **Riffle z-order, pixel-exact.** The riffle is held at every 60Hz frame with
