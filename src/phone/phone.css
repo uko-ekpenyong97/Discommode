@@ -2,6 +2,25 @@
    paper: the chrome's own pill and close shapes (src/chrome), Bowlby One for
    the type that is the magazine's, the system's sans for the reading. */
 
+/* The disclaimer's faces, cut to its glyphs (npm run door): Frijole and Space
+   Mono Bold, their family names dropped from the subsets, so they go by these.
+   The door's only: phone.html preloads them, and nothing on the desktop
+   loads this stylesheet. Block, not swap: no fallback flash of the title. */
+@font-face {
+  font-family: 'Door Display';
+  src: url('/fonts/door-display-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Door Mono';
+  src: url('/fonts/door-mono-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
 :root {
   --ph-sky: #cfe0f1;
   --ph-ink: #1d2230;
@@ -31,6 +50,8 @@ video {
 
 /* The chrome's colours, as the sky would make them on a clear day. */
 .ph[data-chrome] {
+  /* The disclaimer runs to the screen's edges: nothing past them scrolls. */
+  overflow-x: clip;
   --paper: #f6ecdc;
   --paper-press: #e9dcc6;
   --ink: #1d2230;
@@ -76,9 +97,67 @@ video {
   width: 100%;
 }
 
-.ph-note {
-  margin: 22px 0 18px;
-  font-size: 17px;
+/* ── the disclaimer ──
+   Uko's Figma frame "Disclaimer" (Discommode-Website 424:37), 812×1045: the
+   whole frame scaled to the phone's width, one Figma unit = --u, so every box
+   is where the frame has it at any phone size (the 72 / 96 / 88 left edges
+   are the frame's). Wider than a phone in portrait — a phone on its side — it
+   stops at 480 px, centred, and the red runs to the edges either side. The
+   body's 45 units are 16 px at a 289 px wide screen; it never goes under. */
+.ph-disclaimer {
+  --ph-dw: min(100vw, 480px);
+  --u: calc(var(--ph-dw) / 812);
+  /* Out of the door's column, to the screen's edges. */
+  width: 100vw;
+  margin: 22px calc(50% - 50vw) 18px;
+  background: #b82540;
+  color: #ffeaee;
+}
+.ph-disclaimer__frame {
+  position: relative;
+  width: var(--ph-dw);
+  aspect-ratio: 812 / 1045;
+  margin: 0 auto;
+}
+.ph-disclaimer__title,
+.ph-disclaimer__body,
+.ph-disclaimer__photo {
+  position: absolute;
+  margin: 0;
+}
+/* The boxes are the frame's; the type in them is set as Figma sets it: its
+   line heights (97 and 67 units: Figma's, not the browser's "normal", which
+   rounds Space Mono to 66 and reads Frijole's mismatched metrics its own way)
+   and its glyphs that much lower in the box (3 and 2.5 units, measured against
+   the frame's own render). */
+.ph-disclaimer__title {
+  padding-top: calc(3 * var(--u));
+}
+.ph-disclaimer__body {
+  padding-top: calc(2.5 * var(--u));
+}
+.ph-disclaimer__title {
+  left: calc(72 * var(--u));
+  top: calc(61 * var(--u));
+  font: 400 calc(70 * var(--u)) / calc(97 * var(--u)) 'Door Display', ui-sans-serif, system-ui, sans-serif;
+  white-space: nowrap;
+}
+.ph-disclaimer__body {
+  left: calc(96 * var(--u));
+  top: calc(191 * var(--u));
+  width: calc(621 * var(--u));
+  font: 700 max(16px, calc(45 * var(--u))) / calc(67 * var(--u)) 'Door Mono', ui-monospace, monospace;
+  overflow-wrap: break-word;
+}
+.ph-disclaimer__body p {
+  margin: 0;
+}
+.ph-disclaimer__photo {
+  left: calc(88 * var(--u));
+  top: calc(626 * var(--u));
+  width: calc(636 * var(--u));
+  height: calc(358 * var(--u));
+  max-width: none;
 }
 
 .ph-actions {

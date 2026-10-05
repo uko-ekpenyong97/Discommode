@@ -35,11 +35,28 @@ Lenis or Rive.
 Views, by hash (the desktop's links work):
 
 - **The door** (`#`, `#item-01`, anything unknown): DISCOMMODE, Issue 01's
-  cover, a note — "Discommode is made for bigger screens. Open it on a
-  computer or tablet for the full issue. Here's the pocket version." — Read
-  Issue 01, and the three projects' covers.
-  The chrome's own paper shapes (`PillFace`, `ShapeFace`) in a clear day's
+  cover, the disclaimer, Read Issue 01, and the three projects' covers. The
+  chrome's own paper shapes (`PillFace`, `ShapeFace`) in a clear day's
   colours, Bowlby One, a flat light sky (#cfe0f1).
+- **The disclaimer** is Uko's Figma frame "Disclaimer" (Discommode-Website,
+  node 424:37, 812×1045), set exactly as drawn: the whole frame scaled to the
+  phone's width (one Figma unit = width ÷ 812), every box at the frame's x, y
+  and width (the 72 / 96 / 88 left edges are the frame's), the red #B82540
+  edge to edge. On its side a phone gets the same frame at 480 px, centred.
+  "DISCLAIMER!" in Frijole, the two paragraphs in Space Mono Bold (≥ 16 px:
+  21.8 on an iPhone 15), both live type; Figma's line heights (97 and 67
+  units) and its glyphs' place in the box (3 and 2.5 units lower than a
+  browser's "normal") are set explicitly — measured against the frame's render,
+  every line within 1 px in Chromium and WebKit
+  (`docs/mobile/door-disclaimer-figma.webp`). The photo is the frame's own,
+  cut from Uko's flattened export (`~/Discommode-pages/ui/door/disclaimer.png`,
+  the caption edits in it) at 636 and 1272 px, lazy, its alt text the edited
+  caption. `npm run door` (`scripts/make-door.mjs`) makes the photo and the
+  two fonts: each cut to the glyphs the disclaimer sets (`src/phone/disclaimer.ts`;
+  run it again after changing the words), their family names dropped (Frijole's
+  is reserved under the OFL), served as 'Door Display' and 'Door Mono', 10.1 and
+  4.4 KB, `font-display: block` and preloaded by phone.html only: no fallback
+  flash, and the desktop never loads them. Captures: `docs/mobile/door-disclaimer.webp`.
 - **The stack** (`#read-01`, `#read-01/<spread>`): every page in reading order
   (the reader's drawn cover and back), lazy past the first two, `srcset` of
   the 1000 px riffle pages and the 2000 px pages, `width`/`height` set so

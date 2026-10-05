@@ -7,6 +7,7 @@ import type { Page } from '../reader/issue-01';
 import { projectById } from '../portfolio/projects';
 import type { Block, Media, Paragraph, Project } from '../portfolio/blocks/types';
 import { PillFace, ShapeFace } from '../chrome/Paper';
+import { BODY, PHOTO_ALT, TITLE } from './disclaimer';
 
 /**
  * THE PHONE DOOR (docs/mobile.md). A phone does not get the desktop
@@ -94,10 +95,7 @@ function Door() {
       <a className="ph-cover" href={href('read-01')} aria-label="Read Issue 01">
         <img src={issueCover('01')} width={1000} height={1300} alt="Discommode, Issue 01: the cover" />
       </a>
-      <p className="ph-note">
-        Discommode is made for bigger screens. Open it on a computer or tablet for the full issue. Here's the pocket
-        version.
-      </p>
+      <Disclaimer />
       <div className="ph-actions">
         <Pill to="read-01">Read Issue 01</Pill>
       </div>
@@ -114,6 +112,40 @@ function Door() {
         ))}
       </ul>
     </main>
+  );
+}
+
+/**
+ * Uko's Figma frame "Disclaimer" (Discommode-Website 424:37), 812×1045, set
+ * as it is drawn: every box at the frame's own x, y and width, scaled with the
+ * phone's width (phone.css, `.ph-disclaimer`). The words are live type; the
+ * photo is the frame's own, cut from its export (`npm run door`).
+ */
+function Disclaimer() {
+  return (
+    <section className="ph-disclaimer" aria-labelledby="ph-disclaimer-title">
+      <div className="ph-disclaimer__frame">
+        <h2 className="ph-disclaimer__title" id="ph-disclaimer-title">
+          {TITLE}
+        </h2>
+        <div className="ph-disclaimer__body">
+          {BODY.map((p) => (
+            <p key={p}>{p}</p>
+          ))}
+        </div>
+        <img
+          className="ph-disclaimer__photo"
+          src="/ui/door/disclaimer-636.webp"
+          srcSet="/ui/door/disclaimer-636.webp 636w, /ui/door/disclaimer-1272.webp 1272w"
+          sizes="calc(min(100vw, 480px) * 636 / 812)"
+          width={636}
+          height={358}
+          alt={PHOTO_ALT}
+          loading="lazy"
+          decoding="async"
+        />
+      </div>
+    </section>
   );
 }
 
