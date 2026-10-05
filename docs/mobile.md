@@ -35,9 +35,9 @@ Lenis or Rive.
 Views, by hash (the desktop's links work):
 
 - **The door** (`#`, `#item-01`, anything unknown): DISCOMMODE, Issue 01's
-  cover, a note — **placeholder copy**: "Discommode is made for bigger
-  screens: the moving covers, the sky, the paper that turns. On a phone, here
-  is the lighter way in." — Read Issue 01, and the three projects' covers.
+  cover, a note — "Discommode is made for bigger screens. Open it on a
+  computer or tablet for the full issue. Here's the pocket version." — Read
+  Issue 01, and the three projects' covers.
   The chrome's own paper shapes (`PillFace`, `ShapeFace`) in a clear day's
   colours, Bowlby One, a flat light sky (#cfe0f1).
 - **The stack** (`#read-01`, `#read-01/<spread>`): every page in reading order

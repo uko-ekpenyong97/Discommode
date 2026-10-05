@@ -94,10 +94,9 @@ function Door() {
       <a className="ph-cover" href={href('read-01')} aria-label="Read Issue 01">
         <img src={issueCover('01')} width={1000} height={1300} alt="Discommode, Issue 01: the cover" />
       </a>
-      {/* PLACEHOLDER COPY — the final wording is Uko's (docs/mobile.md). */}
       <p className="ph-note">
-        Discommode is made for bigger screens: the moving covers, the sky, the paper that turns. On a phone, here is the
-        lighter way in.
+        Discommode is made for bigger screens. Open it on a computer or tablet for the full issue. Here's the pocket
+        version.
       </p>
       <div className="ph-actions">
         <Pill to="read-01">Read Issue 01</Pill>
