@@ -164,8 +164,14 @@ const COVER_HERO = 0.035;
  * letters, the blobs and their outlines clean; the best whole-pixel shift
  * between the two sides 1px (to 2.78%), a σ1 blur 0.37%, the largest
  * connected difference 44 px. Held to what it measures + 1 point: 6.7%.
+ *
+ * With the bigger hero (2026-10-05, docs/reader.md, "The Studio Display's
+ * gaps are the maximums"): 7.47% at 1728×996 @2× (hero 599.0 × 778.7) and
+ * 8.29% at 1440×900 @2× (538.8 × 700.4), every run; the diff maps the same
+ * speckle over the dot field, the letters, blobs and outlines clean. Held to
+ * the worst + 1 point: 9.3%.
  */
-const LAVA_HERO = 0.067;
+const LAVA_HERO = 0.093;
 /**
  * CARD 04 AS A NEIGHBOUR. Card 04 is a Rive cover now (docs/covers.md, "Rive
  * covers"); as the hero it meets the spec's 0.5% (0.149–0.434%: the DOM face
@@ -193,8 +199,12 @@ const RIVE_STILL_SIDE = 0.02;
  * the wordmark and the number register; the best whole-pixel shift between
  * the sides is 0–1px, after which 0.06–3.6% remain, and a σ1 blur leaves
  * 1.3–2.0%. Held to what it measures + 1 point: 9.2%.
+ *
+ * With the bigger hero (2026-10-05): 9.79–9.99% at 1440×900 @1×, every run;
+ * the diff map the same moiré in the halo and the leaves, the logo and the
+ * wordmark in register. Held to the worst + 1 point: 11%.
  */
-const DREX_STILL_SIDE = 0.092;
+const DREX_STILL_SIDE = 0.11;
 const budget = (r) =>
   r.idx === 0
     ? r.slot === 0
