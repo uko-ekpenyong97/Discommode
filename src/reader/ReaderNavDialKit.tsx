@@ -9,6 +9,7 @@ import type { JumpMode, RiffleCurve } from './jump';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
+import { useSizeDials } from '../dev/sizeDials';
 import { usePageAnimAlign } from '../dev/pageAnimAlign';
 import { usePageAnimLook } from '../dev/pageAnimLook';
 import { useTranslateDials } from '../dev/translateDials';
@@ -72,6 +73,9 @@ export default function ReaderNavDialKit() {
 
   // The paper buttons, and their colour from the sky.
   useChromeDials();
+
+  // How big the book and the detail card get off the Studio Display.
+  useSizeDials();
 
   // How the inside pages' sprites sit on their pages: over the paper, or in it.
   usePageAnimLook();

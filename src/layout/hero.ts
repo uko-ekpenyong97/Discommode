@@ -5,19 +5,22 @@
  * sits exactly where the card was. The grid→detail morph and the doorway land on
  * it too.
  *
- * THE BOOK YIELDS TO THE CHROME. The spacing is the Studio Display's (2560×1440),
- * where it was signed off: there the hero is `detailCardScale` of the height
- * and the band over it and under it — margin, chrome, gap — is
- * `REF_VH · (1 − detailCardScale) / 2` (136.8 at 0.81). That band is reserved
- * FIRST, in px, on every screen; the hero (10:13) takes the height that is left,
- * and the open book (two pages) the width. So the chrome and the gaps between
- * it and the book are the same everywhere and the book is what shrinks.
+ * THE STUDIO DISPLAY'S GAPS ARE THE MOST THERE IS. The spacing was signed off
+ * on the Studio Display (2560×1440): there the hero is `detailCardScale` of
+ * the height and the band over it and under it — margin, chrome, gap — is
+ * `REF_VH · (1 − detailCardScale) / 2` (136.8 at 0.81). On a narrower screen
+ * every part of that band shrinks in proportion to the width (`s`, the
+ * viewport's width over 2560): the margins and the gaps to the book down to
+ * their floors in px (sizeDials.ts), the chrome's faces down to the face floor
+ * (no face under 44px, ×0.957 for the 46 arrows). A short screen shrinks them
+ * further, where the hero would otherwise fall under {@link HERO_MIN_SHARE} of
+ * the height. The book never shrinks first: the band is reserved, and the
+ * hero (10:13) takes the height that is left, the open book (two pages; one,
+ * reading a page at a time) the width. `useChromeFit` puts the faces' fit and
+ * the margin on the chrome lines.
  *
- * Only on a short screen, where the hero would fall under {@link HERO_MIN_SHARE}
- * of the height, does the chrome shrink: the whole band (margin, chrome, gap)
- * scales by `k`, so the proportions stay the Studio Display's — down to the
- * face floor (no face under 44px, ×0.957 for the 46 arrows). Past the floor the
- * hero gives way, not the chrome. `useChromeFit` puts `k` on the chrome lines.
+ * At 2560 wide (and 912 tall or more) `s` is 1, and the layout is the one
+ * that was signed off, to the pixel.
  *
  * The neighbours keep the reference's hero-to-neighbour gap RATIO: `detailGap`
  * is the gap at the reference, scaled with the hero.
@@ -30,6 +33,8 @@ import { useLayoutEffect, useState } from 'react';
 import { CHROME, subscribeChrome } from '../chrome/chromeDials';
 import SHAPES from '../chrome/shapes.json';
 import { config, subscribeConfig } from '../config';
+import { singlePageAt, subscribeSinglePage } from '../reader/singlePage';
+import { SIZE, subscribeSize } from './sizeDials';
 
 /**
  * The reader's page ratio (10:13), NOT the grid card's 3:4. The hero rect uses
@@ -38,11 +43,12 @@ import { config, subscribeConfig } from '../config';
 export const PAGE_ASPECT_W = 10;
 export const PAGE_ASPECT_H = 13;
 
-/** The reference viewport's height, CSS px: the Studio Display, 2560×1440,
- *  where the spacing was signed off. */
+/** The reference viewport, CSS px: the Studio Display, 2560×1440, where the
+ *  spacing was signed off. Its gaps are the most any screen gets. */
+export const REF_VW = 2560;
 export const REF_VH = 1440;
-/** The chrome only shrinks where the hero would otherwise get less than this
- *  share of the viewport's height. */
+/** Past its width, a short screen shrinks the chrome further where the hero
+ *  would otherwise get less than this share of the viewport's height. */
 export const HERO_MIN_SHARE = 0.7;
 /** Smallest a chrome face may get, CSS px (the 46 arrows stop at ×0.957). */
 export const MIN_TARGET = 44;
@@ -64,14 +70,15 @@ export interface HeroRect {
 
 export interface HeroLayout {
   rect: HeroRect;
-  /** The chrome's shrink: 1, or less on a short screen (never under the face
-   *  floor). Every band, margin, chrome size and gap is × k. */
+  /** The chrome faces' fit: 1, or less on a smaller screen (never under the
+   *  face floor). The faces and the gaps between them in a row are × k. */
   k: number;
-  /** The band over the hero and under it, px (already × k): the viewport's
-   *  edge to the hero's. */
+  /** The chrome's margin from the viewport's top and bottom, px. */
+  margin: number;
+  /** The band over the hero and under it, px: margin, the tallest line of
+   *  chrome, and the gap to the book. */
   band: number;
-  /** Least distance from the open book to the viewport's sides, px (× k):
-   *  the band's gap, from the tallest line of chrome. */
+  /** Least distance from the book (or the card) to the viewport's sides, px. */
   sideGap: number;
   /** Edge-to-edge gap between the hero and each neighbour card, px. */
   gap: number;
@@ -85,19 +92,40 @@ export const referenceBand = (cardScale: number = config.detailCardScale): numbe
 export const chromeFloor = (scale: number = CHROME.chromeScale): number =>
   Math.min(1, MIN_TARGET / (CHROME_SMALLEST * scale));
 
-export function computeHeroLayout(vw: number, vh: number): HeroLayout {
-  const band0 = referenceBand();
-  // The gap between the tallest line of chrome and the book, at the reference.
-  const sideGap0 = Math.max(0, band0 - CHROME.chromeMargin - Math.max(CHROME_LINE * CHROME.chromeScale, MIN_TARGET));
-  // The largest k that leaves the hero its share, held to [floor, 1].
+/** The viewport's scale against the reference: its width over 2560, less on a
+ *  short screen (where the reference band would leave the hero under its
+ *  share), never over 1. */
+export function viewportScale(vw: number, vh: number, band0: number = referenceBand()): number {
   const kShare = ((1 - HERO_MIN_SHARE) * vh) / (2 * band0);
-  const k = Math.min(1, Math.max(chromeFloor(), kShare));
-  const band = band0 * k;
-  const sideGap = sideGap0 * k;
-  // Height first; then the open book (two pages, 20:13) inside the side gaps.
+  return Math.max(0, Math.min(1, vw / REF_VW, kShare));
+}
+
+/**
+ * The hero layout for a viewport. `single`: the reader shows one page at a
+ * time here (singlePage.ts), so the book that must fit the width is one page.
+ */
+export function computeHeroLayout(vw: number, vh: number, single: boolean = singlePageAt(vw, vh)): HeroLayout {
+  const band0 = referenceBand();
+  // The reference band's three parts: margin, the tallest line of chrome (or
+  // its 44px hit area), and the gap between it and the book.
+  const margin0 = CHROME.chromeMargin;
+  const line0 = CHROME_LINE * CHROME.chromeScale;
+  const gap0 = Math.max(0, band0 - margin0 - Math.max(line0, MIN_TARGET));
+  const s = viewportScale(vw, vh, band0);
+  // Each shrinks with the screen, to its floor (never over its reference).
+  const floored = (ref: number, min: number) => Math.max(Math.min(ref, min), ref * s);
+  const k = Math.min(1, Math.max(chromeFloor(), s));
+  const margin = floored(margin0, SIZE.marginMin);
+  const gapToBook = floored(gap0, SIZE.gapMin);
+  const sideGap = floored(gap0, SIZE.sideMin);
+  const band = margin + Math.max(line0 * k, MIN_TARGET) + gapToBook;
+  // Height first; then the width: the open book (two pages, 20:13) for the
+  // reader, or one page reading a page at a time, and one card for the detail.
   const byHeight = vh - 2 * band;
-  const byWidth = ((vw - 2 * sideGap) * PAGE_ASPECT_H) / (2 * PAGE_ASPECT_W);
-  const h = Math.max(MIN_HERO_H, Math.min(byHeight, byWidth));
+  const byWidth = (pages: number) => ((vw - 2 * sideGap) * PAGE_ASPECT_H) / (pages * PAGE_ASPECT_W);
+  const reader = Math.min(byHeight, byWidth(single ? 1 : 2)) * SIZE.readerFill;
+  const detail = Math.min(byHeight, byWidth(1)) * SIZE.detailFill;
+  const h = Math.max(MIN_HERO_H, Math.min(reader, detail));
   // The hero deliberately diverges from the grid's shared 3:4 (CARD_ASPECT_*):
   // it is 10:13, the reader's page ratio. With this the detail centre panel and
   // the FLIP endpoint land on the reader cover's rect to the pixel, so the reader
@@ -106,10 +134,17 @@ export function computeHeroLayout(vw: number, vh: number): HeroLayout {
   // arriving. The grid stays 3:4 (CARD_ASPECT_* is unchanged).
   const w = (h * PAGE_ASPECT_W) / PAGE_ASPECT_H;
   const gap = (config.detailGap * h) / (REF_VH * config.detailCardScale);
-  return { rect: { x: (vw - w) / 2, y: (vh - h) / 2, w, h }, k, band, sideGap, gap };
+  return { rect: { x: (vw - w) / 2, y: (vh - h) / 2, w, h }, k, margin, band, sideGap, gap };
 }
 
 export const computeHeroRect = (vw: number, vh: number): HeroRect => computeHeroLayout(vw, vh).rect;
+
+/** Hear every input of the hero layout but the viewport's size: the config,
+ *  chrome and size dials, and the single-page dial. */
+export function subscribeHeroInputs(fn: () => void): () => void {
+  const off = [subscribeConfig(fn), subscribeChrome(fn), subscribeSize(fn), subscribeSinglePage(fn)];
+  return () => off.forEach((u) => u());
+}
 
 function writeVars(r: HeroRect): void {
   const s = document.documentElement.style;
@@ -125,13 +160,15 @@ const same = (a: HeroLayout, b: HeroLayout): boolean =>
   a.rect.w === b.rect.w &&
   a.rect.h === b.rect.h &&
   a.k === b.k &&
+  a.margin === b.margin &&
   a.gap === b.gap;
 
 /**
  * Subscribe to the live hero layout: writes the CSS variables (before paint)
  * and returns the numbers, recomputing on resize and on any config or chrome
  * change (so the `detailCardScale` / `detailGap` / `chromeScale` /
- * `chromeMargin` dials feed it live).
+ * `chromeMargin` dials and READER SIZE / DETAIL SIZE feed it live), and when
+ * the reader starts or stops showing one page at a time.
  */
 export function useHeroLayout(): HeroLayout {
   const [layout, setLayout] = useState<HeroLayout>(() =>
@@ -145,12 +182,10 @@ export function useHeroLayout(): HeroLayout {
     };
     update();
     window.addEventListener('resize', update);
-    const unConfig = subscribeConfig(update);
-    const unChrome = subscribeChrome(update);
+    const unsubscribe = subscribeHeroInputs(update);
     return () => {
       window.removeEventListener('resize', update);
-      unConfig();
-      unChrome();
+      unsubscribe();
     };
   }, []);
   return layout;

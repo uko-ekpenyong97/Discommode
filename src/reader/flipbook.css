@@ -16,21 +16,18 @@
   justify-content: center;
 }
 
-/* One page at a time (singlePage.ts; a dial, off; portrait only): the stage at
-   twice its size, about the book's centre, moved so one page is centred — a
-   page is half the book, (hero-h · 10/13) wide. The closed cover and back are
-   already centred (data-pos). */
+/* One page at a time (singlePage.ts; on for touch, portrait only): the hero is
+   sized for one page (layout/hero.ts), so the open spread is two screens wide;
+   the stage moves half a page, (hero-h · 10/13) / 2, so one page is centred.
+   The closed cover and back are already centred (data-pos). */
 .book-stage[data-single] {
   transition: transform 260ms ease;
 }
-.book-stage[data-single='page'] {
-  transform: translateY(-50%) scale(2);
-}
 .book-stage[data-single='left'] {
-  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * 10 / 13)) scale(2);
+  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * 5 / 13));
 }
 .book-stage[data-single='right'] {
-  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * -10 / 13)) scale(2);
+  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * -5 / 13));
 }
 
 .book {
@@ -70,6 +67,9 @@
      page ratio (so --bw = 2 pages = hero-h * 20/13 ≈ 2.05 × hero width). */
   width: calc(var(--hero-h, 76vh) * 20 / 13);
   height: var(--hero-h, 76vh);
+  /* Never squeezed by the stage: one page at a time, the spread is wider than
+     the screen (singlePage.ts). */
+  flex: none;
   transform: translateX(var(--book-slide, 0px));
   perspective: 2600px;
   /* DEVIATION 1: the spec puts `perspective` on .book but the curl is a

@@ -3,15 +3,17 @@ import { CHROME } from '../chrome/chromeDials';
 import { config } from '../config';
 import {
   CHROME_LINE,
-  HERO_MIN_SHARE,
   MIN_TARGET,
   PAGE_ASPECT_H,
   PAGE_ASPECT_W,
+  REF_VW,
   chromeFloor,
   computeHeroLayout,
   computeHeroRect,
   referenceBand,
+  viewportScale,
 } from './hero';
+import { SIZE, SIZE_DEFAULTS, setSize } from './sizeDials';
 
 /**
  * The hero rect is the ONE rect shared by the detail centre panel, the FLIP
@@ -21,7 +23,8 @@ import {
  * cover opaque over the panel with only its contact shadow arriving.
  *
  * Its height is what the chrome leaves: the band over and under it is the
- * Studio Display's (2560×1440), in px, on every screen.
+ * Studio Display's (2560×1440) at its width, and shrinks with a narrower
+ * screen, to floors.
  */
 const VIEWPORTS: Array<[number, number]> = [
   [2560, 1440],
@@ -55,27 +58,93 @@ describe('computeHeroRect', () => {
   });
 });
 
-describe('computeHeroLayout: the book yields to the chrome', () => {
+describe("computeHeroLayout: the Studio Display's gaps are the maximums", () => {
+  const gap0 = 136.8 - CHROME.chromeMargin - CHROME_LINE;
+
   it('is the signed-off layout at the reference, 2560×1440', () => {
     const l = computeHeroLayout(2560, 1440);
     expect(l.k).toBe(1);
+    expect(l.margin).toBe(CHROME.chromeMargin);
     expect(l.band).toBeCloseTo(136.8, 6);
     expect(l.rect.h).toBeCloseTo(1440 * config.detailCardScale, 6);
     expect(l.rect.h).toBeCloseTo(1166.4, 6);
     expect(l.rect.y).toBeCloseTo(136.8, 6);
     expect(l.gap).toBeCloseTo(config.detailGap, 6);
     // The band less the margin and the tallest line (58): the gap to the book.
-    expect(l.sideGap).toBeCloseTo(136.8 - CHROME.chromeMargin - CHROME_LINE, 6);
+    expect(l.sideGap).toBeCloseTo(gap0, 6);
   });
 
-  // 982 tall and up: at 900 the band (2 × 136.8) would leave the hero under
-  // its share, so the chrome shrinks there (below).
-  it.each(VIEWPORTS.filter(([, vh]) => vh >= 982))('keeps the reference band in px at %ix%i', (vw, vh) => {
-    const l = computeHeroLayout(vw, vh);
+  // The Studio Display with a browser's toolbars: 2560 wide, less tall.
+  it.each([1600, 1300, 1200, 1000, 912])('keeps the reference band at 2560×%i', (vh) => {
+    const l = computeHeroLayout(2560, vh);
     expect(l.k).toBe(1);
+    expect(l.band).toBeCloseTo(referenceBand(), 6);
     expect(l.rect.y).toBeCloseTo(referenceBand(), 6);
-    expect(vh - (l.rect.y + l.rect.h)).toBeCloseTo(referenceBand(), 6);
-    expect(l.rect.h / vh).toBeGreaterThanOrEqual(HERO_MIN_SHARE);
+  });
+
+  it('shrinks every gap in proportion to the width, faces to their floor', () => {
+    const l = computeHeroLayout(1728, 1117);
+    const s = 1728 / REF_VW;
+    expect(viewportScale(1728, 1117)).toBeCloseTo(s, 9);
+    expect(l.k).toBeCloseTo(chromeFloor(), 9);
+    expect(l.margin).toBeCloseTo(CHROME.chromeMargin * s, 9);
+    expect(l.sideGap).toBeCloseTo(gap0 * s, 9);
+    expect(l.band).toBeCloseTo(CHROME.chromeMargin * s + CHROME_LINE * l.k + gap0 * s, 9);
+  });
+
+  it('holds the gaps at their floors on a tablet', () => {
+    for (const [vw, vh] of [[820, 1180], [1024, 1366]]) {
+      const l = computeHeroLayout(vw, vh, false);
+      expect(l.margin).toBe(SIZE.marginMin);
+      expect(l.sideGap).toBeGreaterThanOrEqual(SIZE.sideMin);
+      expect(l.band).toBeGreaterThanOrEqual(SIZE.marginMin + MIN_TARGET + SIZE.gapMin);
+    }
+  });
+
+  const SCREENS: Array<[number, number]> = [...VIEWPORTS, [1366, 1024], [1024, 1366], [1180, 820], [820, 1180], [1133, 744], [744, 1133], [2560, 800]];
+
+  it.each(SCREENS)('never gives more than the reference, and keeps every face at 44px, at %ix%i', (vw, vh) => {
+    const l = computeHeroLayout(vw, vh);
+    expect(l.band).toBeLessThanOrEqual(referenceBand() + 1e-9);
+    expect(l.margin).toBeLessThanOrEqual(CHROME.chromeMargin);
+    expect(l.sideGap).toBeLessThanOrEqual(gap0 + 1e-9);
+    expect(l.k * 46).toBeGreaterThanOrEqual(MIN_TARGET - 1e-9);
+  });
+
+  it.each(SCREENS)('never lets the chrome reach the book at %ix%i', (vw, vh) => {
+    for (const single of [false, true]) {
+      const l = computeHeroLayout(vw, vh, single);
+      // The top line (margin, face) and the bottom row end before the book.
+      expect(l.margin + Math.max(CHROME_LINE * l.k, MIN_TARGET)).toBeLessThan(l.rect.y);
+      expect(l.rect.y).toBeGreaterThanOrEqual(l.band - 1e-9);
+      const pages = single ? 1 : 2;
+      expect(pages * l.rect.w).toBeLessThanOrEqual(vw - 2 * l.sideGap + 1e-9);
+    }
+  });
+
+  it.each([
+    [1728, 1117, 843.4],
+    [1440, 900, 630],
+    [1366, 1024, 750.4],
+    [1180, 820, 558.3],
+  ])('gives a bigger book than the fixed band did at %ix%i', (vw, vh, before) => {
+    expect(computeHeroLayout(vw, vh, false).rect.h).toBeGreaterThan(before + 40);
+  });
+
+  it('sizes for one page, reading a page at a time', () => {
+    const spread = computeHeroLayout(820, 1180, false);
+    const single = computeHeroLayout(820, 1180, true);
+    expect(2 * spread.rect.w).toBeCloseTo(820 - 2 * spread.sideGap, 6);
+    expect(single.rect.h).toBeGreaterThan(1.8 * spread.rect.h);
+    expect(single.rect.w).toBeLessThanOrEqual(820 - 2 * single.sideGap + 1e-9);
+    // Landscape: the height binds either way.
+    expect(computeHeroLayout(1180, 820, true).rect.h).toBeCloseTo(computeHeroLayout(1180, 820, false).rect.h, 9);
+  });
+
+  it('shrinks further on a short screen, past its width', () => {
+    const l = computeHeroLayout(2560, 800);
+    expect(viewportScale(2560, 800)).toBeCloseTo((0.3 * 800) / (2 * 136.8), 9);
+    expect(l.band).toBeLessThan(referenceBand());
   });
 
   it.each(VIEWPORTS)('keeps the reference neighbour gap ratio at %ix%i', (vw, vh) => {
@@ -84,38 +153,19 @@ describe('computeHeroLayout: the book yields to the chrome', () => {
     expect(l.gap / l.rect.w).toBeCloseTo(ref.gap / ref.rect.w, 9);
   });
 
-  it('shrinks the whole band on a short screen, down to the face floor', () => {
-    // 1280×720: the reference band would leave the hero 64% — under the share.
-    const l = computeHeroLayout(1280, 720);
-    expect(l.k).toBeCloseTo(chromeFloor(), 9);
-    expect(l.k).toBeCloseTo(MIN_TARGET / 46, 9);
-    expect(l.band).toBeCloseTo(referenceBand() * l.k, 6);
-    expect(l.rect.y).toBeCloseTo(l.band, 6);
-    // Past the floor, the hero gives way, not the chrome.
-    expect(l.rect.h / 720).toBeLessThan(HERO_MIN_SHARE);
-  });
-
-  it('shrinks the chrome a little at 1440×900, above the floor', () => {
-    const l = computeHeroLayout(1440, 900);
-    expect(l.k).toBeCloseTo((0.3 * 900) / (2 * 136.8), 9);
-    expect(l.k).toBeGreaterThan(chromeFloor());
-    expect(l.k).toBeLessThan(1);
-    expect(l.rect.h / 900).toBeCloseTo(HERO_MIN_SHARE, 6);
-  });
-
-  it('shrinks only as far as the share needs, between the floor and 1', () => {
-    // Where the share binds above the floor: k from (1 − share)·vh = 2·band·k.
-    const band = referenceBand();
-    const vh = Math.round((2 * band * 0.98) / (1 - HERO_MIN_SHARE));
-    const l = computeHeroLayout(vh * 2, vh);
-    expect(l.k).toBeCloseTo(((1 - HERO_MIN_SHARE) * vh) / (2 * band), 9);
-    expect(l.rect.h / vh).toBeCloseTo(HERO_MIN_SHARE, 6);
-  });
-
-  it('fits the open book (two pages) inside the side gaps on a narrow screen', () => {
-    const l = computeHeroLayout(1200, 1440);
-    expect(2 * l.rect.w).toBeCloseTo(1200 - 2 * l.sideGap, 6);
-    expect(l.rect.h).toBeLessThan(1440 - 2 * l.band);
+  it('takes READER SIZE and DETAIL SIZE as shares of the space, the smaller winning', () => {
+    const full = computeHeroLayout(1180, 820, false).rect.h;
+    try {
+      setSize({ readerFill: 0.9 });
+      expect(computeHeroLayout(1180, 820, false).rect.h).toBeCloseTo(full * 0.9, 6);
+      setSize({ readerFill: 1, detailFill: 0.8 });
+      expect(computeHeroLayout(1180, 820, false).rect.h).toBeCloseTo(full * 0.8, 6);
+      // Nothing moves at the reference while the fills are 1.
+      setSize({ detailFill: 1, marginMin: 30, gapMin: 30, sideMin: 30 });
+      expect(computeHeroLayout(2560, 1440).rect.h).toBeCloseTo(1166.4, 6);
+    } finally {
+      setSize(SIZE_DEFAULTS);
+    }
   });
 
   it('follows detailCardScale: the reference band is the dial', () => {
