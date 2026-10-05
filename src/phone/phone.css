@@ -63,7 +63,6 @@ video {
   color: inherit;
 }
 
-.ph-mast,
 .ph-h1,
 .ph-h2,
 .ph-card__no,
@@ -82,11 +81,21 @@ video {
   padding: 28px var(--ph-pad) 56px;
 }
 
+/* Uko's logo (door-logo.svg, Figma 430:41), in the door's ink. Its shapes as
+   wide as the type it replaced ("DISCOMMODE", Bowlby One at 10vw, up to 44 px:
+   0.792 of the screen's width, up to 348.5 px on its side), and their left
+   edge on the door's. The svg's box is wider than the shapes, by the drop
+   shadow's room: 1593 viewBox units to their 1585, from x 4. */
 .ph-mast {
-  margin: 0 0 18px;
-  font-size: clamp(30px, 10vw, 44px);
-  line-height: 1;
-  text-transform: uppercase;
+  --ph-logo: calc(0.792 * min(100vw, 440px));
+  margin: 0;
+  line-height: 0;
+}
+.ph-mast svg {
+  display: block;
+  width: calc(var(--ph-logo) * 1593 / 1585);
+  height: auto;
+  margin-left: calc(var(--ph-logo) * -4 / 1585);
 }
 
 .ph-cover {

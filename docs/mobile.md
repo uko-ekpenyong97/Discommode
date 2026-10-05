@@ -34,10 +34,21 @@ Lenis or Rive.
 
 Views, by hash (the desktop's links work):
 
-- **The door** (`#`, `#item-01`, anything unknown): DISCOMMODE, Issue 01's
-  cover, the disclaimer, Read Issue 01, and the three projects' covers. The
-  chrome's own paper shapes (`PillFace`, `ShapeFace`) in a clear day's
-  colours, Bowlby One, a flat light sky (#cfe0f1).
+- **The door** (`#`, `#item-01`, anything unknown), top to bottom: Uko's
+  logo, the disclaimer, Issue 01's cover, Read Issue 01, and the three
+  projects' covers. The chrome's own paper shapes (`PillFace`, `ShapeFace`)
+  in a clear day's colours, Bowlby One, a flat light sky (#cfe0f1). A shared
+  link (`#read-01/<n>`, `#item-NN`, `#view-NN`) is its own view, so it opens
+  on its target with neither above it.
+- **The logo** is Uko's (Figma 430:41, `~/Discommode-pages/ui/door/logo.svg`,
+  read only), through svgo by `npm run door` into `src/phone/door-logo.svg`
+  (7.7 → 6.0 KB; the paths' numbers kept to the source's 4 decimals, nothing
+  merged, the drop shadow kept; it draws the source's pixels exactly), inlined
+  as the door's `h1` with the name "Discommode", in `currentColor`: the door's
+  ink (#1d2230), as the type it replaced. Its shapes are as wide as that type
+  was — 0.792 of the screen's width, up to 348.5 px on its side — their left
+  edge on the door's (`docs/mobile/door-logo-full.webp`; Figma's black beside
+  the ink: `door-logo-ink-vs-black.webp`).
 - **The disclaimer** is Uko's Figma frame "Disclaimer" (Discommode-Website,
   node 424:37, 812×1045), set exactly as drawn: the whole frame scaled to the
   phone's width (one Figma unit = width ÷ 812), every box at the frame's x, y

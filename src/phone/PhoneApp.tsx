@@ -8,6 +8,8 @@ import { projectById } from '../portfolio/projects';
 import type { Block, Media, Paragraph, Project } from '../portfolio/blocks/types';
 import { PillFace, ShapeFace } from '../chrome/Paper';
 import { BODY, PHOTO_ALT, TITLE } from './disclaimer';
+// Uko's logo (Figma 430:41), optimised in currentColor by `npm run door`.
+import LOGO from './door-logo.svg?raw';
 
 /**
  * THE PHONE DOOR (docs/mobile.md). A phone does not get the desktop
@@ -91,11 +93,13 @@ function Door() {
   const projects = CONTENT.filter((c) => c.project);
   return (
     <main className="ph-door">
-      <h1 className="ph-mast">Discommode</h1>
+      {/* The logo first, then the disclaimer, then the issue and the work. The
+          svg carries its own name ("Discommode"), which the heading takes. */}
+      <h1 className="ph-mast" dangerouslySetInnerHTML={{ __html: LOGO }} />
+      <Disclaimer />
       <a className="ph-cover" href={href('read-01')} aria-label="Read Issue 01">
         <img src={issueCover('01')} width={1000} height={1300} alt="Discommode, Issue 01: the cover" />
       </a>
-      <Disclaimer />
       <div className="ph-actions">
         <Pill to="read-01">Read Issue 01</Pill>
       </div>

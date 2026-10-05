@@ -52,6 +52,7 @@
     "harfbuzzjs": "^1.6.2",
     "playwright": "^1.63.0",
     "sharp": "^0.35.4",
+    "svgo": "^4.1.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
