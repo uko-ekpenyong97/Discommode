@@ -25,7 +25,6 @@ describe('riffle settings', () => {
       riffleMaxInAir: 3,
       riffleCurve: 'easeInOutCubic',
       riffleHalfResBelowMs: 150,
-      riffleHalfResInMotion: false,
       mode: 'riffle',
     });
     expect(RIFFLE_CURVES.easeInOutCubic).toEqual([0.65, 0, 0.35, 1]);

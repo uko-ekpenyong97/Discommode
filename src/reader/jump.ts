@@ -33,13 +33,6 @@ export interface JumpSettings {
   /** A leaf scheduled to cross faster than this uses the half-resolution
    *  copies of its pages (`Page.riffle`); slower leaves, full size. */
   riffleHalfResBelowMs: number;
-  /**
-   * Every leaf IN THE AIR uses the half-resolution pages, whatever its speed;
-   * a page at rest under the stack, or once its leaf has landed, goes back to
-   * full size as soon as that has decoded (flipEngine.ts, `upgradeSlot`). The
-   * book comes to rest on the full-size pages, as always. A READER NAV dial.
-   */
-  riffleHalfResInMotion: boolean;
   mode: JumpMode;
 }
 
@@ -50,7 +43,6 @@ export const JUMP: JumpSettings = {
   riffleMaxInAir: 3,
   riffleCurve: 'easeInOutCubic',
   riffleHalfResBelowMs: 150,
-  riffleHalfResInMotion: false,
   mode: 'riffle',
 };
 

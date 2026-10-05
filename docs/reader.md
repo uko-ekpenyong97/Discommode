@@ -1570,7 +1570,6 @@ READER NAV dock at `#read-NN?intro`; `jump.ts` is the source of truth.
 | `riffleMaxInAir` | 3 | most leaves up at once |
 | `riffleCurve` | easeInOutCubic | also easeInOutSine, easeInOutQuint, linear |
 | `riffleHalfResBelowMs` | 150 | leaves scheduled faster than this use the 1000px pages |
-| `riffleHalfResInMotion` | off | every leaf in the AIR uses the 1000px pages; a page at rest (under the stack, or landed) goes back to full size once that has decoded; the book rests on full size. Measured 2026-10-04 (verify:reader `--only frames`, 20 riffles a run, three runs): 5, 5 and 2 of 20 riffles dropped a frame — 12 of 60, against 13 of 60 off and 18 of 60 on `main` the night before — so it stays off. Held at 500 ms of a 20→0 riffle it reads as the shipped one: `docs/reader-nav/riffle-half-res-in-motion.webp` |
 | `jumpMode` | riffle | or cut |
 
 ## The pages pipeline
