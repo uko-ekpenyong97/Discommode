@@ -477,7 +477,10 @@ function steps(frames) {
  *  page: from the first column to the last where the ink reaches half its
  *  strongest. (Not the ink-weighted spread of x: the curl lights a leaf
  *  unevenly, which weights cream letters on green unevenly too — that read
- *  ×1.046 for a ×1.03 leaf on page 12.) Returned as `w`. */
+ *  ×1.046 for a ×1.03 leaf on page 12.) Only the quote's own columns, its
+ *  hit area and a margin: a curl at t 0 is out of register with the flat page
+ *  by a few px, and the strip of the page under it that shows at the slot's
+ *  edge (a photo, on a bigger book) is not the quote's ink. Returned as `w`. */
 async function inkBox(page, P, ground) {
   const slot = await page.locator(P.slot).boundingBox();
   const png = await page.screenshot({ clip: slot });
@@ -487,12 +490,15 @@ async function inkBox(page, P, ground) {
   // The quote's lines only: not the attribution, not the hint.
   const y0 = Math.floor(((q.top - 30) / H) * info.height);
   const y1 = Math.ceil((Math.min(q.top + q.es.length * QUOTES.styles.quote.lineHeightPx + 30, P.entry.attribution.top - 4) / H) * info.height);
+  const hit = P.entry.hitArea;
+  const x0 = Math.max(1, Math.floor(((hit.x - 80) / 2000) * info.width));
+  const x1 = Math.min(info.width - 1, Math.ceil(((hit.x + hit.w + 80) / 2000) * info.width));
   // Each column's strongest ink; the letters' left and right edges where it
   // crosses half the strongest anywhere, to a subpixel.
   const col = new Float32Array(info.width);
   let max = 0;
   for (let y = y0; y < y1; y++) {
-    for (let x = 0; x < info.width; x++) {
+    for (let x = x0; x < x1; x++) {
       const v = L[y * info.width + x];
       if (v > col[x]) col[x] = v;
       if (v > max) max = v;
@@ -501,7 +507,7 @@ async function inkBox(page, P, ground) {
   const t = max / 2;
   let l = -1;
   let r = -1;
-  for (let x = 0; x < info.width; x++) if (col[x] >= t) (l < 0 && (l = x), (r = x));
+  for (let x = x0; x < x1; x++) if (col[x] >= t) (l < 0 && (l = x), (r = x));
   const left = l - (col[l] - t) / (col[l] - col[l - 1]);
   const right = r + (col[r] - t) / (col[r] - col[r + 1]);
   return { w: right - left };
