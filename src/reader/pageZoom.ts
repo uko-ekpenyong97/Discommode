@@ -301,9 +301,11 @@ export function createPageZoom(opts: PageZoomOptions): PageZoom {
   window.addEventListener('pointermove', onMove, { capture: true });
   window.addEventListener('pointerup', onEnd, { capture: true });
   window.addEventListener('pointercancel', onEnd, { capture: true });
-  // Safari's own pinch of the page, which `touch-action` alone does not stop.
+  // Safari's own pinch of the page, which `touch-action` alone does not stop —
+  // on a touch screen only: a Mac's trackpad pinch is Safari's, as it was.
   const noGesture = (e: Event) => e.preventDefault();
-  document.addEventListener('gesturestart', noGesture);
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  if (coarse) document.addEventListener('gesturestart', noGesture);
 
   // DEV: the checks read the zoom.
   if (import.meta.env.DEV) (window as unknown as { __pageZoom?: () => ZoomState }).__pageZoom = () => ({ ...s });
