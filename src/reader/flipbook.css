@@ -2,6 +2,15 @@
    engine fills with the turn layer. Everything in the curl is expressed against
    --bw (the book's live pixel width), so a resize needs no rebuild. */
 
+/* Zoom to read, on a touch screen (pageZoom.ts): the stage's wrapper, the
+   reader's own box, which the zoom transforms about its top-left corner. At
+   rest it has no transform, and nothing about the stage moves. */
+.book-zoom {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 /* Absolutely centred on the viewport (vw/2, vh/2) so the book sits on the hero
    rect regardless of the chrome above and below it — the cover then lands
    exactly on the detail card. */
@@ -85,10 +94,13 @@
 
 /* A touch screen: the book takes every gesture on it. With pan-y, a turn that
    started a little off the horizontal was the browser's (a pointercancel
-   mid-turn), and a double tap or a pinch zoomed the page. The reader's chrome
-   takes a tap as a tap (no double-tap zoom wait). */
+   mid-turn), and a double tap or a pinch zoomed the whole page. Now a pinch
+   or a double tap anywhere around the book is the reader's own zoom
+   (pageZoom.ts). The reader's chrome takes a tap as a tap (no double-tap zoom
+   wait). */
 @media (pointer: coarse) {
-  .book {
+  .book,
+  .book-zoom {
     touch-action: none;
   }
   .reader-layer {
