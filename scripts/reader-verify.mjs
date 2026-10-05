@@ -7,10 +7,13 @@
  * Every check here is one the unit tests cannot make, because each is a question
  * about what the browser DRAWS or when it draws it:
  *
- *   riffle frame budget   real 20→0 and 0→20 riffles at 1× and 2×: no frame over
- *                         20ms (rAF intervals). An ordinary Next from the cover is
- *                         measured beside it and reported, not asserted — it is
- *                         the baseline a riffle's first leaf shares.
+ *   riffle frame budget   real 20→0 and 0→20 riffles at 1× and 2×, each followed
+ *                         by two ordinary Nexts off the cover — the control, which
+ *                         lifts the same full-size leaf. Dropped vsyncs per frame
+ *                         (a frame over 20ms), pooled per DPR: the riffles fail
+ *                         only when they drop meaningfully more often than the
+ *                         control — more than 2× its rate, shown at p < 0.05
+ *                         (scripts/riffle-gate.mjs).
  *   riffle landing        after every one of those: hash, caption, data-pos and
  *                         the rendered pages agree, and the turn layer is gone.
  *   riffle z-order        pixel-exact. The riffle is held at every 60Hz frame
@@ -110,6 +113,7 @@ import sharp from 'sharp';
 import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registration } from './cover-life-checks.mjs';
 import { checkLayout } from './layout-checks.mjs';
 import { checkQuote } from './quote-checks.mjs';
+import { ALPHA, RATE_MARGIN, droppedVsyncs, riffleGate } from './riffle-gate.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
@@ -215,46 +219,58 @@ async function stillSky(page) {
 
 // ── riffle: frame budget and landing ─────────────────────────────────────────
 
+/** Ordinary Nexts measured after each riffle, as its control (riffle-gate.mjs). */
+const CONTROL_PER_RIFFLE = 2;
+
 async function checkRiffleFrames(browser) {
-  console.log(`\nriffle frame budget and landing (${RUNS} runs each)`);
+  console.log(`\nriffle frame budget and landing (${RUNS} runs each way, ${CONTROL_PER_RIFFLE} ordinary Nexts after each as the control)`);
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, dpr);
-    for (const [from, to] of [
-      [20, 0],
-      [0, 20],
-    ]) {
-      const worst = [];
-      const landings = [];
-      for (let i = 0; i < RUNS; i++) {
+    const riffle = { frames: 0, drops: 0 };
+    const control = { frames: 0, drops: 0, runs: 0, dropped: 0 };
+    const worst = { '20→0': [], '0→20': [] };
+    const landings = { '20→0': [], '0→20': [] };
+    // Interleaved, so the riffles and their control share the machine's state:
+    // each riffle, then CONTROL_PER_RIFFLE ordinary Nexts off the cover, which
+    // lift the same full-size leaf a riffle's first leaf does.
+    for (let i = 0; i < RUNS; i++) {
+      for (const [from, to] of [
+        [20, 0],
+        [0, 20],
+      ]) {
         await open(page, from);
         const fr = await frameTimes(page, async () => {
           await page.evaluate((to) => window.__flip.turnTo(to), to);
           await settled(page, to);
         });
-        worst.push(Math.max(...fr));
-        landings.push(await readState(page));
+        riffle.frames += fr.length;
+        riffle.drops += droppedVsyncs(fr);
+        worst[`${from}→${to}`].push(Math.max(...fr));
+        landings[`${from}→${to}`].push({ to, state: await readState(page) });
+        for (let k = 0; k < CONTROL_PER_RIFFLE; k++) {
+          await open(page, 0);
+          const cf = await frameTimes(page, async () => {
+            await page.evaluate(() => window.__flip.turn('next'));
+            await settled(page, 1);
+          });
+          control.frames += cf.length;
+          control.drops += droppedVsyncs(cf);
+          control.runs++;
+          if (Math.max(...cf) > FRAME_BUDGET_MS) control.dropped++;
+        }
       }
-      const over = worst.filter((w) => w > FRAME_BUDGET_MS).length;
-      check(
-        over === 0,
-        `${dpr}× ${from}→${to}: no frame over ${FRAME_BUDGET_MS}ms`,
-        `worst per run ${worst.map((w) => w.toFixed(1)).join(' / ')}ms`,
-      );
-      const wrong = landings.filter((s) => !agrees(s, to));
-      check(wrong.length === 0, `${dpr}× ${from}→${to}: lands with hash, caption, data-pos and pages agreeing`, wrong.length ? JSON.stringify(wrong[0]) : `${pagesOf(to)} #read-01/${to}`);
     }
-    // The baseline: an ordinary Next off the cover lifts the same full-size
-    // leaf a riffle's first leaf does. Reported, not asserted.
-    let dropped = 0;
-    for (let i = 0; i < RUNS; i++) {
-      await open(page, 0);
-      const fr = await frameTimes(page, async () => {
-        await page.evaluate(() => window.__flip.turn('next'));
-        await settled(page, 1);
-      });
-      if (Math.max(...fr) > FRAME_BUDGET_MS) dropped++;
+    for (const [dir, ls] of Object.entries(landings)) {
+      const wrong = ls.filter((l) => !agrees(l.state, l.to));
+      const to = ls[0].to;
+      check(wrong.length === 0, `${dpr}× ${dir}: lands with hash, caption, data-pos and pages agreeing`, wrong.length ? JSON.stringify(wrong[0].state) : `${pagesOf(to)} #read-01/${to}`);
     }
-    console.log(`    baseline ${dpr}×: an ordinary Next from the cover went over ${FRAME_BUDGET_MS}ms in ${dropped} of ${RUNS} runs`);
+    const g = riffleGate(riffle, control);
+    check(
+      g.pass,
+      `${dpr}× the riffles drop frames no more often than an ordinary Next (rate ≤ ${RATE_MARGIN}× the control's, one-sided p ≥ ${ALPHA})`,
+      `riffles ${riffle.drops} dropped vsyncs in ${riffle.frames} frames (${g.rateR.toFixed(2)}/1000), control ${control.drops} in ${control.frames} (${g.rateC.toFixed(2)}/1000), p ${g.p.toFixed(3)}; worst per riffle 20→0 ${worst['20→0'].map((w) => w.toFixed(1)).join(' / ')}, 0→20 ${worst['0→20'].map((w) => w.toFixed(1)).join(' / ')}; the control's Nexts went over ${FRAME_BUDGET_MS}ms in ${control.dropped} of ${control.runs}`,
+    );
     await page.context().close();
   }
 }

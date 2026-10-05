@@ -1619,9 +1619,18 @@ reader through `window.__flip` (the dev-only engine handle) and its `probe`, and
 exits non-zero on any ✗.
 
 - **Riffle frame budget.** Real 20→0 and 0→20 riffles, `--runs` each at 1× and
-  2×: no rAF interval over 20ms. An ordinary Next from the cover is measured
-  alongside and REPORTED, not asserted — it lifts the same full-size leaf a
-  riffle's first leaf does, so it is the baseline a miss should be read against.
+  2×, each followed by two ordinary Nexts off the cover — the CONTROL, measured
+  in the same page and minute, lifting the same full-size leaf a riffle's first
+  leaf does. Dropped vsyncs per frame (a frame over 20ms; 50ms is two), pooled
+  per DPR. The riffles fail only when they drop **meaningfully more often**
+  than the control: more than **2×** its rate, shown by a one-sided exact test
+  at **p < 0.05** (`scripts/riffle-gate.mjs`, tests beside it). Why gated:
+  through the night of 2026-10-03 a riffle dropped a frame in 36 of 140 runs and
+  an ordinary Next in 4 of 70 — per frame about the same, ~1 in 1000 — and an
+  absolute "no frame over 20ms" in 20 four-second riffles failed nearly every
+  run on this machine whatever the code did. A control that happens to drop
+  nothing cannot fail the riffles on its own; riffles dropping several times as
+  often as an ordinary Next, over enough frames, do.
 - **Riffle landing.** After every one of those: hash, caption, `data-pos` and
   the rendered pages agree, and the turn layer is gone.
 - **Riffle z-order, pixel-exact.** The riffle is held at every 60Hz frame with
