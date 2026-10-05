@@ -544,7 +544,49 @@ CHROME panel — in the READER NAV dock (`#read-NN?intro`), the doorway dock
 
 There is no `chromeEdgeWobble`: the edge is Uko's, not generated (above).
 
-### The book yields to the chrome
+### The Studio Display's gaps are the maximums (2026-10-05)
+
+This supersedes the next section's rule ("the same band in px on every
+screen"), which left an iPad's spread at ~73% of the width and the detail card
+at ~40% of a portrait iPad's height. Now (`src/layout/hero.ts`,
+`computeHeroLayout`; `hero.test.ts`; the `layout` checks of `verify:detail`
+and `verify:reader`, `scripts/layout-checks.mjs`):
+
+1. **The Studio Display's band is the most any screen gets.** Its three parts
+   — margin 35, the tallest line of chrome 58, the gap to the book 43.8 —
+   scale by `s` = the viewport's width over 2560 (less on a short screen,
+   where the hero would get under `HERO_MIN_SHARE` of the height; never
+   over 1). By width, not height: the Studio Display with a browser's toolbars
+   (2560×1300) keeps the signed-off layout.
+2. **Floors.** The margin, the gap to the book and the side gaps never go under
+   16 px (`SIZE_DEFAULTS`, `src/layout/sizeDials.ts`); the faces never under
+   44 px (×0.957 for the 46s, so the 58s stop at 55.5). Hit areas are ≥ 44×44
+   whatever the face.
+3. **The book fills what is left**: the hero (10:13) takes the height, the
+   open book (two pages) must fit the width inside the side gaps — or ONE page,
+   reading a page at a time (`singlePage.ts`, on for touch in portrait).
+4. **Two dials**, dev only, at `?intro` (the app's dock, the doorway's, READER
+   NAV): **READER SIZE** (`readerFill`, and the three floors) and **DETAIL
+   SIZE** (`detailFill`): the share of the free space each takes, 1 = all of
+   it. The detail card and the reader's closed cover are one rect (the doorway
+   opens the one into the other), so the smaller fill wins where both are held
+   by the same edge. Copy writes `SIZE_DEFAULTS`. Nothing moves at 2560 wide
+   at fill 1.
+
+| | before: hero h (share), spread w (share) | now |
+| --- | --- | --- |
+| 2560×1440 | 1166.4 (81%), 1794 (70%) | the same |
+| 1728×1117 | 843 (75%), 1298 (75%) | 900 (81%), 1384 (80%) |
+| 1440×900 | 630 (70%), 969 (67%) | 700 (78%), 1078 (75%) |
+| iPad Pro 12.9" landscape 1366×1024 | 750 (73%), 1154 (84%) | 829 (81%), 1275 (93%) |
+| iPad Pro 12.9" portrait 1024×1366 | 609 (45%), 936 (91%) | one page 914×1188 (89% × 87%) |
+| iPad 11" landscape 1180×820 | 558 (68%), 859 (73%) | 636 (78%), 979 (83%) |
+| iPad 11" portrait 820×1180 | 476 (40%), 732 (89%) | one page 773×1005 (94% × 85%) |
+
+Captures (main | this, detail 02, reader 01 | 02 and 17 | 18):
+`docs/mobile/sizing-desktop.webp`, `docs/mobile/sizing-ipad.webp`.
+
+### The book yields to the chrome (2026-10-01, superseded above)
 
 **The spacing is the Studio Display's**, where it was signed off, and every
 screen keeps it in px. Measured on `main` at 2560×1440 on 2026-10-01, before

@@ -79,24 +79,43 @@ pointer has no rubber-band (not for a mouse: on a Mac `overscroll-behavior`
 also takes the trackpad's swipe back). Videos were already `playsInline` and
 muted. The chrome's hit areas are ≥ 44 px (`.paper`), unchanged.
 
-Layout, emulated (iPad Pro 12.9" 1024×1366, iPad Air 11" 820×1180, iPad mini
-744×1133, @2×, both orientations): the 10:13 hero and the open spread fit the
-viewport in all six; in portrait the spread is scaled to the width.
+**Size.** The chrome's gaps shrink with the screen's width, to 16 px floors,
+and the book and the detail card take the rest (docs/reader.md, "The Studio
+Display's gaps are the maximums"; `docs/mobile/sizing-ipad.webp`).
+
+**Portrait: one page at a time, on by default for touch**
+(`src/reader/singlePage.ts`; the READER PAGE dial in READER NAV, which a
+mouse starts off). The hero is sized for one page, so the page fills the
+screen (iPad 11": 773×1005, 94% of the width) and the detail card with it; the
+open spread is two screens wide and the stage moves half a page to centre the
+one shown. A tap on the screen's half toward the other page shows it; a tap on
+the shown page's own half turns (a Next lands on the new spread's left page, a
+Prev on its right); a swipe left shows the right page, then turns, and back the
+same. Landscape keeps the spread. The doorway opens the full-height card into
+the cover as before; after the opening turn the book pans a half page (260
+ms) to the left page.
+
+**Zoom to read** (`src/reader/pageZoom.ts`, touch pointers only): a pinch or a
+double tap (to 2.4×) zooms the page, one finger pans it while zoomed (held to
+the page), a pinch back under 1.08× or a double tap returns. No page turns
+while zoomed; a new spread (the bar's arrows) or a resize returns it to 1.
+A touch's tap waits out the double tap (300 ms) before it turns; drags turn at
+once, the curl under the finger as before. A second finger landing takes over
+a press that has not become a turn (`flipEngine.releasePress`); a page already
+turning finishes. Safari's own page pinch is stopped in the reader
+(`touch-action: none` and `gesturestart`). A mouse, pen or trackpad is
+unchanged.
+
+Checked, emulated (`.context` scripts, CDP touch): portrait — tap right
+shows the right page, tap right again turns; double tap zooms; tap and drag
+while zoomed pan without turning; double tap returns; pinch to 4× and back to
+1; swipe left. Landscape — taps and drags turn; a pinch whose first finger
+landed on the book zooms without a turn.
 
 ## Not done, and yours to decide
 
-- **Portrait reading.** Today: the spread scaled to the width. And a dial,
-  READER NAV › READER PAGE › `singlePage` (dev dock, **off**, portrait only;
-  `src/reader/singlePage.ts`): the stage at twice its size, one page centred.
-  Turning is still the engine's (it decides Next or Prev by the half of the
-  book pressed, and one half is on screen); a tap on the screen's other side,
-  toward the spread's other page, moves there instead of turning; a Next lands
-  on the new spread's left page, a Prev on its right. Checked on an emulated
-  iPad mini: right (pan), right (turn to 07 | 08, left page), left (turn back,
-  right page), left (pan), no errors. Which of the two portrait reading should
-  be is yours.
 - **DPR caps for touch devices**: not changed. Emulation runs on this Mac's
   GPU and proves nothing about an iPad's; the existing dials
   (`coverMaxDpr`, `coverRenderMax`, `skyResolution`, `skyMaxMegapixels`) are
   where to cap, after a look on a real iPad.
-- The door's note (placeholder) and its colours.
+- The door's colours.
