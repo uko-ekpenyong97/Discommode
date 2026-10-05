@@ -1527,8 +1527,11 @@ async function settledShot(page) {
 /**
  * Pixels that differ between two screenshots: on a page, on a page's edge (a
  * device pixel the paper only partly covers — the page sits at fractional CSS
- * px, so its edge is antialiased whatever is drawn on it), or off the paper
- * altogether, touching no page.
+ * px, so its edge is antialiased whatever is drawn on it — or the one device
+ * pixel past it: where an edge falls past the middle of a device pixel, the
+ * slot's clip snaps out to the next one, and a drawing that runs off the page
+ * there paints that row; seen at 1728×996 @2× with the bigger book, the bottom
+ * at device 1774.66, and gone at 1774.34), or off the paper altogether.
  */
 function diffByPaper(a, b, papers, dpr) {
   let on = 0;
@@ -1540,7 +1543,7 @@ function diffByPaper(a, b, papers, dpr) {
       if (a.data[i] === b.data[i] && a.data[i + 1] === b.data[i + 1] && a.data[i + 2] === b.data[i + 2]) continue;
       const [x0, x1, y0, y1] = [x / dpr, (x + 1) / dpr, y / dpr, (y + 1) / dpr];
       if (papers.some((p) => x0 >= p.x && x1 <= p.x + p.w && y0 >= p.y && y1 <= p.y + p.h)) on++;
-      else if (papers.some((p) => x1 > p.x && x0 < p.x + p.w && y1 > p.y && y0 < p.y + p.h)) edge++;
+      else if (papers.some((p) => x1 + 1 / dpr > p.x && x0 - 1 / dpr < p.x + p.w && y1 + 1 / dpr > p.y && y0 - 1 / dpr < p.y + p.h)) edge++;
       else off++;
     }
   }
