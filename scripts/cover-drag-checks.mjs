@@ -23,7 +23,8 @@ import { overFrames } from './frame-rule.mjs';
  *   siblings  every visible tile of a cover at rest shows the same pixels as
  *             the others in the same frame (they share one draw); a tile whose
  *             card had the pointer in the last 3 s — hit-tested, so its hover
- *             plate counts — is left out (its own dome's draw)
+ *             plate counts, or sent a pointermove — is left out (its own
+ *             dome's draw)
  *   spikes    no tile's sample leaves and comes back in one frame (> 24 of
  *             255 out, the frames either side within 12): the cleared or
  *             mis-sized frame between two good ones
@@ -68,7 +69,7 @@ const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu', '--ignore-gp
 
 /** Installed before the page's scripts. */
 function dragProbe() {
-  const D = (window.__drag = { phase: 'load', writes: [], frames: [], samples: [], loaf: [], ptr: { x: -1, y: -1 }, sampling: false, sharp: null, movedAt: -1e9 });
+  const D = (window.__drag = { phase: 'load', writes: [], frames: [], samples: [], loaf: [], ptr: { x: -1, y: -1 }, sent: new Set(), sampling: false, sharp: null, movedAt: -1e9 });
   // What ran in a long frame (as verify:jank reports it).
   try {
     new PerformanceObserver((l) => {
@@ -117,6 +118,11 @@ function dragProbe() {
     (e) => {
       D.ptr.x = e.clientX;
       D.ptr.y = e.clientY;
+      // The card the event went to (the dome's own listener is the card's): on
+      // a card's edge while the grid moves, the card can slide out from under
+      // the pointer before the frame is sampled, its dome already up.
+      const tr = e.target instanceof Element ? e.target.closest('.grid-card')?.querySelector('.grid-card__transform') : null;
+      if (tr) D.sent.add(`${tr.dataset.dc},${tr.dataset.dr}`);
     },
     { capture: true, passive: true },
   );
@@ -200,16 +206,19 @@ function dragProbe() {
       }
     }
     // The card that gets the pointer's events: its tile has its own dome up.
-    // (Its hover plate floats in front of it, past the tile's own box.)
+    // (Its hover plate floats in front of it, past the tile's own box.) And
+    // the cards a pointermove went to since the last sample (`sent`).
     const under = D.ptr.x >= 0 ? document.elementFromPoint(D.ptr.x, D.ptr.y)?.closest('.grid-card')?.querySelector('.grid-card__transform') : null;
     D.samples.push({
       t: performance.now(),
       phase: D.phase,
       ptr: [D.ptr.x, D.ptr.y],
       hov: under ? `${under.dataset.dc},${under.dataset.dr}` : null,
+      sent: [...D.sent],
       sharp,
       tiles: tiles.map(({ el, ...t }) => (void el, t)),
     });
+    D.sent.clear();
   }
 
   // The grid is MOVING while it is dragged or its transform changed (the
@@ -424,7 +433,7 @@ function analyse(samples, warm) {
     const active = s.phase.startsWith('drag:') || s.phase === 'left' || s.phase === 'warm';
     for (const t of s.tiles) {
       const key = `${t.slot}|${t.cover}`;
-      if (s.hov === t.slot) lastHover.set(key, s.t);
+      if (s.hov === t.slot || s.sent.includes(t.slot)) lastHover.set(key, s.t);
       if (slotCover.has(t.slot) && slotCover.get(t.slot) !== t.cover) out.swaps++;
       slotCover.set(t.slot, t.cover);
       out.tiles++;
