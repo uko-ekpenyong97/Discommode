@@ -1,17 +1,19 @@
 /**
  * THE SPACING, as the browser lays it out — the `layout` section `verify:detail`
- * and `verify:reader` share (src/layout/hero.ts, "the book yields to the
- * chrome").
+ * and `verify:reader` share (src/layout/hero.ts, "the Studio Display's gaps
+ * are the maximums").
  *
  * The spec is the Studio Display's at the signed-off dials (detailCardScale
  * 0.81, detailGap 40), written down here as numbers (not read back from the
- * code it checks): the band over the hero and under it is 136.8 — margin 35,
- * the line of chrome, and the gap to the hero/book — and the neighbours sit 40
- * from an 897.2-wide hero. On every viewport, in both views, the margins, the chrome's
- * sizes and the gaps must be those numbers to ±2px — or, where the chrome
- * shrank on a short screen, those numbers × k (the same k for everything) —
- * and no line's paper (the scallops, not just the base) may overlap the
- * hero/book. In the detail view, no card number may show without its card (a
+ * code it checks): at 2560 wide the band over the hero and under it is 136.8 —
+ * margin 35, the line of chrome, and the gap to the hero/book — and the
+ * neighbours sit 40 from an 897.2-wide hero. A narrower screen scales the
+ * margin and the gaps by s = its width over 2560 (less on a short screen, where
+ * the hero would get under 0.7 of the height), never under 16px each; the
+ * chrome's faces by s too, never under 44px (×44/46). On every viewport, in
+ * both views, the margins, the chrome's sizes and the gaps must be those
+ * numbers to ±2px, and no line's paper (the scallops, not just the base) may
+ * overlap the hero/book. In the detail view, no card number may show without its card (a
  * card two or more from the centre is folded out of sight). Writes a
  * screenshot per viewport to `--shots` (default `.context/layout/`).
  */
@@ -19,11 +21,17 @@ import { mkdir } from 'node:fs/promises';
 
 export const LAYOUT_VIEWPORTS = [
   { width: 2560, height: 1440 },
+  { width: 2560, height: 1300 },
   { width: 1920, height: 1080 },
   { width: 1728, height: 1117 },
   { width: 1512, height: 982 },
   { width: 1440, height: 900 },
   { width: 1280, height: 720 },
+  // A tablet's sizes, with a mouse (the touch layout is the same but for one
+  // page at a time in portrait, which docs/mobile.md checks).
+  { width: 1366, height: 1024 },
+  { width: 1180, height: 820 },
+  { width: 1024, height: 1366 },
 ];
 
 /** The Studio Display's spacing, px at k = 1. The top line is the close X
@@ -39,13 +47,19 @@ export const SPEC = {
   neighbourRatio: 40 / 897.2308,
 };
 const TOL = 2;
-/** The hero's least share of the height before the chrome shrinks, and the
- *  face floor the shrink stops at. */
+/** The hero's least share of the height before a short screen shrinks the
+ *  chrome further, the face floor, and the least margin and gap. */
 const MIN_SHARE = 0.7;
 const FLOOR = 44 / 46;
+const MIN_GAP = 16;
 
-/** The k the spec gives this viewport: 1, or the share's, held to the floor. */
-export const expectedK = (vh) => Math.min(1, Math.max(FLOOR, ((1 - MIN_SHARE) * vh) / (2 * SPEC.band)));
+/** The viewport's scale: its width over 2560, or the share's on a short
+ *  screen, never over 1. */
+export const expectedS = (vw, vh) => Math.min(1, vw / 2560, ((1 - MIN_SHARE) * vh) / (2 * SPEC.band));
+/** The faces' k: s, held to the floor. */
+export const expectedK = (vw, vh) => Math.min(1, Math.max(FLOOR, expectedS(vw, vh)));
+/** A margin or gap at the reference, on this screen: × s, never under 16. */
+const shrunk = (ref, s) => Math.max(Math.min(ref, MIN_GAP), ref * s);
 
 /** The page's numbers: the top line, the row, the hero/book, the neighbours. */
 function measure(view) {
@@ -111,8 +125,18 @@ export async function checkLayout({ browser, view, states, openState, open, chec
     const page = await context.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     const { width: vw, height: vh } = viewport;
-    const k = expectedK(vh);
+    const s = expectedS(vw, vh);
+    const k = expectedK(vw, vh);
     const rowSpec = SPEC.row[view];
+    // The gap to the book is the band's, under the tallest line (58); the
+    // detail row's 46s sit that much further from the hero.
+    const margin = shrunk(SPEC.margin, s);
+    const side = shrunk(SPEC.band - SPEC.margin - SPEC.top.box, s);
+    // The hero fills what the band leaves, the open book (20:13) inside the
+    // side gaps; on a screen held by its width, the gaps over and under it grow.
+    const band = margin + SPEC.top.box * k + shrunk(SPEC.top.gap, s);
+    const heroH = Math.min(vh - 2 * band, ((vw - 2 * side) * 13) / 20);
+    const gapToBook = (vh - heroH) / 2 - margin - SPEC.top.box * k;
     for (const state of states) {
       await open(page, state);
       // Off the chrome and off the cards (a hover lifts a shape, and a hovered
@@ -130,17 +154,17 @@ export async function checkLayout({ browser, view, states, openState, open, chec
         rowMargin: vh - m.rowBase.b,
       };
       const want = {
-        topMargin: SPEC.margin * k,
+        topMargin: margin,
         topBox: SPEC.top.box * k,
-        topGap: SPEC.top.gap * k,
-        rowGap: rowSpec.gap * k,
+        topGap: gapToBook,
+        rowGap: gapToBook + (SPEC.top.box - rowSpec.box) * k,
         rowBox: rowSpec.box * k,
-        rowMargin: SPEC.margin * k,
+        rowMargin: margin,
       };
       const off = Object.keys(want).filter((key) => !near(got[key], want[key]));
       check(
         off.length === 0,
-        `${tag}: margins, chrome and gaps are the spec${k < 1 ? ` × ${k.toFixed(4)}` : ''} (±${TOL}px)`,
+        `${tag}: margins, chrome and gaps are the spec${s < 1 ? ` at s ${s.toFixed(4)}, faces × ${k.toFixed(4)}` : ''} (±${TOL}px)`,
         Object.keys(want)
           .map((key) => `${key} ${f(got[key])}${off.includes(key) ? ` ≠ ${f(want[key])}` : ''}`)
           .join(', '),
@@ -155,6 +179,7 @@ export async function checkLayout({ browser, view, states, openState, open, chec
       check(topClear > 0 && rowClear > 0, `${tag}: no paper over the ${view === 'reader' ? 'book' : 'hero'}`, `top ${f(topClear)}px clear, row ${f(rowClear)}px clear`);
       check(m.faces >= 44 - 0.01 && m.hits >= 44 - 0.01, `${tag}: faces ≥ 44px, hit areas ≥ 44×44`, `smallest face ${f(m.faces)}, hit ${f(m.hits)}`);
       check(m.close === 'Close', `${tag}: the top shape is "Close"`, `aria-label "${m.close}"`);
+      check(near(m.hero.h, heroH), `${tag}: the ${view === 'reader' ? 'book' : 'hero'} fills the space the chrome leaves`, `height ${f(m.hero.h)}, want ${f(heroH)} (${(100 * m.hero.h / vh).toFixed(1)}% of the height)`);
       if (vw === 2560 && vh === 1440) {
         check(
           near(m.hero.h, SPEC.hero.h) && (view === 'reader' || near(m.hero.w, SPEC.hero.w)),
@@ -183,7 +208,6 @@ export async function checkLayout({ browser, view, states, openState, open, chec
       if (view === 'reader' && state === openState) {
         // The open book, inside the side gaps (it is the hero's height that
         // gives way when it does not fit).
-        const side = (SPEC.band - SPEC.margin - SPEC.top.box) * k;
         check(m.hero.l >= side - TOL && m.hero.r <= vw - side + TOL, `${tag}: the open book is inside the side gaps`, `${f(m.hero.l)}–${f(m.hero.r)} of ${vw}, gap ${f(side)}`);
       }
       const shot = view === 'reader' ? `${shots}/reader-${vw}x${vh}-spread${state}.png` : `${shots}/detail-${vw}x${vh}.png`;
