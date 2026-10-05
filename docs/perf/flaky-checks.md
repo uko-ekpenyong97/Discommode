@@ -212,3 +212,27 @@ jitter allowance: over if longer than two vsyncs + 3 ms (36.3 ms), or longer
 than one vsync + 3 ms next to another such frame. Unit tests:
 `scripts/frame-rule.test.mjs` (33.2–33.6 alone pass; 41.4, 41.7, 41.8, 50,
 33 + 33 and 25 + 25 fail; the dock's budget of three).
+
+## Two more, settled (2026-10-05)
+
+**"The flips and the riffle hold 60fps over the sky"** (verify:reader `sky`)
+counted any interval over 20 ms in either. Now only the flips are judged, by
+the frame rule above (`frame-rule.mjs`); the riffle's 60fps is the riffle
+gate's, and its worst frame is reported beside the check.
+
+**"A Drex tile agrees with its siblings" in a fling** (verify:cover `drag`)
+was the check, not the covers. `fling ↙`'s later drags start while the
+previous fling still settles; at 2560 the mouse lands on the top edge of Drex
+tile 1,0, the `pointermove` goes to that card, and its dome (the light, an
+ease: 12% of the way in its first frame) moves toward the pointer. The probe
+hit-tests the last pointer position after the frame has moved the grid, so
+the card has slid out from under it: judged as at rest, the tile was 14–99
+levels off its siblings for one frame, while the stage itself reported it
+`domed`. Card 02's lava dome is a spring from rest (0 off in its first frame),
+card 04 has none, and the drag points are fixed fractions of the viewport,
+hence Drex, mostly at 2560. Ruled out: a stale frame, a backing-store resize
+(no canvas writes while moving), a tile entering mid-draw, the cached pass at
+another size, the rest drift (siblings agree to 0). The fix: a card a
+`pointermove` went to since the last sample also counts as hovered, for the
+same 3 s (`sent`, `cover-drag-checks.mjs`). A/B at 2560, 5 rounds a run: the
+old rule failed 3 of 4 runs (worst 37–89), the new 0 of 4 (worst 1).
