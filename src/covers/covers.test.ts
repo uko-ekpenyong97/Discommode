@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COVERS, riveCover, shaderCover } from './covers';
+import { COVERS, coverSideLive, riveCover, shaderCover } from './covers';
 import { dialDefaults } from './dialValues';
 import { backdropUnder, coverBackdrop, setSiteCoverDials, SITE_COVER_DEFAULTS } from './coverDials';
 import { CONTENT } from '../content';
@@ -21,19 +21,25 @@ describe('the cover registry', () => {
     }
   });
 
-  it("card 04's dials default to the swap at landing, 2× and the full paper light", () => {
-    expect(dialDefaults(riveCover('nosey')!.dials)).toEqual({ rive: { riveSwapAt: 'landing', riveMaxDpr: 2, coverPaperShade: 1 } });
+  it("card 04's dials default to focus at the morph's start, 2× and the full paper light", () => {
+    expect(dialDefaults(riveCover('nosey')!.dials)).toEqual({ rive: { riveFocusAt: 'start', riveMaxDpr: 2, coverPaperShade: 1 } });
   });
 
-  it('card 04 names its file, its two artboards and its state machine', () => {
+  it('card 04 names its file, its one artboard, its state machine, its focus input, and is live as a side card', () => {
     const c = CONTENT.find((i) => i.slug === 'item-04')!.cover;
     expect(c).toEqual({
       kind: 'rive',
       id: 'nosey',
       src: '/projects/nosey/cover.riv',
-      artboard: { grid: 'Main', detail: 'Main Bounce' },
+      artboard: 'Nosey Detail',
       stateMachine: 'Main',
+      focusInput: 'focused',
+      side: 'live',
     });
+  });
+
+  it('only card 04 is live as a side card (02 and 03: their stills, for now)', () => {
+    expect(CONTENT.filter((i) => coverSideLive(i.cover)).map((i) => i.slug)).toEqual(['item-04']);
   });
 });
 

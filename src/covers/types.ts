@@ -4,24 +4,37 @@ import type { DialConfig, DialValues } from './dialValues';
 /** A card's live cover, as the manifest names it (content.ts). */
 export type CoverRef = ShaderCoverRef | RiveCoverRef;
 
+/**
+ * What a cover shows as a detail SIDE card (the card beside the centre one):
+ * its still (the default), or the live cover — the same moment as everywhere
+ * else, at rest (docs/covers.md, "The live side card"). Card 04's is live.
+ */
+export type CoverSide = 'still' | 'live';
+
 /** A shader cover: everything about it is its `CoverDef` in the registry. */
 export interface ShaderCoverRef {
   kind: 'shader';
   id: string;
+  side?: CoverSide;
 }
 
 /**
- * A Rive cover (docs/covers.md, "Rive covers"): a .riv, the artboard the grid
- * shows and the one the detail hero switches to, and the state machine both
- * run. `id` is its registry key and names its stills
+ * A Rive cover (docs/covers.md, "Rive covers"): a .riv, the artboard every
+ * surface shows (one instance of it, for the page's life), the state machine
+ * it runs, and the view-model boolean set while its card is the detail view's
+ * centre card. `id` is its registry key and names its stills
  * (`/projects/<id>/cover-still.webp`).
  */
 export interface RiveCoverRef {
   kind: 'rive';
   id: string;
   src: string;
-  artboard: { grid: string; detail: string };
+  artboard: string;
   stateMachine: string;
+  /** A boolean on the artboard's default view model: true while the card is
+   *  the centre card (src/covers/focus.ts). None: the card is never told. */
+  focusInput?: string;
+  side?: CoverSide;
 }
 
 export type Uniforms = { [name: string]: IUniform };

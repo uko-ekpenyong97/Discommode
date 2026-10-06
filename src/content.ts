@@ -75,8 +75,9 @@ export interface PosterItem {
  * shader — the Drex logo under Figma's risograph, dither and hover reveal, on
  * white paper of its own; its `image` is the still, the light parked on the
  * logo. Card 04's is live too, and
- * is Rive: Nosey's characters on "Main" in the grid and "Main Bounce" as the
- * detail hero, the sky through the ground; its `image` is Main's still.
+ * is Rive: Nosey's looping face on blue, which errors and bursts into the
+ * four bouncing characters when card 04 is the detail view's centre card,
+ * and is live as a side card too; its `image` is the face's first frame.
  */
 export const CONTENT: PosterItem[] = [
   {
@@ -122,14 +123,18 @@ export const CONTENT: PosterItem[] = [
     slug: 'item-04',
     kind: 'portfolio',
     project: '04',
-    // The Nosey cover (docs/covers.md, "Rive covers"); its still, from
-    // `npm run covers`. The .riv is copied in by `npm run projects`.
+    // The Nosey cover (docs/covers.md, "Rive covers"): one instance of
+    // "Nosey Detail" everywhere, focused while it is the centre card, and
+    // live as a side card. Its still, from `npm run covers`. The .riv is
+    // copied in by `npm run projects`.
     cover: {
       kind: 'rive',
       id: 'nosey',
       src: '/projects/nosey/cover.riv',
-      artboard: { grid: 'Main', detail: 'Main Bounce' },
+      artboard: 'Nosey Detail',
       stateMachine: 'Main',
+      focusInput: 'focused',
+      side: 'live',
     },
     image: '/projects/nosey/cover-still.webp',
     hue: 148,

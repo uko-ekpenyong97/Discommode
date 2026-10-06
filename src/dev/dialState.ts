@@ -26,7 +26,7 @@
  *   reset     the dock's DIALS panel, "Reset dials": every saved dial deleted
  *             and the page reloaded on the defaults.
  */
-export const DIAL_STATE_VERSION = 9;
+export const DIAL_STATE_VERSION = 10;
 
 const APP_KEY = 'discommode-dials';
 const KIT_PREFIX = 'dialkit:';

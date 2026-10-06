@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useConfig } from '../config';
 import { registerBusy } from '../activity';
@@ -12,6 +12,10 @@ import { CoverAnimLayer } from './CoverAnimLayer';
 import { DetailPaperLayer } from './DetailPaperLayer';
 import { CoverTile } from '../covers/CoverTile';
 import { heroDome } from '../covers/dome';
+import { coverSideLive } from '../covers/covers';
+import { coverValues } from '../covers/coverDials';
+import { LANDED_EPS, focusedIndex, riveFocusAt } from '../covers/focus';
+import { riveFocusCard } from '../covers/rive/riveCover';
 import type { DetailPaperHandle, PaperPanel } from './DetailPaperLayer';
 import { afterHandOut } from './detailPaper/handoff';
 import { CHROME_DRIFT_PX, CLEAR_DRIFT_PX, doorway } from '../reader/doorway';
@@ -109,6 +113,34 @@ export function DetailView({ detail, transition, suspended = false, hero, neighb
 
   // A Prev/Next slide is motion the idle warm-up waits for.
   useEffect(() => registerBusy(() => posRef.current !== targetRef.current), []);
+
+  // FOCUS (src/covers/focus.ts): a live cover is told when its card is the
+  // centre card — card 04's face errors and bursts into its characters. On
+  // the morph in from its start (or landing: the cover's riveFocusAt), on a
+  // deep link at once, on a slide as the strip LANDS on the card (a card the
+  // strip only passes through is never focused), and off the moment the view
+  // leaves it (the active card changes, or the exit starts). Checked on every
+  // render and every tick; acted on only when it changes.
+  const focusRef = useRef<number | null | undefined>(undefined);
+  const syncFocus = () => {
+    const target = targetRef.current;
+    const landed = mod(Math.round(target), CONTENT_COUNT) === activeIndex && Math.abs(target - posRef.current) < LANDED_EPS;
+    const cover = CONTENT[activeIndex].cover;
+    const focusAt = riveFocusAt(cover ? (coverValues(cover.id) as { rive?: { riveFocusAt?: unknown } }) : undefined);
+    const fi = focusedIndex({ phase, transition, activeIndex, landed, focusAt });
+    if (fi === focusRef.current) return;
+    focusRef.current = fi;
+    riveFocusCard(fi);
+  };
+  useLayoutEffect(syncFocus);
+  useEffect(
+    () => () => {
+      // Forgotten too, so a remount (StrictMode's, in dev) tells it again.
+      focusRef.current = undefined;
+      riveFocusCard(null);
+    },
+    [],
+  );
 
   useTicker((dt) => {
     const target = targetRef.current;
@@ -216,6 +248,8 @@ export function DetailView({ detail, transition, suspended = false, hero, neighb
         bar.style.transform = '';
       }
     }
+
+    syncFocus();
 
     const c = Math.round(pos);
     if (c !== centerRef.current) {
@@ -387,17 +421,17 @@ export function DetailView({ detail, transition, suspended = false, hero, neighb
               aria-hidden={isCenter && !canOpen ? true : undefined}
             >
               {item.cover ? (
-                // The live cover on the CENTRE panel only (its dome is the hero's,
-                // which the paper plane reads too; a Rive cover's is the hero's
-                // player, which the paper plane shows too); the neighbours show
-                // its still.
+                // The live cover on the CENTRE panel (its dome is the hero's,
+                // which the paper plane reads too), and on a SIDE panel for a
+                // cover that is live there (`coverSideLive`: card 04), at
+                // rest; otherwise the side cards show its still. A Rive
+                // cover's every surface is its one instance.
                 // The paper takes this face over once the view settles, as it
                 // does an image: the data-paper rules fade `.detail__media`.
                 <CoverTile
                   coverId={item.cover.id}
-                  live={isCenter}
+                  live={isCenter || (distance === 1 && coverSideLive(item.cover))}
                   dome={isCenter ? heroDome : null}
-                  role="hero"
                   className="detail__media"
                 />
               ) : face ? (

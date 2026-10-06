@@ -4,6 +4,7 @@ import type {
   RiveCanvas,
   StateMachineInstance,
   ViewModelInstance,
+  ViewModelInstanceBoolean,
   WrappedRenderer,
 } from '@rive-app/canvas/rive_advanced.mjs';
 import wasmUrl from '@rive-app/canvas/rive.wasm?url';
@@ -12,73 +13,55 @@ import { coverCropOf } from '../coverRenderer';
 import { backdropUnder } from '../coverDials';
 import { riveCover } from '../covers';
 import type { Crop, RiveCoverRef } from '../types';
+import { coverFault as riveFault } from '../faults';
 
 /**
  * RIVE COVERS — card 04's cover is a .riv, not a shader (docs/covers.md,
  * "Rive covers"). This module holds everything Rive: the runtime and the file,
- * each loaded ONCE, and one PLAYER per artboard role:
+ * each loaded ONCE, and ONE INSTANCE per cover — its artboard, state machine
+ * and view model — for the page's life.
  *
- *   grid  the manifest's `artboard.grid` ("Main"): every grid tile of the card
- *         and the grid→detail morph card. ONE instance for all of them, drawn
- *         once per frame into its canvas and copied into each tile by the cover
- *         stage (coverStage.ts), exactly as card 02's shared draw is.
- *   hero  `artboard.detail` ("Main Bounce"): the detail hero. The DOM hero face
- *         (a stage presenter) and the paper plane (DetailPaperLayer, a
- *         CanvasTexture of this player's canvas) both show THIS instance, so
- *         the DOM → paper hand-off is one picture. A fresh instance each time
- *         the hero is entered (see `HERO_GRACE_FRAMES`), so the bounce starts from
- *         the layout the grid shows.
+ * One instance, because card 04's face is a running loop: a fresh instance
+ * starts from the top of it, so a grid tile, a side card and a centre card of
+ * separate instances would each jump to another moment of the loop as the card
+ * changed role. So every surface that shows the cover shows this instance:
+ * the grid's tiles, the morph card, the detail view's side card and centre
+ * card (the DOM faces, copied by the cover stage), and the paper's plane (a
+ * CanvasTexture of the instance's own exact-size canvas). Nothing ever makes a
+ * second one; while nothing shows the cover it simply is not advanced, and it
+ * resumes where it was.
+ *
+ * What changes with the card's role is one view-model boolean, the ref's
+ * `focusInput` ("focused"): true while the card is the detail view's centre
+ * card (`riveFocus`, driven by src/covers/focus.ts). The file does the rest —
+ * the face finishes its clip, plays its error, shrinks, and the characters
+ * burst out; false cuts back to the top of the loop.
  *
  * The runtime is @rive-app/canvas (Canvas 2D): it adds no WebGL context. The
  * low-level API, not the `Rive` class, because the cover draws on the SHARED
- * cover clock into canvases it owns, once per frame for however many instances
+ * cover clock into canvases it owns, once per frame for however many surfaces
  * show it — the `Rive` class runs its own rAF loop into one DOM canvas. The
  * one thing the `Rive` class did for us is `autoBind`: here that is binding
- * each state machine to its artboard's default view model instance (and the
- * globals', if any) — without it the view-model-driven behaviour (the
- * pointer-follow, the headset's colour, Main Bounce's physics) never runs.
+ * the state machine to its artboard's default view model instance (and the
+ * globals', if any) — without it nothing view-model-driven runs.
  *
- * A player advances by the cover clock's delta since its last draw (capped:
- * a player nobody drew for a while resumes, it does not fast-forward), so a
- * pinned clock holds it still and reduced motion never gets here (the tiles
- * and the paper show the still, and nothing loads the runtime).
+ * The instance advances by the cover clock's delta since its last advance
+ * (capped: an instance nobody drew for a while resumes, it does not
+ * fast-forward), so a pinned clock holds it still and reduced motion never
+ * gets here (the tiles and the paper show the still, and nothing loads the
+ * runtime).
  */
 
-export type { RivePlayerRole } from './swap';
-import type { RivePlayerRole } from './swap';
 export type RivePointerKind = 'move' | 'down' | 'up' | 'exit';
+/** Where a pointer event came from: a grid tile's card, or the centre panel. */
+export type RivePointerFrom = 'tile' | 'centre';
+/** The instance's two canvases: the cover stage's (grow-only; it copies from
+ *  its top-left into every DOM surface) and the paper plane's (its texture, so
+ *  exactly its size). */
+export type RiveSurfaceKind = 'stage' | 'plane';
 
-/** A player's step is capped at this: a hidden grid resumes, not replays. */
+/** An instance's step is capped at this: a hidden grid resumes, not replays. */
 const MAX_STEP_S = 0.1;
-
-/**
- * A hero player not drawn for this many FRAMES of cover work — and this long —
- * has been left (the detail view closed, the card slid away): it is dropped,
- * and the next hero is a fresh instance, so the bounce starts again. The
- * hand-offs between the hero's surfaces (morph card → DOM face → paper, and
- * back) are the same frame or the next.
- *
- * Frames, not only time: it was 400 ms of wall time, and ONE long frame — the
- * detail view's arrival gives 150–500 ms frames on a loaded machine, more in a
- * dev build — looked like leaving. Five 450 ms frames made five fresh heroes:
- * the bounce kept restarting from rest and the tracking kept dropping, which
- * is a hero that looks dead. Frames are counted by the cover work itself
- * (`riveFrame`: the stage's loop, the paper's), so a stall counts once.
- */
-const HERO_GRACE_FRAMES = 30;
-const HERO_GRACE_MS = 400;
-let frameSerial = 0;
-let frameSerialKey = -1;
-/** Count this frame (once per frame, whoever calls). */
-export function riveFrame(): number {
-  const t = document.timeline.currentTime;
-  const k = typeof t === 'number' ? t : performance.now();
-  if (k !== frameSerialKey) {
-    frameSerialKey = k;
-    frameSerial++;
-  }
-  return frameSerial;
-}
 
 /**
  * THE ONE-OFF WORK PREFERS A QUIET MOMENT, AND WAITS AT MOST A SECOND FOR ONE.
@@ -87,21 +70,20 @@ export function riveFrame(): number {
  * presses, keys and wheels, never from the pointer merely moving, and counting
  * it made every arrival wait the whole deadline — a direct load of #item-04
  * showed the still for 2.1–2.7 s while nothing at all was animating.)
- * Importing card 04's file is one ~60–100 ms main-thread task (Main's scripts
- * and nested artboards; the Editor export without them imported in 8), making
- * the grid's instance 10 ms and a hero's 3–4 (docs/covers.md, "Frame time").
- * Inside a slide or a morph that is a dropped frame — verify:detail's Prev
- * slide caught the import doing exactly that — so it waits for an idle
+ * Importing card 04's file is one ~60–100 ms main-thread task (its scripts and
+ * nested artboards), making the instance ~10 ms (docs/covers.md, "Frame
+ * time"). Inside a slide or a morph that is a dropped frame — verify:detail's
+ * Prev slide caught the import doing exactly that — so it waits for an idle
  * callback with no input for `QUIET_MS` and no animation running.
  *
  * But a person's pointer is always moving, and a moving pointer is input: with
- * a 10 s fallback, run twice in a row (the import, then the grid's instance),
- * card 04 stayed its still for 20.8 s in a real Chrome session with the mouse
- * moving, and every hover in that time went nowhere. So the wait has a
- * DEADLINE, `QUIET_MAX_MS` from the bytes being ready, and the grid's
- * instance is made in the same task as the import, not after a second wait.
- * The cover is live within ~1.1 s of its bytes arriving whatever the pointer
- * is doing; a slide that happens to be running then pays one long frame.
+ * a 10 s fallback, run twice in a row (the import, then an instance), card 04
+ * stayed its still for 20.8 s in a real Chrome session with the mouse moving,
+ * and every hover in that time went nowhere. So the wait has a DEADLINE,
+ * `QUIET_MAX_MS` from the bytes being ready, and the instance is made in the
+ * same task as the import, not after a second wait. The cover is live within
+ * ~1.1 s of its bytes arriving whatever the pointer is doing; a slide that
+ * happens to be running then pays one long frame.
  */
 const QUIET_MS = 800;
 const QUIET_MAX_MS = 1000;
@@ -139,37 +121,45 @@ function whenQuiet(fn: () => void) {
 let runtime: RiveCanvas | null = null;
 let runtimeLoad: Promise<RiveCanvas | null> | null = null;
 const files = new Map<string, { file: RiveFile | null; failed: boolean; load: Promise<void> }>();
-const players = new Map<string, RivePlayer>();
-/** A fresh hero instance per cover, made ahead (it is a few ms of work), so the
- *  swap itself never pays for one. */
-const spares = new Map<string, RivePlayer>();
+const instances = new Map<string, RiveInstance>();
 const listeners = new Set<() => void>();
+/** The focus each cover's instance should have, set before or after it exists:
+ *  an instance is made with it, before its first advance (a deep link to
+ *  #item-04 goes straight to the error and the burst). */
+const wantFocus = new Map<string, boolean>();
 /** DEV / verify: main-thread ms of the one-off work — the file's import, and
- *  each instance made (the grid's, each hero). */
-const oneOff = { importMs: 0, instances: [] as { role: RivePlayerRole; ms: number; idle: boolean }[] };
+ *  each instance made. */
+const oneOff = { importMs: 0, instances: [] as { ms: number; idle: boolean }[] };
 
 // ── status (dev readout, console) ────────────────────────────────────────
 // What a Rive cover is doing, for the COVER panel's readout and the console:
-// the file's state, each player's instance and frames, the last pointer event
-// an instance received. Written on every change; cheap enough to keep in
-// production (a few fields), logged in dev only.
+// the file's state, the instance, its focus, what shows it, the last pointer
+// event. Written on every change; cheap enough to keep in production (a few
+// fields), logged in dev only.
 
 export type RiveFileState = 'not requested' | 'fetching' | 'waiting for idle' | 'importing' | 'loaded' | 'failed';
 
-export interface RivePlayerStatus {
+export interface RiveInstanceStatus {
   artboard: string;
   stateMachine: string;
   viewModel: string | null;
   /** State machine advances with dt > 0, and the last dt, s. */
   frames: number;
   lastDt: number;
+  /** Seconds of cover time this instance has advanced: its own clock. */
+  clock: number;
+  /** Which instance this is (counts from 1 for the page's life). */
   instances: number;
-  /** When this instance went into use (performance.now). */
+  /** When this instance was made (performance.now). */
   since: number;
+  /** Its focus input as set now (false when it has none). */
+  focused: boolean;
+  /** `clock` when focus last turned true, or -1. */
+  focusedAt: number;
 }
 
 export interface RivePointerStatus {
-  role: RivePlayerRole;
+  from: RivePointerFrom;
   kind: RivePointerKind;
   x: number;
   y: number;
@@ -177,23 +167,26 @@ export interface RivePointerStatus {
   n: number;
 }
 
+export type RivePlaneShows = 'live' | 'still' | 'none';
+
 export interface RiveStatus {
   file: RiveFileState;
   error: string;
   /** ms from ensureRive to each state. */
   at: Partial<Record<RiveFileState, number>>;
-  players: Partial<Record<RivePlayerRole, RivePlayerStatus>>;
-  /** The last pointer event of either instance, and of each. */
+  instance: RiveInstanceStatus | null;
+  /** The last pointer event from either source, and from each. */
   pointer: RivePointerStatus | null;
-  pointers: Partial<Record<RivePlayerRole, RivePointerStatus>>;
-  /** Which instances are on screen now (the stage's presenters, the paper's
-   *  plane), and the last change — the artboard swap is one. */
+  pointers: Partial<Record<RivePointerFrom, RivePointerStatus>>;
+  /** What shows the instance now (the stage's DOM surfaces, the paper's
+   *  plane), and its last changes. */
   showing: string;
   swaps: { from: string; to: string; t: number }[];
-  /** The stage's half of `showing`: its visible presenters' roles. */
+  /** The stage's half of `showing`: its visible surfaces, as a mask. */
   dom: { mask: number; roles: string; t: number } | null;
-  /** The paper's hero plane for this cover: what it samples, and its uploads. */
-  plane: { shows: 'live' | 'still' | 'none'; uploads: number; t: number } | null;
+  /** The paper's plane for this cover: what it samples, for which slot, and
+   *  its uploads. */
+  plane: { shows: RivePlaneShows; slot: 'centre' | 'side'; uploads: number; t: number } | null;
   reducedMotion: boolean;
 }
 
@@ -213,7 +206,7 @@ export function riveStatus(id: string): RiveStatus & { t0: number } {
       file: 'not requested',
       error: '',
       at: {},
-      players: {},
+      instance: null,
       pointer: null,
       pointers: {},
       showing: '',
@@ -242,10 +235,10 @@ function fileState(id: string, state: RiveFileState, error = '') {
   log(id, `file ${state} (+${st.at[state]} ms)${error ? ` — ${error}` : ''}`);
 }
 
-/** The last pointer event per cover and role, kept while no instance exists to
- *  take it — replayed into the instance when it is made, so a pointer already
- *  resting on the cover is not lost to the load. */
-const pendingPointer = new Map<string, { kind: RivePointerKind; u: number; v: number; w: number; h: number }>();
+/** The last pointer event per cover, kept while no instance exists to take it
+ *  — replayed into the instance when it is made, so a pointer already resting
+ *  on the cover is not lost to the load. */
+const pendingPointer = new Map<string, { from: RivePointerFrom; kind: RivePointerKind; u: number; v: number; w: number; h: number }>();
 
 /** The manifest's ref for a Rive cover id. */
 export function riveRef(id: string): RiveCoverRef | undefined {
@@ -268,20 +261,18 @@ export function onRiveReady(fn: () => void): () => void {
  * NO WEBGL CONTEXT FOR THE RUNTIME. @rive-app/canvas draws with Canvas 2D, but
  * its init also opens a WebGL context of its own, unconditionally, kept for
  * IMAGE MESHES (vertex-deformed images) — one more context on every page that
- * loads it. Card 04's file draws none (its one image is a hidden reference
- * screenshot), and with that context withheld its frames are byte-identical
- * (both artboards, 150 frames, a pointer; docs/covers.md). So while the
- * runtime initialises, a request for a context with Emscripten's own
+ * loads it. Card 04's file draws none, and with that context withheld its
+ * frames are byte-identical (docs/covers.md). So while the runtime
+ * initialises, a request for a context with Emscripten's own
  * `renderViaOffscreenBackBuffer` attribute — the runtime's, and nothing else
  * on the site asks for one — gets null; the runtime logs "Image mesh will not
  * be drawn" and carries on. A .riv that deforms images would need this lifted
  * (and would cost that context back).
  *
  * Decoding an IMAGE asset retries that context (on the image's load), so the
- * file is imported with an asset loader that declines images: card 04's four
- * are reference screenshots its artboards never show (one is placed, hidden),
- * and they are 521 KB of its 872 KB. An artboard that SHOWS an image would draw
- * nothing where it is until this is lifted too.
+ * file is imported with an asset loader that declines images: card 04's are
+ * reference screenshots its artboards never show. An artboard that SHOWS an
+ * image would draw nothing where it is until this is lifted too.
  */
 function withoutMeshContext<T>(run: () => Promise<T>): Promise<T> {
   const proto = HTMLCanvasElement.prototype;
@@ -355,23 +346,12 @@ export function ensureRive(id: string) {
       oneOff.importMs = performance.now() - t0;
       if (import.meta.env.DEV) whenQuiet(() => introspect(id, rt, file, ref));
       entry.file = file;
-      // The grid's instance in this same task, not after a second wait and not
-      // inside the first frame that draws it.
-      const grid = makePlayer(id, 'grid', true);
-      if (grid) players.set(`${id}/grid`, grid);
+      // The instance in this same task, not after a second wait and not inside
+      // the first frame that draws it.
+      const inst = makeInstance(id, true);
       fileState(id, 'loaded');
-      if (grid) {
-        grid.status.since = performance.now();
-        riveStatus(id).players.grid = grid.status;
-        log(id, `grid instance: artboard "${grid.status.artboard}", state machine "${grid.status.stateMachine}", view model ${grid.status.viewModel ?? 'none'}`);
-        const pending = pendingPointer.get(`${id}/grid`);
-        if (pending) {
-          pendingPointer.delete(`${id}/grid`);
-          grid.pointer(pending.kind, pending.u, pending.v, pending.w, pending.h);
-        }
-      }
+      if (inst) adopt(id, inst);
       for (const l of listeners) l();
-      scheduleSpare(id);
     } catch (e) {
       entry.failed = true;
       fileState(id, 'failed', e instanceof Error ? e.message : String(e));
@@ -391,7 +371,7 @@ function introspect(id: string, rt: RiveCanvas, file: RiveFile, ref: RiveCoverRe
       const smi = new rt.StateMachineInstance(ab.stateMachineByIndex(j), ab);
       const inputs = [];
       for (let k = 0; k < smi.inputCount(); k++) inputs.push(smi.input(k).name);
-      sms.push({ name: smi.name, inputs, listeners: rt.hasListeners(smi) });
+      sms.push({ name: ab.stateMachineByIndex(j).name, inputs, listeners: rt.hasListeners(smi) });
       smi.delete();
     }
     const vm = file.defaultArtboardViewModel(ab);
@@ -403,148 +383,57 @@ function introspect(id: string, rt: RiveCanvas, file: RiveFile, ref: RiveCoverRe
     const vm = file.viewModelByIndex(i);
     viewModels.push({ name: vm.name, properties: vm.getProperties().map((p) => `${p.name}: ${p.type}`) });
   }
-  const names = artboards.map((a) => a.name);
-  const missing = [ref.artboard.grid, ref.artboard.detail].filter((n) => !names.includes(n));
   console.info(`[covers] ${id} (${ref.src})`, { artboards, viewModels, globals: file.globalViewModelNames() });
-  if (missing.length) {
+  const shown = artboards.find((a) => a.name === ref.artboard);
+  if (!shown) {
     console.warn(
-      `[covers] ${id}: ${missing.join(', ')} not in the file (docs/covers.md, "The .riv": the Editor's export of this file left its scripted artboards out; the CLI's signed build has them).`,
+      `[covers] ${id}: artboard "${ref.artboard}" is not in the file (docs/covers.md, "The .riv": the Editor's export of this file left its scripted artboards out; the CLI's signed build has them).`,
     );
+    return;
+  }
+  if (!shown.stateMachines.some((s) => s.name === ref.stateMachine)) {
+    console.warn(`[covers] ${id}: "${ref.artboard}" has no state machine "${ref.stateMachine}".`);
+  }
+  if (ref.focusInput) {
+    const vm = viewModels.find((v) => v.name === shown.viewModel);
+    if (!vm?.properties.includes(`${ref.focusInput}: boolean`)) {
+      console.warn(
+        `[covers] ${id}: "${ref.artboard}"'s view model (${shown.viewModel ?? 'none'}) has no boolean "${ref.focusInput}": the card cannot be focused (docs/covers.md, "The .riv").`,
+      );
+    }
   }
 }
 
-/**
- * One instance of one artboard, its state machine and its view model, drawing
- * into its own 2D canvas.
- */
-export class RivePlayer {
-  readonly id: string;
-  readonly role: RivePlayerRole;
+/** One canvas the instance draws into, and its renderer. */
+class Surface {
   readonly canvas = document.createElement('canvas');
+  readonly renderer: WrappedRenderer;
   /** The last draw's size: its top-left `pxW × pxH` of `canvas`. */
   pxW = 0;
   pxH = 0;
   /** Bumped whenever the canvas holds a new picture. */
   version = 0;
-  /** Main-thread ms of this player's last advance + draw. */
-  lastMs = 0;
-  lastUsed = performance.now();
-  /** The `riveFrame` it was last drawn in. */
-  lastFrame = 0;
-  private readonly rt: RiveCanvas;
-  private readonly artboard: Artboard;
-  private readonly sm: StateMachineInstance;
-  private readonly vmi: ViewModelInstance | null;
-  private readonly renderer: WrappedRenderer;
-  private readonly frame = { minX: 0, minY: 0, maxX: 1, maxY: 1 };
-  private readonly crop: Crop = { x0: 0, y0: 0, w: 1, h: 1 };
-  private lastT = -1;
-  private drawnT = -1;
-  /** The backdrop the canvas was last drawn over ('' = none, the sky). */
-  private drawnBg = '';
-  private exact: boolean;
-  private disposed = false;
+  /** The instance's `changes` it last drew. */
+  drewChange = -1;
+  /** The backdrop it was last drawn over ('' = none). */
+  drawnBg = '';
+  /** Exactly its draw's size (the paper's texture), or grow-only (the stage's:
+   *  it copies a top-left region, and a tile's size moves every frame of a
+   *  focus tween). */
+  readonly exact: boolean;
 
-  constructor(rt: RiveCanvas, file: RiveFile, id: string, ref: RiveCoverRef, role: RivePlayerRole) {
-    this.rt = rt;
-    this.id = id;
-    this.role = role;
-    // The hero's canvas IS the paper plane's texture, which has to be its exact
-    // size; the grid's grows only (the focused tile scales every frame of its
-    // tween) and draws into its top-left.
-    this.exact = role === 'hero';
-    const name = role === 'grid' ? ref.artboard.grid : ref.artboard.detail;
-    const ab = file.artboardByName(name);
-    if (!ab) throw new Error(`no artboard "${name}"`);
-    this.artboard = ab;
-    this.sm = new rt.StateMachineInstance(ab.stateMachineByName(ref.stateMachine), ab);
-    // autoBind: the artboard's default view model instance, and the globals'.
-    const vm = file.defaultArtboardViewModel(ab);
-    this.vmi = vm ? vm.defaultInstance() : null;
-    if (this.vmi) this.sm.bindViewModelInstance(this.vmi);
-    for (const g of file.globalViewModelNames()) {
-      const inst = file.viewModelByName(g)?.defaultInstance();
-      if (inst) this.sm.setGlobalViewModelInstance(g, inst);
-    }
-    this.sm.bind();
-    this.sm.advanceAndApply(0);
-    this.canvas.width = this.canvas.height = 1;
+  /** Made at its first draw's size: one backing-store write, not two (a
+   *  surface first wanted mid-slide — card 04 arriving as the side card — is
+   *  made then; cover-drag-checks counts the writes). */
+  constructor(rt: RiveCanvas, exact: boolean, pxW: number, pxH: number) {
+    this.exact = exact;
+    this.canvas.width = pxW;
+    this.canvas.height = pxH;
     this.renderer = rt.makeRenderer(this.canvas);
-    this.status = {
-      artboard: ab.name,
-      stateMachine: ref.stateMachine,
-      viewModel: vm ? vm.name : null,
-      frames: 0,
-      lastDt: 0,
-      instances: (riveStatus(id).players[role]?.instances ?? 0) + 1,
-      since: 0,
-    };
   }
 
-  /** What the readout shows for this instance. Bound into the cover's status
-   *  when the instance is in use (rivePlayer), not while it is a spare. */
-  readonly status: RivePlayerStatus;
-
-  /**
-   * Advance to cover time `t` and draw at `pxW × pxH` (an `object-fit: cover`
-   * crop of the artboard). Called by every surface that shows this player, in
-   * any order, any number of times a frame: the clock only moves forward, and a
-   * second call for the same moment and size draws nothing. Returns the
-   * main-thread ms THIS call spent (0 when it had nothing to do).
-   */
-  draw(t: number, pxW: number, pxH: number): number {
-    if (this.disposed) return 0;
-    this.lastUsed = performance.now();
-    this.lastFrame = riveFrame();
-    const t0 = performance.now();
-    let advanced = false;
-    if (t > this.lastT) {
-      const dt = this.lastT < 0 ? 0 : Math.min(MAX_STEP_S, t - this.lastT);
-      this.lastT = t;
-      this.sm.advanceAndApply(dt);
-      advanced = true;
-      if (dt > 0) {
-        this.status.frames++;
-        this.status.lastDt = dt;
-      }
-    }
-    // The site's coverBackdrop colour, laid under the artboard only if this
-    // cover lets the sky through (card 04 is 'solid': its artboards' own fill).
-    const bg = backdropUnder(this.id) ?? '';
-    const resized = this.size(pxW, pxH) || bg !== this.drawnBg;
-    this.drawnBg = bg;
-    if (!resized && this.drawnT === this.lastT) return 0;
-    if (!resized && advanced && !this.artboard.didChange() && this.version > 0) {
-      this.drawnT = this.lastT;
-      this.lastMs = performance.now() - t0;
-      return this.lastMs;
-    }
-    const r = this.renderer;
-    r.clear();
-    r.save();
-    this.frame.maxX = pxW;
-    this.frame.maxY = pxH;
-    r.align(this.rt.Fit.cover, this.rt.Alignment.center, this.frame, this.artboard.bounds);
-    this.artboard.draw(r);
-    r.restore();
-    r.flush();
-    this.rt.resolveAnimationFrame();
-    if (bg) {
-      // Under the drawing, not before it: the renderer's clear lands at flush.
-      const ctx = this.canvas.getContext('2d')!;
-      ctx.save();
-      ctx.globalCompositeOperation = 'destination-over';
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, pxW, pxH);
-      ctx.restore();
-    }
-    this.drawnT = this.lastT;
-    this.version++;
-    this.lastMs = performance.now() - t0;
-    return this.lastMs;
-  }
-
-  private size(pxW: number, pxH: number): boolean {
+  /** Size for a draw; true when the draw's size changed. */
+  size(pxW: number, pxH: number): boolean {
     const c = this.canvas;
     const changed = pxW !== this.pxW || pxH !== this.pxH;
     this.pxW = pxW;
@@ -556,30 +445,203 @@ export class RivePlayer {
     return changed;
   }
 
-  /** A pointer event at (u, v) across a `w × h` instance box (0..1 each). */
-  pointer(kind: RivePointerKind, u: number, v: number, w: number, h: number) {
+  dispose() {
+    this.renderer.delete();
+    this.canvas.width = this.canvas.height = 0;
+  }
+}
+
+/**
+ * THE instance of a Rive cover: its artboard, state machine and view model,
+ * advanced once per moment of the cover clock however many surfaces draw it,
+ * and drawn into whichever of its two canvases a surface asks for.
+ */
+export class RiveInstance {
+  readonly id: string;
+  /** Main-thread ms of this instance's last advance + draw. */
+  lastMs = 0;
+  readonly status: RiveInstanceStatus;
+  private readonly rt: RiveCanvas;
+  private readonly artboard: Artboard;
+  private readonly sm: StateMachineInstance;
+  private readonly vmi: ViewModelInstance | null;
+  private readonly focusProp: ViewModelInstanceBoolean | null;
+  private readonly surfaces: Partial<Record<RiveSurfaceKind | 'probe', Surface>> = {};
+  private readonly frame = { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+  private readonly crop: Crop = { x0: 0, y0: 0, w: 1, h: 1 };
+  private lastT = -1;
+  /** Bumped by every advance after which the artboard changed. */
+  private changes = 0;
+  /** `latefocus` (dev): the focus wanted at birth, held back. */
+  private lateFocus = false;
+  private disposed = false;
+
+  constructor(rt: RiveCanvas, file: RiveFile, id: string, ref: RiveCoverRef, serial: number) {
+    this.rt = rt;
+    this.id = id;
+    const ab = file.artboardByName(ref.artboard);
+    if (!ab) throw new Error(`no artboard "${ref.artboard}"`);
+    this.artboard = ab;
+    this.sm = new rt.StateMachineInstance(ab.stateMachineByName(ref.stateMachine), ab);
+    // autoBind: the artboard's default view model instance, and the globals'.
+    const vm = file.defaultArtboardViewModel(ab);
+    this.vmi = vm ? vm.defaultInstance() : null;
+    if (this.vmi) this.sm.bindViewModelInstance(this.vmi);
+    for (const g of file.globalViewModelNames()) {
+      const inst = file.viewModelByName(g)?.defaultInstance();
+      if (inst) this.sm.setGlobalViewModelInstance(g, inst);
+    }
+    this.sm.bind();
+    this.focusProp = ref.focusInput && this.vmi ? (this.vmi.boolean(ref.focusInput) ?? null) : null;
+    this.status = {
+      artboard: ab.name,
+      stateMachine: ref.stateMachine,
+      viewModel: vm ? vm.name : null,
+      frames: 0,
+      lastDt: 0,
+      clock: 0,
+      instances: serial,
+      since: performance.now(),
+      focused: false,
+      focusedAt: -1,
+    };
+    // The focus wanted now goes in BEFORE the first advance: focused from
+    // birth, the file goes straight to its error and the burst (a deep link).
+    if (wantFocus.get(id)) {
+      if (riveFault('latefocus')) this.lateFocus = true;
+      else this.focus(true);
+    }
+    this.sm.advanceAndApply(0);
+  }
+
+  /** Set the focus input (no-op for a file without one). */
+  focus(v: boolean) {
+    if (this.disposed || !this.focusProp) return;
+    if (this.focusProp.value === v) return;
+    this.focusProp.value = v;
+    this.status.focused = v;
+    if (v) this.status.focusedAt = this.status.clock;
+    log(this.id, `${v ? 'focused' : 'unfocused'} at ${this.status.clock.toFixed(2)} s of its clock`);
+  }
+
+  /** Advance to cover time `t` (once per moment, whoever asks first). */
+  private advance(t: number) {
+    if (t <= this.lastT) return;
+    let dt = this.lastT < 0 ? 0 : Math.min(MAX_STEP_S, t - this.lastT);
+    this.lastT = t;
+    if (riveFault('frozen')) dt = 0;
+    this.sm.advanceAndApply(dt);
+    if (this.artboard.didChange()) this.changes++;
+    if (dt > 0) {
+      this.status.frames++;
+      this.status.lastDt = dt;
+      this.status.clock += dt;
+      if (this.lateFocus && this.status.clock >= 1) {
+        this.lateFocus = false;
+        this.focus(true);
+      }
+    }
+  }
+
+  /**
+   * Advance to cover time `t` and draw at `pxW × pxH` (an `object-fit: cover`
+   * crop of the artboard) into one of its canvases. Called by every surface
+   * that shows this instance, in any order, any number of times a frame: the
+   * clock only moves forward, and a second call for the same moment and size
+   * draws nothing. Returns the main-thread ms THIS call spent (0 when it had
+   * nothing to do).
+   */
+  draw(t: number, kind: RiveSurfaceKind, pxW: number, pxH: number): number {
+    if (this.disposed) return 0;
+    const t0 = performance.now();
+    this.advance(t);
+    const s = this.surface(kind, pxW, pxH);
+    // The site's coverBackdrop colour, laid under the artboard only if this
+    // cover lets the sky through (card 04 is 'solid': its artboard's own fill).
+    const bg = backdropUnder(this.id) ?? '';
+    const resized = s.size(pxW, pxH) || bg !== s.drawnBg;
+    if (!resized && s.drewChange === this.changes && s.version > 0) {
+      const ms = performance.now() - t0;
+      if (ms > 0.05) this.lastMs = ms;
+      return ms;
+    }
+    this.paint(s, bg);
+    this.lastMs = performance.now() - t0;
+    return this.lastMs;
+  }
+
+  private surface(kind: RiveSurfaceKind | 'probe', pxW: number, pxH: number): Surface {
+    return (this.surfaces[kind] ??= new Surface(this.rt, kind !== 'stage', pxW, pxH));
+  }
+
+  private paint(s: Surface, bg: string) {
+    const r = s.renderer;
+    r.clear();
+    r.save();
+    this.frame.maxX = s.pxW;
+    this.frame.maxY = s.pxH;
+    r.align(this.rt.Fit.cover, this.rt.Alignment.center, this.frame, this.artboard.bounds);
+    this.artboard.draw(r);
+    r.restore();
+    r.flush();
+    this.rt.resolveAnimationFrame();
+    if (bg) {
+      // Under the drawing, not before it: the renderer's clear lands at flush.
+      const ctx = s.canvas.getContext('2d')!;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, s.pxW, s.pxH);
+      ctx.restore();
+    }
+    s.drawnBg = bg;
+    s.drewChange = this.changes;
+    s.version++;
+  }
+
+  /** A surface's canvas and its last draw, or null before its first. */
+  canvasOf(kind: RiveSurfaceKind): { canvas: HTMLCanvasElement; pxW: number; pxH: number; version: number } | null {
+    const s = this.surfaces[kind];
+    return s && s.version > 0 ? { canvas: s.canvas, pxW: s.pxW, pxH: s.pxH, version: s.version } : null;
+  }
+
+  /** DEV / verify: the instance as it is NOW, drawn at `w × h` into a canvas
+   *  of its own — no advance, so it shows exactly the moment the surfaces do,
+   *  wherever they are. RGBA, top row first. */
+  snapshot(w: number, h: number): Uint8ClampedArray {
+    const s = this.surface('probe', w, h);
+    s.size(w, h);
+    this.paint(s, backdropUnder(this.id) ?? '');
+    return s.canvas.getContext('2d')!.getImageData(0, 0, w, h).data;
+  }
+
+  /** A pointer event at (u, v) across a `w × h` box (0..1 each). */
+  pointer(from: RivePointerFrom, kind: RivePointerKind, u: number, v: number, w: number, h: number) {
     if (this.disposed) return;
     const b = this.artboard.bounds;
     coverCropOf(b.maxX - b.minX, b.maxY - b.minY, w, h, this.crop);
     const x = b.minX + this.crop.x0 + u * this.crop.w;
     const y = b.minY + this.crop.y0 + v * this.crop.h;
-    notePointer(this.id, this.role, kind, x, y);
+    notePointer(this.id, from, kind, x, y);
     if (kind === 'move') this.sm.pointerMove(x, y, 0);
     else if (kind === 'down') this.sm.pointerDown(x, y, 0);
     else if (kind === 'up') this.sm.pointerUp(x, y, 0);
     else this.sm.pointerExit(x, y, 0);
   }
 
-  /** DEV / verify: the bound view model's values, flattened (`nosey/lookX`…). */
+  /** DEV / verify: the bound view model's values, flattened
+   *  (`noseyAgent/agentStatus`…). Enums as their value's name. */
   viewModel(): Record<string, number | boolean | string> {
     const out: Record<string, number | boolean | string> = {};
     const walk = (vmi: ViewModelInstance, prefix: string, depth: number) => {
       for (const p of vmi.getProperties()) {
         const key = prefix + p.name;
-        if (p.type === 'number') out[key] = vmi.number(p.name).value;
-        else if (p.type === 'boolean') out[key] = vmi.boolean(p.name).value;
-        else if (p.type === 'string') out[key] = vmi.string(p.name).value;
-        else if (p.type === 'viewModel' && depth < 3) {
+        const type = p.type as string;
+        if (type === 'number') out[key] = vmi.number(p.name).value;
+        else if (type === 'boolean') out[key] = vmi.boolean(p.name).value;
+        else if (type === 'string') out[key] = vmi.string(p.name).value;
+        else if (type === 'enumType') out[key] = vmi.enum(p.name).value;
+        else if (type === 'viewModel' && depth < 3) {
           const child = vmi.viewModel(p.name);
           if (child) walk(child, `${key}/`, depth + 1);
         }
@@ -592,35 +654,34 @@ export class RivePlayer {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.renderer.delete();
+    for (const s of Object.values(this.surfaces)) s?.dispose();
     this.sm.delete();
     this.artboard.delete();
-    this.canvas.width = this.canvas.height = 0;
   }
 }
 
 let pointerLogAt = 0;
 let pointerLogN = 0;
-function notePointer(id: string, role: RivePlayerRole, kind: RivePointerKind, x: number, y: number) {
+function notePointer(id: string, from: RivePointerFrom, kind: RivePointerKind, x: number, y: number) {
   const st = riveStatus(id);
   const now = performance.now();
-  const first = !st.pointer || st.pointer.role !== role;
-  st.pointer = { role, kind, x: Math.round(x), y: Math.round(y), t: now, n: (st.pointers[role]?.n ?? 0) + 1 };
-  st.pointers[role] = st.pointer;
+  const first = !st.pointer || st.pointer.from !== from;
+  st.pointer = { from, kind, x: Math.round(x), y: Math.round(y), t: now, n: (st.pointers[from]?.n ?? 0) + 1 };
+  st.pointers[from] = st.pointer;
   pointerLogN++;
   if (first || kind !== 'move' || now - pointerLogAt > 2000) {
-    log(id, `${role} pointer ${kind} at (${st.pointer.x}, ${st.pointer.y}) in ${role === 'grid' ? 'Main' : 'Main Bounce'}'s space — ${pointerLogN} event(s) since the last line`);
+    log(id, `pointer ${kind} from the ${from === 'tile' ? 'grid tile' : 'centre card'} at (${st.pointer.x}, ${st.pointer.y}) in artboard space — ${pointerLogN} event(s) since the last line`);
     pointerLogAt = now;
     pointerLogN = 0;
   }
 }
 
 /**
- * Which of a cover's instances are on screen: the stage reports its visible
- * presenters' roles every frame it runs, the paper its hero plane; a change is
- * logged — grid → hero is the artboard swap.
+ * What shows a cover's instance now: the stage reports its visible DOM
+ * surfaces every frame it runs, the paper its plane; a change is logged.
  */
-const DOM_ROLES = ['grid tiles (Main)', 'morph card (Main)', 'morph card (Main Bounce)', 'hero face, DOM (Main Bounce)'];
+const DOM_ROLES = ['grid tiles', 'morph card', 'side card (DOM)', 'centre card (DOM)'];
+export const RIVE_DOM = { tiles: 1, morph: 2, side: 4, centre: 8 } as const;
 export function riveDomRoles(id: string, mask: number) {
   const st = riveStatus(id);
   if (st.dom?.mask !== mask) {
@@ -632,7 +693,6 @@ export function riveDomRoles(id: string, mask: number) {
   recomposeShowing(id);
 }
 
-const PLANE_TEXT = { live: 'paper plane (Main Bounce)', still: 'paper plane (the still)', none: '' } as const;
 /** Composes `showing` from the stage's half and the paper's; strings are
  *  only built when a half changes (this runs every frame). */
 const composed = new Map<string, { dom: string; plane: string }>();
@@ -640,7 +700,7 @@ function recomposeShowing(id: string) {
   const st = riveStatus(id);
   const now = performance.now();
   const dom = st.dom && now - st.dom.t < 250 ? st.dom.roles : '';
-  const plane = st.plane && now - st.plane.t < 250 ? PLANE_TEXT[st.plane.shows] : '';
+  const plane = st.plane && now - st.plane.t < 250 && st.plane.shows !== 'none' ? `paper ${st.plane.slot} (${st.plane.shows === 'live' ? 'live' : 'the still'})` : '';
   let last = composed.get(id);
   if (!last) composed.set(id, (last = { dom: '', plane: '' }));
   if (last.dom === dom && last.plane === plane && st.swaps.length) return;
@@ -653,116 +713,108 @@ function recomposeShowing(id: string) {
   st.swaps.push({ from, to: showing, t: now });
   if (st.swaps.length > 16) st.swaps.shift();
   log(id, `showing ${from || 'nothing'} → ${showing || 'nothing'}`);
+  // DEV fault `fresh`: what the per-role instances did — a new one per role.
+  if (riveFault('fresh') && from && showing && instances.has(id)) resetInstance(id);
 }
 
-/** The paper reports what its hero plane samples for a Rive cover. */
-export function rivePlane(id: string, shows: 'live' | 'still' | 'none', uploads: number) {
+/** The paper reports what its plane samples for a Rive cover, and for which slot. */
+export function rivePlane(id: string, shows: RivePlaneShows, slot: 'centre' | 'side', uploads: number) {
   const st = riveStatus(id);
-  if (!st.plane) st.plane = { shows, uploads, t: 0 };
+  if (!st.plane) st.plane = { shows, slot, uploads, t: 0 };
   st.plane.shows = shows;
+  st.plane.slot = slot;
   st.plane.uploads = uploads;
   st.plane.t = performance.now();
   recomposeShowing(id);
 }
 
 /**
- * A pointer event for a cover's role, at (u, v) across a `w × h` instance box.
- * With no instance yet (the file still loading) the last one is kept and
+ * A pointer event for a cover's instance, at (u, v) across a `w × h` box.
+ * With no instance yet (the file still loading) the last move is kept and
  * replayed into the instance when it is made.
  */
-export function rivePointer(id: string, role: RivePlayerRole, kind: RivePointerKind, u: number, v: number, w: number, h: number) {
-  // To the instance on screen, never to a fresh one: asking for the player to
-  // hand it an event is not the user coming back. Through `rivePlayer` it was
-  // — a hero nobody was drawing (the paper took it for a neighbour at
-  // detailSideScale 1) was LEFT, so every pointer move past the grace made a
-  // fresh hero, #2, #3, … for as long as the pointer moved. Only a draw makes
-  // one now; a move kept here is replayed into it when it is made.
+export function rivePointer(id: string, from: RivePointerFrom, kind: RivePointerKind, u: number, v: number, w: number, h: number) {
   ensureRive(id);
-  const key = `${id}/${role}`;
-  const player = players.get(key);
-  if (player && !heroLeft(player)) player.pointer(kind, u, v, w, h);
-  else if (kind === 'exit') pendingPointer.delete(key);
-  else if (kind === 'move') pendingPointer.set(key, { kind, u, v, w, h });
+  const inst = instances.get(id);
+  if (inst) inst.pointer(from, kind, u, v, w, h);
+  else if (kind === 'exit') pendingPointer.delete(id);
+  else if (kind === 'move') pendingPointer.set(id, { from, kind, u, v, w, h });
 }
 
-function makePlayer(id: string, role: RivePlayerRole, idle = false): RivePlayer | null {
+/**
+ * The cover's card is (true) or is not (false) the detail view's centre card:
+ * its focus input (the ref's `focusInput`). Kept, and given to the instance
+ * when it is made if it does not exist yet — before its first advance.
+ */
+export function riveFocus(id: string, focused: boolean) {
+  if (focused && riveFault('nofocus')) return;
+  if (!focused && riveFault('nounfocus')) return;
+  wantFocus.set(id, focused);
+  instances.get(id)?.focus(focused);
+}
+
+/** The detail view's focused card is `index` (CONTENT's), or none: every Rive
+ *  cover with a focus input is told whether its card is it. */
+export function riveFocusCard(index: number | null) {
+  CONTENT.forEach((item, i) => {
+    if (item.cover?.kind === 'rive' && item.cover.focusInput) riveFocus(item.cover.id, i === index);
+  });
+}
+
+let serial = 0;
+function makeInstance(id: string, idle = false): RiveInstance | null {
   const f = files.get(id);
   const ref = riveRef(id);
   if (!runtime || !f?.file || !ref) return null;
   try {
     const t0 = performance.now();
-    const p = new RivePlayer(runtime, f.file, id, ref, role);
-    oneOff.instances.push({ role, ms: performance.now() - t0, idle });
-    return p;
+    const inst = new RiveInstance(runtime, f.file, id, ref, ++serial);
+    oneOff.instances.push({ ms: performance.now() - t0, idle });
+    return inst;
   } catch (e) {
     f.failed = true;
-    console.warn(`[covers] ${id}: no ${role} player —`, e);
+    console.warn(`[covers] ${id}: no instance —`, e);
     return null;
   }
 }
 
-function scheduleSpare(id: string) {
-  if (spares.has(id)) return;
-  whenQuiet(() => {
-    if (spares.has(id)) return;
-    const p = makePlayer(id, 'hero', true);
-    if (p) spares.set(id, p);
-  });
+function adopt(id: string, inst: RiveInstance) {
+  instances.set(id, inst);
+  riveStatus(id).instance = inst.status;
+  log(id, `instance #${inst.status.instances}: artboard "${inst.status.artboard}", state machine "${inst.status.stateMachine}", view model ${inst.status.viewModel ?? 'none'}${inst.status.focused ? ', focused from birth' : ''}`);
+  const pending = pendingPointer.get(id);
+  if (pending) {
+    pendingPointer.delete(id);
+    inst.pointer(pending.from, pending.kind, pending.u, pending.v, pending.w, pending.h);
+  }
 }
 
-/**
- * The player for a cover's role, or null until its file has loaded. The hero
- * is a fresh instance when it has not been drawn for `HERO_GRACE_FRAMES`: every
- * entry into the detail view (or slide into the hero slot) starts the bounce.
- */
-export function rivePlayer(id: string, role: RivePlayerRole): RivePlayer | null {
+/** Drop the instance and make it again at the top of its loop (the focus
+ *  wanted now applied from birth). DEV / verify only: nothing in the site
+ *  ever replaces it. */
+function resetInstance(id: string) {
+  instances.get(id)?.dispose();
+  instances.delete(id);
+  const inst = makeInstance(id);
+  if (inst) adopt(id, inst);
+}
+
+/** A cover's instance, or null until its file has loaded. */
+export function riveInstance(id: string): RiveInstance | null {
   ensureRive(id);
-  const key = `${id}/${role}`;
-  let p = players.get(key);
-  if (p && heroLeft(p)) {
-    p.dispose();
-    players.delete(key);
-    p = undefined;
-  }
-  if (!p) {
-    const spare = role === 'hero' ? spares.get(id) : undefined;
-    if (spare) {
-      spares.delete(id);
-      spare.lastUsed = performance.now();
-      spare.lastFrame = riveFrame();
-      p = spare;
-      scheduleSpare(id);
-    } else {
-      p = makePlayer(id, role) ?? undefined;
-    }
-    if (!p) return null;
-    players.set(key, p);
-    p.status.since = performance.now();
-    riveStatus(id).players[role] = p.status;
-    log(id, `${role} instance: artboard "${p.status.artboard}", state machine "${p.status.stateMachine}", view model ${p.status.viewModel ?? 'none'} (#${p.status.instances})`);
-    const pending = pendingPointer.get(key);
-    if (pending) {
-      pendingPointer.delete(key);
-      p.pointer(pending.kind, pending.u, pending.v, pending.w, pending.h);
-    }
-  }
-  return p;
+  return instances.get(id) ?? null;
 }
 
-/** A hero player not drawn for the grace (frames AND time) has been left. */
-function heroLeft(p: RivePlayer): boolean {
-  return p.role === 'hero' && riveFrame() - p.lastFrame > HERO_GRACE_FRAMES && performance.now() - p.lastUsed > HERO_GRACE_MS;
-}
-
-/** The player a role would draw with right now, without creating one. */
-export function peekRivePlayer(id: string, role: RivePlayerRole): RivePlayer | null {
-  return players.get(`${id}/${role}`) ?? null;
+/** The instance, without asking for its file. */
+export function peekRiveInstance(id: string): RiveInstance | null {
+  return instances.get(id) ?? null;
 }
 
 // ── cost, per frame ──────────────────────────────────────────────────────
-// Every piece of main-thread work a Rive cover does in a frame — each player's
-// advance + draw, each tile's copy, the paper's texture upload — is added to
-// the frame's bucket (keyed by the frame's time), for verify:cover's budget.
+// Every piece of main-thread work a Rive cover does in a frame — the
+// instance's advance + draws, each DOM surface's copy, the paper's texture
+// upload — is added to the frame's bucket (keyed by the frame's time), for
+// verify:cover's budget.
 
 const COST_FRAMES = 240;
 const cost = { key: -1, ms: 0, parts: { draw: 0, copy: 0, upload: 0 } };
@@ -788,7 +840,7 @@ export function riveCost(part: 'draw' | 'copy' | 'upload', ms: number) {
   cost.parts[part] += ms;
 }
 
-/** DEV / verify: the per-frame totals of the last frames, and the players. */
+/** DEV / verify: the per-frame totals of the last frames, and the instance. */
 export function riveProbe() {
   return {
     ready: (id: string) => !!files.get(id)?.file,
@@ -797,18 +849,28 @@ export function riveProbe() {
     clearCosts: () => {
       history.length = 0;
     },
-    players: () =>
-      [...players.values()].map((p) => ({ id: p.id, role: p.role, pxW: p.pxW, pxH: p.pxH, version: p.version, lastMs: p.lastMs })),
-    player: (id: string, role: RivePlayerRole) => peekRivePlayer(id, role),
-    viewModel: (id: string, role: RivePlayerRole) => peekRivePlayer(id, role)?.viewModel() ?? null,
-    /** Drop both players (and the spare): the next draw of each is a fresh
-     *  instance at its artboard's start. */
-    reset: (id: string) => {
-      for (const role of ['grid', 'hero'] as const) {
-        players.get(`${id}/${role}`)?.dispose();
-        players.delete(`${id}/${role}`);
-      }
+    /** The instance: which one, its clock, its focus, its surfaces' draws. */
+    instance: (id: string) => {
+      const i = instances.get(id);
+      if (!i) return null;
+      const s = (k: RiveSurfaceKind) => i.canvasOf(k);
+      const stage = s('stage');
+      const plane = s('plane');
+      return {
+        ...i.status,
+        lastMs: i.lastMs,
+        stage: stage && { pxW: stage.pxW, pxH: stage.pxH, version: stage.version },
+        plane: plane && { pxW: plane.pxW, pxH: plane.pxH, version: plane.version },
+      };
     },
+    viewModel: (id: string) => instances.get(id)?.viewModel() ?? null,
+    /** The instance's current moment drawn at `w × h` (RGBA), no advance. */
+    snapshot: (id: string, w: number, h: number) => instances.get(id)?.snapshot(w, h) ?? null,
+    /** Drop the instance: a fresh one at the top of its loop, now. */
+    reset: (id: string) => {
+      if (instances.has(id)) resetInstance(id);
+    },
+    focus: (id: string, v: boolean) => riveFocus(id, v),
     def: (id: string) => riveCover(id),
     status: (id: string) => {
       const st = riveStatus(id);
@@ -816,21 +878,30 @@ export function riveProbe() {
     },
     /** The one-off costs: the file's import, each instance made. */
     oneOff: () => ({ importMs: oneOff.importMs, instances: oneOff.instances.slice() }),
-    /** Main-thread ms per draw of a THROWAWAY instance of `role` at `w × h`,
-     *  `n` frames of 1/60 s, its pointer circling — the live ones untouched. */
-    bench: (id: string, role: RivePlayerRole, w: number, h: number, n = 120) => {
-      const p = makePlayer(id, role);
+    /** Main-thread ms per draw of a THROWAWAY instance at `w × h`, `n` frames
+     *  of 1/60 s, its pointer circling — the live one untouched. `focused`:
+     *  focused from birth, and `lead` seconds advanced first (past the burst,
+     *  the characters bouncing). */
+    bench: (id: string, w: number, h: number, n = 120, opts: { focused?: boolean; lead?: number } = {}) => {
+      const keep = wantFocus.get(id);
+      wantFocus.set(id, !!opts.focused);
+      const p = makeInstance(id);
+      if (keep === undefined) wantFocus.delete(id);
+      else wantFocus.set(id, keep);
       if (!p) return null;
-      p.draw(0, w, h);
+      let t = 0;
+      p.draw(t, 'plane', w, h);
+      for (let k = 0; k < (opts.lead ?? 0) * 60; k++) p.draw((t += 1 / 60), 'plane', w, h);
       const t0 = performance.now();
       for (let i = 1; i <= n; i++) {
         const a = (i / n) * Math.PI * 4;
-        p.pointer('move', 0.5 + 0.4 * Math.cos(a), 0.5 + 0.4 * Math.sin(a), w, h);
-        p.draw(i / 60, w, h);
+        p.pointer('centre', 'move', 0.5 + 0.4 * Math.cos(a), 0.5 + 0.4 * Math.sin(a), w, h);
+        p.draw((t += 1 / 60), 'plane', w, h);
       }
       const ms = (performance.now() - t0) / n;
       p.dispose();
       oneOff.instances.pop();
+      serial--;
       return ms;
     },
   };

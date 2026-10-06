@@ -4,8 +4,8 @@ import type { DialConfig as KitConfig } from 'dialkit';
 import { COVERS } from '../covers/covers';
 import { SITE_COVER_DEFAULTS, coverValues, setCoverValues, setSiteCoverDials } from '../covers/coverDials';
 import type { DialValues } from '../covers/dialValues';
-import { riveStatus } from '../covers/rive/riveCover';
-import type { RivePlayerStatus, RivePointerStatus } from '../covers/rive/riveCover';
+import { peekRiveInstance, riveStatus } from '../covers/rive/riveCover';
+import type { RiveInstanceStatus, RivePointerStatus } from '../covers/rive/riveCover';
 import { persistedPanelId } from './dialState';
 import { useResetDialsPanel } from './resetDialsPanel';
 import './statusReadout.css';
@@ -25,7 +25,7 @@ const S = SITE_COVER_DEFAULTS;
  * Card 02's `lava` folder is not here: it is the LAVA panel, below.
  *
  * Card 03's (COVER · DREX) is its JSON only, below. A Rive cover's panel
- * (card 04, at #item-04?intro) is its JSON only too — riveSwapAt,
+ * (card 04, at #item-04?intro) is its JSON only too — riveFocusAt,
  * riveMaxDpr, and its own coverPaperShade — and no site folder: two persisted
  * panels writing the same site dials would each overwrite the other's.
  */
@@ -100,24 +100,25 @@ function DrexPanel() {
  * A Rive cover's panel: its dials, and a STATUS readout under them — what the
  * cover is actually doing, the first thing to read when it does not react
  * (docs/covers.md, "When card 04 does not react"): the file's load state (and
- * its error), each instance (artboard, state machine, view model, frames its
- * state machine has advanced, the last step), the last pointer event an
- * instance received (in artboard space, and how long ago), and the
- * reduced-motion media query — the grid's instance and the hero's apart, with
- * what the paper's hero plane samples (live, or the still) and its uploads a
- * second, and what is on screen (the artboard swap is a change there). Text
- * fields, checked four times a second and set only when their text changes,
- * in rows of a fixed height (statusReadout.css); the console carries the same
- * as it changes (`[covers] nosey: …`).
+ * its error), its one instance (artboard, state machine, view model, which
+ * instance, whether it is advancing), its focus and what the file is doing
+ * with it (the face's state, the characters out or parked), what shows it
+ * (the grid's tiles, the morph card, the side or centre card, the paper's
+ * plane — live, or the still — and whether new frames are uploaded to it),
+ * the last pointer event from a tile and from the centre card (in artboard
+ * space), and the reduced-motion media query. Text fields, checked four
+ * times a second and set only when their text changes, in rows of a fixed
+ * height (statusReadout.css); the console carries the same as it changes
+ * (`[covers] nosey: …`).
  */
 const STATUS = {
   file: { type: 'text', default: '' },
   showing: { type: 'text', default: '' },
-  grid: { type: 'text', default: '' },
-  gridPointer: { type: 'text', default: '' },
-  hero: { type: 'text', default: '' },
-  heroPointer: { type: 'text', default: '' },
-  heroPlane: { type: 'text', default: '' },
+  instance: { type: 'text', default: '' },
+  focus: { type: 'text', default: '' },
+  plane: { type: 'text', default: '' },
+  tilePointer: { type: 'text', default: '' },
+  centrePointer: { type: 'text', default: '' },
   reducedMotion: { type: 'text', default: '' },
 } as const;
 
@@ -128,9 +129,10 @@ const STATUS = {
  * whole dock — ~300 ms in a dev build with every panel open, and four 50 ms
  * commits a time while the rows resized to their text — which is why the rows
  * are a fixed height now and the other panels are folded (dockPanels.ts). The
- * live numbers are in the console and `__covers.rive.status(id)`.
+ * live numbers are in the console and `__covers.rive.status(id)`. The face's
+ * state is one: it changes every few seconds, not every frame.
  */
-function playerLine(p: RivePlayerStatus | undefined, advancing: boolean | null): string {
+function instanceLine(p: RiveInstanceStatus | null, advancing: boolean | null): string {
   if (!p) return 'no instance';
   const state = advancing === null ? '' : advancing ? ' · advancing' : ' · not advancing (not on screen, or stalled)';
   return `"${p.artboard}" / "${p.stateMachine}" / vm ${p.viewModel ?? 'none'} · instance #${p.instances}${state}`;
@@ -160,11 +162,11 @@ function useRiveCoverPanel(id: string) {
   }, [id, values]);
   useEffect(() => {
     let shown = '';
-    const last = { grid: -1, hero: -1, uploads: -1 };
+    const last = { frames: -1, uploads: -1 };
     // "advancing" and "uploading" stay judged over a SECOND (every fourth
     // check), as they were: a quarter-second window would flip them on a
     // single slow frame.
-    const judged = { grid: null as boolean | null, hero: null as boolean | null, uploading: false };
+    const judged = { advancing: null as boolean | null, uploading: false };
     let n = 0;
     const tick = () => {
       const st = riveStatus(id);
@@ -173,33 +175,29 @@ function useRiveCoverPanel(id: string) {
         .join(', ');
       const now = performance.now();
       const plane = st.plane && now - st.plane.t < 500 ? st.plane : null;
-      const judge = n++ % 4 === 0;
-      const moved = (role: 'grid' | 'hero') => {
-        if (!judge) return st.players[role] ? judged[role] : null;
-        const f = st.players[role]?.frames ?? -1;
-        const on = last[role] >= 0 && f > last[role];
-        last[role] = f;
-        judged[role] = on;
-        return st.players[role] ? on : null;
-      };
-      if (judge) {
+      if (n++ % 4 === 0) {
+        const f = st.instance?.frames ?? -1;
+        judged.advancing = st.instance ? last.frames >= 0 && f > last.frames : null;
+        last.frames = f;
         judged.uploading = plane ? plane.uploads > last.uploads && last.uploads >= 0 : false;
         if (plane) last.uploads = plane.uploads;
       }
-      const uploading = plane ? judged.uploading : false;
+      const vm = peekRiveInstance(id)?.viewModel();
+      const face = vm ? String(vm['noseyAgent/agentStatus'] ?? '–') : '–';
+      const out = vm && typeof vm.burst === 'number' ? (vm.burst >= 1 ? 'the characters out' : 'the characters parked') : '';
       const swap = st.swaps.at(-1);
       const next = {
         file: `${st.file}${st.error ? `: ${st.error}` : ''} (${at} ms)`,
         showing: `${st.showing || 'nothing'}${swap ? ` (was: ${swap.from || 'nothing'})` : ''}`,
-        grid: playerLine(st.players.grid, moved('grid')),
-        gridPointer: pointerLine(st.pointers.grid, now),
-        hero: playerLine(st.players.hero, moved('hero')),
-        heroPointer: pointerLine(st.pointers.hero, now),
-        heroPlane: plane
+        instance: instanceLine(st.instance, judged.advancing),
+        focus: st.instance ? `${st.instance.focused ? 'focused (the centre card)' : 'unfocused'} · the face: ${face}${out ? ` · ${out}` : ''}` : '–',
+        plane: plane
           ? plane.shows === 'live'
-            ? `live Main Bounce · ${uploading ? 'new frames uploading' : 'no new frame uploaded in the last second'}`
-            : `${plane.shows} — Main Bounce is not on the plane`
-          : 'not drawing (paper off, or not the hero)',
+            ? `${plane.slot}, live · ${judged.uploading ? 'new frames uploading' : 'no new frame uploaded in the last second'}`
+            : `${plane.slot}, ${plane.shows} — the instance is not on the plane`
+          : 'not drawing (paper off, or not a live card)',
+        tilePointer: pointerLine(st.pointers.tile, now),
+        centrePointer: pointerLine(st.pointers.centre, now),
         reducedMotion: st.reducedMotion ? 'reduce (the still, nothing live)' : 'no-preference',
       };
       const json = JSON.stringify(next);

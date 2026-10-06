@@ -3,11 +3,8 @@ import { itemFace, itemHeroFace } from '../content';
 import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
 import { CoverTile } from '../covers/CoverTile';
-import { shaderCover } from '../covers/covers';
+import { coverSideLive, shaderCover } from '../covers/covers';
 import { heroDome } from '../covers/dome';
-import { coverValues } from '../covers/coverDials';
-import { morphRole as swapRole, riveSwapAt } from '../covers/rive/swap';
-import type { RivePlayerRole } from '../covers/rive/swap';
 import './DetailMorph.css';
 
 /** One card morphing from its `from` rect to its `to` rect. */
@@ -149,16 +146,18 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
           >
             {c.item.cover ? (
               // A live cover travels live — the centre card, on the shared cover
-              // clock, so it lands on the hero's frame and needs no cross-fade.
-              // The neighbours are the still, as the detail view shows them.
+              // clock, so it lands on the hero's frame and needs no cross-fade
+              // (a Rive cover: its one instance, so it lands on the same moment
+              // whatever it was showing in the grid). A side card travels live
+              // if its cover is live as a side card (`coverSideLive`: card 04),
+              // else as the still, as the detail view shows them.
               // A cover that keeps state per instance (card 02's lava warmth)
               // travels on the hero's dome, which the clicked tile handed its
               // state to (CoverTile): the morph lands on the hero's moment.
               <CoverTile
                 coverId={c.item.cover.id}
-                live={i === 1}
+                live={i === 1 || coverSideLive(c.item.cover)}
                 dome={i === 1 && shaderCover(c.item.cover.id)?.instanceExtra ? heroDome : null}
-                role={morphRole(c.item.cover.id, entering)}
                 className="detail-morph__media"
               />
             ) : to ? (
@@ -182,12 +181,6 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
       })}
     </div>
   );
-}
-
-/** Which Rive player the morph's centre card shows: the grid's artboard or the
- *  hero's, by the cover's riveSwapAt (src/covers/rive/swap.ts). */
-function morphRole(id: string, entering: boolean): RivePlayerRole {
-  return swapRole(riveSwapAt(coverValues(id) as { rive?: { riveSwapAt?: unknown } }), entering);
 }
 
 export default memo(DetailMorph);
