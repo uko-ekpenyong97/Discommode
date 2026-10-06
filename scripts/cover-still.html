@@ -11,10 +11,11 @@ import { COVERS } from '/src/covers/covers.ts';
 import { coverCropOf } from '/src/covers/coverRenderer.ts';
 import { makeCoverRenderer } from '/src/covers/cachedCoverRenderer.ts';
 import { dialDefaults } from '/src/covers/dialValues.ts';
-import { ensureRive, rivePlayer, riveProbe } from '/src/covers/rive/riveCover.ts';
+import { ensureRive, riveInstance, riveProbe } from '/src/covers/rive/riveCover.ts';
 
-/** A Rive cover's still: its GRID artboard (Main) as its first frame — at rest,
- *  no pointer — the whole frame at `width` px. A 2D canvas already reads back
+/** A Rive cover's still: its artboard ("Nosey Detail") as its first frame —
+ *  unfocused, so the resting face on blue (pixel for pixel `cover`'s), no
+ *  pointer — the whole frame at `width` px. A 2D canvas already reads back
  *  straight-alpha RGBA, top row first. */
 async function riveStill(id, width) {
   const def = COVERS[id];
@@ -22,13 +23,13 @@ async function riveStill(id, width) {
   const h = Math.round((width * def.frame.h) / def.frame.w);
   ensureRive(id);
   let p = null;
-  for (let i = 0; i < 400 && !(p = rivePlayer(id, 'grid')); i++) {
+  for (let i = 0; i < 400 && !(p = riveInstance(id)); i++) {
     if (riveProbe().failed(id)) throw new Error(`${id}: the Rive cover failed to load`);
     await new Promise((r) => setTimeout(r, 25));
   }
   if (!p) throw new Error('the Rive cover never became ready');
-  p.draw(0, w, h);
-  return p.canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  p.draw(0, 'plane', w, h);
+  return p.canvasOf('plane').canvas.getContext('2d').getImageData(0, 0, w, h).data;
 }
 
 /** The whole frame at `width` px, t = 0, dome at rest, nothing behind it,

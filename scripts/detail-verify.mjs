@@ -73,7 +73,7 @@
  *   sidescale  detailSideScale swept across its whole range (0.3 → 1 → 0.3)
  *              at #item-04, the pointer moving on the hero: at every value the
  *              paper hands the cards back in, its hero plane is card 04's live
- *              Main Bounce, and the hero is instance #1 throughout. At 1 it was
+ *              instance, and it is instance #1 throughout. At 1 it was once
  *              #2, #3, … for as long as the pointer moved.
  *   layout     the Studio Display's spacing at 2560×1440, 1920×1080, 1728×1117,
  *              1512×982, 1440×900 and 1280×720, at #item-01: the margins, the
@@ -180,8 +180,13 @@ const LAVA_HERO = 0.093;
  * problem again: Chrome's scale(0.85) resampling of the <img> against a
  * texture resized to the card, on edges. Measured 0.018–0.891% (the high end at
  * 1440×900 @1×, where the old opaque photo face was 0.1–0.4%). Held to 2%.
+ *
+ * Since 2026-10-05 card 04 is LIVE as a side card (docs/covers.md, "The live
+ * side card"): the DOM side card copies the one instance's stage canvas and
+ * the plane samples its plane canvas, the clock pinned — one moment, two
+ * resamplers. 0.126–0.393%; the bar stays 2%.
  */
-const RIVE_STILL_SIDE = 0.02;
+const RIVE_SIDE = 0.02;
 /**
  * CARD 03, the drex cover (docs/covers.md, "Card 03"), held to card 02's
  * budgets for card 02's reason. Its still is a 1-px Bayer dither: noise edge to
@@ -219,7 +224,7 @@ const budget = (r) =>
           ? DREX_STILL_SIDE
           : COVER_STILL_SIDE
       : r.idx === 3 && r.slot !== 0
-        ? RIVE_STILL_SIDE
+        ? RIVE_SIDE
         : IDENTITY;
 const HANDOFF = 0.02;
 const handoffBudget = (r) => Math.max(HANDOFF, budget(r));
@@ -275,11 +280,11 @@ async function open(page, item = '01', { settle = true } = {}) {
   await page.mouse.move(3, 3);
   await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
   // Card 04 is a Rive cover, and its file is imported at the first quiet moment
-  // (docs/covers.md, "Rendering: two players, no WebGL"): until then its hero
+  // (docs/covers.md, "Rendering: one instance, no WebGL"): until then its hero
   // is the still on both sides, which is the still's resampling, not the
   // hand-off. Wait for the live hero.
   if (item === '04') {
-    await page.waitForFunction(() => window.__covers.rive.players().some((p) => p.role === 'hero' && p.version > 0), null, {
+    await page.waitForFunction(() => (window.__covers.rive.instance('nosey')?.plane?.version ?? 0) > 0, null, {
       timeout: 20000,
     });
     await page.waitForTimeout(100);
@@ -1227,7 +1232,7 @@ async function checkSideScale(browser) {
   await page.waitForFunction(() => !!window.__covers && !!window.__config, null, { timeout: 10000 });
   await page.goto(`${B}#item-04`);
   await page.waitForFunction(
-    () => window.__paper?.state() === 'on' && window.__covers.rive.players().some((p) => p.role === 'hero' && p.version > 0),
+    () => window.__paper?.state() === 'on' && (window.__covers.rive.instance('nosey')?.plane?.version ?? 0) > 0,
     null,
     { timeout: 20000 },
   );
@@ -1238,7 +1243,7 @@ async function checkSideScale(browser) {
       const st = window.__covers.rive.status('nosey');
       return {
         paper: window.__paper.state(),
-        inst: st.players.hero?.instances ?? 0,
+        inst: st.instance?.instances ?? 0,
         plane: st.plane && performance.now() - st.plane.t < 500 ? st.plane.shows : 'not drawn',
       };
     });

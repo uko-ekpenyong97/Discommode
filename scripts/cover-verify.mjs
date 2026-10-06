@@ -84,61 +84,71 @@
  *             draw + that many warm draws + 4 copies, benched) ≤ 1.25 — its
  *             own budget, from production-build runs (docs/perf/lsweep.md).
  *
- * CARD 04, the Rive cover (nosey: "Main" in the grid, "Main Bounce" as the
- * hero; docs/covers.md "Rive covers"). The Rive players advance by the cover
- * clock's delta, so a pinned clock holds them still, and `__covers.rive.reset`
- * makes the next draw of each a fresh instance at its artboard's first frame;
- * `step` below walks the pinned clock a frame at a time, so two runs of the
- * same steps are the same run (Main Bounce's physics has no randomness):
+ * CARD 04, the Rive cover (nosey: ONE instance of "Nosey Detail" for every
+ * surface — grid tiles, the morph card, the side card, the centre card, the
+ * paper's plane — its `focused` input true while it is the centre card;
+ * docs/covers.md "Rive covers"). The behaviour checks run in real Chrome, the
+ * pointer moving from the first frame and never parked; each was run once
+ * against the broken path in brackets (`--fault <name>`, or `--broken`), and
+ * failed there:
  *
  *   rbudgets  main-thread ms per frame of ALL card-04 cover work — the grid's
- *             one shared draw of Main plus every visible tile's copy, the
- *             hovered tile's pointer driving it; the hero's draw of Main Bounce
- *             plus the paper's texture upload, the pointer moving over it —
- *             p95 of the frames ≤ 2.0 (at hero size 2× the one that matters);
- *             a timed batch of draws beside it (the frame numbers are read off
- *             a 0.1 ms clock). Sky + fluid (p95) + covers ≤ 8.
- *   rswap     the swap: grid → detail from the focused tile, the morph held on
- *             its last frame (Main, the grid's instance) against the DOM hero
- *             it lands on (Main Bounce, fresh) — the rest frames agree, ≤ 2%;
- *             a control, the hero a second of bounce later, has to fail. Then
- *             the DOM hero → the paper, ≤ 2% (the morph's whole hand-off).
- *             Also riveSwapAt 'start', where the morph card is the hero.
- *   rpointer  the REAL pointer path, as a person uses it: the clock never
- *             pinned, the pointer moving from the first frame (a moving
- *             pointer is input, and input is what held the file's import back
- *             for 20.8 s), mouse events dispatched through the browser at the
- *             on-screen position of the focused grid tile and then of the hero
- *             (opened by clicking the tile), with the tile's hover overlay
- *             left in place (made transparent, still hit-testable):
- *               - the file is imported ≤ 1.1 s after its bytes are ready;
- *               - the instance receives the events, in artboard space: the view
- *                 model's ptrX/ptrY (MainPlay mirrors them) match the on-screen
- *                 point mapped through the instance's crop, ± 2 units;
- *               - a character tracks: a tracking flag or lookX differs between
- *                 the pointer at 12% and at 88% across;
- *               - the tile's pixels move with the pointer: left vs right more
- *                 than 3× the tile's own idle animation over the same time.
- *             The hero is checked again 2 s and 5 s after landing (both
- *             routes), the pointer sweeping it: still advancing, still
- *             uploaded to the plane, still receiving the pointer, a character
- *             tracking it within each window, the same instance, the hero's
- *             pixels still moving (> 0.5% past 32 levels).
- *             It fails on each way this path broke or could: the old 10 s idle
- *             deadline ("never loaded"), events kept from the cover (ptrX/ptrY
- *             stay 0), and the tile-only listener (an exit over the CTA).
- *   rclick    the cover is hover-only: the pointer moved onto the headset
- *             Nosey's cup, against the same second with no pointer — its
- *             colour is another one (the file's "Headset.Pointer.Enter" fires
- *             its Click trigger). And a click on the hero opens the project,
- *             #view-04, as on every portfolio card.
+ *             one shared draw plus every visible tile's copy, the pointer
+ *             circling the focused tile; the centre card (after the burst)
+ *             plus the paper's upload; the side card (card 03 the hero) —
+ *             p95 of the frames ≤ 2.0; a timed batch of draws beside it (the
+ *             frame numbers are read off a 0.1 ms clock). Sky + fluid (p95) +
+ *             covers ≤ 8. In the bundled Chromium, as its earlier numbers.
+ *   rgrid     the focused grid tile is live: the face's agentStatus changes
+ *             over 8 s, the tile's canvas is drawn, mostly the blue ground,
+ *             and its pixels move; unfocused, the characters parked, one
+ *             instance. [frozen]
+ *   rside     card 03 (and 01) the centre card: card 04's side card is live —
+ *             the DOM side canvas drawn, then the paper's side plane live and
+ *             uploading, the instance's clock and agentStatus advancing, its
+ *             pixels moving, unfocused, one instance. [sidestill]
+ *   rjump     NO JUMP through every role change: grid → centre (the morph),
+ *             centre → side (Next, after the unfocus cut, which is excluded),
+ *             side → centre (Prev), grid → side (card 03 clicked). The clock
+ *             pinned and walked a 1/60 s step a frame; every frame the
+ *             instance's moment drawn at a fixed size (`snapshot`, no
+ *             advance) against the frame before. A change of what shows it
+ *             moves ≤ max(3 × that run's p95 frame-to-frame change, 0.5%);
+ *             one instance throughout. [fresh]
+ *   rfocus    card 04 becomes the centre card (the morph, and Next from 03):
+ *             `burst` reaches 1 within 5 s of landing, `faceScale` 0 within
+ *             0.5 s of the burst, then the headset Nosey moves. [nofocus]
+ *   runfocus  it stops being the centre card (Next, Prev, Escape to the
+ *             grid): `burst` 0, `faceScale` 1 and the characters parked
+ *             within 2 frames of the view leaving it. [nounfocus]
+ *   rdeep     #item-04 on load: focused from birth, before its first advance;
+ *             `burst` at 2.42 ± 0.1 s of the instance's clock after its first
+ *             draw. [latefocus]
+ *   rpointer  the REAL pointer path: the file imported ≤ 1.1 s after its
+ *             bytes are ready with the pointer moving; the grid tile's and the
+ *             overlay CTA's moves reach the instance through the crop (± 2
+ *             units; unfocused, the face does not follow them — for now); on
+ *             the centre card after the burst, by the morph and by a direct
+ *             load, the file's mirrored ptrX/ptrY match the on-screen point
+ *             (± 2), and the card is alive — advancing, uploading, the
+ *             headset moving, one instance through three 450 ms frames.
+ *             [--broken pointer]
+ *   rtouch    a tablet (1180×820, touch): a tap on the tile opens card 04 and
+ *             it bursts within 5 s; a finger on the centre card moves its
+ *             pointer (ptrX/ptrY ± 3) and lifting it is an exit.
+ *             [--broken pointer]
+ *   rphone    the phone door's project 04 shows the still (the blue face)
+ *             and nothing Rive is requested. [--broken phone]
+ *   rclick    a click on the centre card opens the project, #view-04.
  *   rreduced  reduced motion: card 04's tiles and hero are the still, the
  *             runtime is never loaded, nothing moves in 1s.
- *   rsky      a patch of Main's empty ground over NOON and NIGHT: > 20% apart.
- *   rground   as `ground`, on card 04's hero (most of it IS ground: no stock);
- *             the control is coverBackdrop 'solid', which has to fail.
+ *   rsky      a patch of the artboard's empty ground over NOON and NIGHT.
+ *   rground   as `ground`, on card 04's hero.
  *   rcontexts WebGL contexts with card 04 live, grid and #item-04: the same
  *             bounds as `contexts`, and none of them made by the Rive runtime.
+ *   sidelive  the generic live side card on a SHADER cover, forced on in dev
+ *             (`window.__coversSideLive`), not enabled in the manifest: card
+ *             02 beside card 03 is drawn live on the paper.
  *
  * `sky`, `ground`, `rsky` and `rground` are about the sky THROUGH a cover's
  * ground. A cover whose own `coverBackdrop` is 'solid' (card 04: its artboards
@@ -162,10 +172,14 @@ const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) +
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg(
   '--only',
-  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rswap,rpointer,rclick,rreduced,rsky,rground,rcontexts,' +
+  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rgrid,rside,rjump,rfocus,runfocus,rdeep,rpointer,rtouch,rphone,rclick,rreduced,rsky,rground,rcontexts,sidelive,' +
     'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets,drag',
 ).split(',');
 const B = `${ORIGIN}/`;
+/** `--fault <name>`: a deliberately broken path in the app (dev only,
+ *  src/covers/faults.ts), for running a check once against what it exists to
+ *  catch. `--broken pointer|phone`: the same, done from the check's side. */
+const FAULT = arg("--fault", "");
 const GPU = ['--use-gl=angle', '--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'];
 const VIEWPORTS = [
   { width: 1728, height: 996 },
@@ -191,13 +205,10 @@ const LSWEEP_OWN_MAX = 2;
  *  and, since the idle warm-up, the grid's too once it has run; counted apart). */
 const MAIN_CONTEXTS = { grid: 1, detail: 2 };
 const FRAME = { w: 900, h: 1326 };
-/** Card 04's: Main and Main Bounce. */
+/** Card 04's artboard, "Nosey Detail". */
 const RFRAME = { w: 1000, h: 1300 };
 /** All card-04 cover work, main-thread ms per frame. */
 const RIVE_BUDGET = 2.0;
-/** Noseyhead in Main Bounce: its origin is the view model's headsetX/Y, at 1.2;
- *  its head centre and ear cup from there (BouncePlay's body, Main's still). */
-const HEADSET = { w: 296 * 1.2, h: 225 * 1.2, head: { x: 175, y: 153 }, cup: { x: 271, y: 180 } };
 
 let failures = 0;
 let skipped = 0;
@@ -235,6 +246,7 @@ function stillDiff(a, b) {
 const errors = [];
 async function newPage(browser, viewport, dpr = 1, extra = {}, init = null) {
   const context = await browser.newContext({ viewport, deviceScaleFactor: dpr, ...extra });
+  if (FAULT) await context.addInitScript((f) => (window.__coversFault = f.split(",")), FAULT);
   if (init) await context.addInitScript(init);
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
@@ -1106,6 +1118,30 @@ async function checkGround(browser) {
 
 // ── card 04, the Rive cover ─────────────────────────────────────────────
 
+/** Load the grid with the pointer moving from the first frame (a person's is
+ *  never still), until card 04's file is in; then `right` ArrowRights. */
+async function gridMoving(page, right = 3) {
+  await page.goto(B, { waitUntil: 'domcontentloaded' });
+  const t0 = Date.now();
+  let st = null;
+  for (let i = 0; i < 200 && !st; i++) {
+    await page.mouse.move(140 + 60 * Math.sin(i / 3), 110 + 40 * Math.cos(i / 4));
+    await page.waitForTimeout(40);
+    st = await page.evaluate(() => {
+      const s = window.__covers?.rive.status('nosey');
+      return s && (s.file === 'loaded' || s.file === 'failed') ? s : null;
+    });
+  }
+  for (let i = 0; i < right; i++) {
+    await page.keyboard.press('ArrowRight');
+    for (let k = 0; k < 8; k++) {
+      await page.mouse.move(200 + 30 * Math.sin(k), 120 + 20 * Math.cos(k));
+      await page.waitForTimeout(45);
+    }
+  }
+  return { st, ms: Date.now() - t0 };
+}
+
 /** The grid, card 04 focused (three ArrowRights from 01), its file loaded. */
 async function gridOn04(page) {
   await page.goto(B, { waitUntil: 'networkidle' });
@@ -1124,8 +1160,7 @@ async function heroOn04(page, { settle = true } = {}) {
   if (settle) await page.waitForFunction(() => window.__paper.presence() >= 1, null, { timeout: 5000 });
 }
 
-/** Walk the pinned cover clock from `t0`, one 60 Hz step per frame, `n` frames:
- *  every surface draws each step once, so the same walk is the same run. */
+/** Walk the pinned cover clock from `t0`, one 60 Hz step per frame, `n` frames. */
 const step = (page, t0, n) =>
   page.evaluate(
     async ([t0, n]) => {
@@ -1137,7 +1172,7 @@ const step = (page, t0, n) =>
     [t0, n],
   );
 
-/** Fresh instances, the clock pinned at `t`, and a couple of frames to draw them. */
+/** A fresh instance at the top of its loop, the clock pinned at `t`. */
 async function freshRive(page, t) {
   await page.evaluate((t) => {
     window.__covers.pin(t);
@@ -1160,6 +1195,100 @@ const pctl = (a, p) => {
 };
 const mean = (a) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
 
+/** Card 04's instance and its view model, now. */
+const nosey = (page) =>
+  page.evaluate(() => ({ i: window.__covers.rive.instance('nosey'), vm: window.__covers.rive.viewModel('nosey'), st: window.__covers.rive.status('nosey') }));
+
+/**
+ * A recorder, in the page, one entry per frame: the instance's clock, focus
+ * and burst, the face's state, the headset's position, what shows it, the
+ * wall time and the frame. `__rec.mark(name)` stamps the frame of an event.
+ */
+const startRec = (page) =>
+  page.evaluate(() => {
+    const R = (window.__rec = { on: true, rows: [], marks: {}, frame: 0 });
+    R.mark = (name) => (R.marks[name] ??= { frame: R.frame, wall: performance.now() });
+    const f = () => {
+      if (!R.on) return;
+      R.frame++;
+      const rive = window.__covers?.rive;
+      const i = rive?.instance('nosey');
+      const vm = i ? rive.viewModel('nosey') : null;
+      const st = rive?.status('nosey');
+      R.rows.push({
+        frame: R.frame,
+        wall: performance.now(),
+        serial: i?.instances ?? 0,
+        clock: i?.clock ?? -1,
+        frames: i?.frames ?? 0,
+        focused: i?.focused ?? false,
+        burst: vm?.burst ?? -1,
+        face: vm?.faceScale ?? -1,
+        hx: vm?.headsetX ?? NaN,
+        hy: vm?.headsetY ?? NaN,
+        agent: vm?.['noseyAgent/agentStatus'] ?? '',
+        showing: st?.showing ?? '',
+        phase: document.querySelector('.detail')?.dataset.phase ?? 'grid',
+        morph: !!document.querySelector('.detail-morph'),
+      });
+      requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+const stopRec = (page) =>
+  page.evaluate(() => {
+    window.__rec.on = false;
+    return { rows: window.__rec.rows, marks: window.__rec.marks };
+  });
+
+/** Keep the pointer moving around (x, y) until `stop()`, as a hand does. */
+function movingAround(page, at) {
+  let on = true;
+  const run = (async () => {
+    for (let i = 0; on; i++) {
+      try {
+        const p = typeof at === 'function' ? await at() : at;
+        await page.mouse.move(p.x + 12 * Math.sin(i / 3), p.y + 9 * Math.cos(i / 4));
+        await page.waitForTimeout(30);
+      } catch {
+        return; // the page went away under it
+      }
+    }
+  })();
+  return { stop: async () => ((on = false), run) };
+}
+
+/** Card 04's panel in the detail view (DOM rect, CSS px), centre or side. */
+const panel04 = (page) =>
+  page.evaluate(() => {
+    let best = null;
+    for (const el of document.querySelectorAll('.detail__panel[data-idx="3"]')) {
+      const r = el.getBoundingClientRect();
+      if (r.right < 0 || r.left > innerWidth) continue;
+      const d = Math.abs(r.x + r.width / 2 - innerWidth / 2);
+      if (!best || d < best.d) best = { d, x: r.x, y: r.y, w: r.width, h: r.height, centre: el.classList.contains('detail__panel--center') };
+    }
+    if (!best) return null;
+    // Its on-screen part (a side card runs off the edge).
+    const x0 = Math.max(0, best.x);
+    const y0 = Math.max(0, best.y);
+    const x1 = Math.min(innerWidth, best.x + best.w);
+    const y1 = Math.min(innerHeight, best.y + best.h);
+    return { ...best, x: x0, y: y0, w: x1 - x0, h: y1 - y0, full: { x: best.x, y: best.y, w: best.w, h: best.h } };
+  });
+
+/** The share of a grab's pixels that are the face's blue ground (#0A85D1),
+ *  by hue, not level: a side card is at detailSideOpacity, and dimmed further
+ *  while the pointer is over the centre card (detailHoverDim). */
+function blueShare(img) {
+  let n = 0;
+  for (let i = 0; i < img.length; i += 3) {
+    const [r, g, b] = [img[i], img[i + 1], img[i + 2]];
+    if (b > 80 && b > 2.5 * r && b > 1.3 * g && g > 2 * r) n++;
+  }
+  return n / (img.length / 3);
+}
+
 async function checkRiveBudgets(browser) {
   console.log(`\nrive budgets: card 04, main-thread ms per frame (≤ ${RIVE_BUDGET}), the pointer moving`);
   for (const vp of VIEWPORTS) {
@@ -1177,28 +1306,41 @@ async function checkRiveBudgets(browser) {
         }
         return page.evaluate(() => window.__covers.rive.costs());
       };
-      const v0 = await page.evaluate(() => window.__covers.rive.players().find((p) => p.role === 'grid')?.version ?? 0);
+      const v = () => page.evaluate(() => window.__covers.rive.instance('nosey')?.stage?.version ?? 0);
+      const v0 = await v();
       const f0 = await page.evaluate(() => window.__covers.frames());
       const grid = await sweep(tr, 120);
-      const v1 = await page.evaluate(() => window.__covers.rive.players().find((p) => p.role === 'grid')?.version ?? 0);
+      const v1 = await v();
       const f1 = await page.evaluate(() => window.__covers.frames());
       const tiles = await page.evaluate(() => window.__covers.presenters().filter((p) => p.cover === 'nosey' && p.visible));
       const big = tiles.reduce((a, p) => (p.pxW > a.pxW ? p : a), { pxW: 0, pxH: 0 });
-      const gridBench = await page.evaluate(([w, h]) => window.__covers.rive.bench('nosey', 'grid', w, h, 120), [big.pxW, big.pxH]);
+      const gridBench = await page.evaluate(([w, h]) => window.__covers.rive.bench('nosey', w, h, 120), [big.pxW, big.pxH]);
       const sky = await page.evaluate(() => {
         const t = window.__skyBenchmark?.(300, 10, true) ?? [];
         t.sort((a, b) => a - b);
         return t.length ? t[Math.floor(t.length * 0.95)] : NaN;
       });
+      // The hero: the centre card, focused from the deep link, measured once
+      // the characters are out and bouncing (the burst is 2.42 s in).
       await heroOn04(page);
+      await page.waitForFunction(() => (window.__covers.rive.viewModel('nosey')?.burst ?? 0) >= 1, null, { timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(500);
       const hr = await heroRect(page);
       const hero = await sweep(hr, 120);
-      const hp = await page.evaluate(() => window.__covers.rive.players().find((p) => p.role === 'hero'));
-      const heroBench = await page.evaluate(([w, h]) => window.__covers.rive.bench('nosey', 'hero', w, h, 120), [hp.pxW, hp.pxH]);
+      const hp = await page.evaluate(() => window.__covers.rive.instance('nosey')?.plane);
+      const heroBench = await page.evaluate(([w, h]) => window.__covers.rive.bench('nosey', w, h, 120, { focused: true, lead: 3 }), [hp.pxW, hp.pxH]);
       const upBench = await page.evaluate(() => window.__paper.benchRiveUpload(60));
+      // The side card: card 03 in the centre, card 04 live beside it, the
+      // pointer over the centre card.
+      await page.goto(`${B}#item-03`);
+      await page.waitForFunction(() => window.__paper?.state() === 'on' && window.__covers.rive.status('nosey').plane?.slot === 'side' && window.__covers.rive.status('nosey').plane?.shows === 'live', null, { timeout: 20000 });
+      await page.waitForTimeout(500);
+      const side = await sweep(await heroRect(page), 120);
+      const sp = await page.evaluate(() => window.__covers.rive.instance('nosey')?.plane);
       const g = grid.map((c) => c.ms);
       const h = hero.map((c) => c.ms);
-      const worst = Math.max(pctl(g, 0.95), pctl(h, 0.95));
+      const s = side.map((c) => c.ms);
+      const worst = Math.max(pctl(g, 0.95), pctl(h, 0.95), pctl(s, 0.95));
       const drawsPerFrame = (v1 - v0) / Math.max(1, f1 - f0);
       check(
         pctl(g, 0.95) <= RIVE_BUDGET,
@@ -1208,7 +1350,12 @@ async function checkRiveBudgets(browser) {
       check(
         pctl(h, 0.95) <= RIVE_BUDGET,
         `${tag} hero`,
-        `${hp.pxW}×${hp.pxH}: per frame mean ${ms(mean(h))}, p95 ${ms(pctl(h, 0.95))}, max ${ms(Math.max(...h))} (draw ${ms(mean(hero.map((c) => c.draw)))} + upload ${ms(mean(hero.map((c) => c.upload)))}); a timed draw ${ms(heroBench)} + upload ${ms(upBench)} = ${ms(heroBench + upBench)} ≤ ${RIVE_BUDGET}`,
+        `${hp.pxW}×${hp.pxH}, after the burst: per frame mean ${ms(mean(h))}, p95 ${ms(pctl(h, 0.95))}, max ${ms(Math.max(...h))} (draw ${ms(mean(hero.map((c) => c.draw)))} + upload ${ms(mean(hero.map((c) => c.upload)))}); a timed draw ${ms(heroBench)} + upload ${ms(upBench)} = ${ms(heroBench + upBench)} ≤ ${RIVE_BUDGET}`,
+      );
+      check(
+        pctl(s, 0.95) <= RIVE_BUDGET,
+        `${tag} side card`,
+        `${sp?.pxW}×${sp?.pxH}, card 03 the hero: per frame mean ${ms(mean(s))}, p95 ${ms(pctl(s, 0.95))}, max ${ms(Math.max(...s))} (draw ${ms(mean(side.map((c) => c.draw)))} + upload ${ms(mean(side.map((c) => c.upload)))}) ≤ ${RIVE_BUDGET}`,
       );
       check(sky + worst <= BUDGET.all, `${tag} sky+fluid+covers`, `${ms(sky)} + ${ms(worst)} = ${ms(sky + worst)} ≤ ${BUDGET.all}`);
       await page.context().close();
@@ -1216,155 +1363,400 @@ async function checkRiveBudgets(browser) {
   }
 }
 
-async function holdMorphAtEnd(page) {
-  await page.evaluate(() => {
-    window.__morphHeld = false;
-    const mo = new MutationObserver(() => {
-      if (!document.querySelector('.detail-morph')) return;
-      mo.disconnect();
-      requestAnimationFrame(() => {
-        for (const a of document.getAnimations()) {
-          const d = a.effect?.getTiming().duration;
-          if (typeof d === 'number') {
-            a.pause();
-            a.currentTime = d - 1;
-          }
-        }
-        window.__morphHeld = true;
-      });
-    });
-    mo.observe(document.body, { childList: true, subtree: true });
-  });
-}
-
-async function checkRiveSwap(browser) {
-  console.log('\nrive swap: the morph (Main) held on its last frame vs the DOM hero it lands on (Main Bounce)');
-  const T = 5;
-  for (const [dpr, swapAt] of [
-    [1, 'landing'],
-    [2, 'landing'],
-    [1, 'start'],
-  ]) {
+async function checkRiveGrid(browser) {
+  console.log('\nrive grid: card 04\'s tile is live — the face loops through its states, on blue, the pointer moving');
+  for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
-    await gridOn04(page);
-    await quiet(page);
-    if (swapAt !== 'landing') await page.evaluate((v) => window.__covers.patchDials('nosey', { rive: { riveSwapAt: v } }), swapAt);
-    const tr = await focusedTile(page);
-    await page.mouse.move(tr.x + tr.w / 2, tr.y + tr.h * 0.62, { steps: 5 });
-    await page.waitForTimeout(300);
-    await freshRive(page, T); // the grid's instance at its first frame, the clock held
-    await holdMorphAtEnd(page);
-    await page.mouse.down();
-    await page.mouse.up();
-    await page.waitForFunction(() => window.__morphHeld, null, { timeout: 5000 });
-    await page.mouse.move(3, 3);
-    await page.waitForTimeout(400);
-    const hr = await heroRect(page);
-    // The number is the DOM hero's alone: this compares the cover.
-    await page.evaluate(() => {
-      const st = document.createElement('style');
-      st.textContent = '.detail__panel-num { visibility: hidden !important; }';
-      document.head.append(st);
-    });
-    const role = await page.evaluate(() => document.querySelector('.detail-morph .cover-tile[data-cover="nosey"]')?.dataset.role);
-    const morph = await grab(page, hr, dpr, 300, 390);
-    await page.evaluate(() => {
-      window.__paper?.set({ paper: 'off' });
-      for (const a of document.getAnimations()) a.play();
-    });
-    await page.waitForFunction(() => !document.querySelector('.detail-morph') && document.querySelector('.detail[data-phase="active"]'), null, { timeout: 5000 });
-    await page.evaluate(() => window.__paper.set({ paper: 'off' }));
-    await frames(page, 6);
-    const heroRole = await page.evaluate(() => document.querySelector('.detail__panel--center .cover-tile[data-cover="nosey"]')?.dataset.role);
-    const dom = await grab(page, hr, dpr, 300, 390);
-    const d = diff(morph, dom);
-    const tag = `@${dpr}× riveSwapAt ${swapAt}`;
-    if (swapAt === 'landing') {
-      await step(page, T, 60); // a second of bounce
-      const later = await grab(page, hr, dpr, 300, 390);
-      await page.evaluate((t) => window.__covers.pin(t), T + 1);
-      const dc = diff(morph, later);
-      check(
-        role === 'grid' && heroRole === 'hero' && d <= 0.02 && dc > 0.02,
-        `${tag}: morph (${role}) → DOM hero (${heroRole})`,
-        `${pct(d)} of pixels differ ≤ 2% (control, the hero 1s of bounce later: ${pct(dc)})`,
-      );
-      await page.evaluate(() => window.__paper.set({ paper: 'on' }));
-      await page.waitForFunction(() => window.__paper.state() === 'on', null, { timeout: 10000 });
-      await page.evaluate(() => window.__paper.override({ zero: true }));
-      await frames(page, 4);
-      const dom2 = await (async () => {
-        await page.evaluate(() => window.__paper.set({ paper: 'off' }));
-        await frames(page, 4);
-        return grab(page, hr, dpr, 300, 390);
-      })();
-      await page.evaluate(() => window.__paper.set({ paper: 'on' }));
-      await page.waitForFunction(() => window.__paper.state() === 'on', null, { timeout: 10000 });
-      await page.evaluate(() => window.__paper.override({ zero: true }));
-      await frames(page, 4);
-      const paper = await grab(page, hr, dpr, 300, 390);
-      const d2 = diff(dom2, paper);
-      check(d2 <= 0.02, `@${dpr}× DOM hero → paper`, `${pct(d2)} of pixels differ ≤ 2% (one instance, one canvas: the DOM face copies it, the plane samples it)`);
-    } else {
-      check(role === 'hero' && heroRole === 'hero' && d <= 0.02, `${tag}: morph (${role}) → DOM hero (${heroRole})`, `${pct(d)} of pixels differ ≤ 2% (the morph card IS the hero's instance)`);
+    const tag = `@${dpr}×`;
+    const { st } = await gridMoving(page, 3);
+    if (st?.file !== 'loaded') {
+      bad(`${tag} grid tile live`, `the file: ${st?.file ?? 'never loaded'}`);
+      await page.context().close();
+      continue;
     }
+    await quiet(page);
+    await flatGrid(page);
+    await page.waitForTimeout(300);
+    const tile = await focusedTile(page);
+    const ptr = movingAround(page, { x: tile.x + tile.w * 0.5, y: tile.y + tile.h * 0.6 });
+    const seen = new Set();
+    const shots = [];
+    let inst = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 8000) {
+      const n = await nosey(page);
+      inst ??= n.i?.instances;
+      seen.add(n.vm?.['noseyAgent/agentStatus']);
+      if (shots.length < 2 && Date.now() - t0 > shots.length * 3000) shots.push(await grab(page, tile, dpr, 150, 200));
+      await page.waitForTimeout(250);
+    }
+    await ptr.stop();
+    const end = await nosey(page);
+    const drawn = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('.grid-card .cover-tile[data-cover="nosey"]')].find((t) => 'drawn' in t.dataset);
+      return !!el;
+    });
+    const blue = blueShare(shots[0]);
+    const moved = diff(shots[0], shots[1]);
+    check(
+      seen.size >= 2 && drawn && blue > 0.3 && moved > 0.005 && !end.i.focused && end.vm.burst === 0 && end.i.instances === inst,
+      `${tag} grid tile live`,
+      `agentStatus seen over 8 s: ${[...seen].join(' → ')}; the tile's canvas drawn: ${drawn}; ${pct(blue)} of it the blue ground; ${pct(moved)} of its pixels changed in 3 s; unfocused, characters ${end.vm.burst === 0 ? 'parked' : 'OUT'}; instance #${inst} → #${end.i.instances}`,
+    );
     await page.context().close();
   }
 }
 
-/** One run on the hero from a fresh instance: `before` (the pointer's moves),
- *  a walk of `n` frames with `mid` at its middle, then the headset's region. */
-async function heroRun(page, dpr, T, { before, mid, n = 60 }) {
-  await page.mouse.move(3, 3);
-  await freshRive(page, T);
-  const hr = await heroRect(page);
-  if (before) await before(hr);
-  await step(page, T, n / 2);
-  if (mid) await mid(hr);
-  await step(page, T + n / 2 / 60, n / 2);
-  await frames(page, 2);
-  const vm = await page.evaluate(() => window.__covers.rive.viewModel('nosey', 'hero'));
-  const box = heroBox(hr, vm.headsetX, vm.headsetY, HEADSET.w, HEADSET.h);
-  const img = await grab(page, box, dpr, 180, 137);
-  return { vm, img, hr };
+async function checkRiveSide(browser) {
+  console.log('\nrive side card: card 04 beside the centre card is live — the same instance, unfocused, not the still');
+  for (const [dpr, centre] of [
+    [1, '03'],
+    [2, '03'],
+    [2, '01'],
+  ]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    const tag = `@${dpr}× ${centre} the hero`;
+    await gridMoving(page, 0);
+    await quiet(page);
+    await page.goto(`${B}#item-${centre}`);
+    const hr = await heroRect(page);
+    const ptr = movingAround(page, { x: hr.x + hr.w * 0.5, y: hr.y + hr.h * 0.5 });
+    // Before the paper takes the cards: the DOM side card's canvas.
+    const dom = await page
+      .waitForFunction(
+        () => {
+          const el = [...document.querySelectorAll('.detail__panel:not(.detail__panel--center) .cover-tile[data-cover="nosey"]')].find((t) => t.closest('.detail__panel').getBoundingClientRect().right > 0);
+          return el && 'drawn' in el.dataset && el.querySelector('.cover-tile__canvas') ? true : null;
+        },
+        null,
+        { timeout: 8000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
+    const p = await panel04(page);
+    const a = await nosey(page);
+    const imgA = await grab(page, p, dpr, 150, 195);
+    const seen = new Set([a.vm['noseyAgent/agentStatus']]);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 7000) {
+      seen.add((await nosey(page)).vm['noseyAgent/agentStatus']);
+      await page.waitForTimeout(250);
+    }
+    const z = await nosey(page);
+    const imgB = await grab(page, p, dpr, 150, 195);
+    await ptr.stop();
+    const plane = z.st.plane;
+    const moved = diff(imgA, imgB);
+    check(
+      dom && !p.centre && plane?.slot === 'side' && plane.shows === 'live' && plane.uploads > (a.st.plane?.uploads ?? 0) + 30 && z.i.clock > a.i.clock + 5 && seen.size >= 2 && moved > 0.005 && !z.i.focused && z.i.instances === a.i.instances && blueShare(imgB) > 0.3,
+      `${tag}: card 04 the side card, live`,
+      `DOM side canvas drawn: ${dom}; the paper's side plane ${plane?.shows} (${plane?.slot}), +${(plane?.uploads ?? 0) - (a.st.plane?.uploads ?? 0)} uploads in ~7 s; the instance's clock ${a.i.clock.toFixed(1)} → ${z.i.clock.toFixed(1)} s, agentStatus ${[...seen].join(' → ')}; ${pct(moved)} of the side card's pixels changed, ${pct(blueShare(imgB))} of it the blue ground; focused ${z.i.focused}; instance #${a.i.instances} → #${z.i.instances}`,
+    );
+    await page.context().close();
+  }
 }
 
-async function checkRivePointer(browser) {
-  console.log('\nrive pointer: real mouse events at the tile and the hero, the pointer moving from the first frame');
+/**
+ * NO JUMP. The cover clock pinned and walked one 1/60 s step per frame, and
+ * every frame the instance's moment drawn at a fixed size (`snapshot`: no
+ * advance) and compared with the frame before. Where what shows the instance
+ * changes (`showing`), that frame's change must be like any other frame's:
+ * ≤ max(3 × the p95 of the same run's frame-to-frame changes, 0.5%). The
+ * instance number must not change. The unfocus cut (centre → side) is the
+ * file's own reset and is excluded: its frame and the next.
+ */
+async function jumpRun(page, act, { until, ms = 1600 }) {
+  await page.evaluate(() => {
+    const J = (window.__jump = { on: true, t: window.__covers.time(), prev: null, rows: [] });
+    window.__covers.pin(J.t);
+    const W = 160;
+    const H = 208;
+    const f = () => {
+      if (!J.on) return;
+      const r = window.__covers.rive;
+      const i = r.instance('nosey');
+      const snap = r.snapshot('nosey', W, H);
+      let d = 0;
+      if (snap && J.prev) {
+        for (let k = 0; k < snap.length; k += 4) {
+          if (Math.max(Math.abs(snap[k] - J.prev[k]), Math.abs(snap[k + 1] - J.prev[k + 1]), Math.abs(snap[k + 2] - J.prev[k + 2])) > 32) d++;
+        }
+        d /= W * H;
+      }
+      J.prev = snap ? snap.slice() : null;
+      J.rows.push({ d, showing: r.status('nosey').showing, serial: i?.instances ?? 0, focused: i?.focused ?? false, clock: i?.clock ?? 0 });
+      J.t += 1 / 60;
+      window.__covers.pin(J.t);
+      requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+  await page.waitForTimeout(400); // the control's frames, before the change
+  await act();
+  if (until) await page.waitForFunction(until, null, { timeout: 15000 });
+  await page.waitForTimeout(ms);
+  const rows = await page.evaluate(() => {
+    window.__jump.on = false;
+    return window.__jump.rows;
+  });
+  await page.evaluate(() => window.__covers.pin(null));
+  rows.shift(); // no frame before it
+  const cut = new Set();
+  rows.forEach((r, k) => {
+    if (k > 0 && rows[k - 1].focused && !r.focused) {
+      cut.add(k);
+      cut.add(k + 1);
+      cut.add(k + 2);
+    }
+  });
+  // A change is judged over its frame and the two after it: on a hand-off
+  // frame nothing may advance the instance (the surface it is moving to has
+  // not drawn yet), and that frame's motion lands in the next one.
+  const switches = [];
+  const near = new Set();
+  rows.forEach((r, k) => {
+    if (k === 0 || r.showing === rows[k - 1].showing) return;
+    let d = 0;
+    for (let j = k; j <= k + 2 && j < rows.length; j++) {
+      near.add(j);
+      if (!cut.has(j)) d = Math.max(d, rows[j].d);
+    }
+    // The instance's own clock across the change: on, by at most a few
+    // steps — never back to the top of the loop, never skipping ahead.
+    const dc = rows[Math.min(k + 2, rows.length - 1)].clock - rows[k - 1].clock;
+    switches.push({ k, from: rows[k - 1].showing, to: r.showing, d, dc });
+  });
+  const control = rows.filter((r, k) => k > 0 && !cut.has(k) && !near.has(k)).map((r) => r.d);
+  return { rows, switches, control, serials: [...new Set(rows.map((r) => r.serial))], cut: cut.size > 0 };
+}
+
+async function checkRiveJump(browser) {
+  console.log('\nrive no jump: one instance through every role change, each change one frame\'s motion');
+  const judge = (label, r, expect) => {
+    const p95 = pctl(r.control, 0.95);
+    const bound = Math.max(3 * p95, 0.005);
+    const worst = r.switches.reduce((a, s) => (s.d >= a.d ? s : a), { d: 0, to: '' });
+    const roles = r.switches.map((s) => s.to || 'nothing');
+    const seenRoles = expect.every((e) => r.switches.some((s) => s.to.includes(e)));
+    const clockOk = r.switches.every((s) => s.dc >= 0 && s.dc <= 4 / 60 + 1e-6);
+    const dcs = r.switches.map((s) => `${(s.dc * 60).toFixed(1)}`).join(', ');
+    check(
+      r.switches.length > 0 && seenRoles && worst.d <= bound && r.serials.length === 1 && clockOk,
+      label,
+      `${r.switches.length} role change(s) → ${roles.join(' | ')}; worst change ${pct(worst.d)} (into "${worst.to}", over its frame and the next two) ≤ ${pct(bound)} (3 × the p95 of ${r.control.length} control frames, ${pct(p95)}; floor 0.5%); its clock across each change +${dcs} frames (0–4); instance ${r.serials.map((s) => `#${s}`).join(' → ')}${r.cut ? '; the unfocus cut excluded' : ''}`,
+    );
+  };
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
     const tag = `@${dpr}×`;
-    // Moving from the first frame, and never waiting for a quiet moment.
-    await page.goto(B, { waitUntil: 'domcontentloaded' });
-    const t0 = Date.now();
-    let loaded = null;
-    for (let i = 0; i < 150 && !loaded; i++) {
-      await page.mouse.move(140 + 60 * Math.sin(i / 3), 110 + 40 * Math.cos(i / 4));
-      await page.waitForTimeout(40);
-      loaded = await page.evaluate(() => {
-        const st = window.__covers?.rive.status('nosey');
-        return st && (st.file === 'loaded' || st.file === 'failed') ? st : null;
+    // grid → centre: card 04 clicked in the grid, a few seconds into its loop.
+    await gridMoving(page, 3);
+    await quiet(page);
+    await page.waitForFunction(() => (window.__covers.rive.instance('nosey')?.clock ?? 0) > 6, null, { timeout: 15000 });
+    let tile = await focusedTile(page);
+    let ptr = movingAround(page, { x: tile.x + tile.w * 0.5, y: tile.y + tile.h * 0.6 });
+    const a = await jumpRun(page, async () => {
+      await ptr.stop();
+      await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.6);
+      ptr = movingAround(page, async () => {
+        const hr = await heroRect(page);
+        return { x: hr.x + hr.w * 0.5, y: hr.y + hr.h * 0.5 };
       });
+    }, { until: () => window.__paper?.state() === 'on' });
+    judge(`${tag} grid → centre`, a, ['morph card', 'centre card (DOM)', 'paper centre']);
+    // centre → side, after the cut: Next, card 01 the centre; card 04 slides left.
+    await page.waitForFunction(() => (window.__covers.rive.viewModel('nosey')?.burst ?? 0) >= 1, null, { timeout: 8000 }).catch(() => {});
+    const b = await jumpRun(page, () => page.click('[data-chrome="next"]'), {
+      until: () => window.__covers.rive.status('nosey').plane?.slot === 'side' && window.__paper.state() === 'on',
+    });
+    judge(`${tag} centre → side (after the unfocus cut)`, b, ['paper side']);
+    // side → centre: Prev, back to card 04.
+    const c = await jumpRun(page, () => page.click('[data-chrome="prev"]'), {
+      until: () => window.__covers.rive.status('nosey').plane?.slot === 'centre' && window.__covers.rive.instance('nosey').focused,
+    });
+    judge(`${tag} side → centre`, c, ['paper centre']);
+    await ptr.stop();
+    // grid → side: card 03 clicked in the grid; card 04 travels in beside it.
+    await page.goto('about:blank');
+    await gridMoving(page, 2);
+    await quiet(page);
+    await page.waitForFunction(() => (window.__covers.rive.instance('nosey')?.clock ?? 0) > 6, null, { timeout: 15000 });
+    tile = await focusedTile(page);
+    const d = await jumpRun(page, () => page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.6), {
+      until: () => window.__paper?.state() === 'on' && window.__covers.rive.status('nosey').plane?.slot === 'side',
+    });
+    judge(`${tag} grid → side`, d, ['morph card', 'paper side']);
+    await page.context().close();
+  }
+}
+
+async function checkRiveFocus(browser) {
+  console.log('\nrive focus: card 04 becomes the centre card — the face finishes, errors, shrinks, and the characters burst out');
+  for (const [dpr, route] of [
+    [1, 'the morph'],
+    [2, 'the morph'],
+    [2, 'Next from 03'],
+  ]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    const tag = `@${dpr}× ${route}`;
+    if (route === 'the morph') {
+      await gridMoving(page, 3);
+      const tile = await focusedTile(page);
+      await startRec(page);
+      await page.evaluate(() => window.__rec.mark('click'));
+      await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.6);
+      await page.waitForFunction(() => document.querySelector('.detail[data-phase="active"]'), null, { timeout: 8000 });
+      await page.evaluate(() => window.__rec.mark('landed'));
+    } else {
+      await gridMoving(page, 0);
+      await page.goto(`${B}#item-03`);
+      await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
+      await startRec(page);
+      await page.evaluate(() => window.__rec.mark('click'));
+      await page.click('[data-chrome="next"]');
+      await page.waitForFunction(() => window.__covers.rive.instance('nosey')?.focused, null, { timeout: 8000 }).catch(() => {});
+      await page.evaluate(() => window.__rec.mark('landed'));
     }
+    const hr = await heroRect(page);
+    const ptr = movingAround(page, { x: hr.x + hr.w * 0.3, y: hr.y + hr.h * 0.4 });
+    await page.waitForFunction(() => (window.__covers.rive.viewModel('nosey')?.burst ?? 0) >= 1, null, { timeout: 7000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    await ptr.stop();
+    const { rows, marks } = await stopRec(page);
+    const landed = marks.landed;
+    const focusRow = rows.find((r) => r.focused);
+    const burstRow = rows.find((r) => r.burst >= 1);
+    const zeroRow = burstRow && rows.find((r) => r.frame >= burstRow.frame && r.face <= 0.001);
+    const after = burstRow ? rows.filter((r) => r.wall >= burstRow.wall + 400) : [];
+    const hxs = after.map((r) => r.hx).filter((x) => Number.isFinite(x) && x > -4000);
+    const span = hxs.length ? Math.max(...hxs) - Math.min(...hxs) : 0;
+    const toBurst = burstRow ? (burstRow.wall - landed.wall) / 1000 : NaN;
+    const toZero = zeroRow ? zeroRow.clock - burstRow.clock : NaN;
+    const morphRow = rows.find((r) => r.morph);
+    const from = morphRow ? `the morph's first frame` : 'the click';
+    const fromWall = (morphRow ?? marks.click).wall;
+    check(
+      !!focusRow && burstRow && toBurst <= 5 && toZero <= 0.5 && span > 20 && rows.every((r) => r.serial === rows[0].serial),
+      `${tag}: focus → burst`,
+      `focused ${focusRow ? `${((focusRow.wall - fromWall) / 1000).toFixed(2)} s after ${from} (at ${focusRow.clock.toFixed(2)} s of its clock, the face "${focusRow.agent}")` : 'NEVER'}; burst ${burstRow ? `${toBurst.toFixed(2)} s after landing (≤ 5), ${(burstRow.clock - focusRow.clock).toFixed(2)} s of its clock after the focus` : 'NEVER'}; the face at 0 ${Number.isFinite(toZero) ? `${toZero.toFixed(2)} s after the burst (≤ 0.5)` : 'never'}; the headset Nosey moved over ${span.toFixed(0)} units after (> 20); instance #${rows[0]?.serial}${rows.every((r) => r.serial === rows[0].serial) ? '' : ' (CHANGED)'}`,
+    );
+    await page.context().close();
+  }
+}
+
+async function checkRiveUnfocus(browser) {
+  console.log('\nrive unfocus: card 04 stops being the centre card — straight back to the looping face');
+  for (const [dpr, route] of [
+    [1, 'Next'],
+    [2, 'Prev'],
+    [2, 'Escape (to the grid)'],
+  ]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    const tag = `@${dpr}× ${route}`;
+    await gridMoving(page, 0);
+    await page.goto(`${B}#item-04`);
+    await page.waitForFunction(() => window.__paper?.state() === 'on' && (window.__covers.rive.viewModel('nosey')?.burst ?? 0) >= 1, null, { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(700);
+    const hr = await heroRect(page);
+    const ptr = movingAround(page, { x: hr.x + hr.w * 0.5, y: hr.y + hr.h + 30 });
+    await startRec(page);
+    await page.evaluate(() => {
+      // The frame the view says card 04 is no longer the centre card: the
+      // active item changed (Prev/Next), or the exit started.
+      const R = window.__rec;
+      const sel = document.querySelector('.detail__select');
+      const was = sel?.value;
+      const f = () => {
+        if (!R.on) return;
+        if (document.querySelector('.detail__select')?.value !== was || document.querySelector('.detail[data-phase="exit"]') || !document.querySelector('.detail')) R.mark('left');
+        requestAnimationFrame(f);
+      };
+      requestAnimationFrame(f);
+    });
+    await page.waitForTimeout(200);
+    if (route === 'Next') await page.click('[data-chrome="next"]');
+    else if (route === 'Prev') await page.click('[data-chrome="prev"]');
+    else await page.keyboard.press('Escape');
+    await page.waitForTimeout(1200);
+    await ptr.stop();
+    const { rows, marks } = await stopRec(page);
+    const left = marks.left;
+    const before = rows.filter((r) => left && r.frame < left.frame).at(-1);
+    const back = left && rows.find((r) => r.frame >= left.frame && r.burst === 0 && r.face >= 0.999);
+    const n = back ? back.frame - left.frame : NaN;
+    const parked = back && back.hx <= -4000;
+    check(
+      before?.burst >= 1 && back && n <= 2 && parked && !back.focused && rows.every((r) => r.serial === rows[0].serial),
+      `${tag}: unfocus → the face`,
+      `before: burst ${before?.burst}, face ${before?.face?.toFixed(2)}; ${back ? `burst 0 and faceScale 1 ${n} frame(s) after the view left card 04 (≤ 2), the characters ${parked ? 'parked' : 'NOT parked'}, the face "${back.agent}"` : 'NEVER back'}; instance #${rows[0]?.serial}${rows.every((r) => r.serial === rows[0].serial) ? '' : ' (CHANGED)'}`,
+    );
+    await page.context().close();
+  }
+}
+
+async function checkRiveDeepLink(browser) {
+  console.log('\nrive deep link: #item-04 on load — focused before the first advance, the burst 2.42 s in');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr, {}, () => {
+      const R = (window.__deep = { rows: [], first: null });
+      const f = () => {
+        const r = window.__covers?.rive;
+        const i = r?.instance('nosey');
+        if (i) {
+          const vm = r.viewModel('nosey');
+          if (!R.first && i.frames > 0) R.first = { wall: performance.now(), clock: i.clock, focusedAt: i.focusedAt };
+          R.rows.push({ wall: performance.now(), clock: i.clock, burst: vm.burst, focused: i.focused, focusedAt: i.focusedAt, serial: i.instances });
+        }
+        if (R.rows.length < 900) requestAnimationFrame(f);
+      };
+      requestAnimationFrame(f);
+    });
+    const tag = `@${dpr}×`;
+    await page.goto(`${B}#item-04`, { waitUntil: 'domcontentloaded' });
+    for (let i = 0; i < 160; i++) {
+      await page.mouse.move(820 + 40 * Math.sin(i / 3), 380 + 30 * Math.cos(i / 4));
+      await page.waitForTimeout(40);
+      if (await page.evaluate(() => window.__deep.rows.some((r) => r.burst >= 1) && window.__deep.rows.length > 30)) break;
+    }
+    const R = await page.evaluate(() => window.__deep);
+    const burst = R.rows.find((r) => r.burst >= 1);
+    const off = burst ? burst.clock - (R.first?.clock ?? 0) : NaN;
+    check(
+      !!R.first && R.first.focusedAt === 0 && burst && Math.abs(off - 2.42) <= 0.1 && new Set(R.rows.map((r) => r.serial)).size === 1,
+      `${tag} the burst after the first draw`,
+      `focused ${R.first?.focusedAt === 0 ? 'from birth (before its first advance)' : `at ${R.first?.focusedAt?.toFixed(2)} s of its clock`}; burst at ${Number.isFinite(off) ? `${off.toFixed(2)} s of its clock` : 'NEVER'} after its first draw (2.42 ± 0.1), ${burst && R.first ? `${((burst.wall - R.first.wall) / 1000).toFixed(2)} s of wall time` : ''}; instances ${[...new Set(R.rows.map((r) => `#${r.serial}`))].join(', ')}`,
+    );
+    await page.context().close();
+  }
+}
+
+async function checkRivePointer(browser, { broken = arg('--broken', '') } = {}) {
+  console.log('\nrive pointer: real mouse events at the tile and the centre card after the burst, the pointer moving from the first frame');
+  for (const dpr of [1, 2]) {
+    const page = await newPage(browser, VIEWPORTS[0], dpr);
+    const tag = `@${dpr}×`;
+    const { st: loaded, ms: loadMs } = await gridMoving(page, 3);
     const waited = loaded ? loaded.at.importing - loaded.at['waiting for idle'] : NaN;
     check(
       loaded?.file === 'loaded' && waited <= 1100,
       `${tag} loads with the pointer moving`,
-      loaded
-        ? `${loaded.file} ${Date.now() - t0} ms after navigation; waited ${waited} ms for a quiet moment (≤ 1100: the deadline), bytes ready at +${loaded.at['waiting for idle']} ms, imported at +${loaded.at.loaded} ms`
-        : 'never loaded',
+      loaded ? `${loaded.file} ~${loadMs} ms after navigation; waited ${waited} ms for a quiet moment (≤ 1100: the deadline), bytes ready at +${loaded.at['waiting for idle']} ms, imported at +${loaded.at.loaded} ms` : 'never loaded',
     );
     if (loaded?.file !== 'loaded') {
       await page.context().close();
       continue;
     }
-    for (let i = 0; i < 3; i++) {
-      await page.keyboard.press('ArrowRight');
-      await page.waitForTimeout(350);
-    }
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(600);
     await quiet(page);
     await flatGrid(page);
+    if (broken === 'pointer') {
+      await page.evaluate(() => {
+        const st = document.createElement('style');
+        st.textContent = '.cover-tile, .detail__panel { pointer-events: none !important; }';
+        document.head.append(st);
+      });
+    }
     // The hover overlay stays hit-testable (its CTA takes the pointer); it is
     // only made invisible, so the pixels are the cover's.
     await page.evaluate(() => {
@@ -1382,52 +1774,33 @@ async function checkRivePointer(browser) {
         await page.waitForTimeout(50);
       }
       await page.mouse.move(x, y); // …and the last event is the point checked
-      await page.waitForTimeout(50);
+      await page.waitForTimeout(60);
       return { x, y };
     };
-    const ptr = (role) => page.evaluate((role) => ({ vm: window.__covers.rive.viewModel('nosey', role), st: window.__covers.rive.status('nosey').pointer }), role);
-    const tracking = (vm) => Object.entries(vm).filter(([k]) => /isTracking|lookX|overHead/.test(k)).map(([k, v]) => `${k}=${typeof v === 'number' ? v.toFixed(2) : v}`);
+    const ptr = () => page.evaluate(() => ({ vm: window.__covers.rive.viewModel('nosey'), st: window.__covers.rive.status('nosey') }));
     const crop = (r) => {
       const a = r.w / r.h;
       const img = RFRAME.w / RFRAME.h;
       return img > a ? { x0: (RFRAME.w - RFRAME.h * a) / 2, y0: 0, w: RFRAME.h * a, h: RFRAME.h } : { x0: 0, y0: (RFRAME.h - RFRAME.w / a) / 2, w: RFRAME.w, h: RFRAME.w / a };
     };
-    const judge = async (role, r, label) => {
+    const want = (r, p) => {
       const c = crop(r);
-      const onCard = await page.evaluate(
-        ([x, y, sel]) => !!document.elementFromPoint(x, y)?.closest(sel),
-        [r.x + 0.12 * r.w, r.y + 0.5 * r.h, role === 'grid' ? '.grid-card' : '.detail__panel--center'],
-      );
-      const a = await hold(r, 0.12, 0.5, 1000);
-      const A = await ptr(role);
-      const imgA = await grab(page, r, dpr, 150, 200);
-      const b = await hold(r, 0.88, 0.5, 1000);
-      const Bp = await ptr(role);
-      const imgB = await grab(page, r, dpr, 150, 200);
-      await hold(r, 0.88, 0.5, 1000);
-      const imgB2 = await grab(page, r, dpr, 150, 200);
-      const want = (p) => ({ x: c.x0 + ((p.x - r.x) / r.w) * c.w, y: c.y0 + ((p.y - r.y) / r.h) * c.h });
-      const wa = want(a);
-      const wb = want(b);
-      const near = (vm, w) => Math.abs(vm.ptrX - w.x) <= 2 && Math.abs(vm.ptrY - w.y) <= 2;
-      const tA = tracking(A.vm).join(' ');
-      const tB = tracking(Bp.vm).join(' ');
-      const dMove = diff(imgA, imgB);
-      const dStill = diff(imgB, imgB2);
-      const pixels = role === 'grid' ? dMove > 3 * dStill && dMove > 0.002 : true;
-      // The hero's characters bounce: at a given moment neither sample point
-      // may be near one. Its tracking is held in heroLater, over a sweep.
-      const trackOk = role === 'grid' ? tA !== tB : true;
-      check(
-        onCard && A.st?.role === role && Bp.st?.role === role && near(A.vm, wa) && near(Bp.vm, wb) && trackOk && pixels,
-        `${tag} ${label}`,
-        `events on the ${role === 'grid' ? 'card' : 'panel'}: ${onCard}; the ${role} instance got them (${Bp.st?.n} so far) at (${A.vm.ptrX.toFixed(1)}, ${A.vm.ptrY.toFixed(1)}) / (${Bp.vm.ptrX.toFixed(1)}, ${Bp.vm.ptrY.toFixed(1)}) — wanted (${wa.x.toFixed(1)}, ${wa.y.toFixed(1)}) / (${wb.x.toFixed(1)}, ${wb.y.toFixed(1)}); tracking left [${tA}] vs right [${tB}]` +
-          (role === 'grid' ? `; pixels left vs right ${pct(dMove)} vs the tile's idle ${pct(dStill)}` : ''),
-      );
+      return { x: c.x0 + ((p.x - r.x) / r.w) * c.w, y: c.y0 + ((p.y - r.y) / r.h) * c.h };
     };
-    await judge('grid', tile, 'the focused grid tile');
-    // Over the hover overlay's CTA — the one thing over a tile that takes the
-    // pointer itself: the instance still gets moves there, not an exit.
+    // The grid tile: unfocused, the pointer does nothing to the face (by
+    // design, for now); the instance still receives it, through the crop.
+    {
+      const a = await hold(tile, 0.12, 0.5, 600);
+      const A = await ptr();
+      const wa = want(tile, a);
+      const ours = A.st.pointers.tile;
+      check(
+        ours && ours.kind === 'move' && Math.abs(ours.x - wa.x) <= 2 && Math.abs(ours.y - wa.y) <= 2,
+        `${tag} the focused grid tile`,
+        `the instance got the card's events (${ours?.n ?? 0} so far), the last a ${ours?.kind} at (${ours?.x}, ${ours?.y}) in artboard space, wanted (${wa.x.toFixed(1)}, ${wa.y.toFixed(1)}); the file mirrors ptrX/ptrY (${A.vm.ptrX.toFixed(1)}, ${A.vm.ptrY.toFixed(1)}) — unfocused, the face does not follow it`,
+      );
+    }
+    // Over the hover overlay's CTA: still moves on the tile, not an exit.
     const cta = await page.evaluate(() => {
       const b = document.querySelector('.grid-card .card-overlay__cta');
       const r = b?.getBoundingClientRect();
@@ -1441,41 +1814,38 @@ async function checkRivePointer(browser) {
       }
       await page.mouse.move(cta.x, cta.y);
       await page.waitForTimeout(80);
-      const c = crop(tile);
-      const want = { x: c.x0 + ((cta.x - tile.x) / tile.w) * c.w, y: c.y0 + ((cta.y - tile.y) / tile.h) * c.h };
-      const got = await ptr('grid');
+      const w = want(tile, cta);
+      const got = (await ptr()).st.pointers.tile;
       check(
-        /card-overlay__cta/.test(String(cta.top)) && got.st?.role === 'grid' && got.st.kind === 'move' && Math.abs(got.vm.ptrX - want.x) <= 2 && Math.abs(got.vm.ptrY - want.y) <= 2,
+        /card-overlay__cta/.test(String(cta.top)) && got?.kind === 'move' && Math.abs(got.x - w.x) <= 2 && Math.abs(got.y - w.y) <= 2,
         `${tag} over the overlay's CTA`,
-        `on top: ${String(cta.top).split(' ')[0]}; the grid instance's last event: ${got.st?.kind} at (${got.vm.ptrX.toFixed(1)}, ${got.vm.ptrY.toFixed(1)}), wanted (${want.x.toFixed(1)}, ${want.y.toFixed(1)})`,
+        `on top: ${String(cta.top).split(' ')[0]}; the instance's last event from the tile: ${got?.kind} at (${got?.x}, ${got?.y}), wanted (${w.x.toFixed(1)}, ${w.y.toFixed(1)})`,
       );
     } else bad(`${tag} over the overlay's CTA`, 'no overlay CTA on the hovered card');
-    // Into the detail view the way a person goes: a click on the tile.
-    await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.62);
-    await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
-    const landed = Date.now();
-    // What was on screen from the click to the paper, before anything else moves it on.
-    const landing = await page.evaluate(() => window.__covers.rive.status('nosey').swaps.map((w) => [w.from, w.to]));
-    // Alive, not just receiving: advancing, bouncing, uploaded to the plane,
-    // the swap seen, and one instance through three 450 ms frames (a loaded
-    // machine's arrival) — wall-time grace made each such frame a fresh hero.
-    const heroAlive = async (label, morph) => {
-      const read = () =>
-        page.evaluate(() => {
-          const st = window.__covers.rive.status('nosey');
-          const vm = window.__covers.rive.viewModel('nosey', 'hero');
-          return {
-            f: st.players.hero?.frames ?? 0,
-            inst: st.players.hero?.instances ?? 0,
-            up: st.plane?.uploads ?? 0,
-            shows: st.plane?.shows ?? 'none',
-            hx: vm?.headsetX ?? NaN,
-            hy: vm?.headsetY ?? NaN,
-            swaps: st.swaps.map((w) => [w.from, w.to]),
-          };
-        });
-      const a = await read();
-      await page.waitForTimeout(800);
+    // The centre card after the burst, reached by clicking the tile, and by a
+    // direct load.
+    const centre = async (label) => {
+      const hr = await heroRect(page);
+      const sweep = movingAround(page, async () => ({ x: hr.x + hr.w * 0.5, y: hr.y + hr.h * 0.45 }));
+      const burst = await page
+        .waitForFunction(() => (window.__covers.rive.viewModel('nosey')?.burst ?? 0) >= 1, null, { timeout: 9000 })
+        .then(() => true)
+        .catch(() => false);
+      await page.waitForTimeout(400);
+      await sweep.stop();
+      const a = await hold(hr, 0.15, 0.5, 700);
+      const A = await ptr();
+      const b = await hold(hr, 0.85, 0.5, 700);
+      const Bp = await ptr();
+      const wa = want(hr, a);
+      const wb = want(hr, b);
+      const near = (vm, w) => Math.abs(vm.ptrX - w.x) <= 2 && Math.abs(vm.ptrY - w.y) <= 2;
+      // Alive: advancing, uploaded, bouncing, one instance, through three
+      // 450 ms frames (a loaded machine's arrival).
+      const r0 = await nosey(page);
+      const up0 = r0.st.plane?.uploads ?? 0;
+      const live = movingAround(page, async () => ({ x: hr.x + hr.w * 0.5, y: hr.y + hr.h * 0.4 }));
+      await page.waitForTimeout(600);
       await page.evaluate(async () => {
         for (let k = 0; k < 3; k++) {
           await new Promise((r) => requestAnimationFrame(r));
@@ -1483,86 +1853,24 @@ async function checkRivePointer(browser) {
           while (performance.now() - t < 450);
         }
       });
-      await page.waitForTimeout(600);
-      const z = await read();
-      const swaps = morph ? landing : z.swaps;
-      const swapped = !morph || swaps.some(([from, to]) => /morph card \(Main\)/.test(from) && /Main Bounce/.test(to));
-      const moved = Math.hypot(z.hx - a.hx, z.hy - a.hy);
+      await page.waitForTimeout(900);
+      await live.stop();
+      const r1 = await nosey(page);
+      const moved = Math.hypot(r1.vm.headsetX - r0.vm.headsetX, r1.vm.headsetY - r0.vm.headsetY);
       check(
-        z.f - a.f > 30 && z.up - a.up > 30 && z.shows === 'live' && moved > 20 && z.inst === a.inst && swapped,
+        burst && A.st.pointer?.from === 'centre' && near(A.vm, wa) && near(Bp.vm, wb),
+        `${tag} ${label}: the pointer after the burst`,
+        `burst ${burst}; events from the centre panel, mirrored by the file at (${A.vm.ptrX.toFixed(1)}, ${A.vm.ptrY.toFixed(1)}) / (${Bp.vm.ptrX.toFixed(1)}, ${Bp.vm.ptrY.toFixed(1)}) — wanted (${wa.x.toFixed(1)}, ${wa.y.toFixed(1)}) / (${wb.x.toFixed(1)}, ${wb.y.toFixed(1)}), ${Bp.st.pointers.centre?.n ?? 0} in all`,
+      );
+      check(
+        r1.i.frames - r0.i.frames > 30 && (r1.st.plane?.uploads ?? 0) - up0 > 30 && r1.st.plane?.shows === 'live' && r1.st.plane?.slot === 'centre' && moved > 20 && r1.i.instances === r0.i.instances,
         `${tag} ${label}: alive`,
-        `${z.f - a.f} frames advanced and ${z.up - a.up} uploads to the plane in ~2 s, the plane shows ${z.shows}; the headset Nosey bounced ${moved.toFixed(0)} units; hero instance #${a.inst} → #${z.inst} through three 450 ms frames${morph ? `; the swap: ${swapped ? swaps.filter(([fr, to]) => /morph card \(Main\)/.test(fr) && /Main Bounce/.test(to)).map(([fr, to]) => `${fr} → ${to}`)[0] : `not seen in ${JSON.stringify(swaps)}`}` : ''}`,
+        `${r1.i.frames - r0.i.frames} frames advanced and ${(r1.st.plane?.uploads ?? 0) - up0} uploads in ~2 s, the plane ${r1.st.plane?.shows} (${r1.st.plane?.slot}); the headset Nosey moved ${moved.toFixed(0)} units; instance #${r0.i.instances} → #${r1.i.instances} through three 450 ms frames`,
       );
     };
-    // Still alive LATER — 2 s and 5 s after landing, the pointer moving over it
-    // the whole time: a hero that lived through the hand-off and then froze
-    // (a plane no longer uploaded, an instance no longer advanced, the pointer
-    // no longer routed) fails here.
-    const heroLater = async (label, since) => {
-      const hr = await heroRect(page);
-      const read = () =>
-        page.evaluate(() => {
-          const st = window.__covers.rive.status('nosey');
-          return {
-            f: st.players.hero?.frames ?? 0,
-            inst: st.players.hero?.instances ?? 0,
-            up: st.plane?.uploads ?? 0,
-            shows: st.plane?.shows ?? 'none',
-            ptr: st.pointers.hero?.n ?? 0,
-            paper: window.__paper.state(),
-            raf: window.__rafN ?? 0,
-          };
-        });
-      // Each window at least 800 ms, whenever the check starts.
-      let windowFrom = Date.now();
-      let tracked = 0;
-      const until = async (ms) => {
-        tracked = 0;
-        for (let i = 0; Date.now() - since < ms || Date.now() - windowFrom < 800; i++) {
-          if (i % 8 === 0) {
-            tracked += await page.evaluate(() => {
-              const vm = window.__covers.rive.viewModel('nosey', 'hero') ?? {};
-              return Object.entries(vm).some(([k, v]) => (/isTracking/.test(k) && v === true) || (/lookX/.test(k) && Math.abs(v) > 0.05)) ? 1 : 0;
-            });
-          }
-          await page.mouse.move(hr.x + hr.w * (0.5 + 0.35 * Math.sin(i / 5)), hr.y + hr.h * (0.4 + 0.2 * Math.cos(i / 7)));
-          await page.waitForTimeout(30);
-        }
-      };
-      const shot = () => grab(page, hr, dpr, 200, 260);
-      await page.evaluate(() => {
-        if (window.__rafN !== undefined) return;
-        window.__rafN = 0;
-        const f = () => {
-          window.__rafN++;
-          requestAnimationFrame(f);
-        };
-        requestAnimationFrame(f);
-      });
-      const samples = [];
-      let prev = await read();
-      let prevImg = await shot();
-      for (const at of [2000, 5000]) {
-        await until(at);
-        const cur = await read();
-        const img = await shot();
-        const moved = diff(prevImg, img);
-        samples.push({ tracked, ms: Date.now() - windowFrom, raf: cur.raf - prev.raf, at, frames: cur.f - prev.f, uploads: cur.up - prev.up, ptr: cur.ptr - prev.ptr, inst: cur.inst, shows: cur.shows, paper: cur.paper, moved, instSame: cur.inst === prev.inst });
-        prev = cur;
-        prevImg = img;
-        windowFrom = Date.now();
-      }
-      check(
-        samples.every((x) => x.frames > 30 && x.uploads > 30 && x.ptr > 5 && x.tracked > 0 && x.shows === 'live' && x.paper === 'on' && x.instSame && x.moved > 0.005),
-        `${tag} ${label}: still alive at 2 s and 5 s`,
-        samples.map((x) => `${x.at / 1000} s (a ${x.ms} ms window, ${x.raf} rAF): +${x.frames} frames, +${x.uploads} uploads, +${x.ptr} pointer events, a character tracking it in ${x.tracked} of its checks, plane ${x.shows}, instance #${x.inst}${x.instSame ? '' : ' (NEW)'}, ${pct(x.moved)} of the hero's pixels changed`).join('; '),
-      );
-    };
-    await heroLater('the hero after the morph', landed);
-    await judge('hero', await heroRect(page), 'the hero after the morph, on the paper');
-    await heroAlive('the hero after the morph', true);
-
-    // …and a direct load of #item-04, the pointer moving from the first frame.
+    await page.mouse.click(tile.x + tile.w / 2, tile.y + tile.h * 0.62);
+    await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 20000 });
+    await centre('the centre card after the morph');
     await page.goto('about:blank');
     await page.goto(`${B}#item-04`, { waitUntil: 'domcontentloaded' });
     const d0 = Date.now();
@@ -1572,65 +1880,169 @@ async function checkRivePointer(browser) {
       await page.waitForTimeout(40);
       live = await page.evaluate(() => window.__covers?.rive.status('nosey').plane?.shows === 'live');
     }
-    const liveMs = Date.now() - d0;
-    const liveAt = Date.now();
-    check(live && liveMs <= 4000, `${tag} direct load: the hero goes live`, live ? `the plane shows Main Bounce ${liveMs} ms after navigation, the pointer moving (≤ 4000)` : 'never live');
+    check(live && Date.now() - d0 <= 4000, `${tag} direct load: the centre card goes live`, live ? `the plane live ${Date.now() - d0} ms after navigation, the pointer moving (≤ 4000)` : 'never live');
     if (live) {
       await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 10000 });
-      await heroLater('the hero on a direct load', liveAt);
-      await judge('hero', await heroRect(page), 'the hero on a direct load');
-      await heroAlive('the hero on a direct load', false);
+      if (broken === 'pointer') {
+        await page.evaluate(() => {
+          const st = document.createElement('style');
+          st.textContent = '.cover-tile, .detail__panel { pointer-events: none !important; }';
+          document.head.append(st);
+        });
+      }
+      await quiet(page);
+      await centre('the centre card on a direct load');
     }
     await page.context().close();
   }
 }
 
-/** The headset's colour in a region: its saturated pixels, by the three hues
- *  the Colors layer cycles through. */
-function hues(img) {
-  const h = { blue: 0, red: 0, yellow: 0 };
-  for (let i = 0; i < img.length; i += 3) {
-    const [r, g, b] = [img[i], img[i + 1], img[i + 2]];
-    if (Math.max(r, g, b) - Math.min(r, g, b) < 90) continue;
-    if (b > r && b > g) h.blue++;
-    else if (r > 150 && g > 140) h.yellow++;
-    else if (r > g) h.red++;
+/** Tablets (docs/mobile.md): a finger stands in for the hover — card 04's
+ *  pointer moves while it is down, and lifting it is an exit. */
+async function checkRiveTouch(browser, { broken = arg('--broken', '') } = {}) {
+  console.log('\nrive touch: a tablet — the tap opens card 04, the burst as on a desktop, a finger drives its pointer');
+  const page = await newPage(browser, { width: 1180, height: 820 }, 2, { hasTouch: true });
+  const cdp = await page.context().newCDPSession(page);
+  const media = async () => page.evaluate(() => ({ coarse: matchMedia('(pointer: coarse)').matches, hover: matchMedia('(hover: hover)').matches }));
+  await page.goto(B, { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => window.__covers?.rive.ready('nosey'), null, { timeout: 20000 });
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(400);
   }
-  const top = Object.entries(h).sort((a, b) => b[1] - a[1])[0];
-  return { ...h, top: top[1] > 20 ? top[0] : 'none' };
+  await page.waitForTimeout(900);
+  const m = await media();
+  const tile = await focusedTile(page);
+  await startRec(page);
+  await page.touchscreen.tap(tile.x + tile.w / 2, tile.y + tile.h * 0.6);
+  await page.waitForFunction(() => document.querySelector('.detail[data-phase="active"]'), null, { timeout: 8000 }).catch(() => {});
+  await page.evaluate(() => window.__rec.mark('landed'));
+  await page.waitForFunction(() => (window.__covers.rive.viewModel('nosey')?.burst ?? 0) >= 1, null, { timeout: 7000 }).catch(() => {});
+  await page.waitForTimeout(300); // the recorder's next frames
+  const { rows, marks } = await stopRec(page);
+  const burstRow = rows.find((r) => r.burst >= 1);
+  const toBurst = burstRow && marks.landed ? (burstRow.wall - marks.landed.wall) / 1000 : NaN;
+  check(
+    !!burstRow && toBurst <= 5 && rows.every((r) => r.serial === rows[0].serial),
+    'a tap on the tile → the centre card bursts',
+    `(pointer: coarse) ${m.coarse}, (hover: hover) ${m.hover}; burst ${Number.isFinite(toBurst) ? `${toBurst.toFixed(2)} s after landing (≤ 5)` : 'NEVER'}; instance #${rows[0]?.serial}${rows.every((r) => r.serial === rows[0].serial) ? '' : ' (CHANGED)'}`,
+  );
+  await page.waitForFunction(() => window.__paper?.state() === 'on', null, { timeout: 10000 }).catch(() => {});
+  if (broken === 'pointer') {
+    await page.evaluate(() => {
+      const st = document.createElement('style');
+      st.textContent = '.detail__panel { pointer-events: none !important; }';
+      document.head.append(st);
+    });
+  }
+  const hr = await heroRect(page);
+  const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+  const at = (u, v) => ({ x: hr.x + u * hr.w, y: hr.y + v * hr.h });
+  const p0 = at(0.3, 0.5);
+  await touch('touchStart', p0.x, p0.y);
+  let last = p0;
+  for (let i = 1; i <= 20; i++) {
+    last = at(0.3 + (0.5 * i) / 20, 0.5 + 0.1 * Math.sin(i / 3));
+    await touch('touchMove', last.x, last.y);
+    await page.waitForTimeout(30);
+  }
+  await page.waitForTimeout(80);
+  const down = await page.evaluate(() => ({ vm: window.__covers.rive.viewModel('nosey'), st: window.__covers.rive.status('nosey') }));
+  await touch('touchEnd', last.x, last.y);
+  await page.waitForTimeout(120);
+  const up = await page.evaluate(() => window.__covers.rive.status('nosey').pointers.centre);
+  const a = hr.w / hr.h;
+  const c = RFRAME.w / RFRAME.h > a ? { x0: (RFRAME.w - RFRAME.h * a) / 2, y0: 0, w: RFRAME.h * a, h: RFRAME.h } : { x0: 0, y0: (RFRAME.h - RFRAME.w / a) / 2, w: RFRAME.w, h: RFRAME.w / a };
+  const w = { x: c.x0 + ((last.x - hr.x) / hr.w) * c.w, y: c.y0 + ((last.y - hr.y) / hr.h) * c.h };
+  const ok = Math.abs(down.vm.ptrX - w.x) <= 3 && Math.abs(down.vm.ptrY - w.y) <= 3;
+  check(
+    ok && down.st.pointers.centre?.kind === 'move' && up?.kind === 'exit',
+    'a finger on the centre card after the burst',
+    `while down: the file's ptrX/ptrY (${down.vm.ptrX.toFixed(1)}, ${down.vm.ptrY.toFixed(1)}), wanted (${w.x.toFixed(1)}, ${w.y.toFixed(1)}), ${down.st.pointers.centre?.n ?? 0} events; lifted: the last event ${up?.kind ?? 'none'}`,
+  );
+  await page.context().close();
+}
+
+/** The phone door (docs/mobile.md) shows card 04's still and never loads Rive. */
+async function checkRivePhone(browser, { broken = arg('--broken', '') } = {}) {
+  console.log('\nrive phone: the door shows card 04\'s still, and loads no Rive');
+  const page = await newPage(browser, { width: 390, height: 844 }, 3, { hasTouch: true, isMobile: true }, broken === 'phone' ? () => fetch('/projects/nosey/cover.riv') : null);
+  const asked = [];
+  page.on('request', (r) => asked.push(r.url()));
+  await page.goto(`${B}#view-04`, { waitUntil: 'networkidle' });
+  const where = page.url();
+  const img = await page
+    .waitForFunction(() => {
+      const el = document.querySelector('.ph-project__cover');
+      return el && el.complete && el.naturalWidth > 0 ? { src: el.getAttribute('src'), w: el.naturalWidth, h: el.naturalHeight } : null;
+    }, null, { timeout: 10000 })
+    .then((h) => h.jsonValue())
+    .catch(() => null);
+  let blue = NaN;
+  if (img) {
+    const r = await page.evaluate(() => {
+      const b = document.querySelector('.ph-project__cover').getBoundingClientRect();
+      return { x: b.x, y: b.y, w: b.width, h: b.height };
+    });
+    const shot = await grab(page, r, 3, 150, 200);
+    blue = blueShare(shot);
+    await sharp(await page.screenshot()).toFile('.context/rphone.png').catch(() => {});
+  }
+  // The runtime (dev: a pre-bundled @rive-app dep; build: an assets/rive-*.js
+  // chunk), its wasm, or a .riv.
+  const rive = asked.filter((u) => /\.riv(\?|$)|rive\.wasm|@rive-app|\/assets\/rive-[^/]*\.js/.test(u));
+  check(
+    /phone\.html/.test(where) && img?.src === '/projects/nosey/cover-still.webp' && blue > 0.3 && rive.length === 0,
+    'the door\'s project 04',
+    `${where.replace(ORIGIN, '')}; the cover ${img ? `${img.src} (${img.w}×${img.h}), ${pct(blue)} of it the blue ground` : 'not shown'}; Rive requests: ${rive.length ? rive.map((u) => u.replace(ORIGIN, '')).join(', ') : 'none'} (of ${asked.length})`,
+  );
+  await page.context().close();
 }
 
 async function checkRiveClick(browser) {
-  console.log('\nrive click: hovering onto the headset steps its colour; a click on the hero opens the project');
-  const T = 2;
+  console.log('\nrive click: a click on the centre card opens the project');
   for (const dpr of [1, 2]) {
     const page = await newPage(browser, VIEWPORTS[0], dpr);
     await heroOn04(page);
-    await quiet(page);
-    await page.evaluate(() => window.__paper.override({ zero: true }));
-    const onto = async (hr) => {
-      const vm = await page.evaluate(() => window.__covers.rive.viewModel('nosey', 'hero'));
-      const b = heroBox(hr, vm.headsetX + HEADSET.cup.x, vm.headsetY + HEADSET.cup.y, 0, 0);
-      await page.mouse.move(b.x, b.y, { steps: 3 });
-    };
-    const none = await heroRun(page, dpr, T, {});
-    const hover = await heroRun(page, dpr, T, { mid: onto });
-    const a = hues(none.img);
-    const b = hues(hover.img);
-    check(
-      a.top !== 'none' && b.top !== 'none' && a.top !== b.top,
-      `@${dpr}× onto the headset vs no pointer, 0.5s after`,
-      `the headset is ${b.top} (no pointer: ${a.top}); ${pct(diff(none.img, hover.img))} of its region differs`,
-    );
-    // A click on the hero is the card's, as on every portfolio card: #view-04.
-    await page.evaluate(() => window.__covers.pin(null));
     const hr = await heroRect(page);
+    await page.mouse.move(hr.x + hr.w * 0.4, hr.y + hr.h * 0.3, { steps: 4 });
     await page.mouse.click(hr.x + hr.w * 0.5, hr.y + hr.h * 0.35);
     await page.waitForFunction(() => location.hash.startsWith('#view-04'), null, { timeout: 5000 }).catch(() => {});
     const hash = await page.evaluate(() => location.hash);
-    check(hash.startsWith('#view-04'), `@${dpr}× a click on the hero opens the project`, `hash ${hash || '(none)'}`);
+    check(hash.startsWith('#view-04'), `@${dpr}× a click on the centre card opens the project`, `hash ${hash || '(none)'}`);
     await page.context().close();
   }
+}
+
+/** Card 02's live side card, the generic path (not enabled in the manifest):
+ *  forced on in dev, card 03 the hero, card 02 beside it on the paper live. */
+async function checkSideShader(browser) {
+  console.log('\nside live (shader): card 02 forced live as a side card — the generic path, not enabled');
+  const page = await newPage(browser, VIEWPORTS[0], 2, {}, () => (window.__coversSideLive = ['rive-site']));
+  await page.goto(`${B}#item-03`);
+  await page.waitForFunction(() => window.__paper?.state() === 'on' && window.__covers, null, { timeout: 20000 });
+  await page.waitForTimeout(800);
+  await quiet(page);
+  const r = await page.evaluate(() => {
+    for (const el of document.querySelectorAll('.detail__panel[data-idx="1"]')) {
+      const b = el.getBoundingClientRect();
+      if (b.right > 0 && b.left < innerWidth) {
+        const x0 = Math.max(0, b.x);
+        const x1 = Math.min(innerWidth, b.right);
+        return { x: x0, y: b.y, w: x1 - x0, h: b.height };
+      }
+    }
+    return null;
+  });
+  const n0 = await page.evaluate(() => window.__paper.coversDrawn());
+  const a = await grab(page, r, 2, 150, 195);
+  await page.waitForTimeout(1500);
+  const b = await grab(page, r, 2, 150, 195);
+  const n1 = await page.evaluate(() => window.__paper.coversDrawn());
+  const dom = await page.evaluate(() => [...document.querySelectorAll('.detail__panel[data-idx="1"] .cover-tile__canvas')].length);
+  const moved = diff(a, b);
+  check(n1 - n0 > 30 && moved > 0.01 && dom > 0, 'card 02 beside card 03, on the paper', `the paper drew live covers ${n1 - n0} times in 1.5 s; ${pct(moved)} of the side card's pixels moved; ${dom} DOM side canvas(es)`);
+  await page.context().close();
 }
 
 async function checkRiveReduced(browser) {
@@ -2175,6 +2587,11 @@ async function checkDrexBudgets(browser) {
 
 async function run() {
   const browser = await chromium.launch({ args: GPU });
+  // Card 04's behaviour checks run in real Chrome (CDP input, as a person's
+  // pointer reaches it); the rest, and rbudgets (its numbers are compared
+  // with earlier runs), in the bundled Chromium as before.
+  let real = null;
+  const chrome = async () => (real ??= await chromium.launch({ channel: "chrome", args: GPU }));
   try {
     if (ONLY.includes('budgets')) await checkBudgets(browser);
     if (ONLY.includes('clock')) await checkClock(browser);
@@ -2188,13 +2605,21 @@ async function run() {
     if (ONLY.includes('lpointer')) await checkLavaPointer(browser);
     if (ONLY.includes('lsweep')) await checkLavaSweep(browser);
     if (ONLY.includes('rbudgets')) await checkRiveBudgets(browser);
-    if (ONLY.includes('rswap')) await checkRiveSwap(browser);
-    if (ONLY.includes('rpointer')) await checkRivePointer(browser);
+    if (ONLY.includes('rgrid')) await checkRiveGrid(await chrome());
+    if (ONLY.includes('rside')) await checkRiveSide(await chrome());
+    if (ONLY.includes('rjump')) await checkRiveJump(await chrome());
+    if (ONLY.includes('rfocus')) await checkRiveFocus(await chrome());
+    if (ONLY.includes('runfocus')) await checkRiveUnfocus(await chrome());
+    if (ONLY.includes('rdeep')) await checkRiveDeepLink(await chrome());
+    if (ONLY.includes('rpointer')) await checkRivePointer(await chrome());
+    if (ONLY.includes('rtouch')) await checkRiveTouch(await chrome());
+    if (ONLY.includes('rphone')) await checkRivePhone(await chrome());
     if (ONLY.includes('rclick')) await checkRiveClick(browser);
     if (ONLY.includes('rreduced')) await checkRiveReduced(browser);
     if (ONLY.includes('rsky')) await checkRiveSky(browser);
     if (ONLY.includes('rground')) await checkRiveGround(browser);
     if (ONLY.includes('rcontexts')) await checkRiveContexts(browser);
+    if (ONLY.includes('sidelive')) await checkSideShader(browser);
     if (ONLY.includes('dcompile')) await checkDrexCompile(browser);
     if (ONLY.includes('dref')) await checkDrexRef(browser);
     if (ONLY.includes('dcache')) await checkDrexCache(browser);
@@ -2209,6 +2634,7 @@ async function run() {
     }
   } finally {
     await browser.close();
+    await real?.close();
   }
   const noise = errors.filter((e) => !/Download the React DevTools|favicon|webgl|WebGL/i.test(e));
   check(noise.length === 0, 'no page errors', noise.slice(0, 3).join(' | '));

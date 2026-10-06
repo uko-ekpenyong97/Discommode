@@ -147,9 +147,11 @@ export function installCoverDevHooks() {
         return { heat: ext.heat, px: ext.px, py: ext.py, extra, settled: ext.settled() };
       },
     },
-    /** Rive covers (card 04): `ready(id)`, `players()`, `player(id, role)`,
-     *  `viewModel(id, role)`, `reset(id)`, and `costs()` — the main-thread ms
-     *  of every recent frame's Rive work (draws, copies, the paper's upload). */
+    /** Rive covers (card 04): `ready(id)`, `instance(id)` (its number, clock,
+     *  focus, surfaces), `viewModel(id)`, `snapshot(id, w, h)` (its moment
+     *  drawn, no advance), `focus(id, v)`, `reset(id)`, `status(id)`, and
+     *  `costs()` — the main-thread ms of every recent frame's Rive work
+     *  (draws, copies, the paper's upload). */
     rive: riveProbe(),
   };
 }

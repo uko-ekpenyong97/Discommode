@@ -1,7 +1,8 @@
 import { riveSite } from './covers/rive-site';
 import { drex } from './covers/drex';
 import { nosey } from './covers/nosey';
-import type { AnyCoverDef, CoverDef, RiveCoverDef } from './types';
+import { coverFault } from './faults';
+import type { AnyCoverDef, CoverDef, CoverRef, RiveCoverDef } from './types';
 
 /**
  * THE COVER REGISTRY — cover id → its definition. A card names its cover in
@@ -10,7 +11,7 @@ import type { AnyCoverDef, CoverDef, RiveCoverDef } from './types';
  *   `{ kind: 'shader', id }`  a GLSL file, a dial JSON and a `CoverDef` beside
  *                            them (rive-site, card 02; drex, card 03, whose
  *                            pass A is cached)
- *   `{ kind: 'rive', id, src, artboard, stateMachine }`  a .riv, and a
+ *   `{ kind: 'rive', id, src, artboard, stateMachine, focusInput }`  a .riv, and a
  *                            `RiveCoverDef` here for its frame and dials
  *                            (nosey, card 04; src/covers/rive/)
  *
@@ -37,6 +38,23 @@ export function shaderCover(id: string): CoverDef | undefined {
 export function riveCover(id: string): RiveCoverDef | undefined {
   const def = COVERS[id];
   return def && def.kind === 'rive' ? def : undefined;
+}
+
+/**
+ * Is this cover live as a detail SIDE card (its ref's `side`)? Read by the
+ * detail view's panels, the morph's side cards and the paper alike, so the
+ * three always agree (docs/covers.md, "The live side card"). DEV: a cover id in
+ * `window.__coversSideLive` is live there too (verify:cover's `sidelive`), and
+ * the `sidestill` fault turns every one off.
+ */
+export function coverSideLive(ref: CoverRef | undefined): boolean {
+  if (!ref) return false;
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    if (coverFault('sidestill')) return false;
+    const forced = (window as unknown as { __coversSideLive?: string[] }).__coversSideLive;
+    if (forced?.includes(ref.id)) return true;
+  }
+  return ref.side === 'live';
 }
 
 /**

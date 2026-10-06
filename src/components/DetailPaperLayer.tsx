@@ -50,9 +50,9 @@ import {
 } from './detailPaper/paperGL';
 import { span } from './detailPaper/span';
 import { registerBusy } from '../activity';
-import { riveCover, shaderCover } from '../covers/covers';
-import { riveCost, riveFrame, rivePlane, rivePlayer } from '../covers/rive/riveCover';
-import type { RivePlayer } from '../covers/rive/riveCover';
+import { coverSideLive, riveCover, shaderCover } from '../covers/covers';
+import { riveCost, riveInstance, rivePlane } from '../covers/rive/riveCover';
+import type { RiveInstance } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
 import { backdropUnder, coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
 import { cssRgb } from '../covers/color';
@@ -346,17 +346,21 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   // renderer IN THIS CONTEXT, into a target whose texture IS the hero plane's
   // map — a texture cannot cross WebGL contexts, and copying a 2 MP frame across
   // from the grid's stage every frame would cost more than drawing it here.
-  // Only the hero is live; the neighbours use the still (itemHeroFace). The
+  // The hero is live, and a side card whose cover is live there
+  // (`coverSideLive`, at rest: no dome); other side cards use the still
+  // (itemHeroFace). One card per cover is on screen, so one target each. The
   // renderer (and its target) is made, compiled and first drawn by the
   // warm-up, and kept (paperGL.ts).
   const coverCrop_: Crop = { x0: 0, y0: 0, w: 1, h: 1 };
   let coversDrawn = 0;
 
-  /** Draw a cover for the hero at `pxW × pxH`; its texture, or null if not ready.
-   *  While the cards are handed OUT the DOM face is the live one (it is
-   *  dissolving back over this plane) and this holds its last frame, so the one
-   *  moment is not drawn twice. */
-  function liveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
+  const restDome = { x: 0, y: 0, amp: 0 };
+
+  /** Draw a cover for the hero (or, `side`, a side card, at rest) at `pxW ×
+   *  pxH`; its texture, or null if not ready. While the cards are handed OUT
+   *  the DOM face is the live one (it is dissolving back over this plane) and
+   *  this holds its last frame, so the one moment is not drawn twice. */
+  function liveCoverTexture(id: string, pxW: number, pxH: number, side = false): Texture | null {
     const def = shaderCover(id);
     const c = def ? liveCover(id) : null;
     if (!def || !c) return null;
@@ -370,7 +374,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       c.rt = CoverRenderer.outputTarget(pxW, pxH);
     }
     const t = coverTime();
-    advanceDome(heroDome, performance.now(), def, coverValues(id), t);
+    if (!side) advanceDome(heroDome, performance.now(), def, coverValues(id), t);
     coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_);
     const under = backdropUnder(id);
     const drawn = c.r.draw(c.rt, {
@@ -378,7 +382,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       crop: coverCrop_,
       pxW,
       pxH,
-      dome: heroDome.state,
+      dome: side ? restDome : heroDome.state,
       backdrop: under ? cssRgb(under) : null,
     });
     if (!drawn) return null;
@@ -412,26 +416,27 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
     return false; // the hand-in waits for the next frame
   }
 
-  // A RIVE cover's hero (card 04) is its hero player's canvas — the same
-  // instance the DOM hero face shows, so the hand-off is one picture —
-  // uploaded as this plane's texture when the player has drawn a new frame,
-  // and not otherwise (a still artboard costs nothing here). Premultiplied, as
-  // a 2D canvas already is: no conversion on the upload. Held while handing
-  // OUT, as the shader's is.
-  const riveTex = new Map<string, { tex: Texture; player: RivePlayer; version: number; w: number; h: number }>();
+  // A RIVE cover's plane (card 04, the hero or a live side card) is its one
+  // instance's exact-size `plane` canvas — the same instance the DOM faces
+  // show, so the hand-off is one picture — uploaded as this plane's texture
+  // when the instance has drawn a new frame, and not otherwise (a still
+  // artboard costs nothing here). Premultiplied, as a 2D canvas already is:
+  // no conversion on the upload. Held while handing OUT, as the shader's is.
+  const riveTex = new Map<string, { tex: Texture; inst: RiveInstance; version: number; w: number; h: number }>();
   let riveUploads = 0;
   let riveUploadMs = 0;
   let riveFresh = false;
 
   function riveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
-    const player = rivePlayer(id, 'hero');
-    if (!player) return null;
+    const inst = riveInstance(id);
+    if (!inst) return null;
     let c = riveTex.get(id);
-    if (state === 'out' && c && c.player === player && player.pxW === pxW && player.pxH === pxH) return c.tex;
-    const ms = player.draw(coverTime(), pxW, pxH);
-    if (player.version === 0) return null;
+    if (state === 'out' && c && c.inst === inst && c.w === pxW && c.h === pxH) return c.tex;
+    const ms = inst.draw(coverTime(), 'plane', pxW, pxH);
+    const drawn = inst.canvasOf('plane');
+    if (!drawn) return null;
     riveCost('draw', ms);
-    if (c && (c.player !== player || c.w !== pxW || c.h !== pxH)) {
+    if (c && (c.inst !== inst || c.w !== pxW || c.h !== pxH)) {
       // A new instance, or a new size: three.js allocates a texture's storage
       // once, so a new size is a new texture.
       c.tex.dispose();
@@ -439,13 +444,13 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       c = undefined;
     }
     if (!c) {
-      const tex = flatTexture(player.canvas);
+      const tex = flatTexture(drawn.canvas);
       tex.premultiplyAlpha = true;
-      c = { tex, player, version: -1, w: pxW, h: pxH };
+      c = { tex, inst, version: -1, w: pxW, h: pxH };
       riveTex.set(id, c);
     }
-    if (c.version !== player.version) {
-      c.version = player.version;
+    if (c.version !== drawn.version) {
+      c.version = drawn.version;
       c.tex.needsUpdate = true;
       const t0 = performance.now();
       R().initTexture(c.tex); // the upload, now, so it can be timed
@@ -670,7 +675,6 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   function render(force: boolean) {
     const f = last;
     if (!f || !canvas) return;
-    riveFrame(); // a frame of cover work, for the Rive hero's "left" test
     const now = performance.now();
     const still = reduced.matches;
     const zero = !!override.zero;
@@ -723,22 +727,24 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       const [tw, th] = plate || big ? [d.heroW, d.heroH] : [d.sideW, d.sideH];
       let tex = plateTex ?? faceTexture(faceKey(p.idx, tw, th));
       // The hero's live cover, at the hero's device size (coverMaxDpr caps it;
-      // a Rive cover's riveMaxDpr), on the shared cover clock. Under reduced
-      // motion it stays the still.
+      // a Rive cover's riveMaxDpr), on the shared cover clock — and a side
+      // card's, at its size, where its cover is live as a side card (not the
+      // folded cards beyond). Under reduced motion it stays the still.
       const rive = item.cover?.kind === 'rive' ? riveCover(item.cover.id) : undefined;
       const riveDials = rive ? (coverValues(rive.id) as { rive?: { riveMaxDpr?: number; coverPaperShade?: number } }).rive : undefined;
-      if (rive && big) {
-        // The readout's "paper plane": live Main Bounce, or the still.
+      const sideLive = !big && p.slot === 1 && coverSideLive(item.cover);
+      if (rive && (big || sideLive)) {
+        // The readout's "paper centre/side": live, or the still.
         let live: Texture | null = null;
         if (!still) {
           const cap = Math.min(dpr, Math.max(0.5, riveDials?.riveMaxDpr ?? 2)) / dpr;
           live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap));
           if (live) tex = live;
         }
-        rivePlane(rive.id, live ? 'live' : tex ? 'still' : 'none', riveUploads);
-      } else if (item.cover && big && !still) {
+        rivePlane(rive.id, live ? 'live' : tex ? 'still' : 'none', big ? 'centre' : 'side', riveUploads);
+      } else if (item.cover && (big || sideLive) && !still) {
         const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
-        const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap));
+        const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap), !big);
         if (live) {
           tex = live;
           liveThisFrame = true;
@@ -873,7 +879,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
     }
     if (!tweenDone(presence, now)) dirty = true;
     // A live cover changes every frame, whatever the signature says; a Rive
-    // one whenever its player drew a new picture.
+    // one whenever its instance drew a new picture.
     if (liveThisFrame || riveFresh) dirty = true;
     riveFresh = false;
 

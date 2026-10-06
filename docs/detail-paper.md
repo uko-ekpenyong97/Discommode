@@ -308,11 +308,12 @@ causes, both fixed:
   `HERO_GRACE_MS` without a draw) ran in `rivePlayer()`, which the pointer
   path called too: handing a hero nobody drew an event made a fresh one. The
   pointer goes to the instance on screen now, or waits for the next draw to
-  make one (`rivePointer`).
+  make one (`rivePointer`). Since 2026-10-05 card 04 is one instance for the
+  page's life and nothing is ever "left" (docs/covers.md, "One instance").
 
 `verify:detail`'s `sidescale` sweeps 0.3 → 1 → 0.3 at `#item-04` with the
 pointer moving on the hero: at every value the cards are handed back in, the
-plane is live Main Bounce, and the hero is #1.
+plane is card 04's live instance, and it is #1.
 
 ## Chrome
 

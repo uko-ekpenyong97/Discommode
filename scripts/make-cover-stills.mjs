@@ -25,9 +25,10 @@
  * 1800: its dither is one pixel, and halving a 1800 render averages the
  * Bayer pattern away into a flat tone the live cover never shows.
  *
- * A RIVE cover's still (card 04, nosey) is its grid artboard ("Main") at its
- * first frame, no pointer, drawn by the app's own player (riveCover.ts) — a
- * vector drawing, so it is a few tens of KB, not a megabyte.
+ * A RIVE cover's still (card 04, nosey) is its artboard ("Nosey Detail") at
+ * its first frame, unfocused — the resting face on blue, pixel for pixel the
+ * file's `cover` artboard — no pointer, drawn by the app's own instance
+ * (riveCover.ts): a vector drawing, so it is a few tens of KB, not a megabyte.
  *
  * Self-contained: starts its own Vite server and a headless Chrome, so it needs
  * no dev server running. Rendered on the GPU where there is one (Metal on a
