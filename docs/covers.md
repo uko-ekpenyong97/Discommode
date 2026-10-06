@@ -1719,3 +1719,9 @@ paper's effects on and the sky there.
    the paper's, where a side card spends its life. `verify:jank`'s
    grid→detail, next, prev and detail→reader rows are where the stage's would
    show.
+21. **Card 03 as a live side card is 12.6% off its DOM face** at 1728×996 @2×
+   beside 04 (verify:detail's `DREX_LIVE_SIDE`, 13.6%): the 1-px dither's
+   moiré inside the light. Snapping the resting side card to whole device
+   pixels (2026-10-06) did not help — the worst row −0.35 points, three
+   others 2–4× worse; numbers in `detail-verify.mjs` — and was reverted. The
+   two renderers sample the one print differently; where exactly is open.

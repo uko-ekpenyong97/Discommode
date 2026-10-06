@@ -227,6 +227,19 @@ const DREX_STILL_SIDE = 0.11;
  * ground clean and the light's disc, the logo and the wordmark in register:
  * `DREX_STILL_SIDE`'s moiré, now over the lit print instead of the still.
  * Held to the worst + 1 point: 13.6%.
+ *
+ * NOT the side card's fractional position (2026-10-06, PR #53's round 2).
+ * Snapping a resting side card's left edge — the DOM transform and the
+ * paper's rect alike — to a whole device pixel, never mid-slide, measured
+ * card 03 beside 02 / beside 04 (%, unsnapped → snapped): 1728×996 @1×
+ * 0.94 → 3.90 / 3.92 → 3.97; @2× 6.47 → 11.61 / 12.56 → 12.20; 1440×900 @1×
+ * 0.23 → 0.40 / 0.53 → 0.79; @2× 4.54 → 4.85 / 5.67 → 6.86. A 1/64 or 1/32 px
+ * nudge past Chrome's layout units moved them by tenths, snapping the top
+ * edge too made every row worse, and the side opacity (0.85 vs 1) is not it
+ * either (1 is higher: more contrast, same pattern). The worst row fell 0.35
+ * points while three others rose 2–4×, so the snap was reverted: the two
+ * faces disagree in how their renderers sample the one print, not in where
+ * the card sits on the pixel grid.
  */
 const LAVA_SIDE = 0.05;
 const DREX_LIVE_SIDE = 0.136;
