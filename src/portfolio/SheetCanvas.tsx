@@ -11,11 +11,12 @@ import {
   PlaneGeometry,
   RGBAFormat,
   Scene,
+  ImageLoader,
   Texture,
-  TextureLoader,
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { qualityDprCap, subscribeQuality } from '../quality';
 import { applyCurlOptions, bentPoint, createCurlMaterials } from './curlMaterial';
 import type { CurlMaterials, CurlMaterialOptions } from './curlMaterial';
 import { fitPlaneToRect } from './fitPlaneToRect';
@@ -159,6 +160,47 @@ export interface SectionCaptures {
   tail: SheetTexture[];
 }
 
+
+/**
+ * A CAPTURE, DECODED OFF THE MAIN THREAD. three's TextureLoader hands the GPU
+ * an <img>, and the browser decodes it at the first upload: inside a frame, a
+ * 44 ms WebP decode that dropped 8–10 frames of every portfolio pass at any
+ * frame rate (docs/perf/thirty-fps.md). Fetched as a blob and decoded with
+ * createImageBitmap instead, which decodes on another thread; flipped there
+ * (`imageOrientation`), since WebGL does not flip a bitmap, so the texture is
+ * the one the <img> made. Where that throws (an older Safari), the <img> it
+ * was. `gone()`: the texture was evicted while this was in flight.
+ */
+function loadCapture(src: string, tex: Texture, gone: () => boolean, onLoad: () => void): void {
+  const done = (image: ImageBitmap | HTMLImageElement, flipY: boolean) => {
+    if (gone()) {
+      if (image instanceof ImageBitmap) image.close();
+      return;
+    }
+    tex.image = image;
+    tex.flipY = flipY;
+    tex.needsUpdate = true;
+    onLoad();
+  };
+  fetch(src)
+    .then((r) => {
+      if (!r.ok) throw new Error(`${src}: ${r.status}`);
+      return r.blob();
+    })
+    .then((blob) => createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'default' }))
+    .then((bitmap) => done(bitmap, false))
+    .catch(() => {
+      if (!gone()) new ImageLoader().load(src, (img) => done(img, true));
+    });
+}
+
+/** A capture's texture, and its bitmap, given back. */
+function releaseCapture(tex: Texture): void {
+  tex.dispose();
+  const img = tex.image as unknown;
+  if (typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap) img.close();
+}
+
 export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCaptures[] }>(
   function SheetCanvas({ captures }, ref) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -258,7 +300,8 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         const w = canvas.clientWidth;
         const h = canvas.clientHeight;
         if (w === 0 || h === 0) return;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
+        // Adaptive quality's tier 2 caps it at 1.5 (src/quality.ts).
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR, qualityDprCap()));
         renderer.setSize(w, h, false);
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
@@ -291,6 +334,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
         dprQuery.addEventListener('change', onDprChange);
       };
       watchDpr();
+      const unsubQuality = subscribeQuality(onDprChange);
 
       // The pointer is read from the WINDOW, not from the canvas: the canvas is
       // never a pointer target (see `portfolio.css`), so it would never hear.
@@ -313,12 +357,13 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       return () => {
         off();
         dprQuery?.removeEventListener('change', onDprChange);
+        unsubQuality();
         window.removeEventListener('resize', resize);
         window.removeEventListener('pointermove', onMove);
         mesh.geometry.dispose();
         materials.dispose();
         blank.dispose();
-        for (const t of textures.values()) t.dispose();
+        for (const t of textures.values()) releaseCapture(t);
         textures.clear();
         renderer.dispose();
         /**
@@ -378,12 +423,15 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       if (!entry) return null;
       const have = loaded.current.get(entry.src);
       if (have) return have;
-      const tex = new TextureLoader().load(entry.src, () => {
+      const tex = new Texture();
+      loadCapture(entry.src, tex, () => loaded.current.get(entry.src) !== tex, () => {
         // EVICTED WHILE IN FLIGHT, and the map is what says so: a fetch started
         // for a section the reader has since moved away from lands on a texture
         // that has been disposed and dropped, and putting that on the screen
         // would bind an object with no GPU resource behind it.
         if (loaded.current.get(entry.src) !== tex) return;
+        // Uploaded now, between frames, not inside the next one's render.
+        gl.current?.renderer.initTexture(tex);
         // A late arrival has to reach the screen, and it cannot wait for the
         // next scroll tick: a reader who has stopped mid-entrance would be
         // looking at blank paper until they moved again. That includes a
@@ -607,7 +655,7 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       }
       for (const [src, tex] of loaded.current) {
         if (keep.has(src)) continue;
-        tex.dispose();
+        releaseCapture(tex);
         loaded.current.delete(src);
       }
     };

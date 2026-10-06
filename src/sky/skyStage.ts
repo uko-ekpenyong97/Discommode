@@ -24,6 +24,7 @@
  * — or a browser with no WebGL2 at all — still paints the right colours in the
  * right places instead of a hole.
  */
+import { qualityStill, subscribeQuality } from '../quality';
 import { config, subscribeConfig } from '../config';
 import { createSkyEngine } from './skyEngine';
 import type { SkyEngine, SkyTarget } from './skyEngine';
@@ -81,7 +82,7 @@ function start(): void {
     const again = createSkyEngine(el);
     if (!again) return;
     engine = again;
-    again.setReducedMotion(window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    again.setReducedMotion(window.matchMedia('(prefers-reduced-motion: reduce)').matches || qualityStill());
     again.setEnv(target, true);
     listeners.forEach((fn) => fn());
   });
@@ -95,6 +96,11 @@ function start(): void {
   // The resolution dial changes the backing-store size, which only `resize`
   // knows how to do — and it only runs on a window resize otherwise.
   subscribeConfig(() => engine?.syncSize());
+  // …as do the adaptive quality's tiers (src/quality.ts), and tier 4 stills it.
+  subscribeQuality(() => {
+    engine?.syncSize();
+    engine?.setReducedMotion(window.matchMedia('(prefers-reduced-motion: reduce)').matches || qualityStill());
+  });
 }
 
 function attach(): void {

@@ -1,3 +1,4 @@
+import { qualityStill, subscribeQuality } from '../quality';
 import { memo, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { EnvState } from '../env';
 import { claimSky, releaseSky, setSkyTarget, skyEngine, skyTarget, subscribeSky } from '../sky/skyStage';
@@ -66,10 +67,15 @@ function SkyLayer({ env }: SkyLayerProps) {
     const engine = skyEngine();
     if (!engine) return;
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const sync = () => engine.setReducedMotion(mq.matches);
+    // Adaptive quality's tier 4 is a still sky too (src/quality.ts).
+    const sync = () => engine.setReducedMotion(mq.matches || qualityStill());
     sync();
     mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
+    const off = subscribeQuality(sync);
+    return () => {
+      mq.removeEventListener('change', sync);
+      off();
+    };
   }, [env]);
 
   // Cross-fade toward the live EnvState. The first push snaps, so the first

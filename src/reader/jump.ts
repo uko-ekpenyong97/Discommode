@@ -51,9 +51,12 @@ export const RIFFLE_DISTANCE_EXP = 0.7;
 /** The last leaf is the one the eye sees come to rest: never shorter than this. */
 export const LAST_LEAF_MIN_MS = 320;
 /** An inner leaf would rather not cross in fewer ms than this — two frames of
- *  travel — but `riffleMaxInAir` and landing order outrank it: a steep curve's
- *  middle can pack lifts tighter than this allows. */
-export const MIN_LEAF_MS = 34;
+ *  travel at 30 fps (it was 34, two at 60: at 30 a leaf could lift and land
+ *  between two frames and never be drawn) — but `riffleMaxInAir` and landing
+ *  order outrank it: a steep curve's middle can pack lifts tighter than this
+ *  allows. The shipped riffles' inner leaves are 107–143 ms, so it binds
+ *  nowhere today. */
+export const MIN_LEAF_MS = 67;
 
 /** The cut's crossfade, in ms. */
 export const CUT_MS = 180;

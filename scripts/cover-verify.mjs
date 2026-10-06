@@ -146,6 +146,10 @@
  *   rground   as `ground`, on card 04's hero.
  *   rcontexts WebGL contexts with card 04 live, grid and #item-04: the same
  *             bounds as `contexts`, and none of them made by the Rive runtime.
+ *   rprint    WebKit's draw print and 20 fps side card (?webkit, in Chrome): the
+ *             paper never left on a card 04 frame older than its canvas holds,
+ *             and far fewer uploads; without ?webkit, unchanged
+ *             (rive-print-checks.mjs).
  *   sidelive  the generic live side card on a SHADER cover, forced on in dev
  *             (`window.__coversSideLive`): card 02 beside card 03 is drawn
  *             live on the paper. (Cards 02 and 03 are live side cards in the
@@ -172,6 +176,7 @@ import { join } from 'node:path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { checkDrag } from './cover-drag-checks.mjs';
+import { checkRivePrint } from './rive-print-checks.mjs';
 import { checkSideBudgets, checkSideJump, checkSideLive } from './side-live-checks.mjs';
 
 const argv = process.argv.slice(2);
@@ -179,7 +184,7 @@ const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) +
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg(
   '--only',
-  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rgrid,rside,rjump,rfocus,runfocus,rdeep,rpointer,rtouch,rphone,rclick,rreduced,rsky,rground,rcontexts,sidelive,sside,sjump,sbudgets,' +
+  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rgrid,rside,rjump,rfocus,runfocus,rdeep,rpointer,rtouch,rphone,rclick,rreduced,rsky,rground,rcontexts,rprint,sidelive,sside,sjump,sbudgets,' +
     'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets,drag',
 ).split(',');
 const B = `${ORIGIN}/`;
@@ -2626,6 +2631,7 @@ async function run() {
     if (ONLY.includes('rsky')) await checkRiveSky(browser);
     if (ONLY.includes('rground')) await checkRiveGround(browser);
     if (ONLY.includes('rcontexts')) await checkRiveContexts(browser);
+    if (ONLY.includes('rprint')) await checkRivePrint({ browser: await chrome(), B, newPage, check });
     if (ONLY.includes('sidelive')) await checkSideShader(browser);
     const side = { B, newPage, check, quiet, grab, diff, heroRect, focusedTile, movingAround, pctl, mean, pct, ms, VIEWPORT: VIEWPORTS[0], errors };
     if (ONLY.includes('sside')) await checkSideLive({ ...side, browser: await chrome() });

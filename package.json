@@ -27,6 +27,7 @@
     "verify:sky": "node scripts/sky-fluid-verify.mjs",
     "verify:cover": "node scripts/cover-verify.mjs",
     "verify:jank": "node scripts/jank-check.mjs",
+    "verify:tier": "node scripts/tier-check.mjs",
     "preview": "vite preview",
     "preview:verify": "vite preview --mode verify"
   },

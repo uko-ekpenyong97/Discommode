@@ -1,3 +1,4 @@
+import { useQualityTier } from '../quality';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useConfig } from '../config';
@@ -314,7 +315,9 @@ export function DetailView({ detail, transition, suspended = false, hero, neighb
   // it wants them — except under the dev doorway dock (`#item-NN?intro`), which
   // suspends the view on purpose and is where the paper's own dials live.
   const authoring = import.meta.env.DEV && window.location.hash.includes('?intro');
-  const paperLive = phase === 'active' && (!suspended || authoring);
+  // Adaptive quality's tier 4 keeps the DOM cards: no paper (src/quality.ts).
+  const stillQuality = useQualityTier() >= 4;
+  const paperLive = phase === 'active' && (!suspended || authoring) && !stillQuality;
 
   // The chrome's paper takes its colour from the sky under it — not while the
   // reader is up over this view, which has its own.
