@@ -46,8 +46,7 @@ Views, by hash (the desktop's links work):
   merged, the drop shadow kept; it draws the source's pixels exactly), inlined
   as the door's `h1` with the name "Discommode", in `currentColor`: the door's
   ink (#1d2230), as the type it replaced. Its shapes are as wide as that type
-  was — 0.792 of the screen's width, up to 348.5 px on its side — their left
-  edge on the door's (`docs/mobile/door-logo-full.webp`; Figma's black beside
+  was — 0.792 of the screen's width, up to 348.5 px on its side — and centred (`docs/mobile/door-logo-full.webp`; Figma's black beside
   the ink: `door-logo-ink-vs-black.webp`).
 - **The disclaimer** is Uko's Figma frame "Disclaimer" (Discommode-Website,
   node 424:37, 812×1045), set exactly as drawn: the whole frame scaled to the
