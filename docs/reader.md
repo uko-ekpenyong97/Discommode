@@ -342,6 +342,22 @@ before. Captured before and after in `docs/chrome/prev-next.webp` (the reader's
 row and the detail view's, clear noon, dusk and night; at rest, then prev
 and next hovered and pressed).
 
+**The books, 2026-10-05.** Uko's fourth cut of `cover.svg` and
+`back-cover.svg` (the other four exports were not touched: every file of
+theirs came out byte-identical). The book is now a SOLID white book, its
+spine and page edges drawn **on top of it in the paper's grey** — the first
+export where grey comes after white. Sorted by fill alone, that line went to
+the paper mask, under the ink, and the button showed a white blob. So
+`make-chrome.mjs` now treats a grey element after the first white one as a
+CUT: it is written into the ink file as an SVG `<mask>`, black where the
+line is, and the paper shows through the ink there — the export's own
+picture, nothing redrawn. Two files moved, `cover-ink.svg` and
+`back-cover-ink.svg`; both papers and the manifest are byte-identical (the
+outlines did not change), so sizes, tap targets (58 × 58 at 2560, 55.5 on an
+iPad), the sky's fill and the hover and press states are what they were.
+`docs/chrome/cover-icons.webp` is the row before and after, at 2560 × 1440 @2×
+(rest, cover hovered, back cover pressed) and on an iPad (rest, touched).
+
 ### The pills: the middle stretched, not generated
 
 The detail view needs pills of other widths ("Read issue", "Open project"),
