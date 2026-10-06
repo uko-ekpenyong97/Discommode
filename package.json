@@ -17,6 +17,7 @@
     "creases": "node scripts/make-crease-map.mjs",
     "chrome": "node scripts/make-chrome.mjs",
     "door": "node scripts/make-door.mjs",
+    "identity": "node scripts/make-identity.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "verify:pv": "node scripts/pv-verify.mjs",

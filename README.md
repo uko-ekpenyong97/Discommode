@@ -19,6 +19,7 @@ npm test         # run the unit tests (Vitest)
 npm run pages    # convert issue page scans to WebP (see below)
 npm run anims    # build the cover hover animations (see below)
 npm run chrome   # split the chrome's paper shapes out of ~/Discommode-pages/ui/reader-bar (docs/reader.md, Chrome)
+npm run identity # the icons from ~/Discommode-pages/ui/icon, and the link preview image (public/og-image.jpg)
 ```
 
 Reader page scans are **not** kept in the repo. Full-size PNG exports from Figma
