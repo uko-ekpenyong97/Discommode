@@ -127,7 +127,11 @@ const QUALITY = 82;
  * `drex/preview-*.png` are drexCover.js's handoff renders, the references
  * `verify:cover` reads from here (docs/covers.md, "Card 03"); nothing loads
  * them.
+ *
+ * And any file with `.backup` in its name (`cover.backup-2026-10-06.riv`):
+ * a copy kept beside a master while it is reworked, never something to load.
  */
+const BACKUP_RE = /\.backup\b/i;
 const NOT_SHIPPED = {
   'rive-site': ['loop.riv', 'cover-ref.png'],
   nosey: ['cover.unsigned.riv'],
@@ -468,8 +472,9 @@ async function listMedia(slug) {
 
 console.log('project media →', OUTPUT_DIR);
 for (const slug of slugs) {
-  const skip = new Set(NOT_SHIPPED[slug] ?? []);
-  const files = (await listMedia(slug)).filter(
+  const all = await listMedia(slug);
+  const skip = new Set([...(NOT_SHIPPED[slug] ?? []), ...all.filter((f) => BACKUP_RE.test(basename(f)))]);
+  const files = all.filter(
     (f) => !skip.has(f) && (VIDEO_RE.test(f) || IMAGE_RE.test(f) || RIVE_RE.test(f) || SVG_RE.test(f)),
   );
   // Two files that would ship under one name is a collision the output folder
