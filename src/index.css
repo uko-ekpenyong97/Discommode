@@ -16,7 +16,20 @@ body,
   padding: 0;
   width: 100vw;
   height: 100vh;
+  /* The visible height on iOS Safari, whose toolbar 100vh ignores (the same
+     as 100vh wherever the viewport does not change). */
+  height: 100dvh;
   overflow: hidden;
+}
+
+/* A touch screen: no rubber-band — the page is one locked viewport, and a
+   bounce dragged the grid and the reader with it. Not for a mouse: on a Mac
+   it would also take the trackpad's swipe back. */
+@media (pointer: coarse) {
+  html,
+  body {
+    overscroll-behavior: none;
+  }
 }
 
 body {

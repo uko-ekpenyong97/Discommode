@@ -160,6 +160,13 @@ export interface FlipEngine {
    * have decoded — see the implementation.
    */
   handoff: (images: HTMLImageElement[]) => void;
+  /**
+   * Let go of a press that has not become a turn (one a `tapTarget` claimed):
+   * it ends as nothing, as a cancelled press does. True if there is no press
+   * now; false if a drag is turning a page, which is left to finish. The
+   * reader's pinch (pageZoom.ts) asks this when a second finger lands.
+   */
+  releasePress: () => boolean;
   destroy: () => void;
 }
 
@@ -1315,6 +1322,14 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     else cancelTurn();
   }
 
+  function releasePress(): boolean {
+    if (!drag) return true;
+    if (!drag.onTap) return false;
+    if (book.hasPointerCapture(drag.id)) book.releasePointerCapture(drag.id);
+    drag = null;
+    return true;
+  }
+
   function onDragStart(e: Event): void {
     e.preventDefault(); // native image drag would hijack the gesture
   }
@@ -1387,6 +1402,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     prepareJump,
     probe,
     handoff,
+    releasePress,
     destroy,
   };
 }

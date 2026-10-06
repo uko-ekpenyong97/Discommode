@@ -5,6 +5,7 @@ import type { LiveConfig } from '../config';
 import { useDetailPaperDials } from './detailPaperDials';
 import { useCoverLifeDials } from './coverLifeDials';
 import { useChromeDials } from './chromeDials';
+import { useSizeDials } from './sizeDials';
 import { clampDial, loadAppDials, saveAppDials } from './dialState';
 
 /**
@@ -142,6 +143,9 @@ function DevPanels() {
   useDetailPaperDials();
   useCoverLifeDials();
   useChromeDials();
+
+  // How big the book and the detail card get off the Studio Display.
+  useSizeDials();
 
   // "Copy config" → a paste-ready DEFAULTS snippet built from the live values.
   // Reads the live `config` singleton directly, so it needs no stale-closure ref.

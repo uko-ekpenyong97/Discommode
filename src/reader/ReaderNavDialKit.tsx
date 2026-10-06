@@ -9,9 +9,11 @@ import type { JumpMode, RiffleCurve } from './jump';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
+import { useSizeDials } from '../dev/sizeDials';
 import { usePageAnimAlign } from '../dev/pageAnimAlign';
 import { usePageAnimLook } from '../dev/pageAnimLook';
 import { useTranslateDials } from '../dev/translateDials';
+import { useReaderPageDials } from '../dev/readerPageDials';
 import { installDockPanels } from '../dev/dockPanels';
 
 // Before this dock's panels register: which open, which stay folded.
@@ -72,6 +74,9 @@ export default function ReaderNavDialKit() {
   // The paper buttons, and their colour from the sky.
   useChromeDials();
 
+  // How big the book and the detail card get off the Studio Display.
+  useSizeDials();
+
   // How the inside pages' sprites sit on their pages: over the paper, or in it.
   usePageAnimLook();
 
@@ -80,6 +85,9 @@ export default function ReaderNavDialKit() {
 
   // The chapter-break quotes' translate morph (quotes.ts).
   useTranslateDials();
+
+  // One page at a time on a portrait screen (singlePage.ts; off).
+  useReaderPageDials();
 
   useEffect(
     () => () => {

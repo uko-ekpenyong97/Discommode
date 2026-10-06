@@ -20,6 +20,7 @@ import { useDetailPaperDials } from '../dev/detailPaperDials';
 import { useCoverLifeDials } from '../dev/coverLifeDials';
 import { useReaderGroundDials } from '../dev/readerGroundDials';
 import { useChromeDials } from '../dev/chromeDials';
+import { useSizeDials } from '../dev/sizeDials';
 import { persistedPanelId } from '../dev/dialState';
 import { installDockPanels } from '../dev/dockPanels';
 
@@ -142,6 +143,9 @@ export default function DoorwayDialKit({ engine, onResetToCover }: DoorwayDialKi
   // The ground its TABLE channel brings in: the washes, the shadow, the wake.
   useReaderGroundDials();
   useChromeDials();
+
+  // How big the book and the detail card get off the Studio Display.
+  useSizeDials();
 
   // REST on mount; restore the normal reader / detail baseline on unmount.
   useLayoutEffect(() => {

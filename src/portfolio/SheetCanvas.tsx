@@ -295,7 +295,14 @@ export const SheetCanvas = forwardRef<SheetCanvasHandle, { captures: SectionCapt
       // The pointer is read from the WINDOW, not from the canvas: the canvas is
       // never a pointer target (see `portfolio.css`), so it would never hear.
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // A finger scrolls the sheet; it does not tilt it. Touch puts the
+      // sheet back at rest (it used to hold wherever the last touch was).
       const onMove = (e: PointerEvent): void => {
+        if (e.pointerType === 'touch') {
+          mouse.current.tx = 0;
+          mouse.current.ty = 0;
+          return;
+        }
         mouse.current.tx = (e.clientX / window.innerWidth) * 2 - 1;
         mouse.current.ty = (e.clientY / window.innerHeight) * 2 - 1;
       };

@@ -11,6 +11,9 @@ import type { PageAnimPlayer } from './pageAnimPlayer';
 import { animsOnPage } from './pageAnims';
 import { createQuotePlayer } from './quotePlayer';
 import { quoteOnPage } from './quotes';
+import { createPageZoom } from './pageZoom';
+import type { PageZoom } from './pageZoom';
+import { useSinglePage } from './singlePage';
 import type { QuotePage } from './quotes';
 import './flipbook.css';
 
@@ -30,6 +33,13 @@ interface FlipBookProps {
   anims?: string;
   /** Inside-page sprite-atlas manifest URL (`Issue.pageAnims`), if any. */
   pageAnims?: string;
+}
+
+interface SingleTouch {
+  on: boolean;
+  pos: 'cover' | 'back' | 'mid';
+  tap: (x: number) => void;
+  swipe: (dir: 1 | -1) => void;
 }
 
 /** 'COVER' / 'BACK' for the plates, 'Page 07' for a numbered page. */
@@ -142,6 +152,10 @@ export function FlipBook({
   const rightAnimRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<FlipEngine | null>(null);
+  const zoomElRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<PageZoom | null>(null);
+  // One page at a time, what a touch's tap and swipe do (set below, each render).
+  const singleRef = useRef<SingleTouch>({ on: false, pos: 'cover', tap: () => {}, swipe: () => {} });
   const leftImgRef = useRef<HTMLImageElement>(null);
   const rightImgRef = useRef<HTMLImageElement>(null);
   const leftSlotRef = useRef<HTMLDivElement>(null);
@@ -179,7 +193,22 @@ export function FlipBook({
   useLayoutEffect(() => {
     const book = bookRef.current;
     const turnHost = hostRef.current;
-    if (!book || !turnHost) return;
+    const zoomEl = zoomElRef.current;
+    if (!book || !turnHost || !zoomEl) return;
+
+    // Zoom to read, on a touch screen (pageZoom.ts). One page at a time, an
+    // open spread's touches are all the zoom's; its taps and swipes come back
+    // here, to show the other page or to turn.
+    const zoom = createPageZoom({
+      wrapper: zoomEl,
+      content: () => book.getBoundingClientRect(),
+      claimAll: () => singleRef.current.on && singleRef.current.pos === 'mid',
+      onTap: (x, _y, claimed) => (claimed ? claimed() : singleRef.current.tap(x)),
+      onSwipe: (dir) => singleRef.current.swipe(dir),
+      tapTarget: (e) => quote.tapAt(e),
+      releasePress: () => engineRef.current?.releasePress() ?? true,
+    });
+    zoomRef.current = zoom;
 
     const engine = createFlipEngine({
       book,
@@ -190,7 +219,15 @@ export function FlipBook({
       getSpread: () => spreadRef.current,
       onSpreadChange,
       onTurnActive,
-      tapTarget: quote.tapAt,
+      // A touch's tap waits out a double tap (the zoom's) before it is the
+      // quote's or a turn; a mouse's is as it was.
+      tapTarget: (e) => {
+        const claimed = quote.tapAt(e);
+        if (e.pointerType !== 'touch') return claimed;
+        const r = book.getBoundingClientRect();
+        const dir = e.clientX - r.left > r.width / 2 ? 'next' : 'prev';
+        return zoom.deferTap(e, claimed ?? (() => engine.turn(dir)));
+      },
       liftSrc: (page) => pageAnimRef.current?.frozenSrc(page.n) ?? null,
     });
     engineRef.current = engine;
@@ -201,8 +238,19 @@ export function FlipBook({
     return () => {
       engine.destroy();
       engineRef.current = null;
+      zoom.destroy();
+      zoomRef.current = null;
     };
   }, [onSpreadChange, onEngineReady, onTurnActive, quote]);
+
+  // A new spread (the bar's arrows, a jump, the hash), or a new size: the page
+  // is shown whole again.
+  useEffect(() => zoomRef.current?.reset(), [spread]);
+  useEffect(() => {
+    const onResize = () => zoomRef.current?.reset(true);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // DEVIATION 2: the turn layer is dropped HERE, after React has committed the
   // new static spread — not inside the engine's completion callback, where the
@@ -266,55 +314,108 @@ export function FlipBook({
   // CSS; the engine takes over inline during a cover/back turn).
   const pos = spread === 0 ? 'cover' : spread >= spreads.length - 1 ? 'back' : 'mid';
 
+  // One page at a time (singlePage.ts; a dial, off): which page of an open
+  // spread is shown. A Next lands on the new spread's left page, a Prev on
+  // its right; the closed cover and back have one page anyway.
+  const single = useSinglePage();
+  const [side, setSide] = useState<'left' | 'right'>('left');
+  const lastSpread = useRef(spread);
+  useLayoutEffect(() => {
+    if (spread !== lastSpread.current) setSide(spread > lastSpread.current ? 'left' : 'right');
+    lastSpread.current = spread;
+  }, [spread]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!single || !stage || pos !== 'mid') return;
+    // A press on the screen's half toward the spread's OTHER page goes there,
+    // and is not a turn: it never reaches the book (the engine's listener).
+    const onDown = (e: PointerEvent) => {
+      const toward = e.clientX < window.innerWidth / 2 ? 'left' : 'right';
+      if (toward === side) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setSide(toward);
+    };
+    stage.addEventListener('pointerdown', onDown, { capture: true });
+    return () => stage.removeEventListener('pointerdown', onDown, { capture: true });
+  }, [single, side, pos]);
+  const singleShows = !single ? undefined : pos === 'mid' ? side : 'page';
+  // For a touch, one page at a time (the zoom claims those presses): a tap on
+  // the screen's half toward the other page shows it, on the shown page's own
+  // half turns; a swipe toward the end of the book shows the right page, then
+  // turns, and back the same.
+  useLayoutEffect(() => {
+    const turn = (dir: 'next' | 'prev') => engineRef.current?.turn(dir);
+    singleRef.current = {
+      on: single,
+      pos,
+      tap: (x) => {
+        const toward = x < window.innerWidth / 2 ? 'left' : 'right';
+        if (toward !== side) setSide(toward);
+        else turn(toward === 'left' ? 'prev' : 'next');
+      },
+      swipe: (dir) => {
+        if (dir > 0) {
+          if (side === 'left') setSide('right');
+          else turn('next');
+        } else if (side === 'right') setSide('left');
+        else turn('prev');
+      },
+    };
+  });
+
   return (
-    <div className="book-stage">
-      <div className="book" ref={setBook} data-pos={pos}>
-        <div className="book__page book__page--left" ref={leftSlotRef}>
-          {left && (
-            <img ref={leftImgRef} src={leftSrc} data-file={fileOf(left)} alt={altFor(left)} draggable={false} />
-          )}
-          {pageAnims && left?.plate && animsOnPage(left.n).length > 0 && (
-            <PageAnimLayer key={left.n} page={left} ref={leftAnimRef} />
-          )}
-          {left?.plate && leftQuote && <QuoteLayer key={left.n} page={left} quote={leftQuote} ref={leftQuoteRef} />}
+    <div className="book-zoom" ref={zoomElRef}>
+      <div className="book-stage" ref={stageRef} data-single={singleShows}>
+        <div className="book" ref={setBook} data-pos={pos}>
+          <div className="book__page book__page--left" ref={leftSlotRef}>
+            {left && (
+              <img ref={leftImgRef} src={leftSrc} data-file={fileOf(left)} alt={altFor(left)} draggable={false} />
+            )}
+            {pageAnims && left?.plate && animsOnPage(left.n).length > 0 && (
+              <PageAnimLayer key={left.n} page={left} ref={leftAnimRef} />
+            )}
+            {left?.plate && leftQuote && <QuoteLayer key={left.n} page={left} quote={leftQuote} ref={leftQuoteRef} />}
+          </div>
+          <div className="book__page book__page--right" ref={rightSlotRef}>
+            {right && (
+              <img ref={rightImgRef} src={rightSrc} data-file={fileOf(right)} alt={altFor(right)} draggable={false} />
+            )}
+            {pageAnims && right?.plate && animsOnPage(right.n).length > 0 && (
+              <PageAnimLayer key={right.n} page={right} ref={rightAnimRef} />
+            )}
+            {right?.plate && rightQuote && (
+              <QuoteLayer key={right.n} page={right} quote={rightQuote} ref={rightQuoteRef} />
+            )}
+          </div>
+          <div className="book__turn-host" ref={hostRef} />
         </div>
-        <div className="book__page book__page--right" ref={rightSlotRef}>
-          {right && (
-            <img ref={rightImgRef} src={rightSrc} data-file={fileOf(right)} alt={altFor(right)} draggable={false} />
-          )}
-          {pageAnims && right?.plate && animsOnPage(right.n).length > 0 && (
-            <PageAnimLayer key={right.n} page={right} ref={rightAnimRef} />
-          )}
-          {right?.plate && rightQuote && (
-            <QuoteLayer key={right.n} page={right} quote={rightQuote} ref={rightQuoteRef} />
-          )}
-        </div>
-        <div className="book__turn-host" ref={hostRef} />
+
+        {/* The cover's hover animations. Deliberately a SIBLING of `.book`, not a
+            child: everything inside `.book` has `pointer-events: none` so the book
+            can own the drag, and the turn layer replaces that subtree wholesale
+            mid-flip. Kept out of both, this box just sits on the cover slot — which
+            at `data-pos="cover"` is exactly the hero rect (see the CSS).
+
+            It exists only while the closed cover is genuinely at rest: spread 0,
+            no turn in the air. `turning` flips true inside `startTurn`, before the
+            leaf has moved, so the layer is gone by the first frame of the lift. */}
+        {anims && spread === 0 && !turning && (
+          <div className="book-anim">
+            <CoverAnimLayer manifest={anims} listen={bookEl} boilWith={coverSlot} />
+          </div>
+        )}
+        {/* The back cover's, on exactly the mirrored rule: the last spread, nothing
+            in the air. At data-pos="back" the book slides the other way and its
+            LEFT slot lands on the hero rect — the same box as the cover's, so the
+            same `.book-anim` placement holds. */}
+        {anims && spread === spreads.length - 1 && !turning && (
+          <div className="book-anim">
+            <CoverAnimLayer manifest={anims} listen={bookEl} face="back" boilWith={backSlot} />
+          </div>
+        )}
       </div>
-
-      {/* The cover's hover animations. Deliberately a SIBLING of `.book`, not a
-          child: everything inside `.book` has `pointer-events: none` so the book
-          can own the drag, and the turn layer replaces that subtree wholesale
-          mid-flip. Kept out of both, this box just sits on the cover slot — which
-          at `data-pos="cover"` is exactly the hero rect (see the CSS).
-
-          It exists only while the closed cover is genuinely at rest: spread 0,
-          no turn in the air. `turning` flips true inside `startTurn`, before the
-          leaf has moved, so the layer is gone by the first frame of the lift. */}
-      {anims && spread === 0 && !turning && (
-        <div className="book-anim">
-          <CoverAnimLayer manifest={anims} listen={bookEl} boilWith={coverSlot} />
-        </div>
-      )}
-      {/* The back cover's, on exactly the mirrored rule: the last spread, nothing
-          in the air. At data-pos="back" the book slides the other way and its
-          LEFT slot lands on the hero rect — the same box as the cover's, so the
-          same `.book-anim` placement holds. */}
-      {anims && spread === spreads.length - 1 && !turning && (
-        <div className="book-anim">
-          <CoverAnimLayer manifest={anims} listen={bookEl} face="back" boilWith={backSlot} />
-        </div>
-      )}
     </div>
   );
 }

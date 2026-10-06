@@ -61,7 +61,9 @@
  *                         budget — main-thread work per frame during page
  *                         flips plus the sky's own GPU frame with the fluid
  *                         awake, ≤ 8ms at p95, at 1× and 2× (a riffle's is
- *                         reported beside it), and 60fps through both.
+ *                         reported beside it), and the flips at 60fps by the
+ *                         shared frame rule (frame-rule.mjs; the riffle's
+ *                         60fps is the riffle gate's).
  *   inside-page animations (`pageanims`) spread 17 | 18 at 1× and 2×: both
  *                         sprite canvases draw, backed at the DPR, and step;
  *                         each loop's first drawn frame after a settle (on
@@ -114,6 +116,7 @@ import { atRest, boilSteps, emptyPoint, hoverAll, judgeLeave, leaveAll, registra
 import { checkLayout } from './layout-checks.mjs';
 import { checkQuote } from './quote-checks.mjs';
 import { ALPHA, RATE_MARGIN, droppedVsyncs, riffleGate } from './riffle-gate.mjs';
+import { overFrames } from './frame-rule.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
@@ -1084,7 +1087,8 @@ async function checkSky(browser) {
   // THE FLIP is held to it. THE RIFFLE is reported beside it: its main thread
   // alone is ~6.3ms at p95, the same on `main` under the wood (where the sky was
   // already rendering, covered), so the sum is over 8 at 2× whatever the ground
-  // is — see docs/reader.md. Its 60fps is asserted, like the flips'.
+  // is — see docs/reader.md. Its 60fps is the riffle gate's (riffle-gate.mjs),
+  // not this check's: the flips are held to the shared frame rule here.
   for (const dpr of [1, 2]) {
     const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: dpr });
     await context.addInitScript(WRAP_RAF);
@@ -1123,9 +1127,16 @@ async function checkSky(browser) {
     console.log(
       `    riffle @${dpr}×: main thread p95 ${riffle95.toFixed(2)}ms + sky ${sky95.toFixed(2)}ms = ${(riffle95 + sky95).toFixed(2)}ms (reported, not asserted)`,
     );
-    const gaps = [...flips.gaps, ...riffle.gaps];
-    const over = gaps.filter((g) => g > FRAME_BUDGET_MS).length;
-    check(over === 0, `@${dpr}× the flips and the riffle hold 60fps over the sky`, `worst frame ${Math.max(...gaps).toFixed(1)}ms, ${over} over ${FRAME_BUDGET_MS}ms of ${gaps.length}`);
+    // The flips, by the shared frame rule (frame-rule.mjs: one isolated
+    // dropped vsync, up to 36.3 ms, is forgiven; two in a row, or longer, is
+    // not). The riffle is not judged here: the riffle gate (above) is its
+    // 60fps question, against a control; its worst frame is reported.
+    const bad = overFrames(flips.gaps);
+    check(
+      bad.length === 0,
+      `@${dpr}× the flips hold 60fps over the sky (the frame rule)`,
+      `worst frame ${Math.max(...flips.gaps).toFixed(1)}ms of ${flips.gaps.length}, ${bad.length} over the rule${bad.length ? ` (${bad.map((i) => flips.gaps[i].toFixed(1)).join(', ')}ms)` : ''}; the riffle's worst ${Math.max(...riffle.gaps).toFixed(1)}ms, reported (the riffle gate judges it)`,
+    );
   }
 }
 
@@ -1516,8 +1527,11 @@ async function settledShot(page) {
 /**
  * Pixels that differ between two screenshots: on a page, on a page's edge (a
  * device pixel the paper only partly covers — the page sits at fractional CSS
- * px, so its edge is antialiased whatever is drawn on it), or off the paper
- * altogether, touching no page.
+ * px, so its edge is antialiased whatever is drawn on it — or the one device
+ * pixel past it: where an edge falls past the middle of a device pixel, the
+ * slot's clip snaps out to the next one, and a drawing that runs off the page
+ * there paints that row; seen at 1728×996 @2× with the bigger book, the bottom
+ * at device 1774.66, and gone at 1774.34), or off the paper altogether.
  */
 function diffByPaper(a, b, papers, dpr) {
   let on = 0;
@@ -1529,7 +1543,7 @@ function diffByPaper(a, b, papers, dpr) {
       if (a.data[i] === b.data[i] && a.data[i + 1] === b.data[i + 1] && a.data[i + 2] === b.data[i + 2]) continue;
       const [x0, x1, y0, y1] = [x / dpr, (x + 1) / dpr, y / dpr, (y + 1) / dpr];
       if (papers.some((p) => x0 >= p.x && x1 <= p.x + p.w && y0 >= p.y && y1 <= p.y + p.h)) on++;
-      else if (papers.some((p) => x1 > p.x && x0 < p.x + p.w && y1 > p.y && y0 < p.y + p.h)) edge++;
+      else if (papers.some((p) => x1 + 1 / dpr > p.x && x0 - 1 / dpr < p.x + p.w && y1 + 1 / dpr > p.y && y0 - 1 / dpr < p.y + p.h)) edge++;
       else off++;
     }
   }

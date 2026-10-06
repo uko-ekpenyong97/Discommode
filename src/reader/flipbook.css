@@ -2,6 +2,15 @@
    engine fills with the turn layer. Everything in the curl is expressed against
    --bw (the book's live pixel width), so a resize needs no rebuild. */
 
+/* Zoom to read, on a touch screen (pageZoom.ts): the stage's wrapper, the
+   reader's own box, which the zoom transforms about its top-left corner. At
+   rest it has no transform, and nothing about the stage moves. */
+.book-zoom {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 /* Absolutely centred on the viewport (vw/2, vh/2) so the book sits on the hero
    rect regardless of the chrome above and below it — the cover then lands
    exactly on the detail card. */
@@ -14,6 +23,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* One page at a time (singlePage.ts; on for touch, portrait only): the hero is
+   sized for one page (layout/hero.ts), so the open spread is two screens wide;
+   the stage moves half a page, (hero-h · 10/13) / 2, so one page is centred.
+   The closed cover and back are already centred (data-pos). */
+.book-stage[data-single] {
+  transition: transform 260ms ease;
+}
+.book-stage[data-single='left'] {
+  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * 5 / 13));
+}
+.book-stage[data-single='right'] {
+  transform: translateY(-50%) translateX(calc(var(--hero-h, 76vh) * -5 / 13));
 }
 
 .book {
@@ -53,6 +76,9 @@
      page ratio (so --bw = 2 pages = hero-h * 20/13 ≈ 2.05 × hero width). */
   width: calc(var(--hero-h, 76vh) * 20 / 13);
   height: var(--hero-h, 76vh);
+  /* Never squeezed by the stage: one page at a time, the spread is wider than
+     the screen (singlePage.ts). */
+  flex: none;
   transform: translateX(var(--book-slide, 0px));
   perspective: 2600px;
   /* DEVIATION 1: the spec puts `perspective` on .book but the curl is a
@@ -64,6 +90,22 @@
   cursor: grab;
   touch-action: pan-y;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* A touch screen: the book takes every gesture on it. With pan-y, a turn that
+   started a little off the horizontal was the browser's (a pointercancel
+   mid-turn), and a double tap or a pinch zoomed the whole page. Now a pinch
+   or a double tap anywhere around the book is the reader's own zoom
+   (pageZoom.ts). The reader's chrome takes a tap as a tap (no double-tap zoom
+   wait). */
+@media (pointer: coarse) {
+  .book,
+  .book-zoom {
+    touch-action: none;
+  }
+  .reader-layer {
+    touch-action: manipulation;
+  }
 }
 
 /* Closed spreads: shift the book so the single occupied slot lands on the hero

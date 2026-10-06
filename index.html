@@ -5,6 +5,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Interactive Portfolio — Phase 1</title>
+    <script>
+      // THE PHONE DOOR (docs/mobile.md, src/device.ts — keep the two in step):
+      // a coarse pointer that cannot hover, on a screen whose short side is
+      // under 600 px, or `?phone` in the query or the hash's query, goes to
+      // phone.html with its query and hash, before this page's module starts.
+      // By capability, never the user agent. Anywhere else it does nothing.
+      (function () {
+        var has = function (q) { return /(^|[?&])phone(=|&|$)/.test(q); };
+        var forced = has(location.search.slice(1)) || has(location.hash.split('?')[1] || '');
+        var m = window.matchMedia;
+        var phone = forced || (!!m && m('(pointer: coarse)').matches && m('(hover: none)').matches && Math.min(screen.width, screen.height) < 600);
+        // The site's own tags (its module, preloads, stylesheet), moved here by
+        // the build (vite.config.ts, phoneDoor) so a phone never even fetches
+        // them: written in place, as the parser would have met them.
+        var site = '__SITE_TAGS__';
+        if (phone) location.replace('/phone.html' + location.search + location.hash);
+        else if (site.charAt(0) === '<') document.write(site);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -121,13 +121,19 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
     // hover overlay's CTA sits over a tile and takes the pointer, and under
     // the paper the hero's DOM face is `visibility: hidden` and takes none.
     const target = (dome === 'own' ? host.closest<HTMLElement>('.grid-card') : host.closest<HTMLElement>('.detail__panel')) ?? host;
+    // A finger is a pointer only while it is down: touch moves drive the dome
+    // as a hovering mouse does, and lifting it is leaving (below), so the
+    // cover eases back to rest rather than holding the last touch.
     const onMove = (e: PointerEvent) => {
-      if (!spring || e.pointerType === 'touch') return;
+      if (!spring) return;
       const r = host.getBoundingClientRect();
       const f = frameOf(coverId, r.width, r.height, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
       spring.point(f[0], f[1]);
     };
     const onLeave = () => spring?.leave();
+    const onLift = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') spring?.leave();
+    };
     // A click on a grid tile of a cover that keeps state per instance (card
     // 02's lava warmth) hands that state to the hero's dome, which the morph
     // card and the hero share: the warmth carries into the detail view and
@@ -139,10 +145,14 @@ export function CoverTile({ coverId, live = true, dome = 'own', role = 'grid', c
     target.addEventListener('pointermove', onMove, { passive: true });
     target.addEventListener('pointerleave', onLeave);
     target.addEventListener('pointerdown', onDown);
+    target.addEventListener('pointerup', onLift);
+    target.addEventListener('pointercancel', onLift);
     return () => {
       target.removeEventListener('pointermove', onMove);
       target.removeEventListener('pointerleave', onLeave);
       target.removeEventListener('pointerdown', onDown);
+      target.removeEventListener('pointerup', onLift);
+      target.removeEventListener('pointercancel', onLift);
       onLeave();
       remove();
       delete host.dataset.drawn;
@@ -197,14 +207,20 @@ function riveInput(id: string, role: RivePlayerRole, host: HTMLElement, mode: 'h
     if (r.width < 1 || r.height < 1) return;
     rivePointer(id, role, kind, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, r.width, r.height);
   };
-  const onMove = (e: PointerEvent) => {
-    if (e.pointerType !== 'touch') send('move', e);
-  };
+  // A finger moves the characters while it is down, and lifting it is an exit.
+  const onMove = (e: PointerEvent) => send('move', e);
   const onLeave = (e: PointerEvent) => send('exit', e);
+  const onLift = (e: PointerEvent) => {
+    if (e.pointerType !== 'mouse') send('exit', e);
+  };
   target.addEventListener('pointermove', onMove, { passive: true });
   target.addEventListener('pointerleave', onLeave);
+  target.addEventListener('pointerup', onLift);
+  target.addEventListener('pointercancel', onLift);
   return () => {
     target.removeEventListener('pointermove', onMove);
     target.removeEventListener('pointerleave', onLeave);
+    target.removeEventListener('pointerup', onLift);
+    target.removeEventListener('pointercancel', onLift);
   };
 }

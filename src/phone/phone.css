@@ -1,0 +1,354 @@
+/* THE PHONE DOOR (PhoneApp.tsx, docs/mobile.md). A flat, light sky behind
+   paper: the chrome's own pill and close shapes (src/chrome), Bowlby One for
+   the type that is the magazine's, the system's sans for the reading. */
+
+/* The disclaimer's faces, cut to its glyphs (npm run door): Frijole and Space
+   Mono Bold, their family names dropped from the subsets, so they go by these.
+   The door's only: phone.html preloads them, and nothing on the desktop
+   loads this stylesheet. Block, not swap: no fallback flash of the title. */
+@font-face {
+  font-family: 'Door Display';
+  src: url('/fonts/door-display-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Door Mono';
+  src: url('/fonts/door-mono-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  --ph-sky: #cfe0f1;
+  --ph-ink: #1d2230;
+  --ph-pad: max(18px, env(safe-area-inset-left));
+  color-scheme: light;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ph-sky);
+  color: var(--ph-ink);
+  font: 17px/1.5 ui-sans-serif, -apple-system, system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+img,
+video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* The chrome's colours, as the sky would make them on a clear day. */
+.ph[data-chrome] {
+  /* The disclaimer runs to the screen's edges: nothing past them scrolls. */
+  overflow-x: clip;
+  --paper: #f6ecdc;
+  --paper-press: #e9dcc6;
+  --ink: #1d2230;
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.ph a {
+  color: inherit;
+}
+
+.ph-h1,
+.ph-h2,
+.ph-card__no,
+.ph-bar__title,
+.ph-page__label {
+  font-family: 'Bowlby One', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+/* ── the door ── */
+
+.ph-door {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px var(--ph-pad) 56px;
+}
+
+/* Uko's logo (door-logo.svg, Figma 430:41), in the door's ink. Its shapes as
+   wide as the type it replaced ("DISCOMMODE", Bowlby One at 10vw, up to 44 px:
+   0.792 of the screen's width, up to 348.5 px on its side), centred. The
+   svg's box is wider than the shapes, by the drop shadow's room: 1593
+   viewBox units to their 1585, from x 4 to 1588.75, so centring the box
+   centres the shapes (to 0.125 units, 0.02 px). */
+.ph-mast {
+  --ph-logo: calc(0.792 * min(100vw, 440px));
+  margin: 0;
+  line-height: 0;
+}
+.ph-mast svg {
+  display: block;
+  width: calc(var(--ph-logo) * 1593 / 1585);
+  height: auto;
+  margin-inline: auto;
+}
+
+.ph-cover {
+  display: block;
+  box-shadow: 0 2px 4px rgb(20 24 40 / 0.18), 0 18px 40px rgb(20 24 40 / 0.22);
+}
+.ph-cover img {
+  width: 100%;
+}
+
+/* ── the disclaimer ──
+   Uko's Figma frame "Disclaimer" (Discommode-Website 424:37), 812×1045: the
+   whole frame scaled to the phone's width, one Figma unit = --u, so every box
+   is where the frame has it at any phone size (the 72 / 96 / 88 left edges
+   are the frame's). Wider than a phone in portrait — a phone on its side — it
+   stops at 480 px, centred, and the red runs to the edges either side. The
+   body's 45 units are 16 px at a 289 px wide screen; it never goes under. */
+.ph-disclaimer {
+  --ph-dw: min(100vw, 480px);
+  --u: calc(var(--ph-dw) / 812);
+  /* Out of the door's column, to the screen's edges. */
+  width: 100vw;
+  margin: 22px calc(50% - 50vw) 18px;
+  background: #b82540;
+  color: #ffeaee;
+}
+.ph-disclaimer__frame {
+  position: relative;
+  width: var(--ph-dw);
+  aspect-ratio: 812 / 1045;
+  margin: 0 auto;
+}
+.ph-disclaimer__title,
+.ph-disclaimer__body,
+.ph-disclaimer__photo {
+  position: absolute;
+  margin: 0;
+}
+/* The boxes are the frame's; the type in them is set as Figma sets it: its
+   line heights (97 and 67 units: Figma's, not the browser's "normal", which
+   rounds Space Mono to 66 and reads Frijole's mismatched metrics its own way)
+   and its glyphs that much lower in the box (3 and 2.5 units, measured against
+   the frame's own render). */
+.ph-disclaimer__title {
+  padding-top: calc(3 * var(--u));
+}
+.ph-disclaimer__body {
+  padding-top: calc(2.5 * var(--u));
+}
+.ph-disclaimer__title {
+  left: calc(72 * var(--u));
+  top: calc(61 * var(--u));
+  font: 400 calc(70 * var(--u)) / calc(97 * var(--u)) 'Door Display', ui-sans-serif, system-ui, sans-serif;
+  white-space: nowrap;
+}
+.ph-disclaimer__body {
+  left: calc(96 * var(--u));
+  top: calc(191 * var(--u));
+  width: calc(621 * var(--u));
+  font: 700 max(16px, calc(45 * var(--u))) / calc(67 * var(--u)) 'Door Mono', ui-monospace, monospace;
+  overflow-wrap: break-word;
+}
+.ph-disclaimer__body p {
+  margin: 0;
+}
+.ph-disclaimer__photo {
+  left: calc(88 * var(--u));
+  top: calc(626 * var(--u));
+  width: calc(636 * var(--u));
+  height: calc(358 * var(--u));
+  max-width: none;
+}
+
+.ph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+/* A pill as a link: at least 44 px tall, as the chrome's are. */
+.ph-pill {
+  --chrome-scale: 1.15;
+  text-decoration: none;
+}
+
+.ph-h1 {
+  margin: 18px 0 8px;
+  font-size: clamp(26px, 8vw, 36px);
+  line-height: 1.1;
+}
+
+.ph-h2 {
+  margin: 34px 0 12px;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.ph-h3 {
+  margin: 20px 0 6px;
+  font-size: 18px;
+}
+
+.ph-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.ph-card {
+  position: relative;
+  display: block;
+  text-decoration: none;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(20 24 40 / 0.16), 0 12px 28px rgb(20 24 40 / 0.18);
+}
+.ph-card img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+.ph-card__no {
+  position: absolute;
+  left: 14px;
+  top: 10px;
+  font-size: 44px;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 2px 18px rgb(0 0 0 / 0.6);
+}
+.ph-card__caption {
+  display: block;
+  padding: 10px 14px 12px;
+  font: 12px/1.3 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* ── the bar over the stack and a project ── */
+
+.ph-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(8px, env(safe-area-inset-top)) var(--ph-pad) 8px;
+  background: color-mix(in srgb, var(--ph-sky) 88%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.ph-bar__title {
+  font-size: 18px;
+}
+.ph-back {
+  --chrome-scale: 0.85;
+}
+
+/* ── Issue 01, a page after a page; pinch to zoom is the browser's ── */
+
+.ph-pages {
+  list-style: none;
+  margin: 0 auto;
+  padding: 8px var(--ph-pad) 24px;
+  max-width: 760px;
+  display: grid;
+  gap: 18px;
+}
+.ph-page {
+  scroll-margin-top: 64px;
+}
+.ph-page img {
+  width: 100%;
+  aspect-ratio: 10 / 13;
+  background: #f4ede3;
+  box-shadow: 0 1px 3px rgb(20 24 40 / 0.16), 0 10px 26px rgb(20 24 40 / 0.18);
+}
+.ph-page__label {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.7;
+  text-align: center;
+}
+
+.ph-end {
+  display: flex;
+  justify-content: center;
+  padding: 12px var(--ph-pad) 48px;
+}
+
+/* ── a project ── */
+
+.ph-project {
+  max-width: 680px;
+  margin: 0 auto;
+}
+.ph-project > :not(.ph-bar):not(.ph-project__cover) {
+  padding-left: var(--ph-pad);
+  padding-right: var(--ph-pad);
+}
+.ph-project__cover {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+.ph-section {
+  padding-bottom: 8px;
+}
+.ph-letterhead,
+.ph-caption {
+  font: 12px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+.ph-letterhead {
+  display: flex;
+  justify-content: space-between;
+}
+.ph-text p {
+  margin: 0 0 12px;
+}
+.ph-twoup,
+.ph-row,
+.ph-figure {
+  margin: 18px 0;
+}
+.ph-twoup {
+  display: grid;
+  gap: 18px;
+}
+.ph-twoup figure,
+.ph-row {
+  margin: 0;
+}
+figcaption {
+  margin-top: 8px;
+  font-size: 15px;
+}
+.ph-stats {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.ph-stats span {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+}
