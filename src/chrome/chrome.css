@@ -26,14 +26,16 @@
 
 /* ── the element ──────────────────────────────────────────────────────────
    A bare box around the face. It is the hit area: at least 44×44 whatever
-   the scale, the face centred in it. */
+   the scale on a touch screen, the face centred in it; with a fine pointer,
+   at least the face floor (`--chrome-hit`, which useChromeFit writes on
+   each line from layout/hero.ts). */
 .paper {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: var(--chrome-hit, 44px);
+  min-height: var(--chrome-hit, 44px);
   margin: 0;
   padding: 0;
   border: 0;
@@ -178,7 +180,8 @@
   display: flex;
   align-items: center;
   font-family: 'Bowlby One', ui-sans-serif, system-ui, sans-serif;
-  font-size: calc(15 * var(--chrome-u));
+  /* Never under 11px, however small the chrome gets. */
+  font-size: max(11px, calc(15 * var(--chrome-u)));
   line-height: 1;
   white-space: nowrap;
   color: var(--ink, #fff);

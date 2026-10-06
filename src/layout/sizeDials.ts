@@ -1,8 +1,9 @@
 /**
- * READER SIZE and DETAIL SIZE — the dials of the hero layout (layout/hero.ts):
- * how far the chrome's gaps may shrink on a screen smaller than the Studio
- * Display, and how much of the space they leave the book and the detail card
- * take. The gaps as tuned at 2560 wide are the MAXIMUMS; these are the floors.
+ * READER SIZE, DETAIL SIZE and READER CHROME SCALE — the dials of the hero
+ * layout (layout/hero.ts): how far the chrome's gaps and faces may shrink on a
+ * screen smaller than the Studio Display, and how much of the space they leave
+ * the book and the detail card take. The gaps and faces as tuned at 2560×1440
+ * are the MAXIMUMS; these are the floors.
  *
  * `SIZE` is the live object: the dev panels (src/dev/sizeDials.ts, at `?intro`
  * in the app's dock, the doorway's and READER NAV) write it, and the hero
@@ -23,6 +24,18 @@ export interface SizeDials {
   gapMin: number;
   /** Least gap from the book (or card) to the viewport's sides, px. */
   sideMin: number;
+  /** READER CHROME SCALE: the least size of the smallest face (the 46
+   *  arrows and pills), px, with a fine pointer (a mouse or trackpad). Its
+   *  hit area is the face. The other faces keep their proportion to it. */
+  faceMinFine: number;
+  /** The same on a touch screen (a coarse pointer). Its hit area never goes
+   *  under 44×44 whatever this says (the face centres in it). */
+  faceMinTouch: number;
+  /** The viewport height at which the chrome and its gaps start shrinking
+   *  with the height, px: they scale by the smaller of the width over 2560
+   *  and the height over this. 1300 keeps the Studio Display with a
+   *  browser's toolbars at the signed-off layout. */
+  heightRef: number;
 }
 
 export const SIZE_DEFAULTS: SizeDials = {
@@ -31,6 +44,9 @@ export const SIZE_DEFAULTS: SizeDials = {
   marginMin: 16,
   gapMin: 16,
   sideMin: 16,
+  faceMinFine: 32,
+  faceMinTouch: 44,
+  heightRef: 1300,
 };
 
 export const SIZE: SizeDials = { ...SIZE_DEFAULTS };

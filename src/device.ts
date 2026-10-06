@@ -17,6 +17,9 @@ export const PHONE_SHORT_SIDE = 600;
 
 const mq = (q: string): boolean => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches;
 
+/** A coarse primary pointer: a touch screen (a tablet; a phone gets the door). */
+export const coarsePointer = (): boolean => mq('(pointer: coarse)');
+
 /** `?phone` in the query or in the hash's query (`#read-01/3?phone`). */
 export function phoneForced(): boolean {
   if (typeof location === 'undefined') return false;

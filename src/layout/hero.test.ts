@@ -8,6 +8,7 @@ import {
   PAGE_ASPECT_W,
   REF_VW,
   chromeFloor,
+  chromeHitMin,
   computeHeroLayout,
   computeHeroRect,
   referenceBand,
@@ -23,8 +24,9 @@ import { SIZE, SIZE_DEFAULTS, setSize } from './sizeDials';
  * cover opaque over the panel with only its contact shadow arriving.
  *
  * Its height is what the chrome leaves: the band over and under it is the
- * Studio Display's (2560×1440) at its width, and shrinks with a narrower
- * screen, to floors.
+ * Studio Display's (2560×1440), and shrinks with a narrower or shorter screen,
+ * to floors: the faces' are 32px with a fine pointer, 44px on a touch screen.
+ * Vitest has no matchMedia, so a call without `coarse` is a fine pointer.
  */
 const VIEWPORTS: Array<[number, number]> = [
   [2560, 1440],
@@ -75,26 +77,51 @@ describe("computeHeroLayout: the Studio Display's gaps are the maximums", () => 
   });
 
   // The Studio Display with a browser's toolbars: 2560 wide, less tall.
-  it.each([1600, 1300, 1200, 1000, 912])('keeps the reference band at 2560×%i', (vh) => {
-    const l = computeHeroLayout(2560, vh);
-    expect(l.k).toBe(1);
-    expect(l.band).toBeCloseTo(referenceBand(), 6);
-    expect(l.rect.y).toBeCloseTo(referenceBand(), 6);
+  it.each([1600, 1440, 1300])('keeps the reference band at 2560×%i', (vh) => {
+    for (const coarse of [false, true]) {
+      const l = computeHeroLayout(2560, vh, false, coarse);
+      expect(l.k).toBe(1);
+      expect(l.band).toBeCloseTo(referenceBand(), 6);
+      expect(l.rect.y).toBeCloseTo(referenceBand(), 6);
+    }
+  });
+
+  it.each([1200, 1000, 912])('shrinks with the height under heightRef, at 2560×%i', (vh) => {
+    const s = vh / SIZE_DEFAULTS.heightRef;
+    expect(viewportScale(2560, vh)).toBeCloseTo(s, 9);
+    const l = computeHeroLayout(2560, vh, false);
+    expect(l.k).toBeCloseTo(s, 9);
+    expect(l.margin).toBeCloseTo(CHROME.chromeMargin * s, 9);
+    expect(l.band).toBeCloseTo(referenceBand() * s, 9);
   });
 
   it('shrinks every gap in proportion to the width, faces to their floor', () => {
-    const l = computeHeroLayout(1728, 1117);
+    const l = computeHeroLayout(1728, 1117, false, false);
     const s = 1728 / REF_VW;
     expect(viewportScale(1728, 1117)).toBeCloseTo(s, 9);
-    expect(l.k).toBeCloseTo(chromeFloor(), 9);
+    // The 46s at 32px, the 58s at 40.3.
+    expect(l.k).toBeCloseTo(chromeFloor(1, false), 9);
+    expect(l.k * 46).toBeCloseTo(32, 9);
+    expect(l.hit).toBe(32);
     expect(l.margin).toBeCloseTo(CHROME.chromeMargin * s, 9);
     expect(l.sideGap).toBeCloseTo(gap0 * s, 9);
     expect(l.band).toBeCloseTo(CHROME.chromeMargin * s + CHROME_LINE * l.k + gap0 * s, 9);
   });
 
+  it('keeps the touch floors on a touch screen: faces and hit areas 44', () => {
+    const l = computeHeroLayout(1180, 820, false, true);
+    expect(l.k).toBeCloseTo(chromeFloor(1, true), 9);
+    expect(l.k * 46).toBeCloseTo(44, 9);
+    expect(l.hit).toBe(MIN_TARGET);
+    // The same screen with a trackpad gets the smaller chrome, and the bigger book.
+    const fine = computeHeroLayout(1180, 820, false, false);
+    expect(fine.k * 46).toBeCloseTo(32, 9);
+    expect(fine.rect.h).toBeGreaterThan(l.rect.h);
+  });
+
   it('holds the gaps at their floors on a tablet', () => {
     for (const [vw, vh] of [[820, 1180], [1024, 1366]]) {
-      const l = computeHeroLayout(vw, vh, false);
+      const l = computeHeroLayout(vw, vh, false, true);
       expect(l.margin).toBe(SIZE.marginMin);
       expect(l.sideGap).toBeGreaterThanOrEqual(SIZE.sideMin);
       expect(l.band).toBeGreaterThanOrEqual(SIZE.marginMin + MIN_TARGET + SIZE.gapMin);
@@ -103,22 +130,27 @@ describe("computeHeroLayout: the Studio Display's gaps are the maximums", () => 
 
   const SCREENS: Array<[number, number]> = [...VIEWPORTS, [1366, 1024], [1024, 1366], [1180, 820], [820, 1180], [1133, 744], [744, 1133], [2560, 800]];
 
-  it.each(SCREENS)('never gives more than the reference, and keeps every face at 44px, at %ix%i', (vw, vh) => {
-    const l = computeHeroLayout(vw, vh);
-    expect(l.band).toBeLessThanOrEqual(referenceBand() + 1e-9);
-    expect(l.margin).toBeLessThanOrEqual(CHROME.chromeMargin);
-    expect(l.sideGap).toBeLessThanOrEqual(gap0 + 1e-9);
-    expect(l.k * 46).toBeGreaterThanOrEqual(MIN_TARGET - 1e-9);
+  it.each(SCREENS)('never gives more than the reference, and keeps every face at its floor, at %ix%i', (vw, vh) => {
+    for (const coarse of [false, true]) {
+      const l = computeHeroLayout(vw, vh, false, coarse);
+      expect(l.band).toBeLessThanOrEqual(referenceBand() + 1e-9);
+      expect(l.margin).toBeLessThanOrEqual(CHROME.chromeMargin);
+      expect(l.sideGap).toBeLessThanOrEqual(gap0 + 1e-9);
+      expect(l.k * 46).toBeGreaterThanOrEqual((coarse ? 44 : 32) - 1e-9);
+      expect(l.hit).toBe(coarse ? 44 : 32);
+    }
   });
 
   it.each(SCREENS)('never lets the chrome reach the book at %ix%i', (vw, vh) => {
     for (const single of [false, true]) {
-      const l = computeHeroLayout(vw, vh, single);
-      // The top line (margin, face) and the bottom row end before the book.
-      expect(l.margin + Math.max(CHROME_LINE * l.k, MIN_TARGET)).toBeLessThan(l.rect.y);
-      expect(l.rect.y).toBeGreaterThanOrEqual(l.band - 1e-9);
-      const pages = single ? 1 : 2;
-      expect(pages * l.rect.w).toBeLessThanOrEqual(vw - 2 * l.sideGap + 1e-9);
+      for (const coarse of [false, true]) {
+        const l = computeHeroLayout(vw, vh, single, coarse);
+        // The top line (margin, face or hit area) and the bottom row end before the book.
+        expect(l.margin + Math.max(CHROME_LINE * l.k, l.hit)).toBeLessThan(l.rect.y);
+        expect(l.rect.y).toBeGreaterThanOrEqual(l.band - 1e-9);
+        const pages = single ? 1 : 2;
+        expect(pages * l.rect.w).toBeLessThanOrEqual(vw - 2 * l.sideGap + 1e-9);
+      }
     }
   });
 
@@ -128,7 +160,16 @@ describe("computeHeroLayout: the Studio Display's gaps are the maximums", () => 
     [1366, 1024, 750.4],
     [1180, 820, 558.3],
   ])('gives a bigger book than the fixed band did at %ix%i', (vw, vh, before) => {
-    expect(computeHeroLayout(vw, vh, false).rect.h).toBeGreaterThan(before + 40);
+    expect(computeHeroLayout(vw, vh, false, true).rect.h).toBeGreaterThan(before + 40);
+  });
+
+  // The 44px floor (2026-10-05) against the 32px one with a fine pointer.
+  it.each([
+    [1728, 1117, 899.6],
+    [1512, 982, 777.8],
+    [1440, 900, 700.2],
+  ])('gives a bigger book with a fine pointer than the 44px floor did at %ix%i', (vw, vh, before) => {
+    expect(computeHeroLayout(vw, vh, false, false).rect.h).toBeGreaterThan(before + 25);
   });
 
   it('sizes for one page, reading a page at a time', () => {
@@ -141,10 +182,17 @@ describe("computeHeroLayout: the Studio Display's gaps are the maximums", () => 
     expect(computeHeroLayout(1180, 820, true).rect.h).toBeCloseTo(computeHeroLayout(1180, 820, false).rect.h, 9);
   });
 
-  it('shrinks further on a short screen, past its width', () => {
-    const l = computeHeroLayout(2560, 800);
-    expect(viewportScale(2560, 800)).toBeCloseTo((0.3 * 800) / (2 * 136.8), 9);
-    expect(l.band).toBeLessThan(referenceBand());
+  it('shrinks further on a short screen, past its height', () => {
+    try {
+      // Under the height's own scale (800 / 1300), the share binds first.
+      expect(viewportScale(2560, 800)).toBeCloseTo(800 / SIZE_DEFAULTS.heightRef, 9);
+      // With the height out of it, the hero's least share is what binds.
+      setSize({ heightRef: 1 });
+      expect(viewportScale(2560, 800)).toBeCloseTo((0.3 * 800) / (2 * 136.8), 9);
+      expect(computeHeroLayout(2560, 800).band).toBeLessThan(referenceBand());
+    } finally {
+      setSize(SIZE_DEFAULTS);
+    }
   });
 
   it.each(VIEWPORTS)('keeps the reference neighbour gap ratio at %ix%i', (vw, vh) => {
@@ -175,8 +223,11 @@ describe("computeHeroLayout: the Studio Display's gaps are the maximums", () => 
     expect(referenceBand(0.9)).toBeCloseTo(72, 6);
   });
 
-  it('never floors above 1, and floors at the 44px face at chromeScale 1', () => {
-    expect(chromeFloor(1)).toBeCloseTo(44 / 46, 9);
-    expect(chromeFloor(0.5)).toBe(1);
+  it('never floors above 1, and floors at the 32px face (44px on touch) at chromeScale 1', () => {
+    expect(chromeFloor(1, false)).toBeCloseTo(32 / 46, 9);
+    expect(chromeFloor(1, true)).toBeCloseTo(44 / 46, 9);
+    expect(chromeFloor(0.5, true)).toBe(1);
+    expect(chromeHitMin(false)).toBe(32);
+    expect(chromeHitMin(true)).toBe(44);
   });
 });

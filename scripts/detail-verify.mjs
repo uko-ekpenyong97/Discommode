@@ -124,8 +124,15 @@ const IDENTITY = 0.005;
  * line art that softness is edges everywhere. The flat-art cards meet the spec
  * at every size; this card does not, so it is held to what it measures, and
  * listed as Not done, rather than hiding it inside a looser bar for all four.
+ *
+ * With the chrome down to 32px with a mouse (2026-10-06, docs/reader.md), the
+ * hero at 1440×900 grew from 539×700 to 562×731, and card 01 beside #item-04
+ * @1× went from 5.88% (main, two runs) to 7.50% (two runs, the same number).
+ * The diff maps (`--diff-dir`, main beside this) are edges alone, the same
+ * edges of the same line art, more of them at the new scale; nothing out of
+ * register. Side held to the worst + 1 point: 8.5%.
  */
-const CARD01_IDENTITY = { hero: 0.01, side: 0.07 };
+const CARD01_IDENTITY = { hero: 0.01, side: 0.085 };
 /**
  * CARD 02 AS A NEIGHBOUR. As the hero, card 02 is the live cover and meets the
  * spec's 0.5% (the clock pinned, one shader draws both sides of the hand-off).
@@ -187,6 +194,14 @@ const LAVA_HERO = 0.093;
  * resamplers. 0.126–0.393%; the bar stays 2%.
  */
 const RIVE_SIDE = 0.02;
+/**
+ * CARD 04 AS THE HERO, held to the spec's 0.5% until the chrome went down to
+ * 32px with a mouse (2026-10-06): the hero at 1440×900 grew from 539×700 to
+ * 562×731, and @1× it went from 0.482% (main, two runs) to 0.528% (three runs,
+ * the same number). The diff map is the face's circle's 1-px antialiased rim
+ * alone, as it is on main; the features register. Held to 0.6%.
+ */
+const RIVE_HERO = 0.006;
 /**
  * CARD 03, the drex cover (docs/covers.md, "Card 03"), held to card 02's
  * budgets for card 02's reason. Its still is a 1-px Bayer dither: noise edge to
@@ -263,8 +278,10 @@ const budget = (r) =>
           : LIVE_SIDE.has(1)
             ? LAVA_SIDE
             : COVER_STILL_SIDE
-      : r.idx === 3 && r.slot !== 0
-        ? RIVE_SIDE
+      : r.idx === 3
+        ? r.slot !== 0
+          ? RIVE_SIDE
+          : RIVE_HERO
         : IDENTITY;
 const HANDOFF = 0.02;
 const handoffBudget = (r) => Math.max(HANDOFF, budget(r));

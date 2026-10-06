@@ -7,10 +7,12 @@
  * 0.81, detailGap 40), written down here as numbers (not read back from the
  * code it checks): at 2560 wide the band over the hero and under it is 136.8 —
  * margin 35, the line of chrome, and the gap to the hero/book — and the
- * neighbours sit 40 from an 897.2-wide hero. A narrower screen scales the
- * margin and the gaps by s = its width over 2560 (less on a short screen, where
- * the hero would get under 0.7 of the height), never under 16px each; the
- * chrome's faces by s too, never under 44px (×44/46). On every viewport, in
+ * neighbours sit 40 from an 897.2-wide hero. A smaller screen scales the
+ * margin and the gaps by s = the smaller of its width over 2560 and its height
+ * over 1300 (less on a short screen, where the hero would get under 0.7 of the
+ * height), never under 16px each; the chrome's faces by s too, the smallest
+ * never under 32px with a mouse (×32/46; the suites' pages have a fine
+ * pointer), its hit area the same. On every viewport, in
  * both views, the margins, the chrome's sizes and the gaps must be those
  * numbers to ±2px, and no line's paper (the scallops, not just the base) may
  * overlap the hero/book. In the detail view, no card number may show without its card (a
@@ -50,12 +52,15 @@ const TOL = 2;
 /** The hero's least share of the height before a short screen shrinks the
  *  chrome further, the face floor, and the least margin and gap. */
 const MIN_SHARE = 0.7;
-const FLOOR = 44 / 46;
+const FACE_MIN = 32;
+const FLOOR = FACE_MIN / 46;
 const MIN_GAP = 16;
+/** The height under which the chrome shrinks with the height. */
+const HEIGHT_REF = 1300;
 
-/** The viewport's scale: its width over 2560, or the share's on a short
- *  screen, never over 1. */
-export const expectedS = (vw, vh) => Math.min(1, vw / 2560, ((1 - MIN_SHARE) * vh) / (2 * SPEC.band));
+/** The viewport's scale: the smaller of its width over 2560 and its height
+ *  over 1300, or the share's on a short screen, never over 1. */
+export const expectedS = (vw, vh) => Math.min(1, vw / 2560, vh / HEIGHT_REF, ((1 - MIN_SHARE) * vh) / (2 * SPEC.band));
 /** The faces' k: s, held to the floor. */
 export const expectedK = (vw, vh) => Math.min(1, Math.max(FLOOR, expectedS(vw, vh)));
 /** A margin or gap at the reference, on this screen: × s, never under 16. */
@@ -177,7 +182,7 @@ export async function checkLayout({ browser, view, states, openState, open, chec
       const topClear = m.hero.t - m.topPaper.b;
       const rowClear = m.rowPaper.t - m.hero.b;
       check(topClear > 0 && rowClear > 0, `${tag}: no paper over the ${view === 'reader' ? 'book' : 'hero'}`, `top ${f(topClear)}px clear, row ${f(rowClear)}px clear`);
-      check(m.faces >= 44 - 0.01 && m.hits >= 44 - 0.01, `${tag}: faces ≥ 44px, hit areas ≥ 44×44`, `smallest face ${f(m.faces)}, hit ${f(m.hits)}`);
+      check(m.faces >= FACE_MIN - 0.01 && m.hits >= FACE_MIN - 0.01, `${tag}: faces ≥ ${FACE_MIN}px, hit areas ≥ ${FACE_MIN}×${FACE_MIN}`, `smallest face ${f(m.faces)}, hit ${f(m.hits)}`);
       check(m.close === 'Close', `${tag}: the top shape is "Close"`, `aria-label "${m.close}"`);
       check(near(m.hero.h, heroH), `${tag}: the ${view === 'reader' ? 'book' : 'hero'} fills the space the chrome leaves`, `height ${f(m.hero.h)}, want ${f(heroH)} (${(100 * m.hero.h / vh).toFixed(1)}% of the height)`);
       if (vw === 2560 && vh === 1440) {

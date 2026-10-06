@@ -8,18 +8,21 @@
  * THE STUDIO DISPLAY'S GAPS ARE THE MOST THERE IS. The spacing was signed off
  * on the Studio Display (2560×1440): there the hero is `detailCardScale` of
  * the height and the band over it and under it — margin, chrome, gap — is
- * `REF_VH · (1 − detailCardScale) / 2` (136.8 at 0.81). On a narrower screen
- * every part of that band shrinks in proportion to the width (`s`, the
- * viewport's width over 2560): the margins and the gaps to the book down to
- * their floors in px (sizeDials.ts), the chrome's faces down to the face floor
- * (no face under 44px, ×0.957 for the 46 arrows). A short screen shrinks them
+ * `REF_VH · (1 − detailCardScale) / 2` (136.8 at 0.81). On a smaller screen
+ * every part of that band shrinks in proportion to the screen (`s`, the
+ * smaller of the viewport's width over 2560 and its height over READER
+ * CHROME SCALE's `heightRef`, 1300): the margins and the gaps to the book down
+ * to their floors in px, the chrome's faces down to the face floor — the
+ * smallest face (the 46 arrows and pills) never under `faceMinFine` (32) with
+ * a mouse or trackpad, nor `faceMinTouch` (44) on a touch screen, where no hit
+ * area goes under 44 either (sizeDials.ts). A short screen shrinks them
  * further, where the hero would otherwise fall under {@link HERO_MIN_SHARE} of
  * the height. The book never shrinks first: the band is reserved, and the
  * hero (10:13) takes the height that is left, the open book (two pages; one,
- * reading a page at a time) the width. `useChromeFit` puts the faces' fit and
- * the margin on the chrome lines.
+ * reading a page at a time) the width. `useChromeFit` puts the faces' fit, the
+ * least hit area and the margin on the chrome lines.
  *
- * At 2560 wide (and 912 tall or more) `s` is 1, and the layout is the one
+ * At 2560 wide and 1300 tall or more `s` is 1, and the layout is the one
  * that was signed off, to the pixel.
  *
  * The neighbours keep the reference's hero-to-neighbour gap RATIO: `detailGap`
@@ -33,6 +36,7 @@ import { useLayoutEffect, useState } from 'react';
 import { CHROME, subscribeChrome } from '../chrome/chromeDials';
 import SHAPES from '../chrome/shapes.json';
 import { config, subscribeConfig } from '../config';
+import { coarsePointer } from '../device';
 import { singlePageAt, subscribeSinglePage } from '../reader/singlePage';
 import { SIZE, subscribeSize } from './sizeDials';
 
@@ -50,7 +54,7 @@ export const REF_VH = 1440;
 /** Past its width, a short screen shrinks the chrome further where the hero
  *  would otherwise get less than this share of the viewport's height. */
 export const HERO_MIN_SHARE = 0.7;
-/** Smallest a chrome face may get, CSS px (the 46 arrows stop at ×0.957). */
+/** Smallest a chrome hit area may get on a touch screen, CSS px. */
 export const MIN_TARGET = 44;
 /** The tallest line of chrome, Figma units: the 58 book icons in the reader's
  *  row, and the close X at the top. The band's gap is measured from it. */
@@ -73,6 +77,9 @@ export interface HeroLayout {
   /** The chrome faces' fit: 1, or less on a smaller screen (never under the
    *  face floor). The faces and the gaps between them in a row are × k. */
   k: number;
+  /** The least hit area of a chrome control, px: 44 on a touch screen; with a
+   *  fine pointer, the face floor. */
+  hit: number;
   /** The chrome's margin from the viewport's top and bottom, px. */
   margin: number;
   /** The band over the hero and under it, px: margin, the tallest line of
@@ -88,23 +95,35 @@ export interface HeroLayout {
 export const referenceBand = (cardScale: number = config.detailCardScale): number =>
   (REF_VH * (1 - cardScale)) / 2;
 
-/** The face floor as a k: no face under {@link MIN_TARGET}, never above 1. */
-export const chromeFloor = (scale: number = CHROME.chromeScale): number =>
-  Math.min(1, MIN_TARGET / (CHROME_SMALLEST * scale));
+/** The face floor as a k: the smallest face never under `faceMinTouch` on a
+ *  touch screen, nor `faceMinFine` with a fine pointer; never above 1. */
+export const chromeFloor = (scale: number = CHROME.chromeScale, coarse: boolean = coarsePointer()): number =>
+  Math.min(1, (coarse ? SIZE.faceMinTouch : SIZE.faceMinFine) / (CHROME_SMALLEST * scale));
 
-/** The viewport's scale against the reference: its width over 2560, less on a
- *  short screen (where the reference band would leave the hero under its
- *  share), never over 1. */
+/** The least hit area: 44 on a touch screen; with a fine pointer the face
+ *  floor (a 32 face is a 32 target), never more than 44. */
+export const chromeHitMin = (coarse: boolean = coarsePointer()): number =>
+  coarse ? MIN_TARGET : Math.min(MIN_TARGET, SIZE.faceMinFine);
+
+/** The viewport's scale against the reference: the smaller of its width over
+ *  2560 and its height over `heightRef`, less on a short screen (where the
+ *  reference band would leave the hero under its share), never over 1. */
 export function viewportScale(vw: number, vh: number, band0: number = referenceBand()): number {
   const kShare = ((1 - HERO_MIN_SHARE) * vh) / (2 * band0);
-  return Math.max(0, Math.min(1, vw / REF_VW, kShare));
+  return Math.max(0, Math.min(1, vw / REF_VW, vh / SIZE.heightRef, kShare));
 }
 
 /**
  * The hero layout for a viewport. `single`: the reader shows one page at a
  * time here (singlePage.ts), so the book that must fit the width is one page.
+ * `coarse`: a touch screen, with the touch floors.
  */
-export function computeHeroLayout(vw: number, vh: number, single: boolean = singlePageAt(vw, vh)): HeroLayout {
+export function computeHeroLayout(
+  vw: number,
+  vh: number,
+  single: boolean = singlePageAt(vw, vh),
+  coarse: boolean = coarsePointer(),
+): HeroLayout {
   const band0 = referenceBand();
   // The reference band's three parts: margin, the tallest line of chrome (or
   // its 44px hit area), and the gap between it and the book.
@@ -114,11 +133,12 @@ export function computeHeroLayout(vw: number, vh: number, single: boolean = sing
   const s = viewportScale(vw, vh, band0);
   // Each shrinks with the screen, to its floor (never over its reference).
   const floored = (ref: number, min: number) => Math.max(Math.min(ref, min), ref * s);
-  const k = Math.min(1, Math.max(chromeFloor(), s));
+  const k = Math.min(1, Math.max(chromeFloor(CHROME.chromeScale, coarse), s));
+  const hit = chromeHitMin(coarse);
   const margin = floored(margin0, SIZE.marginMin);
   const gapToBook = floored(gap0, SIZE.gapMin);
   const sideGap = floored(gap0, SIZE.sideMin);
-  const band = margin + Math.max(line0 * k, MIN_TARGET) + gapToBook;
+  const band = margin + Math.max(line0 * k, hit) + gapToBook;
   // Height first; then the width: the open book (two pages, 20:13) for the
   // reader, or one page reading a page at a time, and one card for the detail.
   const byHeight = vh - 2 * band;
@@ -134,7 +154,7 @@ export function computeHeroLayout(vw: number, vh: number, single: boolean = sing
   // arriving. The grid stays 3:4 (CARD_ASPECT_* is unchanged).
   const w = (h * PAGE_ASPECT_W) / PAGE_ASPECT_H;
   const gap = (config.detailGap * h) / (REF_VH * config.detailCardScale);
-  return { rect: { x: (vw - w) / 2, y: (vh - h) / 2, w, h }, k, margin, band, sideGap, gap };
+  return { rect: { x: (vw - w) / 2, y: (vh - h) / 2, w, h }, k, hit, margin, band, sideGap, gap };
 }
 
 export const computeHeroRect = (vw: number, vh: number): HeroRect => computeHeroLayout(vw, vh).rect;
@@ -160,6 +180,7 @@ const same = (a: HeroLayout, b: HeroLayout): boolean =>
   a.rect.w === b.rect.w &&
   a.rect.h === b.rect.h &&
   a.k === b.k &&
+  a.hit === b.hit &&
   a.margin === b.margin &&
   a.gap === b.gap;
 
