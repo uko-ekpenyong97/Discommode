@@ -48,9 +48,10 @@ export interface PosterItem {
   /**
    * A LIVE cover: a shader or a Rive file, drawn every frame, mouse-reactive,
    * transparent where its ground is — the grid tile, the morph card and the
-   * detail hero all draw it (src/covers/, docs/covers.md). `image` stays its
-   * STILL: what the neighbours, reduced motion and a browser without WebGL (a
-   * shader) or the Rive runtime (a .riv) show.
+   * detail hero all draw it (src/covers/, docs/covers.md), and with
+   * `side: 'live'` the detail view's side card too, at rest. `image` stays
+   * its STILL: what the folded cards, reduced motion and a browser without
+   * WebGL (a shader) or the Rive runtime (a .riv) show.
    */
   cover?: CoverRef;
   /** Issue id (e.g. "01") — `kind: 'magazine'` only; opens `#read-NN`. */
@@ -76,8 +77,16 @@ export interface PosterItem {
  * white paper of its own; its `image` is the still, the light parked on the
  * logo. Card 04's is live too, and
  * is Rive: Nosey's looping face on blue, which errors and bursts into the
- * four bouncing characters when card 04 is the detail view's centre card,
- * and is live as a side card too; its `image` is the face's first frame.
+ * four bouncing characters when card 04 is the detail view's centre card;
+ * its `image` is the face's first frame.
+ *
+ * Cards 02, 03 and 04 are LIVE SIDE CARDS (`side: 'live'`): beside the
+ * centre card each shows its cover at rest — the lava drifting, the light on
+ * its `restMode`, the face looping — on the same clock and state as
+ * everywhere else, and only the centre card takes the pointer
+ * (docs/covers.md, "The live side card"). Card 01 has no live cover: its
+ * rest is a still (its sprites play on hover only), so as a side card it
+ * shows that, as it does in the grid.
  */
 export const CONTENT: PosterItem[] = [
   {
@@ -96,8 +105,9 @@ export const CONTENT: PosterItem[] = [
     slug: 'item-02',
     kind: 'portfolio',
     project: '02',
-    // The rive-site cover (docs/covers.md); its still, from `npm run covers`.
-    cover: { kind: 'shader', id: 'rive-site' },
+    // The rive-site cover (docs/covers.md), live as a side card too; its
+    // still, from `npm run covers`.
+    cover: { kind: 'shader', id: 'rive-site', side: 'live' },
     image: '/projects/rive-site/cover-still.webp',
     hue: 208,
     captions: ['NO 02', 'RIVE', 'REDESIGN'],
@@ -109,9 +119,10 @@ export const CONTENT: PosterItem[] = [
     slug: 'item-03',
     kind: 'portfolio',
     project: '03',
-    // The Drex cover (docs/covers.md, "Card 03"); its still, from
-    // `npm run covers`. The project is `src/portfolio/projects/drex.ts`.
-    cover: { kind: 'shader', id: 'drex' },
+    // The Drex cover (docs/covers.md, "Card 03"), live as a side card too;
+    // its still, from `npm run covers`. The project is
+    // `src/portfolio/projects/drex.ts`.
+    cover: { kind: 'shader', id: 'drex', side: 'live' },
     image: '/projects/drex/cover-still.webp',
     hue: 276,
     captions: ['NO 03', 'DREX', 'ZINES'],

@@ -7,7 +7,8 @@ export type CoverRef = ShaderCoverRef | RiveCoverRef;
 /**
  * What a cover shows as a detail SIDE card (the card beside the centre one):
  * its still (the default), or the live cover — the same moment as everywhere
- * else, at rest (docs/covers.md, "The live side card"). Card 04's is live.
+ * else, at rest, the pointer reaching only the centre card (docs/covers.md,
+ * "The live side card"). Cards 02, 03 and 04 are live.
  */
 export type CoverSide = 'still' | 'live';
 

@@ -13,6 +13,8 @@ import { isBusy } from '../activity';
 import { afterFirstPaint } from '../firstPaint';
 import { DomeSpring, advanceDome, domeUp } from './dome';
 import type { Crop, Dome } from './types';
+import { noteDraw, noting } from './drawProbe';
+import type { DrawSurface } from './drawProbe';
 
 /**
  * THE COVER STAGE — the DOM instances' one renderer.
@@ -714,6 +716,7 @@ function tick(now: number) {
       if (!p.visible || p.coverId !== g.coverId || (p.dome && domeUp(p.dome.state))) continue;
       if (p.capped !== g.capped || Math.round((p.pxW / p.pxH) * 100) / 100 !== g.aspect) continue;
       present(p, g.pxW, g.pxH);
+      if (import.meta.env.DEV && noting()) noteDraw(p.coverId, surfaceOf(p, false), t, restDome);
     }
     for (let i = 0; i < nUndrawn; i++) {
       const p = undrawn[i];
@@ -727,6 +730,7 @@ function tick(now: number) {
     if (cover && draw(cover, p.drawW, p.drawH, t, p.dome.state, coverBackdrop(p.coverId) === 'solid' ? null : backdrop)) {
       present(p, p.drawW, p.drawH);
       ownDraws.set(p.coverId, (ownDraws.get(p.coverId) ?? 0) + 1);
+      if (import.meta.env.DEV && noting()) noteDraw(p.coverId, surfaceOf(p, true), t, p.dome.state);
     }
   }
 
@@ -812,6 +816,15 @@ function domRole(p: Presenter): number {
   const panel = p.host.closest('.detail__panel');
   if (panel) return panel.classList.contains('detail__panel--center') ? RIVE_DOM.centre : RIVE_DOM.side;
   return RIVE_DOM.tiles;
+}
+
+/** DEV: where a presenter is, as the draw probe names it (drawProbe.ts). */
+function surfaceOf(p: Presenter, own: boolean): DrawSurface {
+  const r = domRole(p);
+  if (r === RIVE_DOM.morph) return 'morph';
+  if (r === RIVE_DOM.centre) return 'centre';
+  if (r === RIVE_DOM.side) return 'side';
+  return own ? 'tile own' : 'tiles';
 }
 
 /** The cap on a Rive cover's backing store (its riveMaxDpr dial). */

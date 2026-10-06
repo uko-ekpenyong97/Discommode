@@ -147,8 +147,14 @@
  *   rcontexts WebGL contexts with card 04 live, grid and #item-04: the same
  *             bounds as `contexts`, and none of them made by the Rive runtime.
  *   sidelive  the generic live side card on a SHADER cover, forced on in dev
- *             (`window.__coversSideLive`), not enabled in the manifest: card
- *             02 beside card 03 is drawn live on the paper.
+ *             (`window.__coversSideLive`): card 02 beside card 03 is drawn
+ *             live on the paper. (Cards 02 and 03 are live side cards in the
+ *             manifest since 2026-10-06; the force path stays.)
+ *
+ * CARDS 02 AND 03 AS LIVE SIDE CARDS (scripts/side-live-checks.mjs, which
+ * says what each asserts): `sside`, `sjump`, `sbudgets` — the last with
+ * `--side-budget-viewports 1728x996@2,2560x1440@2` for a subset, and
+ * `--side-json <file>` to write its rows.
  *
  * `sky`, `ground`, `rsky` and `rground` are about the sky THROUGH a cover's
  * ground. A cover whose own `coverBackdrop` is 'solid' (card 04: its artboards
@@ -166,13 +172,14 @@ import { join } from 'node:path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { checkDrag } from './cover-drag-checks.mjs';
+import { checkSideBudgets, checkSideJump, checkSideLive } from './side-live-checks.mjs';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const ORIGIN = arg('--url', 'http://localhost:5173');
 const ONLY = arg(
   '--only',
-  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rgrid,rside,rjump,rfocus,runfocus,rdeep,rpointer,rtouch,rphone,rclick,rreduced,rsky,rground,rcontexts,sidelive,' +
+  'budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,rbudgets,rgrid,rside,rjump,rfocus,runfocus,rdeep,rpointer,rtouch,rphone,rclick,rreduced,rsky,rground,rcontexts,sidelive,sside,sjump,sbudgets,' +
     'dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets,drag',
 ).split(',');
 const B = `${ORIGIN}/`;
@@ -2620,6 +2627,21 @@ async function run() {
     if (ONLY.includes('rground')) await checkRiveGround(browser);
     if (ONLY.includes('rcontexts')) await checkRiveContexts(browser);
     if (ONLY.includes('sidelive')) await checkSideShader(browser);
+    const side = { B, newPage, check, quiet, grab, diff, heroRect, focusedTile, movingAround, pctl, mean, pct, ms, VIEWPORT: VIEWPORTS[0], errors };
+    if (ONLY.includes('sside')) await checkSideLive({ ...side, browser: await chrome() });
+    if (ONLY.includes('sjump')) await checkSideJump({ ...side, browser: await chrome() });
+    if (ONLY.includes('sbudgets')) {
+      const viewports = arg('--side-budget-viewports', '1728x996@1,1728x996@2,1440x900@1,1440x900@2,2560x1440@2')
+        .split(',')
+        .map((v) => {
+          const [wh, d] = v.split('@');
+          const [width, height] = wh.split('x').map(Number);
+          return [{ width, height }, Number(d)];
+        });
+      const rows = await checkSideBudgets({ ...side, browser: await chrome(), viewports });
+      const out = arg('--side-json', null);
+      if (out) await writeFile(out, JSON.stringify({ origin: ORIGIN, rows }, null, 2));
+    }
     if (ONLY.includes('dcompile')) await checkDrexCompile(browser);
     if (ONLY.includes('dref')) await checkDrexRef(browser);
     if (ONLY.includes('dcache')) await checkDrexCache(browser);

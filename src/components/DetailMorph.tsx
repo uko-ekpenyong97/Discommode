@@ -4,7 +4,7 @@ import type { PosterItem } from '../content';
 import type { Rect } from '../detailLayout';
 import { CoverTile } from '../covers/CoverTile';
 import { coverSideLive, shaderCover } from '../covers/covers';
-import { heroDome } from '../covers/dome';
+import { detailDome } from '../covers/dome';
 import './DetailMorph.css';
 
 /** One card morphing from its `from` rect to its `to` rect. */
@@ -149,15 +149,18 @@ function DetailMorph({ cards, durationMs, entering, onFinished }: DetailMorphPro
               // clock, so it lands on the hero's frame and needs no cross-fade
               // (a Rive cover: its one instance, so it lands on the same moment
               // whatever it was showing in the grid). A side card travels live
-              // if its cover is live as a side card (`coverSideLive`: card 04),
-              // else as the still, as the detail view shows them.
-              // A cover that keeps state per instance (card 02's lava warmth)
-              // travels on the hero's dome, which the clicked tile handed its
-              // state to (CoverTile): the morph lands on the hero's moment.
+              // if its cover is live as a side card (`coverSideLive`: cards
+              // 02, 03 and 04), else as the still, as the detail view shows
+              // them. A shader cover travels on its detail dome, which the
+              // clicked tile handed its state to (CoverTile: card 02's lava
+              // warmth, card 03's light) and which the detail view's card goes
+              // on with: the morph lands on its moment. Only the centre card
+              // takes the pointer.
               <CoverTile
                 coverId={c.item.cover.id}
                 live={i === 1 || coverSideLive(c.item.cover)}
-                dome={i === 1 && shaderCover(c.item.cover.id)?.instanceExtra ? heroDome : null}
+                dome={shaderCover(c.item.cover.id) ? detailDome(c.item.cover.id) : null}
+                input={i === 1}
                 className="detail-morph__media"
               />
             ) : to ? (

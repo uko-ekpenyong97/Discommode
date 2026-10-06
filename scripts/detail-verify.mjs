@@ -210,6 +210,29 @@ const RIVE_SIDE = 0.02;
  * wordmark in register. Held to the worst + 1 point: 11%.
  */
 const DREX_STILL_SIDE = 0.11;
+/**
+ * CARDS 02 AND 03 AS LIVE SIDE CARDS (2026-10-06, docs/covers.md, "The live
+ * side card"): the DOM side card is the stage's draw, the plane the paper's,
+ * the clock pinned — one moment, two renderers and two resamplers, as each
+ * card's hero is.
+ *
+ * Card 02: 0.000–3.928% (the high end at 1728×996 @2× beside 01), the dot
+ * field's drift as for its hero; held to the worst + 1 point, 5% (its still
+ * was held to card 01's 7%).
+ *
+ * Card 03: 0.231–6.473%, and 12.555% at 1728×996 @2× beside 04, every run.
+ * The diff map (`--diff-dir`) is speckle inside the light alone — the 1-px
+ * dither of the print under the reveal, resampled off whole device pixels
+ * (the side card's left edge is at a fractional x there) — with the dark
+ * ground clean and the light's disc, the logo and the wordmark in register:
+ * `DREX_STILL_SIDE`'s moiré, now over the lit print instead of the still.
+ * Held to the worst + 1 point: 13.6%.
+ */
+const LAVA_SIDE = 0.05;
+const DREX_LIVE_SIDE = 0.136;
+/** Content indices of the cards that are live as side cards (content.ts
+ *  `side: 'live'`): their side planes must be the live cover. */
+const LIVE_SIDE = new Set([1, 2, 3]);
 const budget = (r) =>
   r.idx === 0
     ? r.slot === 0
@@ -221,8 +244,12 @@ const budget = (r) =>
           ? LAVA_HERO
           : COVER_HERO
         : r.idx === 2
-          ? DREX_STILL_SIDE
-          : COVER_STILL_SIDE
+          ? LIVE_SIDE.has(2)
+            ? DREX_LIVE_SIDE
+            : DREX_STILL_SIDE
+          : LIVE_SIDE.has(1)
+            ? LAVA_SIDE
+            : COVER_STILL_SIDE
       : r.idx === 3 && r.slot !== 0
         ? RIVE_SIDE
         : IDENTITY;
@@ -435,6 +462,9 @@ async function checkIdentity(browser) {
         await page.evaluate(() => window.__paper.override({ zero: true }));
         await settleFrames(page);
         const rs = await cards(page);
+        // Every side card whose cover is live there (cards 02, 03 and 04) is
+        // SAMPLED by the paper — its plane is the live cover, not the still.
+        const planes = await page.evaluate(() => window.__paper.planes().filter((p) => p.slot === 1));
         const on = await shot(page);
         await page.evaluate(() => window.__paper.set({ paper: 'off' }));
         await page.waitForTimeout(350); // the DOM faces' opacity transition
@@ -447,12 +477,14 @@ async function checkIdentity(browser) {
         for (const p of parts) await saveDiff(`identity-${vp.width}x${vp.height}@${dpr}-item${item}`, on, off, p.r, dpr);
         const hero = parts.find((p) => p.r.slot === 0);
         const side = parts.filter((p) => p.r.slot !== 0);
+        const liveSides = planes.filter((p) => LIVE_SIDE.has(p.idx));
+        const sidesLive = liveSides.length > 0 && liveSides.every((p) => p.shows === 'live');
         check(
-          parts.every((p) => p.d <= budget(p.r)),
+          parts.every((p) => p.d <= budget(p.r)) && sidesLive,
           `${vp.width}×${vp.height} @${dpr}× #item-${item}`,
           `hero (${hero.r.idx + 1}) ${pct(hero.d)}; neighbours ${side
-            .map((p) => `${String(p.r.idx + 1).padStart(2, '0')} ${pct(p.d)}`)
-            .join(', ')}`,
+            .map((p) => `${String(p.r.idx + 1).padStart(2, '0')} ${pct(p.d)} (≤ ${pct(budget(p.r))})`)
+            .join(', ')}; the paper's side planes ${planes.map((p) => `${String(p.idx + 1).padStart(2, '0')} ${p.shows}`).join(', ')}`,
         );
       }
       await page.context().close();

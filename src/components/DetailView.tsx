@@ -11,8 +11,9 @@ import { issueAnims } from '../reader/issue-01';
 import { CoverAnimLayer } from './CoverAnimLayer';
 import { DetailPaperLayer } from './DetailPaperLayer';
 import { CoverTile } from '../covers/CoverTile';
-import { heroDome } from '../covers/dome';
+import { detailDome } from '../covers/dome';
 import { coverSideLive } from '../covers/covers';
+import { coverFault } from '../covers/faults';
 import { coverValues } from '../covers/coverDials';
 import { LANDED_EPS, focusedIndex, riveFocusAt } from '../covers/focus';
 import { riveFocusCard } from '../covers/rive/riveCover';
@@ -421,17 +422,20 @@ export function DetailView({ detail, transition, suspended = false, hero, neighb
               aria-hidden={isCenter && !canOpen ? true : undefined}
             >
               {item.cover ? (
-                // The live cover on the CENTRE panel (its dome is the hero's,
-                // which the paper plane reads too), and on a SIDE panel for a
-                // cover that is live there (`coverSideLive`: card 04), at
-                // rest; otherwise the side cards show its still. A Rive
-                // cover's every surface is its one instance.
+                // The live cover on the CENTRE panel, and on a SIDE panel for
+                // a cover that is live there (`coverSideLive`: cards 02, 03
+                // and 04); the folded cards beyond show its still. Both read
+                // the cover's detail dome, as the paper plane does, but only
+                // the centre panel's pointer drives it: a side card is at rest,
+                // or easing back to it from the centre. A Rive cover's every
+                // surface is its one instance.
                 // The paper takes this face over once the view settles, as it
                 // does an image: the data-paper rules fade `.detail__media`.
                 <CoverTile
                   coverId={item.cover.id}
                   live={isCenter || (distance === 1 && coverSideLive(item.cover))}
-                  dome={isCenter ? heroDome : null}
+                  dome={detailDome(item.cover.id)}
+                  input={isCenter || (import.meta.env.DEV && coverFault('sideinput'))}
                   className="detail__media"
                 />
               ) : face ? (

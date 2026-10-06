@@ -427,13 +427,20 @@ open and close before 2026-09-28, and made on the first hover until
 
 ### The live cover plane
 
-A card with a live cover (`cover` in content.ts; cards 02 and 04) is the face
+A card with a live cover (`cover` in content.ts; cards 02, 03 and 04) is the face
 that is not a texture made once. As the HERO its plane samples the render target of
 a `CoverRenderer` on the paper's renderer (made, compiled and drawn once by
 the warm-up, and kept: [the arrival](#the-arrival)), drawn every
 frame on the shared cover clock at the hero's device size (`coverMaxDpr`
 capped) — a texture cannot cross WebGL contexts, so the cover is drawn where the
-plane is (docs/covers.md). As a neighbour it is its still, like any other face.
+plane is (docs/covers.md). As a SIDE card (one slot off; `side: 'live'`,
+cards 02, 03 and 04 since 2026-10-06) it is drawn the same way, at its own
+size — at `detailSideScale` 1 the hero's, so one target and card 03's one
+print serve both roles — with the cover's detail dome, which only the centre
+card's pointer drives (docs/covers.md, "The live side card"). The folded cards
+two slots off are the still, like any other face. `__paper.planes()` (dev)
+says what each plane shows: `live`, `still`, `plate` or `none`; verify:detail's
+`identity` asserts every live side card's plane is `live`.
 While the plane is live the layer repaints every frame whatever the signature
 says; while the cards are handed OUT it holds the cover's last frame (the DOM
 face, dissolving back over it, is the live one).

@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { addPresenter, coverLiveAvailable, coverStageAvailable, sizeIdleTile, subscribeStage } from './coverStage';
 import { coverStill as clockStill, subscribeReducedMotion } from './coverClock';
 import { coverStillUrl, riveCover, shaderCover } from './covers';
-import { DomeSpring, heroDome } from './dome';
+import { DomeSpring, detailDome } from './dome';
 import { frameOf } from './frame';
 import { rivePointer } from './rive/riveCover';
 import type { RivePointerKind } from './rive/riveCover';
@@ -22,9 +22,10 @@ interface CoverTileProps {
    *  live there — `coverSideLive` — and the folded cards beyond). */
   live?: boolean;
   /**
-   * Whose dome the pointer over this tile drives: 'own' (a grid tile — its own
-   * spring, the others stay at rest), a shared spring (the hero's, which the
-   * paper plane reads too), or null for none (the morph card).
+   * The instance's dome: 'own' (a grid tile — its own spring, the others stay
+   * at rest), a shared spring (the cover's detail dome, `detailDome`, which
+   * the paper plane reads too: the morph card, the centre card, a live side
+   * card), or null for none — always at rest.
    *
    * A Rive cover has no dome; the same prop says where its pointer goes: 'own'
    * is a grid tile (the card under the pointer), a spring is the centre card
@@ -33,6 +34,13 @@ interface CoverTileProps {
    * and the centre card's opens its project, as ever.
    */
   dome?: 'own' | DomeSpring | null;
+  /**
+   * Whether the pointer drives it (default true). False: a detail SIDE card —
+   * it shows its dome (easing back to rest, if it was the centre card a moment
+   * ago) and nothing the pointer does reaches it. The pointer only ever moves
+   * the centre card (docs/covers.md, "The live side card").
+   */
+  input?: boolean;
   className?: string;
   style?: CSSProperties;
 }
@@ -55,7 +63,7 @@ interface CoverTileProps {
  * recycled tile goes straight from one cover's frame to the other's; if there
  * was nothing to prime from, the still shows until its next copy lands.
  */
-export function CoverTile({ coverId, live = true, dome = 'own', className, style }: CoverTileProps) {
+export function CoverTile({ coverId, live = true, dome = 'own', input = true, className, style }: CoverTileProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [still, setStill] = useState(() => clockStill());
@@ -107,9 +115,17 @@ export function CoverTile({ coverId, live = true, dome = 'own', className, style
     };
     const remove = addPresenter(p);
     if (rive) {
-      const off = dome ? riveInput(coverId, host, dome === 'own' ? 'hover' : 'full') : null;
+      const off = dome && input ? riveInput(coverId, host, dome === 'own' ? 'hover' : 'full') : null;
       return () => {
         off?.();
+        remove();
+        delete host.dataset.drawn;
+      };
+    }
+    if (!input) {
+      // A side card: its dome is drawn, never pointed. (Its last centre
+      // effect's cleanup let go of it — `onLeave` below — so it eases out.)
+      return () => {
         remove();
         delete host.dataset.drawn;
       };
@@ -133,13 +149,15 @@ export function CoverTile({ coverId, live = true, dome = 'own', className, style
     const onLift = (e: PointerEvent) => {
       if (e.pointerType !== 'mouse') spring?.leave();
     };
-    // A click on a grid tile of a cover that keeps state per instance (card
-    // 02's lava warmth) hands that state to the hero's dome, which the morph
-    // card and the hero share: the warmth carries into the detail view and
-    // eases out there, instead of the morph starting at rest.
+    // A press on a grid tile hands its dome — card 02's lava warmth, card 03's
+    // light where the pointer is — to the cover's detail dome, which the morph
+    // card and the centre card share: the state carries into the detail view
+    // and eases out there, instead of the morph starting at rest. (Until
+    // 2026-10-06 only a cover with per-instance state handed over, and card
+    // 03's light jumped to its rest as the morph began.)
     const def = shaderCover(coverId);
     const onDown = () => {
-      if (spring && def?.instanceExtra && dome === 'own') heroDome.adopt(spring, performance.now(), def);
+      if (spring && def && dome === 'own') detailDome(coverId).adopt(spring, performance.now(), def);
     };
     target.addEventListener('pointermove', onMove, { passive: true });
     target.addEventListener('pointerleave', onLeave);
@@ -156,7 +174,7 @@ export function CoverTile({ coverId, live = true, dome = 'own', className, style
       remove();
       delete host.dataset.drawn;
     };
-  }, [on, coverId, dome]);
+  }, [on, coverId, dome, input]);
 
   return (
     <div

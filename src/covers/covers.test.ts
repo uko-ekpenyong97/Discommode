@@ -38,8 +38,9 @@ describe('the cover registry', () => {
     });
   });
 
-  it('only card 04 is live as a side card (02 and 03: their stills, for now)', () => {
-    expect(CONTENT.filter((i) => coverSideLive(i.cover)).map((i) => i.slug)).toEqual(['item-04']);
+  it('every live cover is live as a side card: 02, 03 and 04 (card 01 has none — its rest is a still)', () => {
+    expect(CONTENT.filter((i) => coverSideLive(i.cover)).map((i) => i.slug)).toEqual(['item-02', 'item-03', 'item-04']);
+    expect(CONTENT.find((i) => i.slug === 'item-01')!.cover).toBeUndefined();
   });
 });
 

@@ -21,8 +21,8 @@ export class DomeSpring {
   private ty = 0;
   private on = false;
   private last = -1;
-  /** Whose `ext` the state carries (a cover id): the hero's dome serves every
-   *  card in turn. */
+  /** Whose `ext` the state carries (a cover id): a grid slot's tile shows
+   *  every cover in turn. */
   private extId = '';
   /** When it last took over another instance's state (`adopt`), until its
    *  first step: -1 otherwise. */
@@ -178,5 +178,21 @@ export function advanceDome(d: DomeSpring, now: number, def: CoverDef, values: D
   d.extFor(def)?.step(now, t, d.state, values);
 }
 
-/** The hero's dome, shared by the DOM hero panel and the paper plane. */
-export const heroDome = new DomeSpring();
+/**
+ * A cover's DETAIL dome: one per cover, for its card in the detail view
+ * whatever role it has there — the morph card, the centre card (its DOM face
+ * and its paper plane) and a live side card (docs/covers.md, "The live side
+ * card"). Only the centre card's panel drives it (CoverTile's `input`); as a
+ * side card nothing points it, so it eases to rest. Being the SAME spring in
+ * every role, a card that leaves the centre warm (card 02's lava, card 03's
+ * light under the pointer) eases out as a side card instead of snapping to
+ * rest, and a side card becoming the centre card starts from where it was —
+ * not from the last centre card's dome, which the one shared hero dome handed
+ * it until 2026-10-06.
+ */
+const detailDomes = new Map<string, DomeSpring>();
+export function detailDome(id: string): DomeSpring {
+  let d = detailDomes.get(id);
+  if (!d) detailDomes.set(id, (d = new DomeSpring()));
+  return d;
+}
