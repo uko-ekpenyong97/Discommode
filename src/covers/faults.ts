@@ -11,9 +11,15 @@
  *   latefocus  a focus wanted before the instance exists is applied a second
  *              into its life, not before its first advance: `rdeep` must fail
  *   frozen     the instance never advances: `rgrid` must fail
- *   sidestill  no cover is live as a side card: `rside` must fail
+ *   sidestill  no cover is live as a side card: `rside`, `sside` and `sjump`
+ *              must fail
+ *   siderest   a shader cover's side card drawn at rest, not with its detail
+ *              dome (what the paper did until 2026-10-06): a card leaving the
+ *              centre warm snaps to rest — `sjump` must fail
+ *   sideinput  the side cards take the pointer, as the centre card does:
+ *              `sside` must fail
  */
-export type CoverFault = 'fresh' | 'nofocus' | 'nounfocus' | 'latefocus' | 'frozen' | 'sidestill';
+export type CoverFault = 'fresh' | 'nofocus' | 'nounfocus' | 'latefocus' | 'frozen' | 'sidestill' | 'siderest' | 'sideinput';
 
 export function coverFault(name: CoverFault): boolean {
   if (!import.meta.env.DEV || typeof window === 'undefined') return false;

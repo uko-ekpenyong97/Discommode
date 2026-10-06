@@ -25,6 +25,13 @@
  *   - the root gets `preserveAspectRatio="none"`, so the pill's middle can be
  *     stretched (src/chrome/PaperPill.tsx). At a box of the viewBox's own ratio
  *     it is the same picture;
+ *   - a grey element drawn OVER the ink (after it in the file) is a cut: the
+ *     2026-10-05 books are a solid white book with their spine and edges drawn
+ *     on top in the paper's grey. A mask only reads alpha, so on the paper
+ *     layer that line would sit UNDER the ink and vanish. It is written into
+ *     the ink file as an SVG <mask> instead, black where the line is, so the
+ *     ink has the line cut out of it and the paper shows through — the picture
+ *     the export draws, in the two layers the site needs;
  *   - the pill's two numbers ("01", "02") are DROPPED: on the site they are live
  *     text in Bowlby One. Its hairline (the thin wobbly vertical, a 1px vector
  *     in the file) is kept as the pill's ink. They are told apart by shape: the
@@ -117,9 +124,15 @@ function boxOf(el) {
 
 const r2 = (b) => Object.fromEntries(Object.entries(b).map(([k, v]) => [k, Math.round(v * 100) / 100]));
 
-function doc(head, els) {
+function doc(head, els, cut = [], [vw, vh] = [0, 0]) {
   const open = head.replace(/<svg\b/, '<svg preserveAspectRatio="none"');
-  return `${open}\n${els.map((e) => round(e.src)).join('\n')}\n</svg>\n`;
+  const body = els.map((e) => round(e.src)).join('\n');
+  if (!cut.length) return `${open}\n${body}\n</svg>\n`;
+  const holes = cut.map((e) => round(e.src).replace(/\bfill="[^"]*"/, 'fill="black"')).join('\n');
+  return (
+    `${open}\n<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="${vw}" height="${vh}">\n` +
+    `<rect width="${vw}" height="${vh}" fill="white"/>\n${holes}\n</mask>\n<g mask="url(#cut)">\n${body}\n</g>\n</svg>\n`
+  );
 }
 
 async function main() {
@@ -138,7 +151,10 @@ async function main() {
     const head = svg.match(/<svg\b[^>]*>/)[0];
     const [vw, vh] = head.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/).slice(1).map(Number);
     const els = elements(svg);
-    const paper = els.filter((e) => PAPER.has(e.fill));
+    // Grey after the first white is drawn over the ink: a cut, not paper.
+    const firstInk = els.findIndex((e) => INK.has(e.fill));
+    const cut = firstInk < 0 ? [] : els.slice(firstInk).filter((e) => PAPER.has(e.fill));
+    const paper = els.filter((e) => PAPER.has(e.fill) && !cut.includes(e));
     let ink = els.filter((e) => INK.has(e.fill));
     const unknown = els.filter((e) => !PAPER.has(e.fill) && !INK.has(e.fill) && e.fill !== 'none' && e.fill !== '');
     if (unknown.length) console.warn(`  ${name}: ${unknown.length} element(s) of an unexpected fill (${unknown.map((e) => e.fill).join(', ')}) — left out`);
@@ -153,7 +169,8 @@ async function main() {
       console.log(`  pill: ${text} text path(s) dropped — the numbers are live Bowlby One`);
     }
     const paperSvg = doc(head, paper);
-    const inkSvg = doc(head, ink);
+    const inkSvg = doc(head, ink, cut, [vw, vh]);
+    if (cut.length) console.log(`  ${name}: ${cut.length} grey element(s) over the ink — cut out of it`);
     await writeFile(join(OUT, `${name}-paper.svg`), paperSvg);
     await writeFile(join(OUT, `${name}-ink.svg`), inkSvg);
     manifest[name] = entry;

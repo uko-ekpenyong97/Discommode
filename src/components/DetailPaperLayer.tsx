@@ -56,7 +56,9 @@ import type { RiveInstance } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
 import { backdropUnder, coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
 import { cssRgb } from '../covers/color';
-import { advanceDome, heroDome } from '../covers/dome';
+import { advanceDome, detailDome } from '../covers/dome';
+import { coverFault } from '../covers/faults';
+import { measureDraw, noteDraw } from '../covers/drawProbe';
 import type { Crop } from '../covers/types';
 import { benchCoverDraw, benchDome } from '../covers/bench';
 
@@ -196,6 +198,8 @@ interface Card {
   fold: Tween;
   hover: Tween;
   slot: number;
+  /** DEV: what its plane showed last frame (`__paper.planes()`). */
+  shows: 'live' | 'still' | 'plate' | 'none';
 }
 
 /** DEV: forced uniforms for the verify suite — `zero` is the identity check;
@@ -347,19 +351,23 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   // map — a texture cannot cross WebGL contexts, and copying a 2 MP frame across
   // from the grid's stage every frame would cost more than drawing it here.
   // The hero is live, and a side card whose cover is live there
-  // (`coverSideLive`, at rest: no dome); other side cards use the still
-  // (itemHeroFace). One card per cover is on screen, so one target each. The
-  // renderer (and its target) is made, compiled and first drawn by the
-  // warm-up, and kept (paperGL.ts).
+  // (`coverSideLive`: cards 02, 03 and 04) — the folded cards beyond use the
+  // still (itemHeroFace). Both are drawn with the cover's detail dome, which
+  // only the centre card's pointer drives: a side card is at rest, or easing
+  // back to it from the centre, so a card changes role without a jump. One
+  // card per cover is on screen, so one target each, and at detailSideScale 1
+  // the side card is the hero's size: the same target, and card 03's same
+  // print, in either role. The renderer (and its target) is made, compiled and
+  // first drawn by the warm-up, and kept (paperGL.ts).
   const coverCrop_: Crop = { x0: 0, y0: 0, w: 1, h: 1 };
   let coversDrawn = 0;
 
   const restDome = { x: 0, y: 0, amp: 0 };
 
-  /** Draw a cover for the hero (or, `side`, a side card, at rest) at `pxW ×
-   *  pxH`; its texture, or null if not ready. While the cards are handed OUT
-   *  the DOM face is the live one (it is dissolving back over this plane) and
-   *  this holds its last frame, so the one moment is not drawn twice. */
+  /** Draw a cover for the hero (or, `side`, a side card) at `pxW × pxH`;
+   *  its texture, or null if not ready. While the cards are handed OUT the DOM
+   *  face is the live one (it is dissolving back over this plane) and this
+   *  holds its last frame, so the one moment is not drawn twice. */
   function liveCoverTexture(id: string, pxW: number, pxH: number, side = false): Texture | null {
     const def = shaderCover(id);
     const c = def ? liveCover(id) : null;
@@ -374,18 +382,24 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       c.rt = CoverRenderer.outputTarget(pxW, pxH);
     }
     const t = coverTime();
-    if (!side) advanceDome(heroDome, performance.now(), def, coverValues(id), t);
+    const spring = detailDome(id);
+    advanceDome(spring, performance.now(), def, coverValues(id), t);
+    const dome = side && import.meta.env.DEV && coverFault('siderest') ? restDome : spring.state;
     coverCropOf(def.frame.w, def.frame.h, pxW, pxH, coverCrop_);
     const under = backdropUnder(id);
-    const drawn = c.r.draw(c.rt, {
-      t,
-      crop: coverCrop_,
-      pxW,
-      pxH,
-      dome: side ? restDome : heroDome.state,
-      backdrop: under ? cssRgb(under) : null,
-    });
+    const rt = c.rt;
+    const draw = () =>
+      c.r.draw(rt, {
+        t,
+        crop: coverCrop_,
+        pxW,
+        pxH,
+        dome,
+        backdrop: under ? cssRgb(under) : null,
+      });
+    const drawn = import.meta.env.DEV ? measureDraw(id, side ? 'side' : 'centre', draw) : draw();
     if (!drawn) return null;
+    if (import.meta.env.DEV) noteDraw(id, side ? 'paper side' : 'paper centre', t, dome);
     coversDrawn++;
     return c.rt.texture;
   }
@@ -483,6 +497,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       fold: { from: f, to: f, start: now, ms: 0 },
       hover: { from: 0, to: 0, start: now, ms: 0 },
       slot: p.slot,
+      shows: 'none',
     };
     cards.set(p.key, c);
     return c;
@@ -726,6 +741,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       const big = p.dist < 0.5;
       const [tw, th] = plate || big ? [d.heroW, d.heroH] : [d.sideW, d.sideH];
       let tex = plateTex ?? faceTexture(faceKey(p.idx, tw, th));
+      let liveTex = false;
       // The hero's live cover, at the hero's device size (coverMaxDpr caps it;
       // a Rive cover's riveMaxDpr), on the shared cover clock — and a side
       // card's, at its size, where its cover is live as a side card (not the
@@ -739,7 +755,10 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
         if (!still) {
           const cap = Math.min(dpr, Math.max(0.5, riveDials?.riveMaxDpr ?? 2)) / dpr;
           live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap));
-          if (live) tex = live;
+          if (live) {
+            tex = live;
+            liveTex = true;
+          }
         }
         rivePlane(rive.id, live ? 'live' : tex ? 'still' : 'none', big ? 'centre' : 'side', riveUploads);
       } else if (item.cover && (big || sideLive) && !still) {
@@ -748,8 +767,10 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
         if (live) {
           tex = live;
           liveThisFrame = true;
+          liveTex = true;
         }
       }
+      c.shows = liveTex ? 'live' : plate ? 'plate' : tex ? 'still' : 'none';
       u.uMap.value = tex;
       u.uPremul.value = item.cover ? 1 : 0;
       // A live cover lies on the sky with no card around it: no rounded
@@ -939,6 +960,11 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
             sprites: u?.uSpriteCount.value,
           };
         }),
+      /** What each plane shows — 'live' (its cover drawn this frame, or
+       *  held while handing out), 'still', 'plate' (card 01's under its
+       *  sprites) or 'none' — keyed by content idx and slot. */
+      planes: () =>
+        (last?.panels ?? []).map((p) => ({ key: p.key, idx: p.idx, slot: p.slot, dist: p.dist, shows: cards.get(p.key)?.shows ?? 'none' })),
       folds: () =>
         [...cards.entries()].map(([key, c]) => ({ key, fold: c.mesh.material.uniforms.uFold.value })),
       presence: () => sampleTween(presence, performance.now()),

@@ -3,7 +3,8 @@ import { coverStageProbe } from './coverStage';
 import { coverCropOf } from './coverRenderer';
 import { CachedCoverRenderer } from './cachedCoverRenderer';
 import { benchCoverDraw, benchDome, benchPresent } from './bench';
-import { heroDome } from './dome';
+import { detailDome } from './dome';
+import { drawProbe, shownNote } from './drawProbe';
 import { LavaInstance, MAX_BLOBS } from './covers/lava';
 import { lavaModel } from './covers/rive-site';
 import { COVERS, shaderCover } from './covers';
@@ -33,7 +34,7 @@ function merge(base: DialValues, patch: DialValues): DialValues {
 export function installCoverDevHooks() {
   const probe = coverStageProbe();
   const lavaExt = (which: 'rest' | 'hero' | number): LavaInstance | null => {
-    const d = which === 'rest' ? null : which === 'hero' ? heroDome.state : probe.domeOf(which);
+    const d = which === 'rest' ? null : which === 'hero' ? detailDome('rive-site').state : probe.domeOf(which);
     return d?.ext instanceof LavaInstance ? d.ext : null;
   };
   (window as unknown as { __covers: unknown }).__covers = {
@@ -145,6 +146,38 @@ export function installCoverDevHooks() {
         let extra = 0;
         for (const e of ext.extra) extra = Math.max(extra, Math.abs(e - 2 * Math.PI * Math.round(e / (2 * Math.PI))));
         return { heat: ext.heat, px: ext.px, py: ext.py, extra, settled: ext.settled() };
+      },
+    },
+    /**
+     * The shader covers' probe (drawProbe.ts): `set({ cost, drawn })`;
+     * `costs()` — per frame, per cover and role, the paper's draw's
+     * main-thread and GPU ms; `shown(id)` — the surface showing the cover
+     * and the clock and dome it last drew with; `snapshot(id, w, h)` — that
+     * draw redone at w × h by the stage's renderer, read back (RGBA, bottom
+     * row first), or null.
+     */
+    probe: {
+      set: drawProbe.set,
+      costs: drawProbe.costs,
+      clearCosts: drawProbe.clearCosts,
+      shown: (id: string) => {
+        const n = shownNote(id);
+        const heat = n?.dome.ext instanceof LavaInstance ? n.dome.ext.heat : 0;
+        return n ? { surface: n.surface, t: n.t, x: n.dome.x, y: n.dome.y, amp: n.dome.amp, heat, seq: n.seq } : null;
+      },
+      snapshot: (id: string, w: number, h: number) => {
+        const n = shownNote(id);
+        const gl = probe.renderer;
+        if (!n || !gl || !probe.cover(id)?.ready() || !probe.draw(id, w, h, n.t, n.dome)) return null;
+        const ctx = gl.getContext();
+        const px = new Uint8Array(w * h * 4);
+        ctx.readPixels(0, 0, w, h, ctx.RGBA, ctx.UNSIGNED_BYTE, px);
+        return px;
+      },
+      /** The cover's detail dome now (`amp` 0: at rest). */
+      dome: (id: string) => {
+        const d = detailDome(id).state;
+        return { x: d.x, y: d.y, amp: d.amp, settled: !d.ext || d.ext.settled() };
       },
     },
     /** Rive covers (card 04): `ready(id)`, `instance(id)` (its number, clock,

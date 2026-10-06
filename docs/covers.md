@@ -14,9 +14,10 @@ view's centre card — one instance for every surface, so it never jumps — see
 again: the Drex logo under Figma's risograph, dither and hover reveal, dark but
 for a light that follows the pointer, on white paper of its own — see
 [Card 03](#card-03-drex-a-cached-pass-a). Each is live in the grid tile, the
-grid→detail morph and the detail hero; card 04 is live as a detail side card
-too ([The live side card](#the-live-side-card)); everywhere else a cover is its
-still.
+grid→detail morph and the detail hero, and as a detail side card too
+([The live side card](#the-live-side-card); card 04 since 2026-10-05, cards 02
+and 03 since 2026-10-06); everywhere else — the folded cards two slots off,
+reduced motion, a failed load — a cover is its still.
 
 The shader and its tuning are the prototype's
 ([docs/prototypes/cover-shader-prototype.html](prototypes/cover-shader-prototype.html)),
@@ -45,6 +46,21 @@ so what is tuned there is what ships.
 | card 02's lava: the grid tile and the detail hero, at rest and with the pointer over them, the clock pinned — `main` (top) and the lava (bottom) (2026-10-01) | `docs/covers/lava.webp` |
 
 ## Handoff
+
+**Live side cards for 02 and 03 (2026-10-06).** Cards 02 (the lava) and 03
+(Drex) are live as detail side cards, as card 04 has been since 2026-10-05:
+`side: 'live'` on their refs, so whichever card is the centre card has live
+neighbours; the folded cards two off stay the still. A side card is at rest —
+the lava drifts, the light follows its `restMode` — and only the centre card
+takes the pointer (`CoverTile`'s `input`). The one `heroDome` became a
+`detailDome(id)` per cover, so a card keeps its state through grid → morph →
+centre → side and back: no snap to rest when it leaves the centre warm, and a
+clicked card 03 tile's light glides home on the morph card instead of jumping.
+Card 01 has no live cover; its side card is its rest face, unchanged. Checked
+by `sside`, `sjump`, `sbudgets` (each against a broken path: `sidestill`,
+`siderest`, `sideinput`) and by verify:detail's `identity`, which now asserts
+the paper samples every live side card. Costs and contexts:
+[The live side card](#the-live-side-card).
 
 **Card 04's face (2026-10-05).** Card 04 is Uko's new file: a large Nosey
 face on blue that loops through its states, and, when card 04 becomes the
@@ -258,7 +274,8 @@ npm run verify:detail -- --url http://localhost:5191
 | `src/covers/coverStage.ts` | The DOM instances' ONE renderer: one draw per aspect at rest, one per domed instance, `drawImage` to each. |
 | `src/covers/CoverTile.tsx` | One DOM instance: a 2D canvas over the still. |
 | `src/covers/coverClock.ts` | The shared clock. |
-| `src/covers/dome.ts` | The mouse dome: a spring (card 02) or an ease (card 03); `heroDome`, shared by the DOM hero and the paper plane; the cover's per-instance state beside it (`advanceDome`, `domeUp`, `adopt`). |
+| `src/covers/dome.ts` | The mouse dome: a spring (card 02) or an ease (card 03); `detailDome(id)`, one per cover for its card in the detail view in every role (the morph card, the centre card's DOM face and paper plane, a live side card); the cover's per-instance state beside it (`advanceDome`, `domeUp`, `adopt`). |
+| `src/covers/drawProbe.ts` | DEV only: each shader cover's draw cost per frame and role, and what each surface last drew (its clock and dome), for `sbudgets` and `sjump`. |
 | `src/covers/coverDials.ts` | The live dial values (a module store), the site's dials, and `coverBackdrop(id)` / `backdropUnder(id)`: what is drawn behind each cover. |
 | `src/dev/coverDials.tsx` | The COVER panels and card 02's LAVA panel (dev). |
 | `src/covers/bench.ts`, `devHooks.ts` | Dev: `window.__covers`, the GPU benchmark. |
@@ -557,11 +574,15 @@ lenses and the marquee do not.
 
 **The mouse dome.** Each grid tile has its own spring: the pointer over a tile's
 CARD drives the dome in that tile's frame coordinates, and every other instance
-of the cover shows it at rest. The hero has one spring (`heroDome`), driven by
-the pointer over the hero's PANEL. The DOM face and the paper plane both read
+of the cover shows it at rest. In the detail view each cover has one spring
+(`detailDome(id)`, until 2026-10-06 one `heroDome` for whichever card was the
+hero), driven by the pointer over its panel only while it is the CENTRE card;
+as a side card it is drawn with the same spring, unpointed, so a card that
+leaves the centre warm eases out instead of snapping
+([The live side card](#the-live-side-card)). The DOM face and the paper plane both read
 it, stepped by wall time so reading it twice in a frame integrates once. The
 paper's hover dent stays; both react at once. The morph card has no dome —
-except card 02's, which travels on `heroDome` with its lava warmth
+except a shader cover's, which travels on its detail dome — card 02's with its lava warmth, card 03's with its light where the pointer left it
 ([Card 02's lava](#the-pointers-warmth)).
 (Until 2026-10-01 the listener was on the tile itself: the hover overlay's CTA
 sits over it and took the pointer, and under the paper the hero's DOM face is
@@ -596,7 +617,7 @@ it crops exactly as the live cover does wherever it stands in for it:
 
 | | | |
 | --- | --- | --- |
-| `cover-still.webp` | 900 × 1326, 239 KB | where the still IS what shows: the detail side cards (cards 02 and 03), reduced motion, no WebGL. Drawn at 1800 and halved. |
+| `cover-still.webp` | 900 × 1326, 239 KB | where the still IS what shows: the folded detail cards two slots off, reduced motion, no WebGL, a failed load. Drawn at 1800 and halved. |
 | `cover-still-sm.webp` | 360 × 530, 36 KB | under a live tile, for its first paint only |
 
 The full still was 1.1 MB (and the small one 181 KB) while the cover let the
@@ -609,9 +630,9 @@ replaced by the still.
 
 Where the still is used: **reduced motion** (the clock is 0 and nothing draws —
 `verify:cover`: 0 cover canvases, the paper drew the cover 0 times, 0 bytes
-changed over 1s), **no WebGL** (all tiles on the still), **the detail
-side cards** of a cover that is not live there (cards 02 and 03; card 04's is
-live: [The live side card](#the-live-side-card)), **first paint** (until
+changed over 1s), **no WebGL** (all tiles on the still), **the folded
+detail cards** two slots from the centre (every side card one slot off is
+live since 2026-10-06: [The live side card](#the-live-side-card)), **first paint** (until
 the stage's first frame lands on the canvas). The MiniMap shows numbers, not
 faces, so it has nothing to show.
 
@@ -781,7 +802,7 @@ settled (`domeUp`), and rejoins the shared draw when the warmth is under
 0.01 and every blob within 0.005 rad of the timeline: ~2.2 s after the
 pointer leaves (`lpointer`: 130–139 frames), moving back at most 1.0–4.3
 units a frame. A click on a warm tile hands its dome and warmth to
-`heroDome` (`adopt`), which the morph card and the hero share, so the
+its detail dome (`detailDome`, `adopt`), which the morph card and the hero share, so the
 click does not snap the cover to rest; a state nobody shows within 800 ms
 (the click did not open the view) is dropped. That hand-off is only for a
 cover with `instanceExtra`: card 03's morph card still has no dome.
@@ -931,7 +952,7 @@ The light is where the reveal is, in frame px:
 
 | | |
 | --- | --- |
-| hovered | follows the pointer, eased by `followEase` (0.12) per 60 Hz frame — the instance's dome, as an ease ([the dome](#the-clock-and-the-dome)). The grid tile's own (its card), the hero's `heroDome` (its panel: under the paper too) |
+| hovered | follows the pointer, eased by `followEase` (0.12) per 60 Hz frame — the instance's dome, as an ease ([the dome](#the-clock-and-the-dome)). The grid tile's own (its card), the centre card's `detailDome('drex')` (its panel: under the paper too). A click on a hovered tile hands it to the morph card (2026-10-06), so the light glides home from where the pointer left it instead of jumping to its rest |
 | at rest | `restMode`: `drift` (default; `drexCover.js`'s Lissajous around the mark, `driftRadius` 170, `driftPeriod` 14 s, on the shared clock), `parked` (on the mark's centre, 500, 649) or `off` (dark) |
 | reduced motion | `parked`, `motionSpeed` 0: `stillValues`. The cover is its still under reduced motion, like every cover, and the still is drawn with these. |
 
@@ -1304,24 +1325,104 @@ A cover can be **live as a detail side card**: the card beside the centre one
 shows the cover live, at rest, instead of its still. It is a field on the
 manifest's cover ref, `side: 'live'` (default `'still'`), read through one
 function, `coverSideLive(ref)` (covers.ts), by everything that draws a side
-card, so they agree:
+card, so they agree. **Cards 02, 03 and 04 have it** (card 04 since 2026-10-05,
+02 and 03 since 2026-10-06), so whichever card is the centre card has live
+neighbours; the folded cards two slots off stay the still.
 
 | | |
 | --- | --- |
-| the DOM panel (`DetailView`) | `CoverTile` live on a panel one slot from the centre, no dome; the folded cards two slots off stay the still |
+| the DOM panel (`DetailView`) | `CoverTile` live on a panel one slot from the centre; a shader cover's with its detail dome, but `input` false: the pointer does not reach it |
 | the morph's side cards (`DetailMorph`) | live, so a side card lands on the same moment it travelled with |
-| the paper (`DetailPaperLayer`) | a live texture for slot 1 at the side card's size: a Rive cover's `plane` canvas; a shader cover drawn by the paper's renderer with the REST dome (no pointer) into its target |
+| the paper (`DetailPaperLayer`) | a live texture for slot 1 at the side card's size: a Rive cover's `plane` canvas; a shader cover drawn by the paper's renderer with its detail dome into its target — at `detailSideScale` 1 the hero's size, so the same target and card 03's same print in either role |
 
-Only card 04 has it (`content.ts`). Cards 02 and 03 can take it by adding the
-same line; the shader path is in place and smoke-checked (`sidelive`: card 02
-forced live beside card 03 through `window.__coversSideLive`, dev only, drawn
-on the paper and moving), but their budgets as side cards — a second shader
-draw on the paper every frame beside the hero's — are not measured. That is
-the follow-up's.
+**At rest, and only the centre card takes the pointer.** As a side card the
+lava drifts on the shared clock, card 03's light follows its `restMode`
+(drift or parked), card 04's face loops, and nothing the pointer does reaches
+them: a shader cover's side card has no listeners (`CoverTile`'s `input`), a
+Rive cover's none either. Card 01 has no live cover: its sprites play only on
+hover and its rest is a still, which is what its side card shows — as on the
+grid, where it is the photographed cover.
 
-What it costs card 04: the side card is drawn and uploaded every frame while
-the detail view shows card 01 or 03 ([Frame time](#frame-time-1)'s side
-row).
+**No jump: one dome per cover in the detail view** (`detailDome(id)`,
+dome.ts). Until 2026-10-06 the detail view had ONE `heroDome` for whichever
+card was the hero, and a side card was drawn with a fixed rest dome. A card
+that left the centre warm — card 02's lava under the pointer, card 03's light
+where the pointer was — snapped to rest the moment it became a side card (the
+middle of the slide, on the paper), and the next centre card inherited the
+last one's dome. Now each cover keeps its own spring for its card in every
+detail role: the clicked grid tile hands its state over (`adopt`, card 03's
+light too now), the morph card and the centre card drive it, and when the card
+stops being the centre card its panel lets go (`leave`) and the same spring
+eases out while it is the side card. Its clock is the shared one throughout.
+
+**The checks** (scripts/side-live-checks.mjs, real Chrome, the pointer moving
+from the first frame; each run once against a broken path, which failed):
+
+| check | what | measured | broken path → |
+| --- | --- | --- | --- |
+| `sside` | 02 and 03 as the side card of both their neighbours, 1× and 2×: the DOM side canvas drawn, the paper's side plane `live`, pixels moving at rest; the pointer on the centre card (its dome up) and then on the side card (its dome at 0, the warmth settled); a tablet (1180 × 820 @2×, touch only): a finger circling on the side card moves nothing, on the centre card its dome; reduced motion, no WebGL and card 03's logo failing to load: the still | 218–336 live draws in 1.5 s; 30–39% of the side card's pixels moved (> 8 levels: the side card is dimmed while the pointer is on the centre card); the centre's dome 1.00, the side card's 0.000 throughout | `sidestill`: no DOM canvas, the plane `still`, 0% moved. `sideinput` (the side panel takes the pointer): the side dome 1.00, the finger's 1.03 |
+| `sjump` | as `rjump`: grid → centre (a hovered tile clicked), centre → side (ArrowRight with the pointer still on the card: it leaves WARM), side → centre, grid → side; the clock pinned and walked a step a frame; each frame what the surface on screen last drew (`__covers.probe`: its clock and a copy of its dome) redrawn at 240 × 312. Judged on the STATE — a dome or warmth above 0.05 keeps ≥ half of itself per vsync — the clock (+0–4 frames) and every surface of the route drawing it; the redraw's pixels are printed beside (a function of the clock and dome alone) | kept 0.62–0.96 of a warm dome over every change (card 02: 0.62–0.96; card 03's light: 0.77–0.87); clock +3 frames at every change | `siderest` (the side card at rest, as before): kept 0.00 on centre → side, 7% (card 02) and 31% (card 03) of the redraw in one frame. `sidestill`: no side surface ever draws; side → centre restarts the clock (+650 frames) |
+| `sbudgets` | per frame, per cover and role, at 1728×996 and 1440×900 (1×, 2×) and 2560×1440 @2×: the paper's draw's main-thread ms every frame (p95, the pointer circling the centre card) + the same draw's GPU ms (`benchCover`, the floor included, six benches, p95). Card 04 is `rbudgets` | below | |
+
+A TIME_ELAPSED timer query (EXT_disjoint_timer_query_webgl2) was tried for
+the GPU half first: on ANGLE's Metal backend it timed card 03's 0.12 ms pass B
+at 5.5 ms — the command buffer's span, not the draw's — so the GPU ms are the
+bench's, as `budgets` and `dbudgets` have always been.
+
+**What it costs** (2026-10-06): production builds (`build:verify`, `vite
+preview`), `main` (with only the measuring probe ported to it) and this
+branch interleaved — main, branch, twice — Google Chrome quit before every
+run, at a load average of 3.0–7.4 (macOS's own daemons). Per-frame p95, ms,
+ranges over the two rounds; budget ≤ 2.0 each. `main`'s side cards of 02 and
+03 are the still, which costs nothing per frame:
+
+| viewport | cover · role | main p95 | branch p95 |
+| --- | --- | --- | --- |
+| 1440×900 @1× | 02 centre | 1.20–1.40 | 0.91–0.98 |
+| 1440×900 @1× | 02 side | still (0) | 0.91–0.99 |
+| 1440×900 @1× | 03 centre | 0.34–0.36 | 0.25–0.26 |
+| 1440×900 @1× | 03 side | still (0) | 0.30–0.55 |
+| 1440×900 @1× | 04 centre | 1.60–1.70 | 1.50–1.70 |
+| 1440×900 @1× | 04 side | 1.50–2.60 | 1.50–1.60 |
+| 1440×900 @2× | 02 centre | 1.65–1.70 | 1.16–1.30 |
+| 1440×900 @2× | 02 side | still (0) | 1.02–1.34 |
+| 1440×900 @2× | 03 centre | 0.47–0.56 | 0.40–0.47 |
+| 1440×900 @2× | 03 side | still (0) | 0.49–0.77 |
+| 1440×900 @2× | 04 centre | 1.70–1.80 | 1.60–1.80 |
+| 1440×900 @2× | 04 side | 1.40–1.60 | 1.50 |
+| 1728×996 @1× | 02 centre | 0.99–1.27 | 1.14–1.15 |
+| 1728×996 @1× | 02 side | still (0) | 0.76–1.15 |
+| 1728×996 @1× | 03 centre | 0.37–0.39 | 0.20–0.26 |
+| 1728×996 @1× | 03 side | still (0) | 0.37–0.57 |
+| 1728×996 @1× | 04 centre | 1.70–1.80 | 1.60–1.70 |
+| 1728×996 @1× | 04 side | 1.50–1.60 | 1.40–1.50 |
+| 1728×996 @2× | 02 centre | 1.70–1.83 | 1.28–1.45 |
+| 1728×996 @2× | 02 side | still (0) | 0.92–1.31 |
+| 1728×996 @2× | 03 centre | 0.61–0.62 | 0.22–0.22 |
+| 1728×996 @2× | 03 side | still (0) | 0.52–0.88 |
+| 1728×996 @2× | 04 centre | 1.70 | 1.60–1.80 |
+| 1728×996 @2× | 04 side | 1.50 | 1.60 |
+| 2560×1440 @2× | 02 centre | 1.89–2.14 | 1.84–1.86 |
+| 2560×1440 @2× | 02 side | still (0) | 1.72–1.85 |
+| 2560×1440 @2× | 03 centre | 0.66–0.98 | 0.31–0.74 |
+| 2560×1440 @2× | 03 side | still (0) | 0.63–0.98 |
+
+Within each row `main` and the branch draw the same thing in the centre
+role; their differences there are the machine (the centre cards read lower on
+the branch in some rows: the load fell between rounds). The side card of a
+shader cover costs about what that cover costs as the centre card, because it
+IS the same draw at the same size, at rest. No row needed a lower DPR or frame
+rate for the side card to stay inside 2.0 ms, so it is drawn as the centre card
+is. The closest is card 02 at 2560 × 1440 @2× (1.72–1.86 in either role; on
+`main` its centre card measured 1.89–2.14): the lava's own cost at the
+Studio Display's size, not the side card's. Every live shader cover of one
+detail frame, together, at most 2.80 ms (2560 × 1440 @2×, `#item-02`: card
+02 the centre card, 03 the side card; `main` 2.14), with card 04's side card
+beside it on the CPU (`rbudgets` p95 1.4–1.6); sky + fluid + covers stays
+far inside its 8. WebGL contexts are unchanged — `contexts`, `rcontexts`:
+grid 2 (+ the paper's once warmed), detail 3, none made by the Rive runtime,
+on `main` and the branch alike: a side card is drawn by the renderers that
+were already there.
 
 ### The still
 
@@ -1395,7 +1496,7 @@ npm test && npx tsc -b && npm run lint
 npm run dev                   # in another shell
 npm run verify:cover          # --url <origin>, --only budgets,clock,morph,reduced,nogl,contexts,sky,ground,lmove,lpointer,lsweep,
                               #   rbudgets,rgrid,rside,rjump,rfocus,runfocus,rdeep,rpointer,rtouch,rphone,
-                              #   rclick,rreduced,rsky,rground,rcontexts,sidelive,
+                              #   rclick,rreduced,rsky,rground,rcontexts,sidelive,sside,sjump,sbudgets,
                               #   dcompile,dref,dcache,dpointer,dmorph,dreduced,dbudgets,drag
 npm run build && npx vite preview   # for drag's frame times: judged on a production build only
 npm run verify:detail         # its identity and hand-off cover cards 02 and 04
@@ -1444,7 +1545,7 @@ only; or `--broken`, from the check's side) and **failed there**, as listed:
 | `rreduced` | reduced motion: tiles and hero on the still, runtime never loaded, 1 s | 0 canvases, not loaded, 0 bytes changed | |
 | `rsky`, `rground` | the sky through the ground | **skipped**: card 04 is `solid` | |
 | `rcontexts` | WebGL contexts with card 04 live | grid 2, `#item-04` 3; 0 made by the runtime | |
-| `sidelive` | the live side card's SHADER path, card 02 forced live beside 03 (`window.__coversSideLive`) | the paper drew live covers 330 times in 1.5 s; 10.5% of card 02's side pixels moved | |
+| `sidelive` | the live side card's SHADER path, card 02 forced live beside 03 (`window.__coversSideLive`; card 02 is live there by the manifest since 2026-10-06, and `sside`, `sjump`, `sbudgets` are its checks: [The live side card](#the-live-side-card)) | the paper drew live covers 330 times in 1.5 s; 10.5% of card 02's side pixels moved | |
 
 `rswap` (the Main → Main Bounce swap) is gone with the swap.
 
@@ -1541,13 +1642,11 @@ paper's effects on and the sky there.
 
 ## Not done
 
-1. **A neighbour sliding into the hero switches from the still to live** —
-   cards 02 and 03. Their side cards are the still (card 04's is live since
-   2026-10-05, [The live side card](#the-live-side-card); theirs can be). When card 02 slides from a neighbour
-   slot into the hero slot, the plane changes texture from the t = 0 still to
-   the live cover at the clock's current time, at the midpoint of the slide.
-   The rest of the page is moving then, but the switch is there. A cross-fade,
-   or the still drawn at the current time, would hide it.
+1. **A neighbour sliding into the hero switched from the still to live.**
+   Resolved 2026-10-06: cards 02, 03 and 04 are live side cards, on one clock
+   and one dome per cover ([The live side card](#the-live-side-card),
+   `sjump`). The folded cards two slots off are still the still, and one
+   arriving from there passes through the side slot first.
 2. **The still was heavy** (1.1 MB). Resolved by card 02's own ground
    (2026-10-01): 239 KB.
 3. **A lost context falls back to nothing, not the still.** If the stage's
@@ -1607,8 +1706,22 @@ paper's effects on and the sky there.
    pointer reaches the instance (`rpointer`), and the file ignores it until
    the burst. Accepted for now (2026-10-05); the face noticing the cursor
    while unfocused is a Rive-side follow-up.
-18. **The live side card is card 04's only.** The path is generic
-   (`side: 'live'`, [The live side card](#the-live-side-card)) and
-   smoke-checked on card 02 (`sidelive`), but cards 02 and 03 as live side
-   cards are not enabled or budgeted: a second shader draw on the paper every
-   frame beside the hero's.
+18. **The live side card was card 04's only.** Resolved 2026-10-06: cards 02
+   and 03 too, budgeted per role ([The live side card](#the-live-side-card)).
+19. **Detail → grid lands the morph card on a tile at rest.** The exit morph
+   carries the cover's detail dome back to the grid, and the tile it lands on
+   has its own spring, at rest: whatever warmth is left when the morph lands
+   (the exit takes ~450 ms; card 03's light is ~97% home by then) is dropped.
+   `sjump` covers the four routes `rjump` does, not this one.
+20. **A side card's DOM face before the paper has the cards** (the arrival,
+   and while the paper hands out) is drawn by the cover stage at the side
+   card's full size, the same draw the paper would make; `sbudgets` measures
+   the paper's, where a side card spends its life. `verify:jank`'s
+   grid→detail, next, prev and detail→reader rows are where the stage's would
+   show.
+21. **Card 03 as a live side card is 12.6% off its DOM face** at 1728×996 @2×
+   beside 04 (verify:detail's `DREX_LIVE_SIDE`, 13.6%): the 1-px dither's
+   moiré inside the light. Snapping the resting side card to whole device
+   pixels (2026-10-06) did not help — the worst row −0.35 points, three
+   others 2–4× worse; numbers in `detail-verify.mjs` — and was reverted. The
+   two renderers sample the one print differently; where exactly is open.
