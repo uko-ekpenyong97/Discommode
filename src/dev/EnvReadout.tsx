@@ -14,7 +14,32 @@ import {
   previewEnv,
 } from './skyPreview';
 import type { MoonPreset, SunPreset } from './skyPreview';
+import { qualityReadout, subscribeQuality } from '../quality';
 import './EnvReadout.css';
+
+/**
+ * Adaptive quality's line (src/quality.ts): the tier, why, and the last
+ * window's numbers. Read on a tier change and every 2 s (a window); a string
+ * that has not changed does not re-render.
+ */
+function QualityRow() {
+  const [line, setLine] = useState(qualityReadout);
+  useEffect(() => {
+    const read = () => setLine(qualityReadout());
+    const off = subscribeQuality(read);
+    const t = window.setInterval(read, 2000);
+    return () => {
+      off();
+      window.clearInterval(t);
+    };
+  }, []);
+  return (
+    <div className="env-readout__row">
+      <span className="env-readout__key">quality</span>
+      <span className="env-readout__val">{line}</span>
+    </div>
+  );
+}
 
 /**
  * Dev-only text readout of the live {@link EnvState} — and the OVERRIDE that
@@ -161,6 +186,7 @@ function EnvReadout({ snapshot }: { snapshot: EnvSnapshot }) {
       )}
       {row('wmo', String(env.rawWeatherCode))}
 
+      <QualityRow />
       <div className="env-readout__sep">override</div>
       <div className="env-readout__grid">
         {CONDITIONS.map((c) => (

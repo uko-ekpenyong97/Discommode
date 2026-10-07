@@ -237,7 +237,8 @@ export class Boil {
     let step = this.lastStep;
     if (this.running) {
       // max: a dial lowering the rate mid-boil must not walk the sequence back.
-      step = Math.max(step, this.base + stepsIn(now - this.clock, d.boilFps));
+      // ≥ 0: a frame's timestamp can be a hair before the hover that started it.
+      step = Math.max(step, this.base + stepsIn(Math.max(0, now - this.clock), d.boilFps));
       this.lastStep = step;
     }
     if (hold) {

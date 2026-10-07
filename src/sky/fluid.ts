@@ -12,7 +12,8 @@
  * only makes the field.
  *
  * THE PIPELINE is the standard one (Stam, as popularised by Pavel Dobryakov's
- * WebGL-Fluid-Simulation), once per frame:
+ * WebGL-Fluid-Simulation), once per STEP — a fixed 1/60 s, on the wake's own
+ * clock (skyEngine.ts `stepFluid`), whatever the frame rate:
  *
  *   splat → curl → vorticity → divergence → pressure (Jacobi ×20) →
  *   gradient subtract → advect velocity → advect dye

@@ -1,3 +1,4 @@
+import { qualitySideStill } from '../quality';
 import { riveSite } from './covers/rive-site';
 import { drex } from './covers/drex';
 import { nosey } from './covers/nosey';
@@ -49,6 +50,8 @@ export function riveCover(id: string): RiveCoverDef | undefined {
  */
 export function coverSideLive(ref: CoverRef | undefined): boolean {
   if (!ref) return false;
+  // Adaptive quality's tier 3 shows the stills (src/quality.ts).
+  if (qualitySideStill()) return false;
   if (import.meta.env.DEV && typeof window !== 'undefined') {
     if (coverFault('sidestill')) return false;
     const forced = (window as unknown as { __coversSideLive?: string[] }).__coversSideLive;

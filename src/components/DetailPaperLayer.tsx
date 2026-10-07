@@ -30,7 +30,7 @@ import type { CardRect, Tween } from './detailPaper/paperMath';
 import { CoverRenderer, coverCropOf } from '../covers/coverRenderer';
 import { CachedCoverRenderer } from '../covers/cachedCoverRenderer';
 import {
-  MAX_DPR,
+  paperMaxDpr,
   faceKey,
   faceKeys,
   faceSettled,
@@ -54,6 +54,8 @@ import { coverSideLive, riveCover, shaderCover } from '../covers/covers';
 import { riveCost, riveInstance, rivePlane } from '../covers/rive/riveCover';
 import type { RiveInstance } from '../covers/rive/riveCover';
 import { coverTime } from '../covers/coverClock';
+import { ambientFrame } from '../ambient';
+import { centreFrame, qualityDprCap, sideFrame, subscribeQuality } from '../quality';
 import { backdropUnder, coverDialsVersion, coverValues, siteCoverDials } from '../covers/coverDials';
 import { cssRgb } from '../covers/color';
 import { advanceDome, detailDome } from '../covers/dome';
@@ -363,6 +365,8 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   let coversDrawn = 0;
 
   const restDome = { x: 0, y: 0, amp: 0 };
+  /** The cover targets holding a frame: what a skipped ambient frame shows. */
+  const drawnTargets = new WeakSet<object>();
 
   /** Draw a cover for the hero (or, `side`, a side card) at `pxW × pxH`;
    *  its texture, or null if not ready. While the cards are handed OUT the DOM
@@ -377,6 +381,10 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       c.r.setValues(coverValues(id));
     }
     if (state === 'out' && c.rt && c.rt.width === pxW && c.rt.height === pxH) return c.rt.texture;
+    // Ambient: the cover moves at most ~60 a second (src/ambient.ts); the
+    // paper itself keeps the full rate, over the cover's last frame.
+    if ((!ambientFrame() || (side && !sideFrame('shader'))) && c.rt && c.rt.width === pxW && c.rt.height === pxH && drawnTargets.has(c.rt))
+      return c.rt.texture;
     if (!c.rt || c.rt.width !== pxW || c.rt.height !== pxH) {
       c.rt?.dispose();
       c.rt = CoverRenderer.outputTarget(pxW, pxH);
@@ -399,6 +407,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       });
     const drawn = import.meta.env.DEV ? measureDraw(id, side ? 'side' : 'centre', draw) : draw();
     if (!drawn) return null;
+    drawnTargets.add(rt);
     if (import.meta.env.DEV) noteDraw(id, side ? 'paper side' : 'paper centre', t, dome);
     coversDrawn++;
     return c.rt.texture;
@@ -441,11 +450,13 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   let riveUploadMs = 0;
   let riveFresh = false;
 
-  function riveCoverTexture(id: string, pxW: number, pxH: number): Texture | null {
+  function riveCoverTexture(id: string, pxW: number, pxH: number, side = false): Texture | null {
     const inst = riveInstance(id);
     if (!inst) return null;
     let c = riveTex.get(id);
     if (state === 'out' && c && c.inst === inst && c.w === pxW && c.h === pxH) return c.tex;
+    // WebKit: a side card at 20 fps, the centre card at 30 (quality.ts).
+    if ((!ambientFrame() || (side ? !sideFrame('rive') : !centreFrame())) && c && c.inst === inst && c.w === pxW && c.h === pxH && c.version >= 0) return c.tex;
     const ms = inst.draw(coverTime(), 'plane', pxW, pxH);
     const drawn = inst.canvasOf('plane');
     if (!drawn) return null;
@@ -633,7 +644,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
   const unregister = registerHandOut(handOut);
 
   function resize() {
-    const nextDpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    const nextDpr = Math.min(window.devicePixelRatio || 1, paperMaxDpr());
     const w = window.innerWidth;
     const h = window.innerHeight;
     if (nextDpr === dpr && w === vw && h === vh) return;
@@ -753,8 +764,8 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
         // The readout's "paper centre/side": live, or the still.
         let live: Texture | null = null;
         if (!still) {
-          const cap = Math.min(dpr, Math.max(0.5, riveDials?.riveMaxDpr ?? 2)) / dpr;
-          live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap));
+          const cap = Math.min(dpr, Math.max(0.5, Math.min(riveDials?.riveMaxDpr ?? 2, qualityDprCap()))) / dpr;
+          live = riveCoverTexture(rive.id, Math.round(tw * cap), Math.round(th * cap), !big);
           if (live) {
             tex = live;
             liveTex = true;
@@ -762,7 +773,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
         }
         rivePlane(rive.id, live ? 'live' : tex ? 'still' : 'none', big ? 'centre' : 'side', riveUploads);
       } else if (item.cover && (big || sideLive) && !still) {
-        const cap = Math.min(dpr, siteCoverDials().coverMaxDpr) / dpr;
+        const cap = Math.min(dpr, siteCoverDials().coverMaxDpr, qualityDprCap()) / dpr;
         const live = liveCoverTexture(item.cover.id, Math.round(tw * cap), Math.round(th * cap), !big);
         if (live) {
           tex = live;
@@ -929,6 +940,8 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
     dirty = true;
   };
   window.addEventListener('resize', onResize);
+  // Adaptive quality's tier 2 caps the DPR: a resize, as far as the paper goes.
+  const unsubQuality = subscribeQuality(onResize);
 
   if (import.meta.env.DEV) {
     (window as unknown as { __paper?: unknown }).__paper = {
@@ -1067,6 +1080,7 @@ function createEngine(host: HTMLElement, input: EngineInputs) {
       document.documentElement.removeEventListener('pointerleave', onLeave);
       window.removeEventListener('blur', onLeave);
       window.removeEventListener('resize', onResize);
+      unsubQuality();
       unsubProgress();
       root.removeAttribute('data-paper');
       const then = pendingLeave;

@@ -29,6 +29,8 @@ import { config } from '../config';
 import type { LiveConfig } from '../config';
 import { createBandSweep, createRectMeans } from './bandSweep';
 import { MAX_SPLATS, createFluid } from './fluid';
+import { ambientFrame } from '../ambient';
+import { qualityDprCap, qualityFluidOff } from '../quality';
 import type { Fluid, Splat } from './fluid';
 import { afterFirstPaint } from '../firstPaint';
 import { skyGradientAt } from './palette';
@@ -633,6 +635,10 @@ const MAX_DT = 0.05; // clamp the post-background frame jump
 const SPLAT_SPEED_MAX = 4;
 /** Density a splat lays down per (screen height / s) of its speed, up to 1. */
 const DENSITY_PER_SPEED = 1;
+/** The wake's solver step, s: 60 Hz whatever the frame rate. */
+const FLUID_STEP = 1 / 60;
+/** Most solver steps in one frame (two: a 30 fps frame). */
+const FLUID_MAX_STEPS = 2;
 
 /** Storm level above which lightning is armed. */
 const FLASH_ARMED_AT = 0.3;
@@ -783,7 +789,10 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     gl.bindVertexArray(vao);
     gl.viewport(0, 0, width, height);
   });
-  const splats: Splat[] = [];
+  /** The page's splats (cards, flips, the checks) since the last step. */
+  const external: Splat[] = [];
+  /** One step's splats: the pointer's, then the page's. */
+  const stepSplats: Splat[] = [];
   /** The pointer as last reported, and as last splatted (CSS px). */
   let pointerX = 0;
   let pointerY = 0;
@@ -791,14 +800,20 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   let splatX = 0;
   let splatY = 0;
   let splatFrom = false;
+  /** Seconds since the pointer's last splat. */
+  let pointerT = 0;
+  /** The wake's clock: time not yet stepped, and frames since the last step. */
+  let fluidAcc = 0;
+  let framesSinceStep = 0;
+  /** rAF frames since the last drawn one (more than 1 when ambient skips). */
+  let rawFrames = 0;
   let pinned: number | null = null;
   let held = false;
 
   /** The fluid runs only while it is on, motion is allowed, and it exists. */
-  const fluidLive = () => fluid !== null && config.fluidOn && !reduced;
+  const fluidLive = () => fluid !== null && config.fluidOn && !reduced && !qualityFluidOff();
 
-  function queueSplat(x: number, y: number, dx: number, dy: number, strength: number): void {
-    if (!fluidLive() || splats.length >= MAX_SPLATS || !(strength > 0)) return;
+  function makeSplat(x: number, y: number, dx: number, dy: number, strength: number): Splat | null {
     const vh = Math.max(1, window.innerHeight);
     const vw = Math.max(1, window.innerWidth);
     // CSS px / s → screen heights / s, y up. Clamped: a flick is a gust, not a
@@ -806,19 +821,25 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
     let vx = dx / vh;
     let vy = -dy / vh;
     const speed = Math.hypot(vx, vy);
-    if (!(speed > 0)) return;
+    if (!(speed > 0)) return null;
     const cap = SPLAT_SPEED_MAX / speed;
     if (cap < 1) {
       vx *= cap;
       vy *= cap;
     }
-    splats.push({
+    return {
       u: x / vw,
       v: 1 - y / vh,
       vx: vx * strength,
       vy: vy * strength,
       density: Math.min(1, Math.min(speed, SPLAT_SPEED_MAX) * DENSITY_PER_SPEED) * strength,
-    });
+    };
+  }
+
+  function queueSplat(x: number, y: number, dx: number, dy: number, strength: number): void {
+    if (!fluidLive() || external.length >= MAX_SPLATS || !(strength > 0)) return;
+    const s = makeSplat(x, y, dx, dy, strength);
+    if (s) external.push(s);
   }
 
   function onPointerMove(e: PointerEvent): void {
@@ -830,41 +851,91 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   function onPointerGone(): void {
     pointerSeen = false;
     splatFrom = false;
+    pointerT = 0;
   }
 
-  /** One step of the wake: the pointer's splat for this frame, then the solve. */
+  /**
+   * The wake, on a clock of its own: the solver steps at a fixed 60 Hz,
+   * whatever the frame rate — at most {@link FLUID_MAX_STEPS} steps a frame,
+   * none on a frame that comes before the next step is due. A splat adds a
+   * fixed push, so a wake stepped once a frame was ~5× weaker per halving of
+   * the frame rate (docs/perf/thirty-fps.md). Now:
+   *
+   *  - the POINTER puts one splat into every step, spaced along its path
+   *    since its last splat, at its speed over that time;
+   *  - the PAGE's splats (queued once a frame by whoever moves) go into every
+   *    step that covers their frames, each weighted by 1 / the frames since
+   *    the last step, so a second of them adds what it adds at 60 Hz: at 30
+   *    fps each goes into two steps, at 120 two frames' share one step.
+   *
+   * At 60 Hz it is the wake it was: one step a frame, the pointer's splat at
+   * its position, the page's at weight 1.
+   */
   function stepFluid(dt: number): void {
     if (!fluid) return;
-    if (!fluidLive()) {
-      if (fluid.awake()) fluid.clear();
-      splats.length = 0;
+    if (!fluidLive() || held) {
+      if (!fluidLive() && fluid.awake()) fluid.clear();
+      external.length = 0;
       splatFrom = false;
+      pointerT = 0;
+      fluidAcc = 0;
+      framesSinceStep = 0;
+      rawFrames = 0;
       return;
     }
-    // NO POINTER, NO SPLAT. A pointer that has not moved since the last frame
+    // The rAF frames this one stands for: the page queues splats on each.
+    framesSinceStep += Math.max(1, rawFrames);
+    rawFrames = 0;
+    pointerT += dt;
+    fluidAcc += dt;
+    let n = Math.floor(fluidAcc / FLUID_STEP + 1e-6);
+    if (n === 0) return;
+    if (n > FLUID_MAX_STEPS) {
+      // A long frame: the time past two steps is dropped, not caught up.
+      n = FLUID_MAX_STEPS;
+      fluidAcc = 0;
+    } else {
+      fluidAcc = Math.max(0, fluidAcc - n * FLUID_STEP);
+    }
+    // NO POINTER, NO SPLAT. A pointer that has not moved since its last splat
     // puts nothing in; the field just goes on decaying.
-    if (pointerSeen) {
-      if (splatFrom && dt > 0 && (pointerX !== splatX || pointerY !== splatY)) {
-        queueSplat(pointerX, pointerY, (pointerX - splatX) / dt, (pointerY - splatY) / dt, config.fluidStrength);
-      }
-      splatX = pointerX;
-      splatY = pointerY;
-      splatFrom = true;
-    }
-    if (held) {
-      splats.length = 0;
-      splatFrom = false;
-      return;
-    }
-    if (splats.length === 0 && !fluid.awake()) return;
-    fluid.step(dt, splats, {
+    const moved = pointerSeen && splatFrom && pointerT > 0 && (pointerX !== splatX || pointerY !== splatY);
+    const pvx = moved ? (pointerX - splatX) / pointerT : 0;
+    const pvy = moved ? (pointerY - splatY) / pointerT : 0;
+    const w = 1 / framesSinceStep;
+    const params = {
       radius: config.fluidRadius,
       curl: config.fluidCurl,
       velocityDissipation: config.velocityDissipation,
       densityDissipation: config.densityDissipation,
       aspect: window.innerWidth / Math.max(1, window.innerHeight),
-    });
-    splats.length = 0;
+    };
+    let stepped = false;
+    for (let i = 0; i < n; i++) {
+      stepSplats.length = 0;
+      if (moved) {
+        const f = (i + 1) / n;
+        const s = makeSplat(splatX + (pointerX - splatX) * f, splatY + (pointerY - splatY) * f, pvx, pvy, config.fluidStrength);
+        if (s) stepSplats.push(s);
+      }
+      for (const e of external) {
+        if (stepSplats.length >= MAX_SPLATS) break;
+        stepSplats.push(w === 1 ? e : { ...e, vx: e.vx * w, vy: e.vy * w, density: e.density * w });
+      }
+      if (stepSplats.length === 0 && !fluid.awake()) break;
+      fluid.step(FLUID_STEP, stepSplats, params);
+      stepped = true;
+    }
+    if (pointerSeen) {
+      splatX = pointerX;
+      splatY = pointerY;
+      splatFrom = true;
+      pointerT = 0;
+    }
+    external.length = 0;
+    stepSplats.length = 0;
+    framesSinceStep = 0;
+    if (!stepped) return;
     // The solve leaves its own program, framebuffer and viewport bound.
     gl!.useProgram(program);
     gl!.bindVertexArray(vao);
@@ -872,14 +943,17 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   }
 
   function resize(): void {
-    let dpr = Math.min(window.devicePixelRatio || 1, 2) * config.skyResolution;
+    // Adaptive quality (src/quality.ts): half resolution from tier 3.
+    let dpr = Math.min(window.devicePixelRatio || 1, 2) * config.skyResolution * (qualityFluidOff() ? 0.5 : 1);
     // THE PIXEL CAP — off by default, the lever for a slower machine. The sky's
     // cost is per pixel and nothing else, so on a big retina window it is the
     // backing store that decides the frame (a foggy 5K @2x is 5–6ms on an M1
     // Max). Above `skyMaxMegapixels` the store is scaled down to that many
     // pixels and the compositor scales it up; the sky is soft noise and the
     // grain covers it. 5.5 leaves 1440×900 @2x (5.2 MP) untouched. 0 = no cap.
-    const cap = config.skyMaxMegapixels * 1e6;
+    // …and at most 4 MP from tier 2.
+    const mp = qualityDprCap() < Infinity ? (config.skyMaxMegapixels > 0 ? Math.min(config.skyMaxMegapixels, 4) : 4) : config.skyMaxMegapixels;
+    const cap = mp * 1e6;
     const area = window.innerWidth * window.innerHeight * dpr * dpr;
     if (cap > 0 && area > cap) dpr *= Math.sqrt(cap / area);
     const w = Math.max(1, Math.round(window.innerWidth * dpr));
@@ -966,6 +1040,13 @@ export function createSkyEngine(canvas: HTMLCanvasElement): SkyEngine | null {
   }
 
   function frame(now: number): void {
+    // Ambient: at most ~60 a second on a faster screen (src/ambient.ts). The
+    // page's splats still arrive every frame; the wake weighs them by these.
+    rawFrames++;
+    if (!ambientFrame()) {
+      raf = requestAnimationFrame(frame);
+      return;
+    }
     const dt = Math.min((now - last) / 1000, MAX_DT);
     last = now;
     const tauMs = reduced ? REDUCED_TRANSITION_MS : config.skyTransitionMs;

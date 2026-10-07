@@ -1640,6 +1640,117 @@ veil — neither.** Measured on the tuned cover at a clear NOON, 1728×996:
 `__paper.override({ zero: true })` and the sky hidden. `ground` runs with the
 paper's effects on and the sky there.
 
+## Safari: stray black lines on card 04 (2026-10-06, fixed in the .riv)
+
+**Fixed, in the file** (Uko's signed build, 2026-10-06: 603,483 bytes, was
+1,125,192): handle distance 0 on `Eyebrow_R Path`'s end vertices in all three
+faces (NotionAI 2, Nosey, Nosey Hardhat), and four unused reference images no
+longer exported. No code changed. Checked on the verify build, the clock walked
+to the moments the artifacts showed, old file against new:
+
+- **Stray ink** (near-black pixels in WebKit or Safari with no dark pixel within
+  4 px in Chrome), worst frame: side card `#item-03` @2× 2,916 px → **0**, @1×
+  571 → 0, iPad 11" 1,196 → 0, iPad 12.9" 2,200 → 0; centre (error pose and
+  burst shards) 180 → 0 (iPads 130 / 48 → 0); grid tile (the instance's own
+  render) 549–621 → 0. After the burst: 0 on both.
+- **Real Safari 27.0** (WebDriver, 1728×1117 @2×): the old file's lines
+  reproduce exactly as in Playwright's WebKit (side 2,696 px at 6.033 s; centre
+  in 18 of 25 frames; grid 549 px), and the new file draws none.
+- **The stroke log:** the 37-unit eyebrow strokes' end handles read 0 at every
+  sampled time (0–9 s, unfocused and focused), in all three faces.
+- **The rest of the file is the same:** artboards (9; names, sizes, bounds),
+  state machines, inputs, listeners, animations, view models and their
+  properties, enums and Nosey Detail's defaults, compared in the one runtime.
+  Only the four images are gone and the Luau scripts' internal file names are
+  renumbered. Chrome draws it as before.
+
+Captures (Chrome old · Safari or WebKit old · NEW · Chrome new):
+`docs/covers/safari-lines/fixed-side-real-safari.webp`, `fixed-error-pose-real-safari.webp`,
+`fixed-burst-shard-real-safari.webp`, `fixed-grid-tile-real-safari.webp`,
+`fixed-side-ipad-webkit.webp`; the characters after the burst in Safari,
+`fixed-after-burst-real-safari.webp`.
+
+### The findings (before the fix)
+
+
+Uko saw black lines in Safari on the Nosey face that are not part of the
+animation: a spike off the left tip of the eyebrow, and worse on moving
+shapes. Chrome is fine. **The cause is in the .riv, on two vertices of one
+path.** It is not our draw or copy path, and no runtime version changes it.
+
+**Where.** In Playwright's WebKit (Safari 26.6's engine), on every surface: the
+grid tile, the side card (`#item-03`: long lines across the face at
+6.03–6.07 s, `docs/covers/safari-lines/site-side-card-sequence.webp`), the centre card's
+error pose (0.56–0.9 s) and a flying eyebrow shard in the burst (2.62–2.68 s);
+at 1× and 2×, and in the iPad Pro 11" and 12.9" emulations. The four
+characters after the burst are clean. Chromium and Chrome draw none of it. Real
+Safari was not driven: `safaridriver` needs Safari's "Allow remote automation",
+which is off and was left off.
+
+**Not our code.** A bare page drawing the artboard through `@rive-app/canvas`,
+with no cover stage, shows the same spikes. The stage copies the instance's
+own 2D canvas (no WebGL between), so it cannot add lines. (A dark line down the
+centre card's left edge, and a dash by the kitten, are in Chrome too: not this.)
+
+**The path.** Every stroke was logged as the runtime drew it. Every frame with
+an artifact had the same one: **`Eyebrow_R Path`** in the face artboard
+**`NotionAI 2`** (`NULL_Face` › `Eyebrow_R`), 37 units thick, round cap, miter
+join, three vertices. Its **first and last vertices** (ids `0-10065245` and
+`0-10065247`) are mirrored, with a handle **0.1 units long** at −30.39° (the
+first) and 90° (the last). The anchors are animated and the handles are not,
+so the curve begins and ends on a 0.1-unit handle pointing 25–164° away from
+where it actually goes. WebKit takes the stroke's end direction from that
+handle and draws the thick, round-capped end skewed: the spike and the bite
+next to it, and, when the angle gets wide, the long lines. Skia (Chrome) draws
+a faint notch at most. In the characters' faces the same path stays near 26°,
+and nothing shows at any size.
+
+**What does not fix it.** Round or bevel joins, `miterLimit` 1, butt caps
+(`docs/covers/safari-lines/joins-caps-no-help.webp`): the spikes move, sometimes grow.
+`@rive-app/canvas` 2.42.1 (ours), 2.43.1 and 2.44.0 draw identical pixels in
+WebKit (`docs/covers/safari-lines/runtimes-identical.webp`); 2.44.0's "keep coincident control points
+exact when trimming paths" does not apply to a 0.1 handle. `canvas-lite` does
+not run the file's scripts. No matching rive-wasm issue was found.
+
+**The fix, in Rive (Uko's):** on those two vertices of `Eyebrow_R Path`, set the
+handle distance to **0**, or make them straight vertices, or turn the handles
+along the curve; then republish the signed CLI build ([The .riv](#the-riv)).
+With distance 0 simulated in the runtime, WebKit matches Chrome: 0–1 differing
+pixels where there were 84–3,729 (`docs/covers/safari-lines/eyebrow-chrome-webkit-fixed.webp`, panels 3
+and 4; `docs/covers/safari-lines/side-size-long-lines.webp`, `docs/covers/safari-lines/burst-shard.webp`). The Rive MCP dropped
+before the animation's keys could be read, so "the handles are not keyed"
+rests on the drawn output.
+
+**A stopgap in code, if the file cannot change soon (proposed, not built):**
+wrap the runtime's own path (`rt.renderFactory.makeRenderPath()`, not the
+global `Path2D`) so `cubicTo` snaps any control point within 0.5 units of its
+anchor onto the anchor. One length check per segment; it removed every
+artifact in the tests, the burst included. Risks: it patches a runtime
+internal (a runtime update can break it), and it would flatten real handles
+that short (nothing visible in a 1000-unit artboard).
+
+**The Rive Renderer** (`@rive-app/webgl2` 2.44.0, one shared offscreen context
+copied to 2D canvases) also draws it clean (`docs/covers/safari-lines/webgl2-renderer.webp`), at a cost
+— A/B rounds interleaved, DPR 2, characters bouncing, load average 5.8–11, M1
+Max:
+
+| | canvas 2.42.1 (now) | webgl2 2.44.0 |
+| --- | --- | --- |
+| WebGL contexts | 0 | +1: grid 2 → 3, `#item-04` 3 → 4 |
+| draw, main thread, Chrome (mean / p95) | 0.68–0.80 / 0.9–1.2 ms | 0.95–0.98 / 1.1–1.2 ms |
+| the same, WebKit | 0.88–1.23 / 1–2 ms | 1.39–1.84 / 2–3 ms |
+| first frames, cold shader cache | — | one 743 ms (Chrome) / 897 ms (WebKit) stall |
+| renderer setup | 0.3–2 ms | 24–60 ms (288 cold) |
+| reading pixels back (`snapshot()`) | ~0.1 ms | 2.6–4.2 ms mean, p95 to 9 |
+| wasm, gzip | 782 KB | 925 KB |
+
+It would also mean lifting `withoutMeshContext`, whose test refuses the
+webgl2 runtime's own context. Not worth it for a two-vertex fix in the file.
+
+**Seen on the way:** uploading card 04's 2D canvas into the paper's WebGL
+texture costs 12.6–12.8 ms a frame in Playwright's WebKit at 1384×1800 (Chrome:
+0.05 ms). It needs checking in real Safari ([docs/perf/thirty-fps.md](perf/thirty-fps.md) has it too).
+
 ## Not done
 
 1. **A neighbour sliding into the hero switched from the still to live.**

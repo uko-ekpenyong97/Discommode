@@ -4,6 +4,8 @@ import type { CoverDrawer } from './coverRenderer';
 import { makeCoverRenderer } from './cachedCoverRenderer';
 import { riveCover, shaderCover } from './covers';
 import { coverStill, coverTime } from './coverClock';
+import { ambientFrame } from '../ambient';
+import { qualityDprCap, sideCapped, sideFrame } from '../quality';
 import { coverBackdrop, coverDialsVersion, coverValues, siteCoverDials, subscribeCoverDials } from './coverDials';
 import { RIVE_DOM, ensureRive, onRiveReady, peekRiveInstance, riveAvailable, riveCost, riveDomRoles, riveInstance } from './rive/riveCover';
 import { cssRgb } from './color';
@@ -604,9 +606,15 @@ function tick(now: number) {
     running = false;
     return;
   }
+  // Ambient: the covers move at most ~60 a second (src/ambient.ts).
+  if (!ambientFrame()) {
+    raf = requestAnimationFrame(tick);
+    return;
+  }
   const t0 = performance.now();
   const site = siteCoverDials();
-  const dprCap = Math.max(0.5, site.coverMaxDpr);
+  // Adaptive quality's tier 2 caps it at 1.5 (src/quality.ts).
+  const dprCap = Math.max(0.5, Math.min(site.coverMaxDpr, qualityDprCap()));
   const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
   if (boundVersion !== coverDialsVersion()) {
     boundVersion = coverDialsVersion();
@@ -615,6 +623,7 @@ function tick(now: number) {
   const backdrop = site.coverBackdrop === 'solid' ? cssRgb(site.coverBackdropColor) : null;
   const t = coverTime(now);
   capEasingTiles();
+  sideHeld.clear();
   retired.length = 0; // a commit's, primed by now (flushPrimes)
 
   // 1. what is on screen, and at what size
@@ -656,6 +665,12 @@ function tick(now: number) {
     // frame, behind the hero — while only visibility was checked.
     if (p.host.checkVisibility && !p.host.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
     if (p.drawn && (p.host.closest(HOLD) || (covered && p.host.closest('.app')))) continue;
+    // A live side card at 20 fps: adaptive quality's tier 1, or WebKit (quality.ts).
+    const kind = rive ? 'rive' : 'shader';
+    if (p.drawn && sideCapped(kind) && domRole(p) === RIVE_DOM.side && !sideFrame(kind)) {
+      sideHeld.add(p); // still showing its last frame, as far as the status goes
+      continue;
+    }
     p.visible = true;
     any = true;
     // Its box on screen only says whether the page is moving (prime, above);
@@ -797,12 +812,14 @@ function copy(p: Presenter, src: CanvasImageSource, sy: number, pxW: number, pxH
  *  status (riveDomRoles, RIVE_DOM: grid tiles, the morph card, the detail
  *  view's side card, its centre card). No allocation. */
 const riveMasks = new Map<string, number>();
+/** Side cards skipped this frame by adaptive quality's 20 fps (tick). */
+const sideHeld = new Set<Presenter>();
 function reportRiveRoles() {
   for (const id of riveMasks.keys()) riveMasks.set(id, 0);
   for (const p of presenters) {
     if (!riveCover(p.coverId)) continue;
     let m = riveMasks.get(p.coverId) ?? 0;
-    if (p.visible) {
+    if (p.visible || sideHeld.has(p)) {
       m |= domRole(p);
     }
     riveMasks.set(p.coverId, m);
@@ -830,7 +847,7 @@ function surfaceOf(p: Presenter, own: boolean): DrawSurface {
 /** The cap on a Rive cover's backing store (its riveMaxDpr dial). */
 function riveMaxDpr(id: string): number {
   const v = coverValues(id) as { rive?: { riveMaxDpr?: number } };
-  return Math.max(0.5, v.rive?.riveMaxDpr ?? 2);
+  return Math.max(0.5, Math.min(v.rive?.riveMaxDpr ?? 2, qualityDprCap()));
 }
 
 /**

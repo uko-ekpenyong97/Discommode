@@ -8,6 +8,8 @@ import type {
   WrappedRenderer,
 } from '@rive-app/canvas/rive_advanced.mjs';
 import wasmUrl from '@rive-app/canvas/rive.wasm?url';
+import { webkitEngine } from '../../engine';
+import { DrawPrint } from './drawPrint';
 import { CONTENT } from '../../content';
 import { coverCropOf } from '../coverRenderer';
 import { backdropUnder } from '../coverDials';
@@ -417,6 +419,13 @@ class Surface {
   drewChange = -1;
   /** The backdrop it was last drawn over ('' = none). */
   drawnBg = '';
+  /** WebKit: its visible draws' print (drawPrint.ts), and its last one. A
+   *  paint whose print is the last one's is not a new picture: the version
+   *  holds, and the paper does not upload it. */
+  readonly print: DrawPrint | null;
+  lastPrint: number | null = null;
+  /** Paints that turned out to be the same picture (dev readout). */
+  same = 0;
   /** Exactly its draw's size (the paper's texture), or grow-only (the stage's:
    *  it copies a top-left region, and a tile's size moves every frame of a
    *  focus tween). */
@@ -429,6 +438,8 @@ class Surface {
     this.exact = exact;
     this.canvas.width = pxW;
     this.canvas.height = pxH;
+    // The print wraps the context BEFORE the renderer takes it.
+    this.print = webkitEngine() ? new DrawPrint(this.canvas.getContext('2d')!) : null;
     this.renderer = rt.makeRenderer(this.canvas);
   }
 
@@ -565,7 +576,7 @@ export class RiveInstance {
       if (ms > 0.05) this.lastMs = ms;
       return ms;
     }
-    this.paint(s, bg);
+    this.paint(s, bg, resized);
     this.lastMs = performance.now() - t0;
     return this.lastMs;
   }
@@ -574,8 +585,9 @@ export class RiveInstance {
     return (this.surfaces[kind] ??= new Surface(this.rt, kind !== 'stage', pxW, pxH));
   }
 
-  private paint(s: Surface, bg: string) {
+  private paint(s: Surface, bg: string, resized = false) {
     const r = s.renderer;
+    s.print?.begin();
     r.clear();
     r.save();
     this.frame.maxX = s.pxW;
@@ -596,13 +608,19 @@ export class RiveInstance {
     }
     s.drawnBg = bg;
     s.drewChange = this.changes;
+    const print = s.print ? s.print.end() : null;
+    if (print !== null && print === s.lastPrint && !resized && s.version > 0) {
+      s.same++;
+      return; // the same picture: no new version, no upload
+    }
+    s.lastPrint = print;
     s.version++;
   }
 
   /** A surface's canvas and its last draw, or null before its first. */
-  canvasOf(kind: RiveSurfaceKind): { canvas: HTMLCanvasElement; pxW: number; pxH: number; version: number } | null {
+  canvasOf(kind: RiveSurfaceKind): { canvas: HTMLCanvasElement; pxW: number; pxH: number; version: number; same: number; printed: boolean } | null {
     const s = this.surfaces[kind];
-    return s && s.version > 0 ? { canvas: s.canvas, pxW: s.pxW, pxH: s.pxH, version: s.version } : null;
+    return s && s.version > 0 ? { canvas: s.canvas, pxW: s.pxW, pxH: s.pxH, version: s.version, same: s.same, printed: !!s.print } : null;
   }
 
   /** DEV / verify: the instance as it is NOW, drawn at `w × h` into a canvas
@@ -860,7 +878,7 @@ export function riveProbe() {
         ...i.status,
         lastMs: i.lastMs,
         stage: stage && { pxW: stage.pxW, pxH: stage.pxH, version: stage.version },
-        plane: plane && { pxW: plane.pxW, pxH: plane.pxH, version: plane.version },
+        plane: plane && { pxW: plane.pxW, pxH: plane.pxH, version: plane.version, same: plane.same, printed: plane.printed },
       };
     },
     viewModel: (id: string) => instances.get(id)?.viewModel() ?? null,

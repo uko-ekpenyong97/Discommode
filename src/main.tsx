@@ -4,6 +4,8 @@ import './index.css';
 import PortfolioGate from './portfolio/PortfolioGate.tsx';
 import { prepareSky } from './sky/skyStage';
 import { prepareCoverStage } from './covers/coverStage';
+import { skyEngine } from './sky/skyStage';
+import { startQuality } from './quality';
 
 // The page's WebGL contexts before anything else asks the GPU process for
 // work — the sky's, then the cover stage's — each in a task of its own, posted
@@ -21,6 +23,8 @@ const post = (fn: () => void) => {
 };
 post(prepareSky);
 post(prepareCoverStage);
+// Adaptive quality (src/quality.ts): the governor, and the renderer it checks.
+startQuality(() => skyEngine()?.renderer() ?? null);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

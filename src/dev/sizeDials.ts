@@ -6,16 +6,18 @@ import { persistedPanelId } from './dialState';
 const D = SIZE_DEFAULTS;
 
 /**
- * READER SIZE and DETAIL SIZE — how big the open book and the detail card get
- * on a screen smaller than the Studio Display (src/layout/sizeDials.ts,
- * src/layout/hero.ts). The Studio Display's gaps are the maximums; these are
- * the floors the gaps shrink to, and the share of what is left that each view
- * takes. Nothing here moves the layout at 2560 wide.
+ * READER SIZE, DETAIL SIZE and READER CHROME SCALE — how big the open book and
+ * the detail card get on a screen smaller than the Studio Display
+ * (src/layout/sizeDials.ts, src/layout/hero.ts). The Studio Display's gaps and
+ * faces are the maximums; these are the floors the gaps and the chrome's faces
+ * shrink to, the height the chrome starts shrinking at, and the share of what
+ * is left that each view takes. Nothing here moves the layout at 2560×1440.
  *
  * The detail card and the reader's closed cover are one rect (the doorway opens
  * the one into the other), so the smaller of the two fills wins wherever both
  * are held by the same edge (the height, on a landscape screen). The floors
- * are the chrome's, the same in both views; they sit in READER SIZE.
+ * are the chrome's, the same in both views: the gaps' in READER SIZE, the
+ * faces' in READER CHROME SCALE.
  *
  * Registered in the READER NAV dock at `#read-NN?intro`, the doorway's dock at
  * `#item-NN?intro`, and the app's own dock at `/?intro#item-NN`: one panel id
@@ -52,6 +54,16 @@ export function useSizeDials(): void {
     },
     { id: persistedPanelId('detail-size'), persist: true, onAction },
   );
+  const chrome = useDialKit(
+    'READER CHROME SCALE',
+    {
+      faceMinFine: [D.faceMinFine, 24, 58, 1],
+      faceMinTouch: [D.faceMinTouch, 32, 58, 1],
+      heightRef: [D.heightRef, 900, 1600, 10],
+      copy: { type: 'action', label: 'Copy' },
+    },
+    { id: persistedPanelId('reader-chrome-scale'), persist: true, onAction },
+  );
 
   useEffect(() => {
     setSize({
@@ -60,6 +72,9 @@ export function useSizeDials(): void {
       gapMin: reader.gapMin,
       sideMin: reader.sideMin,
       detailFill: detail.detailFill,
+      faceMinFine: chrome.faceMinFine,
+      faceMinTouch: chrome.faceMinTouch,
+      heightRef: chrome.heightRef,
     });
-  }, [reader.readerFill, reader.marginMin, reader.gapMin, reader.sideMin, detail.detailFill]);
+  }, [reader.readerFill, reader.marginMin, reader.gapMin, reader.sideMin, detail.detailFill, chrome.faceMinFine, chrome.faceMinTouch, chrome.heightRef]);
 }

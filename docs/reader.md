@@ -532,8 +532,10 @@ with `main`, run by run, 15 per DPR alternating 20→0 and 0→20: a frame over
   so a press only ever adds contrast.
 - **Focus:** a round ring outside the paper's overhang, 2px white inside 2px
   ink-black, so it reads on any sky and any paper. Tab order is unchanged.
-- **Hit areas:** every control is at least 44×44 whatever `chromeScale` says
-  (the face centres in it); at 1 they are 46, 58 and 131×46.
+- **Hit areas:** on a touch screen every control is at least 44×44 whatever
+  `chromeScale` says (the face centres in it); with a mouse, at least the face
+  floor, 32 ([the chrome shrinks to 32px with a mouse](#the-chrome-shrinks-to-32px-with-a-mouse-2026-10-06)).
+  At 1 they are 46, 58 and 131×46.
 
 ### Dials
 
@@ -559,6 +561,65 @@ CHROME panel — in the READER NAV dock (`#read-NN?intro`), the doorway dock
 | `chromeGap` | 26 | between shapes in a row, px |
 
 There is no `chromeEdgeWobble`: the edge is Uko's, not generated (above).
+
+### The chrome shrinks to 32px with a mouse (2026-10-06)
+
+On the laptops the chrome took about a fifth of the height: the gaps already
+scaled with the width (below), but the faces stopped at the 44px floor, so
+at 1728×1117 the 58s were 55.5 where the width alone would make them 39. Now
+(`src/layout/hero.ts`, `sizeDials.ts`; `hero.test.ts`; `layout` in both
+suites):
+
+1. **`s` is the smaller of the width over 2560 and the height over
+   `heightRef` (1300)**, so a short window shrinks the chrome and its gaps
+   too. 1300, not 1440: the Studio Display with a browser's toolbars
+   (2560×1300) keeps the signed-off layout. On every listed screen the width
+   is still the smaller, so this changes nothing there; it is for wide, short
+   windows (2560×1000: s 0.77).
+2. **The face floor depends on the pointer.** With a mouse or trackpad
+   (`pointer: fine`) the smallest face (the 46 arrows and pills) may go down
+   to `faceMinFine` **32** (the 58s to 40.3), and its hit area is the face
+   (`--chrome-hit`, written by `useChromeFit`). On a touch screen
+   (`pointer: coarse`) the floor is `faceMinTouch` **44**, as before, and no
+   hit area goes under 44×44 whatever the face.
+3. **The pill's text never goes under 11px** (`chrome.css`); at the 32 floor
+   it would be 10.4.
+
+The shapes, their fill and the icons are the same masks at a smaller
+`--chrome-u`; the margins and gaps are the 2026-10-05 rule, × `s`, to 16px.
+The detail card is the same hero rect, so it grows by the same amount.
+
+**READER CHROME SCALE** (dev, `?intro`, beside READER SIZE in the three
+docks; Copy writes `SIZE_DEFAULTS`): `faceMinFine` 32, `faceMinTouch` 44,
+`heightRef` 1300.
+
+Measured 2026-10-06 (verify build, real Chrome, 1×; touch is Chrome with the
+`pointer: coarse` / `hover: none` media emulated). The open book at 11 | 12
+in the reader, the centre card in the detail view; the smallest / tallest
+face in px:
+
+| | before | now | | faces |
+| --- | --- | --- | --- | --- |
+| 2560×1440 | 1794×1166 (70.1% × 81.0% of the screen) | the same | 0 | 46 / 58, the same |
+| 16" 1728×1117 | 1384×900 (80.1% × 80.5%) | 1431×930 (82.8% × 83.3%) | +3.4% | 44 / 55.5 → 32 / 40.3 |
+| 14" 1512×982 | 1197×778 (79.2% × 79.2%) | 1243×808 (82.2% × 82.3%) | +3.9% | 44 / 55.5 → 32 / 40.3 |
+| 1440×900 | 1078×700 (74.8% × 77.8%) | 1124×731 (78.1% × 81.2%) | +4.3% | 44 / 55.5 → 32 / 40.3 |
+| iPad Pro 12.9" landscape | 1275×829 (93.4% × 81.0%) | the same | 0 | 44 / 55.5 (touch floor) |
+| iPad 11" landscape | 979×636 (83.0% × 77.6%) | the same | 0 | 44 / 55.5 |
+| iPad Pro 12.9" portrait, one page | 914×1188 (89.2% × 87.0%) | the same | 0 | 44 / 55.5 |
+| iPad 11" portrait, one page | 773×1005 (94.3% × 85.2%) | the same | 0 | 44 / 55.5 |
+
+The detail card: 692×900 → 715×930 at 1728×1117, 598×778 → 622×808 at
+1512×982, 539×700 → 562×731 at 1440×900; the same elsewhere.
+
+A tablet is unchanged: its smallest face was already at the touch floor.
+`faceMinTouch` under 44 shrinks the faces inside 44×44 hit areas (the row's
+faces then sit further apart by the difference): at 36, +3.2% on an iPad 11"
+landscape, +2.4% on a 12.9".
+
+Captures, before | now: `docs/chrome/scale-desktop.webp` (the reader at 11 | 12,
+then the detail view, at 2560, 1728, 1512 and 1440 wide),
+`scale-ipad-landscape.webp` and `scale-ipad-portrait.webp` (touch; the same).
 
 ### The Studio Display's gaps are the maximums (2026-10-05)
 

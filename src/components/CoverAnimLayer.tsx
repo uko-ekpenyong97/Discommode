@@ -380,11 +380,13 @@ export function CoverAnimLayer({ manifest, listen, face = 'cover', boilWith }: C
       if (host) publishBoil(host, b);
       lastBoil.set(face, b);
     };
-    const tick = () => {
+    // The FRAME's time, not performance.now() read late in the frame: at 30 fps
+    // a late read jittered the 1/6 s steps into holds of 4 and 6 frames.
+    const tick = (frame: number) => {
       rafRef.current = 0;
       const boil = boilRef.current;
       if (!boil) return;
-      const now = performance.now();
+      const now = frame;
       const f = fitRef.current;
       const scale = data ? (f.scale * data.w) / HERO_REF_W : 0;
       const hold = import.meta.env.DEV ? boilHoldFor(face) : null;

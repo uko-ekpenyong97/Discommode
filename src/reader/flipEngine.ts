@@ -61,6 +61,21 @@ const EASE: [number, number, number, number] = [0.42, 0.05, 0.25, 1];
  * the real leaf, because the pointer path calls applyTurn directly.
  */
 const PLATE_T = 0.985;
+/**
+ * …and the latest it may be left to. Past PLATE_T there are ~46 ms of the
+ * turn: 2–3 frames at 60 Hz, but 1–2 at 30, and one late frame skipped the
+ * window, so the plate came in at the arrival — the settle above. So a frame
+ * whose NEXT one (extrapolated from this one's step) would land past this
+ * hands over now, a little before PLATE_T. At 60 Hz the steps are too small
+ * for that ever to happen: the hand-over is where it was.
+ */
+const PLATE_LATE = 0.997;
+
+/** Whether this frame of a tween toward 1 hands over to the plate: past
+ *  PLATE_T, or the next frame would be past PLATE_LATE. */
+export function plateDue(t: number, prev: number): boolean {
+  return t >= PLATE_T || t + (t - prev) >= PLATE_LATE;
+}
 
 /** Crossfade from the chain to the flat plate, in ms. */
 const PLATE_FADE_MS = 80;
@@ -437,7 +452,9 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     // written for a cover/back turn; other turns leave the CSS data-pos value.
     if (state && (state.slideFromK !== 0 || state.slideToK !== 0)) {
       const k = state.slideFromK + (state.slideToK - state.slideFromK) * t;
-      book.style.setProperty('--book-slide', `${(k * book.clientWidth).toFixed(2)}px`);
+      // bookW, not book.clientWidth: a read here forced the layout the turn had
+      // just dirtied, every frame (docs/perf/thirty-fps.md).
+      book.style.setProperty('--book-slide', `${(k * bookW).toFixed(2)}px`);
     }
 
     // The air the leaf pushes — for a turn the engine is running (a tween or a
@@ -735,6 +752,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     const { to, dir, backSrc } = state;
     // The leaf lands on the FAR half, showing its back page.
     const side = dir === 'next' ? 'left' : 'right';
+    let prev = state.t;
     tweenTo(
       1,
       duration,
@@ -746,7 +764,8 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
         opts.onSpreadChange(to);
       },
       (t) => {
-        if (t >= PLATE_T) plateOnce(side, backSrc);
+        if (plateDue(t, prev)) plateOnce(side, backSrc);
+        prev = t;
       },
     );
   }
@@ -762,12 +781,15 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
     if (!state) return;
     const { dir, liftSrc } = state;
     const side = dir === 'next' ? 'right' : 'left';
+    let prev = state.t;
     tweenTo(
       0,
       duration,
       () => afterFade(clearTurn),
       (t) => {
-        if (t <= 1 - PLATE_T) plateOnce(side, liftSrc);
+        // Mirrored: toward 0.
+        if (plateDue(1 - t, 1 - prev)) plateOnce(side, liftSrc);
+        prev = t;
       },
     );
   }
@@ -1117,7 +1139,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
       if (a === b || l.phase === 'pending') continue;
       slide = a + (b - a) * (l.phase === 'landed' ? 1 : l.t);
     }
-    if (slide !== null) book.style.setProperty('--book-slide', `${(slide * book.clientWidth).toFixed(2)}px`);
+    if (slide !== null) book.style.setProperty('--book-slide', `${(slide * bookW).toFixed(2)}px`);
 
     // Each leaf in the air pushes its own air, keyed by leaf so each has its
     // own velocity. Not while the dev probe holds the riffle still.
@@ -1169,7 +1191,7 @@ export function createFlipEngine(opts: FlipEngineOptions): FlipEngine {
 
     const layer = document.createElement('div');
     layer.className = 'book__turn';
-    const dx = (slideK(to) - slideK(from)) * book.clientWidth;
+    const dx = (slideK(to) - slideK(from)) * bookW;
     if (dx !== 0) layer.style.transform = `translateX(${dx.toFixed(2)}px)`;
     const [left, right] = spreads[to];
     const plates = [buildPlate('left', left?.src ?? null), buildPlate('right', right?.src ?? null)];

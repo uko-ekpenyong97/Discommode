@@ -17,6 +17,7 @@
     "creases": "node scripts/make-crease-map.mjs",
     "chrome": "node scripts/make-chrome.mjs",
     "door": "node scripts/make-door.mjs",
+    "identity": "node scripts/make-identity.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "verify:pv": "node scripts/pv-verify.mjs",
@@ -26,6 +27,7 @@
     "verify:sky": "node scripts/sky-fluid-verify.mjs",
     "verify:cover": "node scripts/cover-verify.mjs",
     "verify:jank": "node scripts/jank-check.mjs",
+    "verify:tier": "node scripts/tier-check.mjs",
     "preview": "vite preview",
     "preview:verify": "vite preview --mode verify"
   },

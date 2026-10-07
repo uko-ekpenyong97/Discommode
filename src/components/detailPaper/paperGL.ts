@@ -1,3 +1,4 @@
+import { qualityDprCap } from '../../quality';
 import {
   CanvasTexture,
   ClampToEdgeWrapping,
@@ -58,6 +59,8 @@ import type { FaceJob, FaceReply } from './faceWorker';
 
 /** Hard cap on the canvas's backing store — the portfolio sheet's rule. */
 export const MAX_DPR = 2;
+/** The paper's DPR cap now: MAX_DPR, or adaptive quality's tier-2 cap. */
+export const paperMaxDpr = (): number => Math.min(MAX_DPR, qualityDprCap());
 
 export interface PaperGL {
   canvas: HTMLCanvasElement;
@@ -207,7 +210,7 @@ let size = { dpr: 0, vw: 0, vh: 0 };
  *  at 3456×1992 on an idle GPU, 50–280 ms behind a busy one. */
 export function sizePaper(): boolean {
   if (!gl) return false;
-  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  const dpr = Math.min(window.devicePixelRatio || 1, paperMaxDpr());
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   if (dpr === size.dpr && vw === size.vw && vh === size.vh) return false;
@@ -441,7 +444,7 @@ export interface FaceDims {
 /** The faces' device sizes for the viewport as it is now — the numbers the
  *  mounted layer computes from its props (hero.ts, the side scale dial). */
 export function faceDims(): FaceDims {
-  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  const dpr = Math.min(window.devicePixelRatio || 1, paperMaxDpr());
   const h = computeHeroRect(window.innerWidth, window.innerHeight);
   const s = config.detailSideScale;
   return {
